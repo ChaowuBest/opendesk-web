@@ -16,12 +16,12 @@
  * _multiSelectAnchorId），行内点选（Ctrl/Cmd/Shift）也由宿主在行点击里处理；
  * 这里只负责三块：
  *
- * 1. 框选（rubber band）：仅鼠标。在任务列表空白处按住左键拖动，松开时若选区
- *    覆盖 >= 2 个任务则进入多选并选中覆盖的任务（门槛见 sidebarMultiSelect.ts，
- *    覆盖 0/1 个任务时静默放弃，防误操作）。拖到列表上下边缘自动滚动。
- *    触屏不做框选：单指滑动是自然的列表滚动手势，且多选态的触摸操作统一走退出。
+ * 1. 框选（rubber band）：仅鼠标。按住左键拖动（从列表空白或任务行上起手均可），
+ *    松开时若选区覆盖 >= 2 个任务则进入多选并选中覆盖的任务（门槛见
+ *    sidebarMultiSelect.ts，覆盖 0/1 个任务时静默放弃，防误操作）。拖到列表上下
+ *    边缘自动滚动。触屏不做框选：单指滑动是自然的列表滚动手势。
  * 2. 多选态的退出路径：选区外点击（带修饰键的点击是选择手势，不退出）、
- *    任何触屏操作（多选菜单内除外）、Esc 键。
+ *    列表区域外的触屏操作（列表内的轻点是选择手势，交给行点击）、Esc 键。
  * 3. 列表重渲染后把选中集合同步到新行节点（is-multi-selected class）。
  *
  * 行由 innerHTML 重渲染，因此监听全部以委托方式挂在容器与 document 上，
@@ -155,6 +155,21 @@ export function attachSidebarMultiSelect(
     /** 拖动中列表重建后游离的旧行：hover 已标在它们身上，松手时需一并清理 */
     let detachedHoverRows: HTMLElement[] = [];
 
+    /** 读一次全部行的视口几何（会触发一次同步 layout，只在捕获/缓存失效时调用） */
+    function readRowRects(): CachedRowRect[] {
+        return rows().map((row) => {
+            const r = row.getBoundingClientRect();
+            return {
+                row,
+                taskId: (row.dataset && row.dataset.task_id) || '',
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom
+            };
+        });
+    }
+
     function captureRowRects(): void {
         // 重新捕获前把失联的旧行挪进游离清单，保证松手时 hover 能被清干净
         if (rowRects) {
@@ -168,17 +183,7 @@ export function attachSidebarMultiSelect(
         cachedInnerScrollEl = inner;
         cacheOuterScrollTop = (container.querySelector(groupsSelector) as HTMLElement | null)?.scrollTop ?? 0;
         cacheInnerScrollTop = inner?.scrollTop ?? 0;
-        rowRects = rows().map((row) => {
-            const r = row.getBoundingClientRect();
-            return {
-                row,
-                taskId: (row.dataset && row.dataset.task_id) || '',
-                left: r.left,
-                right: r.right,
-                top: r.top,
-                bottom: r.bottom
-            };
-        });
+        rowRects = readRowRects();
     }
 
     function releaseRowRects(): void {
@@ -203,17 +208,7 @@ export function attachSidebarMultiSelect(
             captureRowRects();
         }
         if (!rowRects) {
-            return rows().map((row) => {
-                const r = row.getBoundingClientRect();
-                return {
-                    row,
-                    taskId: (row.dataset && row.dataset.task_id) || '',
-                    left: r.left,
-                    right: r.right,
-                    top: r.top,
-                    bottom: r.bottom
-                };
-            });
+            return readRowRects();
         }
         const delta = innerScrollDelta() + outerScrollDelta();
         if (delta === 0) return rowRects;
@@ -234,11 +229,12 @@ export function attachSidebarMultiSelect(
         return hit;
     }
 
-    function ensureBox(): void {
-        if (box && box.isConnected) return;
+    function ensureBox(): HTMLElement {
+        if (box && box.isConnected) return box;
         box = doc.createElement('div');
         box.className = 'sb-marquee-box';
         doc.body.appendChild(box);
+        return box;
     }
 
     /** 当前选区的视口矩形 */
@@ -252,14 +248,21 @@ export function attachSidebarMultiSelect(
         };
     }
 
+    /**
+     * 把选区矩形同步到浮层，并给命中的行打 hover。
+     *
+     * 浮层在这里懒创建：未越过拖动门槛的手势（含普通单击）不产生任何 DOM 变更，
+     * 也就不会有一个尚未定位的方框残留在视口角落。
+     */
     function updateBox(): void {
-        if (!marquee || !box) return;
+        if (!marquee) return;
+        const el = ensureBox();
         const left = Math.min(marquee.startX, marquee.lastX);
         const top = Math.min(marquee.startY, marquee.lastY);
-        box.style.left = `${left}px`;
-        box.style.top = `${top}px`;
-        box.style.width = `${Math.abs(marquee.lastX - marquee.startX)}px`;
-        box.style.height = `${Math.abs(marquee.lastY - marquee.startY)}px`;
+        el.style.left = `${left}px`;
+        el.style.top = `${top}px`;
+        el.style.width = `${Math.abs(marquee.lastX - marquee.startX)}px`;
+        el.style.height = `${Math.abs(marquee.lastY - marquee.startY)}px`;
         const rect = marqueeRect();
         const hit = rect ? rowsInRect(rect) : new Set<string>();
         // 累积语义：自动滚动会让行移出固定选区，扫过即入集，松手时不丢行
@@ -302,11 +305,13 @@ export function attachSidebarMultiSelect(
     }
 
     function beginMarquee(x: number, y: number): void {
-        ensureBox();
         marquee = { startX: x, startY: y, lastX: x, lastY: y, active: false };
         marqueeScannedIds.clear();
         detachedHoverRows = [];
-        updateBox();
+        // 这里既不打 hover 也不建浮层：按下即命中行会让普通单击（打开任务）留下一块
+        // 淡红底色，而未定位的浮层会在视口角落闪一下。两者都等拖动越过门槛后再生效。
+        // 顺带清掉上一次手势的浮层：在窗口外松手收不到 mouseup 时它会滞留在旧位置。
+        removeMarqueeBox();
     }
 
     function moveMarquee(x: number, y: number): void {
@@ -328,6 +333,18 @@ export function attachSidebarMultiSelect(
         updateBox();
     }
 
+    /**
+     * 清掉行上的框选 hover。
+     *
+     * rows() 只能查到在册节点，框选期间被重建的行把 hover 样式带在身上，必须从游离
+     * 清单里一并摘掉，否则那行会永久留下淡红底色（切换任务后尤其明显）。
+     */
+    function clearHover(): void {
+        for (const row of detachedHoverRows) row.classList.remove('is-marquee-hover');
+        detachedHoverRows = [];
+        for (const row of rows()) row.classList.remove('is-marquee-hover');
+    }
+
     function finishMarquee(): void {
         if (!marquee) return;
         const { active } = marquee;
@@ -337,15 +354,13 @@ export function attachSidebarMultiSelect(
         marquee = null;
         releaseRowRects();
         doc.documentElement?.classList?.remove('sb-marquee-active');
+        // 清 hover 放在未达门槛分支之前：拖动过就可能有行挂着 hover（含被中断的手势
+        // 遗留的样式），不清理会让它一直留着
+        clearHover();
         if (!active) return;
         // 累积语义：命中 = 当前选区几何 ∪ 拖动过程中扫过的全部行（自动滚动导致的移出不再丢失）
         const hit = rect ? rowsInRect(rect) : new Set<string>();
         for (const id of marqueeScannedIds) hit.add(id);
-        // 清 hover 需覆盖游离的旧行节点：rows() 只能查到在册节点，
-        // 框选期间被重建的行把 hover 样式带在身上，必须从游离清单里摘掉
-        for (const row of detachedHoverRows) row.classList.remove('is-marquee-hover');
-        detachedHoverRows = [];
-        for (const row of rows()) row.classList.remove('is-marquee-hover');
         // 拖动过但未达框选门槛：同样吞掉合成 click，避免误开任务；不进入多选
         if (!shouldStartMarquee(hit.size)) {
             armClickSuppress();
@@ -377,6 +392,12 @@ export function attachSidebarMultiSelect(
 
     function onMouseMove(event: MouseEvent): void {
         if (!marquee) return;
+        // 在窗口外或窗口装饰上松手会收不到 mouseup：后续 mousemove 里按键已抬起，
+        // 按松手收尾，避免手势残留（浮层滞留、文本选择一直被禁用、列表继续自动滚动）
+        if (event.buttons === 0) {
+            onMouseUp();
+            return;
+        }
         moveMarquee(event.clientX, event.clientY);
         if (marquee && marquee.active) startAutoScroll();
     }
@@ -408,7 +429,7 @@ export function attachSidebarMultiSelect(
      * 多选态下点击「列表区域之外」退出多选。
      *
      * 任务行内（含行间空隙、组头）的点击一律交给行点击/组头开合逻辑处理：
-     * - 选中行普通点击 = toggle 取消；未选中行 = 单选该行；Ctrl/Shift = 修饰选。
+     * - 行点击 = toggle 该行的选中态（Shift = 以锚点做区间选，Ctrl/Cmd 同 toggle）。
      *   这些都在 sidebar.js 的行 click handler 里完成，这里提前退出会吞掉 Shift/Ctrl
      *   （document 捕获先于行 handler 触发，一旦退出多选，行 handler 就走打开任务分支）。
      * - 多选菜单内的点击不退出。
@@ -427,20 +448,19 @@ export function attachSidebarMultiSelect(
         options.setMultiSelect(false);
     }
 
-    /** 多选态下任何触屏操作都退出（浮层菜单与弹窗内除外） */
+    /**
+     * 多选态下的触屏：任务列表区域内的一击是选择手势（tap 会补发合成 click，
+     * 由行点击做 toggle），只有列表区域外的触摸才退出多选。
+     */
     function onDocumentTouchStartCapture(event: TouchEvent): void {
         if (!options.isMultiSelect()) return;
-        if (closestFrom(event.target as any, '.sb-multi-menu') || closestFrom(event.target as any, '.ctx-menu')) {
-            return;
-        }
+        const target = event.target as any;
+        if (closestFrom(target, '.sb-multi-menu') || closestFrom(target, '.ctx-menu')) return;
         if (modalOpen()) return;
-        // 先退出多选，再吞掉本次触屏的后续事件，避免退出重渲染后触点落在新行上误开任务
+        // 列表内（行、行间空隙、组头）不退出：一碰就退会让人没法用触屏多选。
+        // 这里也不 preventDefault，让轻点照常生成合成 click 落到行点击上
+        if (closestFrom(target, groupsSelector) || container.contains(target)) return;
         options.setMultiSelect(false);
-        // 触点在多选列表区域内才吞事件（防误开任务）；区域外的头部按钮等保持原功能
-        if (closestFrom(event.target as any, groupsSelector) || container.contains(event.target as any)) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
     }
 
     /** 确认/反馈弹窗、原生 modal dialog（如任务搜索）打开时，Esc 与外点交互归弹窗所有 */
@@ -470,6 +490,9 @@ export function attachSidebarMultiSelect(
             removeMarqueeBox();
             marquee = null;
             releaseRowRects();
+            // 手势可能在拖动中途被打断（容器重建后重新挂载），销毁时把行上的 hover 收干净
+            clearHover();
+            marqueeScannedIds.clear();
             doc.documentElement?.classList?.remove('sb-marquee-active');
             // onMouseUp 在 marquee 为 null 时不会自清理，销毁时兜底摘掉拖动监听
             doc.removeEventListener('mousemove', onMouseMove);

@@ -24,6 +24,7 @@ import {
 } from '../../../packages/app-sdk/src/index.js';
 import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
+import { NotificationManager } from '../utils/notificationmgr.js';
 
 setOpenDeskAppHost({
     getConfig(bundleName: string): unknown {
@@ -47,6 +48,9 @@ setOpenDeskAppHost({
     },
     logWarn(message: string): void {
         logger.warn(message);
+    },
+    notify(type, source, title, message): void {
+        NotificationManager.getInstance().sendNotification(type, source, title, message);
     }
 });
 

@@ -51,6 +51,8 @@ export interface OpenDeskAppManifest {
 
 export type OpenDeskAppPackageManifest = OpenDeskAppManifest;
 
+export type OpenDeskNotificationType = 'info' | 'warning' | 'error';
+
 export interface OpenDeskAppHost {
     getConfig?: (bundleName: string) => unknown;
     setConfig?: (bundleName: string, config: unknown, schema: z.ZodObject<any>) => void;
@@ -58,6 +60,8 @@ export interface OpenDeskAppHost {
     callWorker?: (bundleName: string, methodName: string, ...args: any[]) => Promise<any>;
     logInfo?: (message: string) => void;
     logWarn?: (message: string) => void;
+    /** 把应用侧的结果反馈交给 OpenDesk 的通知中枢（系统通知/通知中心） */
+    notify?: (type: OpenDeskNotificationType, source: string, title: string, message: string) => void;
 }
 
 let host: OpenDeskAppHost | undefined;
@@ -264,6 +268,16 @@ export abstract class BaseApplication {
             isExperimental: this.isExperimental(),
             needAgentBar: this.needAgentBar()
         };
+    }
+
+    /**
+     * 推一条系统通知（界面通知中心 / 系统通知）。
+     *
+     * 应用内的一次性结果反馈（如启用、禁用、保存成功）走这里，不要占应用页面里的提示区域。
+     * 宿主未注入通知通道时静默丢弃：通知只是反馈，不该影响调用方的业务流程。
+     */
+    sendNotification(type: OpenDeskNotificationType, source: string, title: string, message: string): void {
+        getOpenDeskAppHost()?.notify?.(type, source, title, message);
     }
 
     addSubscriber(eventName: string, senderFrame: any): void {

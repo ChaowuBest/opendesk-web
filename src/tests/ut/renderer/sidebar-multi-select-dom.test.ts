@@ -167,6 +167,53 @@ describe('sidebar multi-select', () => {
         expect(sidebar._multiSelectIds).toEqual(new Set(['t1', 't2', 't3']));
     });
 
+    test('多选态下点击行是 toggle 加选，不清空其它已选行', () => {
+        const sidebar = createSidebar();
+        sidebar.taskList = [
+            { task_id: 'a', task_name: 'A', created_at: Date.now(), updated_at: Date.now() },
+            { task_id: 'b', task_name: 'B', created_at: Date.now(), updated_at: Date.now() },
+            { task_id: 'c', task_name: 'C', created_at: Date.now(), updated_at: Date.now() }
+        ];
+        sidebar._enterMultiSelect(new Set(['a']));
+
+        const rowB = sidebar.querySelector('.task-item[data-task_id="b"]') as HTMLElement;
+        rowB.dispatchEvent(new (window as any).Event('click', { bubbles: true }));
+        expect(sidebar._multiSelectIds).toEqual(new Set(['a', 'b']));
+
+        // 再点一次 b 取消，a 仍在（不能变成「只选 a」或「清空」）
+        rowB.dispatchEvent(new (window as any).Event('click', { bubbles: true }));
+        expect(sidebar._multiSelectIds).toEqual(new Set(['a']));
+
+        // 点未选中的 c 也是加选，多选形态保持不变
+        const rowC = sidebar.querySelector('.task-item[data-task_id="c"]') as HTMLElement;
+        rowC.dispatchEvent(new (window as any).Event('click', { bubbles: true }));
+        expect(sidebar._multiSelectIds).toEqual(new Set(['a', 'c']));
+        expect(sidebar._multiSelect).toBe(true);
+    });
+
+    test('触屏轻点列表内的行不退出多选，列表外触摸才退出', () => {
+        const sidebar = createSidebar();
+        sidebar.taskList = [
+            { task_id: 'a', task_name: 'A', created_at: Date.now(), updated_at: Date.now() },
+            { task_id: 'b', task_name: 'B', created_at: Date.now(), updated_at: Date.now() }
+        ];
+        sidebar._enterMultiSelect(new Set(['a']));
+
+        const rowB = sidebar.querySelector('.task-item[data-task_id="b"]') as HTMLElement;
+        rowB.dispatchEvent(new (window as any).Event('touchstart', { bubbles: true }));
+        expect(sidebar._multiSelect).toBe(true);
+        // 轻点照常生成合成 click → toggle 加选
+        rowB.dispatchEvent(new (window as any).Event('click', { bubbles: true }));
+        expect(sidebar._multiSelectIds).toEqual(new Set(['a', 'b']));
+        expect(sidebar._multiSelect).toBe(true);
+
+        // 列表外的触屏（如侧边栏头部）退出多选
+        const outside = document.createElement('div');
+        document.body.appendChild(outside);
+        outside.dispatchEvent(new (window as any).Event('touchstart', { bubbles: true }));
+        expect(sidebar._multiSelect).toBe(false);
+    });
+
     test('Esc 退出多选并恢复常规渲染', async () => {
         const sidebar = createSidebar();
         sidebar.taskList = [{ task_id: 'a', task_name: 'A', created_at: Date.now(), updated_at: Date.now() }];
