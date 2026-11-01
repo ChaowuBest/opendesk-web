@@ -292,10 +292,9 @@ function ensureWidgetWindow(): BrowserWindow | null {
             contextIsolation: true,
             backgroundThrottling: false,
             preload: host.getPreloadPath(),
-            // Chromium 的页面缩放按 session + host 存储：主窗口应用用户缩放
-            // （设置里的 scale_factor、Ctrl+{+,-,0}）会连带放大同 session 同 origin
-            // 的浮窗，而浮窗外壳尺寸固定，放大后内容溢出出现滚动条。使用独立 session
-            // partition 让浮窗的缩放状态与主窗口隔离，恒定保持 100%。
+            // 浮窗外壳尺寸固定，必须恒定 100% 渲染：不加入 main.ts 里 DisplayZoomSync
+            // 的缩放同步集合（那里只同步主窗口与独立应用窗口）。独立 partition 让浮窗
+            // 不落在主窗口的 session 里（存储 / cookie 各自隔离）。
             partition: WIDGET_PARTITION
         }
     });

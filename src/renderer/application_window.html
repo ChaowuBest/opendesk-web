@@ -85,7 +85,14 @@
 
         <script type="module">
             import './components/loading.js';
+            import { guiShortcutManager } from './components/shortcutManager.ts';
+            import { registerDisplayZoomShortcuts } from './scripts/display-zoom-shortcuts.ts';
             import { createRendererTranslator, resolveRendererLocale } from './locale.ts';
+
+            // 独立应用窗口与主窗口共用同一套界面缩放快捷键（Ctrl+{+,-,0}）：
+            // 缩放偏好是全局设置，两边的缩放比例始终一致。
+            registerDisplayZoomShortcuts();
+            guiShortcutManager.attach();
 
             // 应用首屏就绪的兜底上限（与主窗口 / 桌面浮窗的启动占位一致）
             var APP_READY_TIMEOUT_MS = 15000;

@@ -131,6 +131,7 @@ import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './t
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { registerDesktopAPIHandlers, registerTrashAPIHandlers } from './windows/handlers.js';
+import { DisplayZoomSync } from './windows/display-zoom-sync.js';
 import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { initAgentGateHook } from './applications/agentgate/hook.js';
 import {
@@ -895,6 +896,9 @@ const createWindow = () => {
         }, MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS);
     });
     mainWindow.once('closed', clearMainWindowShowFallback);
+    // 主窗口与独立应用窗口共用同一个界面缩放偏好
+    displayZoomSync.add(mainWindow);
+    mainWindow.once('closed', () => displayZoomSync.remove(mainWindow));
     installWebviewHostHandlers(mainWindow);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
@@ -3159,12 +3163,18 @@ const computeEffectiveZoom = (): number => {
     return Math.max(0.5, Math.min(3.0, userScale * platformCompensation));
 };
 
-/** 将有效缩放系数应用到窗口并通知渲染进程 */
+/**
+ * 需要跟随缩放偏好的窗口：主窗口 + 独立应用窗口。
+ * 独立应用窗口里的 Ctrl+{+,-,0} 与主窗口共用同一份全局偏好，两边缩放比例始终一致。
+ */
+const displayZoomSync = new DisplayZoomSync<BrowserWindow>();
+
+/** 将有效缩放系数应用到所有参与同步的窗口并通知各自渲染进程 */
 const applyEffectiveZoomToWindow = () => {
-    if (!globalMainWindow) return;
     const effective = computeEffectiveZoom();
-    globalMainWindow.webContents.setZoomFactor(effective);
-    safeSendToWebContents(globalMainWindow.webContents, 'display:scaleFactorChanged', effective);
+    for (const win of displayZoomSync.apply(effective)) {
+        safeSendToWebContents(win.webContents, 'display:scaleFactorChanged', effective);
+    }
 };
 
 const registerDisplayZoomHandlers = () => {
@@ -4117,9 +4127,16 @@ async function startApplication(): Promise<void> {
                         webviewTag: true,
                         allowRunningInsecureContent: true,
                         backgroundThrottling: true,
-                        preload: getRendererPreloadPath()
+                        preload: getRendererPreloadPath(),
+                        // zoom 按 webContents 独立存储，新窗口不会自动继承主窗口的缩放，
+                        // 必须显式给出初始值（后续变更由 displayZoomSync 广播）
+                        zoomFactor: computeEffectiveZoom()
                     }
                 });
+
+                // 独立应用窗口也跟随缩放偏好：窗口内的 Ctrl+{+,-,0} 与主窗口一致
+                displayZoomSync.add(appWindow);
+                appWindow.once('closed', () => displayZoomSync.remove(appWindow));
 
                 installWebviewHostHandlers(appWindow);
                 appWindow.setMenu(null);

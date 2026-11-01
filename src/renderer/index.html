@@ -413,6 +413,7 @@
 
     <script type="module">
         import { guiShortcutManager } from './components/shortcutManager.ts';
+        import { registerDisplayZoomShortcuts } from './scripts/display-zoom-shortcuts.ts';
         import { initRendererTheme } from './theme/theme-renderer.ts';
         import {
             broadcastThemeToAppFrames,
@@ -451,32 +452,8 @@
             handler: () => document.getElementById('shortcut-help-panel')?.hide()
         });
 
-        guiShortcutManager.register({
-            id: 'display:zoom-in',
-            label: '放大界面',
-            category: '显示',
-            keys: ['Ctrl++ / ='],
-            match: (e) => (e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+'),
-            handler: () => window.displayAPI?.adjustScaleFactor(0.1)
-        });
-
-        guiShortcutManager.register({
-            id: 'display:zoom-out',
-            label: '缩小界面',
-            category: '显示',
-            keys: ['Ctrl+-'],
-            match: (e) => (e.ctrlKey || e.metaKey) && e.key === '-',
-            handler: () => window.displayAPI?.adjustScaleFactor(-0.1)
-        });
-
-        guiShortcutManager.register({
-            id: 'display:zoom-reset',
-            label: '重置缩放',
-            category: '显示',
-            keys: ['Ctrl+0'],
-            match: (e) => (e.ctrlKey || e.metaKey) && e.key === '0',
-            handler: () => window.displayAPI?.setScaleFactor(1)
-        });
+        // 界面缩放快捷键与独立应用窗口共用同一份定义
+        registerDisplayZoomShortcuts();
 
         guiShortcutManager.attach();
         window.__guiShortcutManager = guiShortcutManager;

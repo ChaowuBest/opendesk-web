@@ -4159,11 +4159,24 @@ class SettingPanel extends HTMLElement {
         if (scaleInput) {
             const applyScaleValue = async (val) => {
                 const clamped = Math.max(0.5, Math.min(2.0, Math.round(val * 100) / 100));
+                if (window.displayAPI?.setScaleFactor) {
+                    try {
+                        await window.displayAPI.setScaleFactor(clamped);
+                    } catch (error) {
+                        // 主进程写配置失败（如配置目录只读）：先提示，且不动本地值，
+                        // 否则界面显示的缩放与实际生效值不一致
+                        window.notificationAPI.sendNotification(
+                            'error',
+                            this._t('sp.title'),
+                            this._t('sp.save.failed'),
+                            error.message
+                        );
+                        this.refreshGeneralSection();
+                        return;
+                    }
+                }
                 if (!this.currentData.gui_config) this.currentData.gui_config = {};
                 this.currentData.gui_config.scale_factor = clamped;
-                if (window.displayAPI?.setScaleFactor) {
-                    await window.displayAPI.setScaleFactor(clamped);
-                }
                 this.refreshGeneralSection();
                 this.saveImmediately();
             };
