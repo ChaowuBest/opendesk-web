@@ -28,6 +28,7 @@ export const enUs: Record<string, string> = {
     'status.waitMs':
         'Optional bounded wait in milliseconds, 0-${max}, default 0 (immediate). Use 0 only when you need the current status and have other independent work; use 1000-5000 to observe progress again soon; prefer 10000-30000 when the next step depends on completion. Returns early once the process completes, so it never has to consume the full waitMs. Avoid consecutive zero-wait checks of the same running PID; repeated checks with unchanged output are throttled with a cooldown.',
     'shell.sandboxTag': 'Sandbox',
+    'shell.running': 'Running',
     'prompt.title': '# Terminal execution environment',
     'prompt.active': '- Active terminal: ${shell} (`${path}`)',
     'prompt.shell.powershell': 'PowerShell',

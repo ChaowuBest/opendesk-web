@@ -1038,6 +1038,23 @@ details.terminal-tool .terminal-tool-path {
     border-color: #c4b5fd;
     background: #f5f3ff;
 }
+/* 终端卡片「执行中」转圈：与侧边栏 sb-running-spinner 同款品牌红描边与旋转动画，
+   尺寸缩到 12px（侧边栏 15px）以便和 12px 标题文本同高，不撑高 summary 行 */
+.terminal-tool-running {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    border: 1.5px solid rgba(201, 76, 64, 0.18);
+    border-top-color: #c94c40;
+    border-radius: 50%;
+    animation: sb-spinner 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    /* 动效敏感用户：停在固定的缺口圆环上，不做无限旋转 */
+    .terminal-tool-running {
+        animation: none;
+    }
+}
 /* Dark mode terminal scrollbar */
 html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18);

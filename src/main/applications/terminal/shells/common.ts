@@ -122,7 +122,11 @@ export function renderTerminalToolCallCli(
 export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sandboxed = false): string | undefined {
     const command = toolcall.args_object?.['command'] || '';
     const description: string | undefined = toolcall.args_object?.['description'];
+    // 实际语义是「还没有任何输出」：live tick 每 200ms 就把当前输出写回 result，
+    // 命令一出字它就变 false，只用来决定是否渲染输出块，不能当作「是否在跑」。
     const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
+    // 运行指示与 toolcall 状态同源：pending 是「尚未开始执行」，不算运行中。
+    const showRunningIndicator = toolcall.status === 'running';
     const isError = toolcall.status === 'error';
 
     const headerText = description
@@ -132,6 +136,12 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
     const borderColor = isError ? 'border-red-200' : 'border-gray-200';
     const iconColor = isError ? 'text-red-400' : 'text-gray-400';
     const headerTextColor = isError ? 'text-red-600' : 'text-gray-600';
+
+    // 运行中提示：与侧边栏「运行中任务」同款转圈，放在标签胶囊左侧。
+    // 只由 toolcall.status 决定，与输出渲染解耦；状态迁移会触发全量重渲，转圈随之消失。
+    const runningIndicator = showRunningIndicator
+        ? `\n            <span class="terminal-tool-running shrink-0" role="img" aria-label="${escapeHtml(t('shell.running'))}"></span>`
+        : '';
 
     // 命令回显行：.terminal-tool-command 保留多行命令的换行并允许长 token 折行（如超长 PATH），
     // 否则命令块会把卡片撑出横向溢出，让滚动区出现横向滚动条。
@@ -154,7 +164,7 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
             <svg class="w-4 h-4 ${iconColor} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 9l3 3-3 3"/><line x1="14" y1="15" x2="16" y2="15"/>
             </svg>
-            <span class="text-[12px] ${headerTextColor} font-medium truncate min-w-0 flex-1">${headerText}</span>
+            <span class="text-[12px] ${headerTextColor} font-medium truncate min-w-0 flex-1">${headerText}</span>${runningIndicator}
             <span class="terminal-shell-tag terminal-shell-tag-${escapeHtml(cmdName)} shrink-0">${escapeHtml(cmdName)}</span>
             ${sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox shrink-0">${escapeHtml(t('shell.sandboxTag'))}</span>` : ''}
             <svg class="terminal-tool-chevron w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

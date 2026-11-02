@@ -1129,6 +1129,12 @@ html[data-theme='dark'] .terminal-shell-tag-sandbox {
     border-color: #6d28d9;
     background: rgba(109, 40, 217, 0.2);
 }
+/* 深色卡片底是 --od-bg-elevated(#252526)，浅色主题的淡红轨道混上去几乎不可见，
+   只剩半截弧在闪；换成中性白轨道，留住「圆环 + 一道品牌红」的形状 */
+html[data-theme='dark'] .terminal-tool-running {
+    border-color: rgba(255, 255, 255, 0.18);
+    border-top-color: #e0685c;
+}
 
 /* askUser 工具 GUI 渲染卡片 */
 html[data-theme='dark'] .ask-user-tool {
