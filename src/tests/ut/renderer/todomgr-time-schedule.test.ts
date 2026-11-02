@@ -1,10 +1,49 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { getNextTodoRecurrenceRuns } from '../../../main/applications/todomgr/todo-recurrence.js';
+import { TIME_SCHEDULE_CSS } from '../../../main/applications/todomgr/renderer/time-schedule-picker.js';
+
+function ruleBody(css: string, selector: string): string {
+    const start = css.indexOf(`${selector} {`);
+    if (start < 0) throw new Error(`missing rule: ${selector}`);
+    const open = css.indexOf('{', start) + 1;
+    return css.slice(open, css.indexOf('}', open));
+}
+
+/** 测试固定的系统时区 */
+const SYSTEM_TIMEZONE = 'Asia/Shanghai';
+
+/**
+ * 把系统时区固定为指定值。
+ *
+ * 系统时区不能直接 spy：fake timers 会让 V8 内联缓存 Intl.DateTimeFormat 的原生方法，
+ * 实例调用绕过 resolvedOptions 原型 spy（仅在本机时区恰好为 Asia/Shanghai 时掩盖此问题）。
+ * 模块级部分替换也不可用：ESM 下 jest.requireActual 无法加载 ESM 源码，而在 mock 工厂里
+ * import 自身模块会递归。
+ *
+ * 因此在导入被测模块前给 Intl.DateTimeFormat 加一层构造垫片：调用方未显式指定 timeZone 时
+ * 注入该时区，其余参数与行为走真实实现，等价于“以该时区作为系统时区运行”。
+ *
+ * 注意：jest.useFakeTimers() 会重新接管 Intl.DateTimeFormat 并覆盖本垫片，
+ * 需要固定时钟的用例必须走 useFixedClock()，不要直接调用 jest.useFakeTimers()。
+ */
+function installSystemTimezone(timezone: string): () => void {
+    const RealDateTimeFormat = Intl.DateTimeFormat;
+    const patched = function (locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+        const merged = !options || !options.timeZone ? { ...options, timeZone: timezone } : options;
+        return new RealDateTimeFormat(locales, merged);
+    } as unknown as Intl.DateTimeFormatConstructor;
+    patched.supportedValuesOf = RealDateTimeFormat.supportedValuesOf;
+    Intl.DateTimeFormat = patched;
+    return () => {
+        Intl.DateTimeFormat = RealDateTimeFormat;
+    };
+}
 
 describe('automation period and interval picker', () => {
     let Widget: CustomElementConstructor;
     let call: ReturnType<typeof jest.fn>;
+    let restoreSystemTimezone: (() => void) | undefined;
     const widgets: any[] = [];
 
     beforeAll(async () => {
@@ -33,21 +72,33 @@ describe('automation period and interval picker', () => {
         jest.unstable_mockModule('../../../renderer/components/workspacePicker.js', () => ({
             showWorkspacePicker: jest.fn()
         }));
-        // 系统时区不可直接 spy：fake timers 会让 V8 内联缓存 Intl.DateTimeFormat 的原生方法，
-        // 实例调用绕过 resolvedOptions 原型 spy（仅在本机时区恰好为 Asia/Shanghai 时掩盖此问题）。
-        // 改为模块级替换 getSystemTimezone，其余导出保持真实实现。
-        jest.unstable_mockModule('../../../main/applications/todomgr/timezone.js', async () => {
-            const actual = await jest.requireActual('../../../main/applications/todomgr/timezone.js');
-            return { ...actual, getSystemTimezone: () => 'Asia/Shanghai' };
-        });
+        // 系统时区固定为 SYSTEM_TIMEZONE，见 installSystemTimezone 说明
+        restoreSystemTimezone = installSystemTimezone(SYSTEM_TIMEZONE);
         await import('../../../main/applications/todomgr/renderer/entry.js');
         Widget = window.customElements.get('todomgr-entry-widget')!;
+    });
+
+    afterAll(() => {
+        restoreSystemTimezone?.();
     });
 
     beforeEach(() => {
         call = jest.fn(async (method: unknown) => (method === 'listGlobalTodos' ? [] : undefined));
         (window as any).applicationAPI = { call, callMainWorld: jest.fn(async () => []) };
     });
+
+    /**
+     * 固定系统时钟并保持时区垫片有效。
+     *
+     * modern fake timers 会一并接管 Intl.DateTimeFormat，把 beforeAll 安装的垫片覆盖回
+     * 基于真实 TZ 的实现；直接调用 jest.useFakeTimers() 会让依赖系统时区的用例在
+     * TZ 非 Asia/Shanghai 的环境（如 CI）失败。因此固定时钟必须走这里。
+     */
+    function useFixedClock(now: string): void {
+        jest.useFakeTimers({ now: new Date(now) });
+        restoreSystemTimezone?.();
+        restoreSystemTimezone = installSystemTimezone(SYSTEM_TIMEZONE);
+    }
 
     afterEach(() => {
         for (const widget of widgets.splice(0)) widget.disconnectedCallback();
@@ -95,6 +146,12 @@ describe('automation period and interval picker', () => {
         widget.querySelector(`[data-period-mode="${mode}"]`).click();
     }
 
+    function pressKey(widget: any, selector: string, key: string) {
+        const event = new Event('keydown', { bubbles: true });
+        Object.assign(event, { key });
+        widget.querySelector(selector).dispatchEvent(event);
+    }
+
     function createdTrigger(): any {
         return call.mock.calls.find((args: any[]) => args[0] === 'addGlobalTodo')?.[5];
     }
@@ -113,7 +170,7 @@ describe('automation period and interval picker', () => {
 
     describe('next execution time', () => {
         beforeEach(() => {
-            jest.useFakeTimers({ now: new Date('2026-10-28T00:00:00.000Z') });
+            useFixedClock('2026-10-28T00:00:00.000Z');
         });
 
         afterEach(() => {
@@ -206,6 +263,75 @@ describe('automation period and interval picker', () => {
             Array.from(widget.querySelectorAll('[data-period-mode]')).map((element: any) => element.dataset.periodMode)
         ).toEqual(['once', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly']);
         expect(widget.querySelector('#tm-frequency-cron-panel').hidden).toBe(true);
+    });
+
+    test('frequency tabs fill the column, split evenly and keep an icon for the narrow state', async () => {
+        const { widget } = await editor();
+        const tabs = Array.from(
+            widget.querySelectorAll('#tm-frequency-period-tab, #tm-frequency-interval-tab, #tm-frequency-cron-tab')
+        ) as any[];
+        expect(tabs).toHaveLength(3);
+        // 点击切换直接读这个属性，不再从 id 反推页签名
+        expect(tabs.map((tab) => tab.dataset.frequencyTab)).toEqual(['period', 'interval', 'cron']);
+        for (const tab of tabs) {
+            expect(tab.querySelector('svg.tm-frequency-tab-icon')).toBeTruthy();
+            // 文案由 span 承载，窄态隐藏后仍靠 aria-label/title 保留可读名称
+            expect(tab.querySelector('.tm-frequency-tab-label').textContent).toBe(tab.getAttribute('aria-label'));
+            expect(tab.getAttribute('title')).toBe(tab.getAttribute('aria-label'));
+        }
+
+        // 样式表由 connectedCallback 注入，测试里的元素未接入 DOM，直接断言样式常量
+        const css = TIME_SCHEDULE_CSS;
+        const tabsBody = ruleBody(css, '.tm-frequency-tabs');
+        expect(tabsBody).toMatch(/width:\s*100%/);
+        expect(tabsBody).toMatch(/container:\s*tm-frequency-tabs\s*\/\s*inline-size/);
+        // 文案可见但比实测更宽时（自定义字体等）应省略而不是溢出到相邻按钮
+        expect(ruleBody(css, '.tm-frequency-tab')).toMatch(/flex:\s*1 1 0/);
+        expect(ruleBody(css, '.tm-frequency-tab')).toMatch(/overflow:\s*hidden/);
+        expect(ruleBody(css, '.tm-frequency-tab > .tm-frequency-tab-label')).toMatch(/text-overflow:\s*ellipsis/);
+
+        const block = css.match(/@container\s+tm-frequency-tabs\s*\(max-width:\s*(\d+)px\)\s*\{([^}]*)\{([^}]*)\}/);
+        expect(block).not.toBeNull();
+        const threshold = Number(block![1]);
+        // 按钮等分（flex:1 1 0），瓶颈是最宽的英文 Interval：单格 85px（图标 14 + 间距 6 + 文案 + 内边距 20），
+        // 三格加 2px 间距与容器内边距共需约 266px 外框；容器查询按内容盒计宽，故下限为 266 - 8。
+        // 上界保证右栏拖到最小宽度（内容宽 232px）时不会显示被裁切的文案。
+        expect(threshold).toBeGreaterThanOrEqual(258);
+        expect(threshold).toBeLessThan(272);
+        expect(block![2].trim()).toBe('.tm-frequency-tab > .tm-frequency-tab-label');
+        expect(block![3]).toMatch(/display:\s*none/);
+    });
+
+    test('frequency tabs support arrow-key navigation with a roving tabindex', async () => {
+        const { widget } = await editor();
+        const tab = (name: string) => widget.querySelector(`#tm-frequency-${name}-tab`);
+        const selectedOf = () =>
+            ['period', 'interval', 'cron'].find((name) => tab(name).getAttribute('aria-selected') === 'true');
+        const tabIndexes = () =>
+            ['period', 'interval', 'cron'].map((name) => Number(tab(name).getAttribute('tabindex')));
+
+        // 只有当前页签在 Tab 键序列内，其余靠方向键到达
+        expect(tabIndexes()).toEqual([0, -1, -1]);
+
+        pressKey(widget, '#tm-frequency-period-tab', 'ArrowRight');
+        expect(selectedOf()).toBe('interval');
+        expect(tabIndexes()).toEqual([-1, 0, -1]);
+        expect(widget.querySelector('#tm-frequency-interval-panel').hidden).toBe(false);
+        expect(widget.querySelector('#tm-frequency-period-panel').hidden).toBe(true);
+
+        pressKey(widget, '#tm-frequency-interval-tab', 'ArrowLeft');
+        expect(selectedOf()).toBe('period');
+
+        // 首尾循环
+        pressKey(widget, '#tm-frequency-period-tab', 'ArrowLeft');
+        expect(selectedOf()).toBe('cron');
+        pressKey(widget, '#tm-frequency-cron-tab', 'ArrowRight');
+        expect(selectedOf()).toBe('period');
+
+        pressKey(widget, '#tm-frequency-period-tab', 'End');
+        expect(selectedOf()).toBe('cron');
+        pressKey(widget, '#tm-frequency-cron-tab', 'Home');
+        expect(selectedOf()).toBe('period');
     });
 
     test('creates and reloads a Cron rule, retaining its input across tab switches', async () => {
@@ -514,7 +640,7 @@ describe('automation period and interval picker', () => {
         };
 
         beforeEach(() => {
-            jest.useFakeTimers({ now: new Date(now) });
+            useFixedClock(now);
         });
 
         afterEach(() => {

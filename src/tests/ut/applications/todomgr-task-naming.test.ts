@@ -6,6 +6,8 @@ import type { Participant } from '../../../main/plugins/types.js';
 import type { TodoTrigger } from '../../../main/applications/todomgr/common.js';
 
 const mainAgent = { name: 'main' };
+// 指定的工作区路径会被 resolve 成平台绝对路径（Windows 上带盘符），断言须用同一形态
+const scheduledWorkspace = path.resolve('/scheduled-workspace');
 const getModelInstance = jest.fn((alias: string) => {
     if (alias === 'reasoning-pro') return { model_name: 'gpt-5' };
     if (alias === 'unsupported-reasoning') return { model_name: 'gpt-5' };
@@ -112,7 +114,7 @@ describe('TodoMgr execution conversation names', () => {
             '检查新闻并生成报告',
             trigger,
             undefined,
-            { type: 'path', path: '/scheduled-workspace' },
+            { type: 'path', path: scheduledWorkspace },
             'reasoning-pro',
             'high'
         );
@@ -123,7 +125,7 @@ describe('TodoMgr execution conversation names', () => {
             expect.stringContaining('检查新闻并生成报告'),
             {
                 taskName: title,
-                workspace: '/scheduled-workspace',
+                workspace: scheduledWorkspace,
                 origin: { type: 'automation' },
                 model: 'reasoning-pro',
                 reasoningEffort: 'high'

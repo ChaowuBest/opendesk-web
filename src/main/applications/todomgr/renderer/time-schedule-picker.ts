@@ -34,6 +34,33 @@ const PERIOD_SUBMENU_IDS: Partial<Record<Period, string>> = {
     yearly: 'tm-frequency-months-options'
 };
 type ScheduleTab = 'period' | 'interval' | 'cron';
+interface FrequencyTab {
+    name: ScheduleTab;
+    labelKey: string;
+    icon: string;
+}
+/** 频率页签定义：i18n key 与图标显式并列，避免拼接 key 时改名不报错（与侧边栏导航按钮一致的 14px 线性图标） */
+const FREQUENCY_TABS: FrequencyTab[] = [
+    {
+        name: 'period',
+        labelKey: 'renderer.todo.frequency.periodTab',
+        icon: '<svg class="tm-frequency-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>'
+    },
+    {
+        name: 'interval',
+        labelKey: 'renderer.todo.frequency.intervalTab',
+        icon: '<svg class="tm-frequency-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/></svg>'
+    },
+    {
+        name: 'cron',
+        labelKey: 'renderer.todo.frequency.cronTab',
+        icon: '<svg class="tm-frequency-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 17 6-5-6-5"/><path d="M12.5 19H20"/></svg>'
+    }
+];
+
+/** 页签顺序（键盘导航与可见性同步共用，避免各处再硬编码一份） */
+const FREQUENCY_TAB_NAMES = FREQUENCY_TABS.map((tab) => tab.name);
+
 type CalendarKind = 'dates' | 'months';
 interface StoredTrigger {
     type: string;
@@ -49,9 +76,22 @@ interface ExecutionPreviewOptions {
 export const TIME_SCHEDULE_CSS = `
 .tm-time-schedule { font-size:var(--fs-base); }
 .tm-time-schedule [hidden] { display:none !important; }
-.tm-frequency-tabs { display:inline-flex; padding:4px; gap:2px; border-radius:12px; background:var(--tm-surface-muted,#f2f2f2); margin-bottom:12px; }
-.tm-frequency-tab { padding:8px 22px; border:0; border-radius:9px; background:transparent; color:var(--tm-text-secondary); font:inherit; font-weight:500; cursor:pointer; }
+.tm-frequency-tabs { display:flex; width:100%; box-sizing:border-box; padding:4px; gap:2px; border-radius:12px; background:var(--tm-surface-muted,#f2f2f2); margin-bottom:12px; container:tm-frequency-tabs / inline-size; }
+.tm-frequency-tab { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:center; gap:6px; padding:8px 10px; border:0; border-radius:9px; background:transparent; color:var(--tm-text-secondary); font:inherit; font-weight:500; white-space:nowrap; cursor:pointer; overflow:hidden; }
 .tm-frequency-tab[aria-selected="true"] { background:var(--tm-surface,#fff); color:var(--tm-text); box-shadow:0 1px 4px #0002; font-weight:600; }
+.tm-frequency-tab-icon { flex:none; }
+/* 文案比实测更宽时（自定义字体等）先省略，避免溢出到相邻按钮之上 */
+.tm-frequency-tab > .tm-frequency-tab-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+/*
+ * 空间不足时只保留图标（同侧边栏导航按钮）。按钮是等分的（flex:1 1 0），所以约束是最宽的那个
+ * 按钮而不是三者需求之和：13px 下最宽的是英文 Interval（图标 14 + 间距 6 + 文案 44.8 + 内边距 20
+ * = 84.8），三格共需 3×84.8 + 间距 4 + 容器内边距 8 ≈ 266px。容器查询量的是内容盒，需再减去
+ * 容器内边距 8px，取 260px（≈ 外框 268px）留出字体差异余量。
+ * 右栏默认内容宽 372px 与最窄的 232px 分居阈值两侧：默认显示文案，极窄时只剩图标。
+ */
+@container tm-frequency-tabs (max-width: 260px) {
+    .tm-frequency-tab > .tm-frequency-tab-label { display:none; }
+}
 .tm-frequency-cron-input { font-family:'SF Mono',Consolas,monospace; }
 .tm-cron-help-link { display:inline-flex; align-items:center; gap:3px; margin-top:6px; font-size:var(--fs-sm); color:var(--tm-text-muted,#8E8E93); text-decoration:none; cursor:pointer; }
 .tm-cron-help-link:hover { color:var(--tm-accent,#3B82F6); }
@@ -215,6 +255,11 @@ export class TimeSchedulePicker {
             .join('');
     }
 
+    private renderTab(tab: FrequencyTab): string {
+        const label = escapeHtml(this.t(tab.labelKey));
+        return `<button type="button" class="tm-frequency-tab" id="tm-frequency-${tab.name}-tab" role="tab" aria-selected="${this.tab === tab.name}" aria-controls="tm-frequency-${tab.name}-panel" data-frequency-tab="${tab.name}" title="${label}" aria-label="${label}">${tab.icon}<span class="tm-frequency-tab-label">${label}</span></button>`;
+    }
+
     private render(): void {
         const recurrence = this.originalRecurrence;
         const anchorTime =
@@ -228,9 +273,7 @@ export class TimeSchedulePicker {
             recurrence?.anchorDate ?? formatDatetimeLocal(new Date().toISOString(), this.timezone()).slice(0, 10);
         this.container.innerHTML = `<div class="tm-edit-field tm-time-schedule">
             <div class="tm-frequency-tabs" role="tablist" aria-label="${escapeHtml(this.t('renderer.todo.frequency.label'))}">
-                <button type="button" class="tm-frequency-tab" id="tm-frequency-period-tab" role="tab" aria-selected="${this.tab === 'period'}" aria-controls="tm-frequency-period-panel">${escapeHtml(this.t('renderer.todo.frequency.periodTab'))}</button>
-                <button type="button" class="tm-frequency-tab" id="tm-frequency-interval-tab" role="tab" aria-selected="${this.tab === 'interval'}" aria-controls="tm-frequency-interval-panel">${escapeHtml(this.t('renderer.todo.frequency.intervalTab'))}</button>
-                <button type="button" class="tm-frequency-tab" id="tm-frequency-cron-tab" role="tab" aria-selected="${this.tab === 'cron'}" aria-controls="tm-frequency-cron-panel">${escapeHtml(this.t('renderer.todo.frequency.cronTab'))}</button>
+                ${FREQUENCY_TABS.map((tab) => this.renderTab(tab)).join('')}
             </div>
             <div id="tm-frequency-period-panel" role="tabpanel" aria-labelledby="tm-frequency-period-tab">
                 <button class="tm-edit-select tm-frequency-period-trigger" type="button" id="tm-frequency-period-trigger" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="tm-frequency-period-options"><span id="tm-frequency-period-label"></span><span aria-hidden="true">⌄</span></button>
@@ -285,6 +328,15 @@ export class TimeSchedulePicker {
                 return;
             }
             const target = event.target as HTMLElement;
+            // 页签按 tabs 模式支持方向键 / Home / End 循环移动并立即激活
+            if (
+                target.closest('.tm-frequency-tab') &&
+                (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End')
+            ) {
+                event.preventDefault();
+                this.moveTabFocus(event.key);
+                return;
+            }
             if (event.key === 'ArrowLeft' && this.yearDatesTrigger && target.closest('#tm-frequency-dates-options')) {
                 event.preventDefault();
                 this.closeYearDates(true);
@@ -568,6 +620,29 @@ export class TimeSchedulePicker {
         menu.style.top = `${Math.max(viewport.top + 12, Math.min(top, viewport.bottom - menuHeight - 12)) - origin.y}px`;
     }
 
+    /** 切换页签：同步可见性、校验提示与预览，供点击与键盘导航共用 */
+    private selectTab(name: ScheduleTab): void {
+        this.clearValidationError();
+        this.tab = name;
+        this.closeMenus();
+        this.updateVisibility();
+        this.refreshPreview();
+    }
+
+    /** tabs 模式的键盘导航：左右循环、Home/End 跳到首尾，并立即激活 */
+    private moveTabFocus(key: string): void {
+        const last = FREQUENCY_TAB_NAMES.length - 1;
+        const current = FREQUENCY_TAB_NAMES.indexOf(this.tab);
+        const next =
+            key === 'Home'
+                ? FREQUENCY_TAB_NAMES[0]
+                : key === 'End'
+                  ? FREQUENCY_TAB_NAMES[last]
+                  : FREQUENCY_TAB_NAMES[(current + (key === 'ArrowRight' ? 1 : last)) % FREQUENCY_TAB_NAMES.length];
+        this.selectTab(next);
+        this.root.querySelector<HTMLButtonElement>(`.tm-frequency-tab[data-frequency-tab="${next}"]`)?.focus();
+    }
+
     private onClick(event: Event): void {
         const button = (event.target as Element).closest<HTMLButtonElement>('button');
         if (!button) return;
@@ -604,14 +679,9 @@ export class TimeSchedulePicker {
             else this.closeMenus(true);
             return;
         } else if (button.classList.contains('tm-frequency-tab')) {
-            this.clearValidationError();
-            this.tab =
-                button.id === 'tm-frequency-cron-tab'
-                    ? 'cron'
-                    : button.id === 'tm-frequency-period-tab'
-                      ? 'period'
-                      : 'interval';
-            this.closeMenus();
+            const name = button.dataset.frequencyTab as ScheduleTab | undefined;
+            if (name) this.selectTab(name);
+            return;
         }
         this.updateVisibility();
         this.refreshPreview();
@@ -715,10 +785,14 @@ export class TimeSchedulePicker {
     }
 
     private updateVisibility(): void {
-        for (const tab of ['period', 'interval', 'cron']) {
-            this.root
-                .querySelector(`#tm-frequency-${tab}-tab`)!
-                .setAttribute('aria-selected', String(this.tab === tab));
+        for (const name of FREQUENCY_TAB_NAMES) {
+            const tabButton = this.root.querySelector<HTMLButtonElement>(
+                `.tm-frequency-tab[data-frequency-tab="${name}"]`
+            )!;
+            const selected = this.tab === name;
+            tabButton.setAttribute('aria-selected', String(selected));
+            // tabs 模式：只有当前页签在 Tab 键序列内，其余靠方向键到达
+            tabButton.setAttribute('tabindex', selected ? '0' : '-1');
         }
         const interval = this.tab === 'interval';
         const period = this.tab === 'period';
