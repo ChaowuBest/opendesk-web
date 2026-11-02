@@ -414,7 +414,7 @@ task-view .markdown-body .mermaid-block-lang {
 /* Code block styles with high-specificity font protection */
 html[data-font-preset] .markdown-body .code-block-body {
     overflow-x: auto !important;
-    background: #ffffff !important;
+    background: var(--chat-code-bg, #ffffff) !important;
     font-size: var(--fs-sm) !important;
     line-height: 1.55 !important;
     font-family:
@@ -440,7 +440,7 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
 .markdown-body .code-lines {
     display: block !important;
     margin: 0 !important;
-    padding: 0.5em 0 !important;
+    padding: 0 !important;
     counter-reset: codeln !important;
     white-space: pre !important;
     font-size: inherit !important;
@@ -452,7 +452,9 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
     position: relative !important;
     counter-increment: codeln !important;
     margin: 0 !important;
-    padding: 0 0.8em 0 3.4em !important;
+    /* 左侧 3.4em 让出 .code-line::before 的行号列，额外 0.8em 是代码与分隔线的间距，
+       否则首列字符会紧贴行号列的分隔线 */
+    padding: 0 0.8em 0 4.2em !important;
     white-space: pre !important;
     border: none !important;
     background: transparent !important;
@@ -474,6 +476,18 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
     background: #f8fafc !important;
     border-right: 1px solid #f1f5f9 !important;
     font-family: inherit !important;
+}
+/* 上下留白改由首/末行承担：行号列（.code-line::before）高度跟随行框，
+   这样行号列能从语言栏一路贯通到代码块底部，不会在首行之前、末行之后留下
+   没有行号列、只有代码底色的“白条”（.code-lines 的纵向内边距会露出这种空隙）。 */
+.markdown-body .code-line:first-child {
+    padding-top: 0.5em !important;
+}
+.markdown-body .code-line:first-child::before {
+    padding-top: 0.5em !important;
+}
+.markdown-body .code-line:last-child {
+    padding-bottom: 0.5em !important;
 }
 .markdown-body .code-line:hover {
     background: #f8fafc !important;
