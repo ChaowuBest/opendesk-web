@@ -2321,7 +2321,7 @@ class SettingPanel extends HTMLElement {
             <div class="sp-toggle-row" style="padding:0">
                 <div class="sp-toggle-info">
                     <label id="launch-at-login-label" class="sp-toggle-label" ${systemStartupSettings ? '' : 'for="launch-at-login"'}>${this._t('sp.general.launchAtLogin')}</label>
-                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status">${this._t(systemStartupSettings ? 'sp.general.launchAtLogin.harmony.desc' : 'sp.general.launchAtLogin.desc')}</div>
+                    <div id="launch-at-login-status" class="sp-toggle-desc" role="status" ${systemStartupSettings ? '' : 'hidden'}>${systemStartupSettings ? this._t('sp.general.launchAtLogin.harmony.desc') : ''}</div>
                 </div>
                 <span id="launch-at-login-state" class="sp-tag sp-tag-neutral" aria-live="polite" style="display:${systemStartupSettings ? '' : 'none'}">${this._t('sp.general.launchAtLogin.unknown')}</span>
                 <button id="launch-at-login-manage" type="button" class="sp-btn sp-btn-secondary" style="display:${systemStartupSettings ? '' : 'none'}" disabled>${this._t('sp.general.launchAtLogin.manage')}</button>
@@ -2717,7 +2717,15 @@ class SettingPanel extends HTMLElement {
         let pendingRead = false;
         let generation = 0;
         let settingsTrip = null;
-        let message = null;
+        const notify = (type, key) => {
+            if (disposed) return;
+            window.notificationAPI.sendNotification(
+                type,
+                this._t('config.main.title'),
+                this._t('sp.general.launchAtLogin'),
+                this._t(key)
+            );
+        };
         const visible = () =>
             !disposed &&
             generalActive &&
@@ -2748,16 +2756,13 @@ class SettingPanel extends HTMLElement {
                       ? 'sp.general.launchAtLogin.on'
                       : 'sp.general.launchAtLogin.off'
             );
-            status.textContent = this._t(
-                message ||
-                    (state.reason === 'unavailable'
-                        ? 'sp.general.launchAtLogin.error'
-                        : state.supported
-                          ? systemSettings
-                              ? 'sp.general.launchAtLogin.harmony.desc'
-                              : 'sp.general.launchAtLogin.desc'
-                          : 'sp.general.launchAtLogin.unsupported')
-            );
+            status.textContent =
+                state.reason === 'unsupported'
+                    ? this._t('sp.general.launchAtLogin.unsupported')
+                    : systemSettings
+                      ? this._t('sp.general.launchAtLogin.harmony.desc')
+                      : '';
+            status.hidden = !status.textContent;
         };
         const drain = () => {
             if (!pendingRead || busy || inFlight || !visible()) return;
@@ -2766,16 +2771,17 @@ class SettingPanel extends HTMLElement {
         };
         const read = () => {
             const version = generation;
-            message = null;
             inFlight = (async () => {
                 try {
                     const state = await (await kit).getState();
                     if (disposed || version !== generation) return;
                     this.launchAtLoginState = state;
+                    if (state.reason === 'unavailable') notify('error', 'sp.general.launchAtLogin.error');
                     return state;
                 } catch {
                     if (disposed || version !== generation) return;
                     this.launchAtLoginState = { ...this.launchAtLoginState, enabled: null, reason: 'unavailable' };
+                    notify('error', 'sp.general.launchAtLogin.error');
                 } finally {
                     inFlight = null;
                     render();
@@ -2829,7 +2835,6 @@ class SettingPanel extends HTMLElement {
                 if (disposed || busy || inFlight) return;
                 busy = true;
                 ++generation;
-                message = null;
                 render();
                 try {
                     const startup = await kit;
@@ -2839,9 +2844,11 @@ class SettingPanel extends HTMLElement {
                     pendingRead = false;
                     const state = await read();
                     if (state && typeof state.enabled === 'boolean' && state.enabled !== enabled)
-                        message = 'sp.general.launchAtLogin.systemBlocked';
-                } catch {
-                    message = 'sp.general.launchAtLogin.error';
+                        notify('error', 'sp.general.launchAtLogin.systemBlocked');
+                } catch (error) {
+                    if (error?.message?.includes('STARTUP_DEV_MODE'))
+                        notify('warning', 'sp.general.launchAtLogin.devMode');
+                    else notify('error', 'sp.general.launchAtLogin.error');
                 } finally {
                     busy = false;
                     render();
@@ -2854,14 +2861,13 @@ class SettingPanel extends HTMLElement {
                 settingsTrip = trip;
                 busy = true;
                 ++generation;
-                message = null;
                 render();
                 try {
                     await (await kit).delegateSetting();
                     trip.succeeded = true;
                 } catch {
                     if (settingsTrip === trip) settingsTrip = null;
-                    message = 'sp.general.launchAtLogin.settingsError';
+                    notify('error', 'sp.general.launchAtLogin.settingsError');
                 } finally {
                     busy = false;
                     render();
