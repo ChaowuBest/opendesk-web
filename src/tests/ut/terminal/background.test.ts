@@ -152,6 +152,123 @@ describe('installTimeoutBackgrounding', () => {
         jest.useRealTimers();
     });
 
+    /**
+     * 事件/定时器回调抛错时，仍然必须结算。
+     *
+     * 回归背景：这些回调由子进程事件或定时器触发，异常不会被 Promise 捕获。一旦跳过
+     * settle()，工具会永久挂起——closeArtifact 不被调用（artifact 不落盘、
+     * tmp 文件不释放）、runningProcesses / stopPromises 不清理、stop() 等不到 close。
+     */
+    describe('回调抛错仍然结算', () => {
+        let warnSpy: ReturnType<typeof jest.spyOn>;
+
+        beforeEach(() => {
+            warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        });
+
+        afterEach(() => {
+            warnSpy.mockRestore();
+        });
+
+        test('超时后台接管失败（detachListeners 抛错）→ 结算为未后台化并清理', async () => {
+            jest.useFakeTimers();
+            const proc = new EventEmitter() as ChildProcess;
+            const onFinish = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: {
+                    proc,
+                    detachListeners: () => {
+                        throw new Error('detach exploded');
+                    }
+                },
+                command: 'hang',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => 'partial output',
+                result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish
+            });
+
+            jest.advanceTimersByTime(1000);
+
+            await expect(completion).resolves.toBe(false);
+            // 未后台化 → onFinish(false) 会让调用方关闭 artifact
+            expect(onFinish).toHaveBeenCalledWith(false);
+            expect(jest.getTimerCount()).toBe(0);
+            expect(warnSpy).toHaveBeenCalled();
+        });
+
+        test('进程缺少 pid 时不能误判为接管成功（否则 artifact 再也没人关）', async () => {
+            jest.useFakeTimers();
+            const proc = new EventEmitter() as ChildProcess;
+            const onFinish = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'no-pid',
+                startTime: Date.now(),
+                timeout: 1000,
+                getOutput: () => 'out',
+                result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish
+            });
+
+            jest.advanceTimersByTime(1000);
+
+            await expect(completion).resolves.toBe(false);
+            expect(onFinish).toHaveBeenCalledWith(false);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('关闭回调里的格式化抛错 → 仍然结算', async () => {
+            jest.useFakeTimers();
+            const proc = new EventEmitter() as ChildProcess;
+            const onFinish = jest.fn();
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'odd-output',
+                startTime: Date.now(),
+                timeout: 30000,
+                getOutput: () => 'out',
+                formatOutput: () => {
+                    throw new Error('format exploded');
+                },
+                result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish
+            });
+
+            proc.emit('close', 0);
+
+            await expect(completion).resolves.toBe(false);
+            expect(onFinish).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('onFinish 清理逻辑抛错也必须 resolve，不能让工具挂住', async () => {
+            jest.useFakeTimers();
+            const proc = new EventEmitter() as ChildProcess;
+            const completion = installTimeoutBackgrounding({
+                handle: { proc, detachListeners: jest.fn() },
+                command: 'cleanup-boom',
+                startTime: Date.now(),
+                timeout: 30000,
+                getOutput: () => 'done',
+                result: { updateResult: jest.fn(), updateResultObject: jest.fn() } as any,
+                isKilledByStop: () => false,
+                onFinish: () => {
+                    throw new Error('cleanup exploded');
+                }
+            });
+
+            proc.emit('close', 0);
+
+            await expect(completion).resolves.toBe(false);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
     test('records an integer exit code and clears the backgrounding timer', async () => {
         jest.useFakeTimers();
         const proc = new EventEmitter() as ChildProcess;
@@ -282,7 +399,7 @@ describe('installTimeoutBackgrounding', () => {
         const backgroundOutput = 'background tail';
         buffer.append(foregroundOutput);
         const onFinish = jest.fn((backgrounded?: boolean) => {
-            if (!backgrounded) buffer.closeArtifact();
+            if (!backgrounded) void buffer.closeArtifact();
         });
 
         try {
@@ -305,11 +422,51 @@ describe('installTimeoutBackgrounding', () => {
             stdout.emit('data', Buffer.from(backgroundOutput));
             proc.emit('close', 0);
 
+            // artifact 写入已改为异步流：等待落盘完成后再断言（fake timers 会拦住
+            // 流事件的 nextTick 派发，这里先切回真实定时器）
+            jest.useRealTimers();
+            await buffer.closeArtifact();
             expect(fs.readFileSync(artifactPath, 'utf8')).toBe(foregroundOutput + backgroundOutput);
         } finally {
-            buffer.closeArtifact();
+            jest.useRealTimers();
+            await buffer.closeArtifact();
             fs.rmSync(directory, { recursive: true, force: true });
         }
+    });
+
+    test('终态更新清掉 live tick 残留的 outputDelta，避免渲染端重复追加', async () => {
+        jest.useFakeTimers();
+        const stdout = new EventEmitter();
+        const proc = Object.assign(new EventEmitter(), {
+            pid: 555,
+            stdout,
+            stderr: new EventEmitter()
+        }) as unknown as ChildProcess;
+        // 模拟上一次 live tick 留在 ToolResult 上的增量字段
+        const result = {
+            outputDelta: 'stale tail',
+            outputReset: true,
+            updateResult: jest.fn(),
+            updateResultObject: jest.fn()
+        } as any;
+
+        const completion = installTimeoutBackgrounding({
+            handle: { proc, detachListeners: jest.fn() },
+            command: 'ls',
+            startTime: Date.now(),
+            timeout: 5000,
+            getOutput: () => 'final output',
+            result,
+            isKilledByStop: () => false,
+            onFinish: jest.fn()
+        });
+
+        proc.emit('close', 0);
+        await expect(completion).resolves.toBe(false);
+
+        expect(result.updateResult).toHaveBeenCalledWith('final output');
+        expect(result.outputDelta).toBeUndefined();
+        expect(result.outputReset).toBeUndefined();
     });
 
     test('keeps the timeout paused while a sandbox permission prompt waits for the user', async () => {

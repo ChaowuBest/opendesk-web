@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import stripAnsi from 'strip-ansi';
+
 /**
  * 终端 live 输出的增量计算。
  *
@@ -31,4 +33,23 @@ export function computeTerminalOutputDelta(lastSentOutput: string, currentOutput
         return { reset: true, delta: currentOutput };
     }
     return { reset: false, delta: currentOutput.slice(lastSentOutput.length) };
+}
+
+/**
+ * 计算一帧 live tick 的输出增量帧。
+ *
+ * 关键点：先剥离 ANSI，再在剥离后的文本上求增量。渲染端整份渲染用的是
+ * stripAnsi(toolcall.result)，若增量在原始文本上切分、再逐段剥离，转义序列恰好
+ * 跨 tick 边界时两头都会残留半个序列，增量拼接结果与全量渲染不一致（要等终态
+ * 全量渲染才自愈）。在剥离后的文本上求增量可保证两条路径逐字一致。
+ *
+ * @param lastSentStripped 上一次放行的快照（已剥离 ANSI）
+ * @param currentOutput    本次快照的原始文本
+ */
+export function computeTerminalLiveOutputFrame(
+    lastSentStripped: string,
+    currentOutput: string
+): TerminalOutputDelta & { stripped: string } {
+    const stripped = stripAnsi(currentOutput);
+    return { stripped, ...computeTerminalOutputDelta(lastSentStripped, stripped) };
 }

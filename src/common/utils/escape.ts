@@ -10,6 +10,17 @@
  */
 
 /**
+ * HTML 转义的模块级映射表：避免每次调用重新构造对象。
+ */
+const HTML_ESCAPE_MAP: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+};
+
+/**
  * HTML 转义 — 将外部可控文本转为 HTML 实体，防止 XSS。这是 HTML 场景的默认选择。
  *
  * 使用场景：文本被拼进 HTML 文本节点或属性值，最终由 innerHTML / 响应体解析。
@@ -23,16 +34,9 @@ export function escapeHtml(content: string | undefined | null): string {
     if (content === null || content === undefined) {
         return '';
     }
-    const map: Record<string, string> = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return String(content).replace(/[&<>"']/g, function (m: string) {
-        return map[m];
-    });
+    // 该函数在终端 live 输出渲染等热路径上每秒调用多次（单次可达 256KiB），
+    // 转义表提到模块级，避免每次调用重新构造对象。
+    return String(content).replace(/[&<>"']/g, (m: string) => HTML_ESCAPE_MAP[m]);
 }
 
 /**

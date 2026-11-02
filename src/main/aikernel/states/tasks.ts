@@ -171,6 +171,7 @@ import {
     TaskStatus
 } from '../task/types.js';
 import { StreamFeedbackThrottle } from '../task/stream-feedback-throttle.js';
+import { LiveFeedbackCoalescer } from '../task/live-feedback-coalescer.js';
 export { ATTEMPT_COMPLETION_TOOL_NAME, getLLMRetryDelayMs };
 
 export interface TaskCompactOptions {
@@ -259,6 +260,19 @@ function generateShortTaskId(): string {
     const timestamp = Date.now().toString(36).slice(-8);
     const random = Math.random().toString(36).slice(2, 6);
     return `task_${timestamp}_${random}`;
+}
+
+/**
+ * live 渲染一致性签名。
+ *
+ * live tick 只会改动 toolcall 上的三样东西：状态、结果文本长度、待送达增量。
+ * 用它们做轻量指纹，判断一次异步渲染期间 part 是否又变了（见 renderLiveStablePart）。
+ */
+function liveRenderSignature(part: AssistantMessagePart): string {
+    if (part.type !== 'tool_call') return '';
+    return part.toolcalls
+        .map((toolcall) => `${toolcall.status}:${toolcall.result?.length ?? 0}:${toolcall.outputDelta?.length ?? -1}`)
+        .join('|');
 }
 
 export class TaskState {
@@ -521,6 +535,14 @@ export class TaskState {
     subscribers: BaseTaskUpdateSubscriber[] = [];
     /** 流式订阅反馈限流器（运行时状态，不持久化），按 (message_id, part_index) 限频发送全量快照 */
     private streaming_feedback_throttle = new StreamFeedbackThrottle();
+    /**
+     * 终端 live 输出的推送合并器（任务级）。
+     *
+     * 一个任务内并行跑多个命令时，若每个工具各自持有合并器，推送频率会按命令数
+     * 线性叠加（3 条并行命令 = 15Hz 全量快照 + 15Hz 渲染进程解析）。提升到任务级后，
+     * 无论多少命令在输出，同一时刻只有一次推送在飞，期间只补发最新状态。
+     */
+    private live_feedback_coalescer = new LiveFeedbackCoalescer(() => this.sendSubscriptionFeedback());
     /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */
     onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
@@ -2406,6 +2428,8 @@ export class TaskState {
                     toolCall.result = result;
                     toolCall.result_object = { interrupted: true, reason: reasonCode };
                     toolCall.rendered = undefined;
+                    // 中断后不会再有 live tick：残留的待送达增量只会被后续快照反复携带
+                    toolCall.clearOutputDelta();
                     partChanged = true;
                     changed++;
                 }
@@ -2763,9 +2787,7 @@ export class TaskState {
                     return;
                 }
                 if (this.needsHtmlRender && !streaming) {
-                    await this.renderInWorkspace(async () => {
-                        await last_part.render();
-                    });
+                    await this.renderLiveStablePart(last_part);
                 }
                 chunkUpdate = {
                     type: 'assistant',
@@ -2790,8 +2812,34 @@ export class TaskState {
             }
 
             this.publishTaskUpdate(chunkUpdate, 'subscription feedback');
+            // live 增量是「一次性载荷」：快照一经发布（载荷已按 toRenderJSON 落成）就
+            // 清空，否则下一次快照会把同一段文本再带一遍，渲染端的「只追加」快路径
+            // 就会把这段文本重复追加一次。
+            if (chunkUpdate.type === 'assistant' && chunkUpdate.last_part.type === 'tool_call') {
+                for (const toolcall of chunkUpdate.last_part.toolcalls) {
+                    toolcall.clearOutputDelta();
+                }
+            }
         } catch (err) {
             logger.error(`error sending subscription feedback for task ${this.task_id}: ${errorToMessage(err)}`);
+        }
+    }
+
+    /**
+     * 渲染 part，并保证 rendered 与随后随快照发出的 live 增量同源。
+     *
+     * live tick 与渲染都是异步的：渲染期间可能又落下一帧 tick，使 rendered 落后于
+     * 增量终点。渲染端此时若走全量渲染，就会停在旧文本上，而后续增量都以新终点为
+     * 基准，中间那段永久缺失（要等下一次全量渲染）。tick 间隔 200ms、渲染耗时毫秒级，
+     * 检测到渲染期间发生变化后重渲染一次即可收敛。
+     */
+    private async renderLiveStablePart(part: AssistantMessagePart): Promise<void> {
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const before = liveRenderSignature(part);
+            await this.renderInWorkspace(async () => {
+                await part.render();
+            });
+            if (liveRenderSignature(part) === before) return;
         }
     }
 
@@ -3095,22 +3143,28 @@ export class TaskState {
             const toolOperation = new TelemetryOperation('tool.execute', {
                 'tool.name': tool_call.tool_name
             });
+
             const result = await TelemetryOperationRegistry.aroundOperation(toolOperation, async () => {
                 const r = await tool.execute(
                     args,
-                    async (result) => {
+                    (result) => {
                         tool_call.result = result.result;
                         tool_call.result_object = result.result_object;
                         // 终端 live 增量：tick 推送携带 outputDelta 时同步到 toolcall，
                         // 供渲染端做无解析的文本追加；非终端工具不携带，显式清理残留。
                         if (result.outputDelta !== undefined) {
-                            tool_call.outputDelta = result.outputDelta;
-                            tool_call.outputReset = result.outputReset;
-                        } else {
-                            delete tool_call.outputDelta;
-                            delete tool_call.outputReset;
+                            // 累积而不是覆盖：合并器会跳过中间帧，覆盖会让被跳过那帧
+                            // 的文本从所有后续快照里消失（渲染端只追加，不会自愈）。
+                            tool_call.queueOutputDelta(result.outputDelta, result.outputReset);
+                            // 终端 live tick 走任务级合并器：单次快照渲染 + IPC 慢于 tick 间隔时，
+                            // fire-and-forget 的推送会无界堆积（任务越多界面越卡）；合并后
+                            // 同一时刻只有一次推送在飞，期间的新状态只补发一次最新值。
+                            this.live_feedback_coalescer.push();
+                            return;
                         }
-                        await this.sendSubscriptionFeedback();
+                        tool_call.clearOutputDelta();
+                        // 非 live 更新（一次性状态/结果）保持即时审计语义，不参与合并
+                        return this.sendSubscriptionFeedback();
                     },
                     this,
                     tool_call
@@ -3122,8 +3176,7 @@ export class TaskState {
             tool_call.result = result.result;
             tool_call.result_object = result.result_object;
             // 终态渲染走全量 rendered，live 增量字段不再有意义，避免持久化残留。
-            delete tool_call.outputDelta;
-            delete tool_call.outputReset;
+            tool_call.clearOutputDelta();
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';

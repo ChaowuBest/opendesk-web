@@ -2610,24 +2610,42 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 运行中终端命令 live 输出快路径的判定：part 为 tool_call、前后同为 tool_call 且
-     * toolcall id 一一对应、状态均为 running。静态纯函数，便于单测覆盖。
+     * 运行中终端命令 live 输出快路径的判定：part 为 tool_call、前后同为 tool_call、
+     * toolcall id 一一对应，且每个 toolcall 的状态相对上一帧未发生变化。
+     * 静态纯函数，便于单测覆盖。
      */
     static canPatchRunningTerminalToolCall(progress, previousPart, isRunning) {
-        return (
-            progress?.last_part?.type === 'tool_call' &&
-            previousPart?.type === 'tool_call' &&
-            isRunning === true &&
-            Array.isArray(progress.last_part.toolcalls) &&
-            progress.last_part.toolcalls.length > 0 &&
-            Array.isArray(previousPart.toolcalls) &&
-            previousPart.toolcalls.length === progress.last_part.toolcalls.length &&
-            progress.last_part.toolcalls.every((tc, i) => {
-                const prev = previousPart.toolcalls[i];
-                return Boolean(prev) && prev.id === tc.id && prev.status === 'running' && tc.status === 'running';
-            })
-        );
+        if (
+            progress?.last_part?.type !== 'tool_call' ||
+            previousPart?.type !== 'tool_call' ||
+            isRunning !== true ||
+            !Array.isArray(progress.last_part.toolcalls) ||
+            progress.last_part.toolcalls.length === 0 ||
+            !Array.isArray(previousPart.toolcalls) ||
+            previousPart.toolcalls.length !== progress.last_part.toolcalls.length
+        ) {
+            return false;
+        }
+        return progress.last_part.toolcalls.every((tc, i) => {
+            const prev = previousPart.toolcalls[i];
+            if (!prev || prev.id !== tc.id) return false;
+            // 状态迁移（pending → running、running → success/error）必须走全量渲染：
+            // 增量快路径只追加输出文本，不重建卡片，会让状态徽标、终态输出、耗时
+            // 永远停在上一帧（用户看到命令已经跑完却仍显示「运行中」）。
+            // 状态未变则允许被增量跳过，这样「并行工具里一个先结束后，另一个长时间
+            // 输出」不会每 tick 整条消息全量重渲。
+            return prev.status === tc.status;
+        });
     }
+
+    /**
+     * 增量追加时允许累积的文本节点上限。
+     *
+     * 每 200ms 一个 tick 都 append 一个文本节点，长时间运行的命令（dev server、
+     * 持续日志）会堆出上万个节点；`pre-wrap` 下的排版成本随节点数增长，最终拖慢
+     * 渲染进程。达到上限后合并为单个文本节点，内容等价。
+     */
+    static LIVE_OUTPUT_MAX_TEXT_NODES = 64;
 
     /**
      * 运行中终端命令的 live 输出快路径。优先走增量分支：主进程 tick 携带
@@ -2643,16 +2661,13 @@ class TaskView extends HTMLElement {
             let incremental = true;
             const deltas = [];
             for (const tc of toolcalls) {
-                if (
-                    typeof tc?.id !== 'string' ||
-                    tc.id === '' ||
-                    tc.status !== 'running' ||
-                    typeof tc.outputDelta !== 'string' ||
-                    tc.outputDelta === ''
-                ) {
+                if (typeof tc?.id !== 'string' || tc.id === '') {
                     incremental = false;
                     break;
                 }
+                // 已结束 / 本次没有增量 / 非终端卡片的 toolcall 不参与增量：
+                // 它们不是本次要更新的目标，不应因此把整条消息退回全量重建。
+                if (tc.status !== 'running' || typeof tc.outputDelta !== 'string' || tc.outputDelta === '') continue;
                 const escapedId = tc.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
                 const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
                 const pre = liveCard?.querySelector('.terminal-tool-output');
@@ -2662,10 +2677,13 @@ class TaskView extends HTMLElement {
                 }
                 deltas.push({ pre, delta: tc.outputDelta, reset: tc.outputReset === true });
             }
-            if (incremental) {
+            if (incremental && deltas.length > 0) {
                 for (const { pre, delta, reset } of deltas) {
                     if (reset) {
                         pre.textContent = delta;
+                    } else if (pre.childNodes.length >= TaskView.LIVE_OUTPUT_MAX_TEXT_NODES) {
+                        // 合并已有节点，避免长期运行累积出上万个文本节点
+                        pre.textContent = pre.textContent + delta;
                     } else {
                         pre.appendChild(document.createTextNode(delta));
                     }

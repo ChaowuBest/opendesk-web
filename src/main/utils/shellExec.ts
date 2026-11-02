@@ -20,7 +20,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import iconv from 'iconv-lite';
+import { decodeShellOutput } from './shell-output-decoder.js';
 import { Setting, getOpendeskDirectory, type SettingData } from './setting.js';
 import { getPlatform } from '../../platforms/base.js';
 import { getCachedProxyEnvVars } from './proxy-env.js';
@@ -284,74 +284,9 @@ export interface ShellExecResult {
     stderr: string;
 }
 
-/**
- * 将 shell 命令输出的 Buffer 解码为字符串。
- *
- * 在 Windows 上，cmd / PowerShell 默认输出编码为系统代码页（中文系统为 GBK/CP936），
- * 而非 UTF-8。直接使用 Buffer.toString('utf8') 会导致中文乱码。
- *
- * 策略：先尝试 UTF-8 解码，若结果包含替换字符（\\uFFFD）则回退到 GBK 解码。
- * 非 Windows 平台直接使用 UTF-8。
- */
-export function decodeShellOutput(buffer: Buffer): string {
-    if (process.platform !== 'win32') {
-        return buffer.toString('utf8');
-    }
-    const utf8 = buffer.toString('utf8');
-    // 包含 Unicode 替换字符说明 UTF-8 解码失败，回退到 GBK
-    if (!utf8.includes('\uFFFD')) {
-        return utf8;
-    }
-    try {
-        return iconv.decode(buffer, 'gbk');
-    } catch {
-        return utf8;
-    }
-}
-
-/**
- * 跨数据分片的 shell 输出流式解码器。
- *
- * 管道以任意大小分片到达 data 事件（尤其 dynobox 沙箱经中继转发时），UTF-8
- * 多字节字符（中文 3 字节、emoji 4 字节）可能被切断在 chunk 边界。逐 chunk 调
- * 用 decodeShellOutput 时，被切断的半个字符会解码出 U+FFFD 替换符，误触发"回退
- * GBK"分支，把本应完好的 UTF-8 中文变成 GBK 乱码（"锟斤拷"），且错误不可逆。
- *
- * 解法：缓冲到完整行（\n 结尾）再解码。\n（0x0A）在 UTF-8 与 GBK 双字节编码中
- * 都只会作为独立的 ASCII 字节出现，绝不会成为多字节序列的内部字节，因此行边界
- * 是安全的解码切分点；行内字符必然完整，不会被误判编码。未到行尾的残片缓存到
- * 下一分片；流结束时 flush 吐出剩余内容。
- */
-export function createShellOutputDecoder() {
-    let pending: Buffer = Buffer.alloc(0);
-
-    const decode = (buf: Buffer): string => decodeShellOutput(buf);
-
-    return {
-        /** 喂入一分片，返回可安全解码的完整文本（可能为空字符串）。 */
-        push(chunk: Buffer): string {
-            if (chunk.length === 0) return '';
-            const combined = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk;
-            // 找最后一个 \n：其前（含 \n）都是完整行，可立即解码
-            const lastNl = combined.lastIndexOf(0x0a);
-            if (lastNl < 0) {
-                // 无换行：整段都是残片，全部缓存等后续
-                pending = combined;
-                return '';
-            }
-            const complete = combined.subarray(0, lastNl + 1);
-            pending = combined.subarray(lastNl + 1);
-            return decode(complete);
-        },
-        /** 流结束：把剩余残片（可能是不带换行的完整最后一行）解码吐出。 */
-        flush(): string {
-            if (pending.length === 0) return '';
-            const out = decode(pending);
-            pending = Buffer.alloc(0);
-            return out;
-        }
-    };
-}
+// 输出解码与跨分片解码器独立成模块（无 setting/platform 依赖，便于单测）。
+// 无换行输出的 O(n²) 累积问题与上限策略见 shell-output-decoder.ts。
+export { decodeShellOutput, createShellOutputDecoder, SHELL_OUTPUT_PENDING_MAX_BYTES } from './shell-output-decoder.js';
 
 // ── shell 输出噪音过滤 ──────────────────────────────────────────────────────
 

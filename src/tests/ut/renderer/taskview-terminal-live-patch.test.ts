@@ -176,6 +176,52 @@ describe('task-view terminal live output fast path', () => {
             expect(TaskViewClass.canPatchRunningTerminalToolCall(progressRenamed, previousPart, true)).toBe(false);
         });
 
+        test('并行工具中部分已完成但状态未变时仍走快路径（避免每 tick 全量重渲整条消息）', () => {
+            const progress = {
+                last_part: {
+                    type: 'tool_call',
+                    rendered: '',
+                    toolcalls: [
+                        { id: 'tc1', status: 'running', outputDelta: 'x' },
+                        { id: 'tc2', status: 'success' }
+                    ]
+                }
+            };
+            const previousPart = {
+                type: 'tool_call',
+                rendered: '',
+                toolcalls: [
+                    { id: 'tc1', status: 'running' },
+                    { id: 'tc2', status: 'success' }
+                ]
+            };
+            expect(TaskViewClass.canPatchRunningTerminalToolCall(progress, previousPart, true)).toBe(true);
+        });
+
+        test('任一 toolcall 状态发生迁移 → 回退全量路径（否则终态卡片停在「运行中」）', () => {
+            const progress = {
+                last_part: {
+                    type: 'tool_call',
+                    rendered: '',
+                    toolcalls: [
+                        { id: 'tc1', status: 'running', outputDelta: 'x' },
+                        { id: 'tc2', status: 'success' }
+                    ]
+                }
+            };
+            // 上一帧 tc2 仍是 running：本轮的成功终态必须靠全量渲染落到 DOM 上，
+            // 不能被 tc1 的增量追加顺带吞掉。
+            const previousPart = {
+                type: 'tool_call',
+                rendered: '',
+                toolcalls: [
+                    { id: 'tc1', status: 'running' },
+                    { id: 'tc2', status: 'running' }
+                ]
+            };
+            expect(TaskViewClass.canPatchRunningTerminalToolCall(progress, previousPart, true)).toBe(false);
+        });
+
         test('前一部分缺失或非 tool_call → 回退全量路径', () => {
             const progress = { last_part: toolCallPart('tc1', 'running') };
             expect(TaskViewClass.canPatchRunningTerminalToolCall(progress, undefined, true)).toBe(false);
@@ -319,6 +365,45 @@ describe('task-view terminal live output fast path', () => {
                 expect(patched).toBe(true);
                 const outputs = [...content.querySelectorAll('.terminal-tool-output')].map((el) => el.textContent);
                 expect(outputs).toEqual(['aA', 'bB']);
+            });
+
+            test('文本节点超过上限后合并，内容保持且节点数不再增长', () => {
+                const content = makeMessageContent('tc1', '');
+                const pre = content.querySelector('.terminal-tool-output')!;
+                const limit = TaskViewClass.LIVE_OUTPUT_MAX_TEXT_NODES;
+                let expected = '';
+
+                for (let i = 0; i < limit + 10; i++) {
+                    const delta = `chunk-${i};`;
+                    expected += delta;
+                    const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                        content,
+                        [{ id: 'tc1', status: 'running', outputDelta: delta }],
+                        ''
+                    );
+                    expect(patched).toBe(true);
+                }
+
+                expect(pre.textContent).toBe(expected);
+                expect(pre.childNodes.length).toBeLessThanOrEqual(limit);
+            });
+
+            test('并行工具中已完成的卡片不参与增量，运行中的卡片照常追加', () => {
+                const content = document.createElement('div');
+                content.innerHTML = terminalCardHtml('tc1', 'live-') + terminalCardHtml('tc2', 'done');
+
+                const patched = TaskViewClass.patchRunningTerminalToolOutput(
+                    content,
+                    [
+                        { id: 'tc1', status: 'running', outputDelta: 'tail' },
+                        { id: 'tc2', status: 'success' }
+                    ],
+                    ''
+                );
+
+                expect(patched).toBe(true);
+                const outputs = [...content.querySelectorAll('.terminal-tool-output')].map((el) => el.textContent);
+                expect(outputs).toEqual(['live-tail', 'done']);
             });
 
             test('增量内容以纯文本插入，不解析 HTML（防注入）', () => {
