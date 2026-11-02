@@ -131,6 +131,12 @@ export interface TaskUpdateAssistantReplaceChunk {
      * （旧语义）。仅发给声明 supportsReplaceDelta 的订阅方。
      */
     unmodifiedTail?: number;
+    /**
+     * 消息级定型标记：本条消息内容已定稿（最终渲染已完成），前端据此停止
+     * 流式展示。与 task_status 语义无关——定型快照发出时任务可能仍在
+     * running（如 hook 拒绝后的续跑等待期），task_status 必须携带真实值。
+     */
+    finalized?: boolean;
     usage?: Usage;
     metadata?: RuntimeMetadata;
 }

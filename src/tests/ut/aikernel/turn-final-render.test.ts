@@ -141,7 +141,7 @@ describe('hook 拒绝重试前的终态渲染快照 (issue #332)', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    test('第一次 hook 拒绝后、重跑请求发出前，向订阅者推送 task_status=stopped 的 assistant_replace 且 text part 携带最终渲染 HTML', async () => {
+    test('第一次 hook 拒绝后、重跑请求发出前，推送 finalized 标记的 assistant_replace（真实 task_status）且 text part 携带最终渲染 HTML', async () => {
         const { task, chunks } = createRunningTask();
 
         // session memory / task name 等收尾后台任务的兜底 mock，避免真实网络请求
@@ -173,16 +173,17 @@ describe('hook 拒绝重试前的终态渲染快照 (issue #332)', () => {
         await waitForCondition(() => hookCalls === 1 && requestCount === 1);
         expect(requestCount).toBe(1);
 
-        // 修复点：拒绝后立即补发终态快照（stopped + 最终渲染 HTML）
+        // 修复点：拒绝后立即补发终态快照（finalized 标记 + 真实 task_status + 最终渲染 HTML）
         await waitForCondition(() =>
-            chunks.some((chunk) => chunk.type === 'assistant_replace' && chunk.task_status === 'stopped')
+            chunks.some((chunk) => chunk.type === 'assistant_replace' && chunk.finalized === true)
         );
         const finalReplaces = chunks.filter(
             (chunk): chunk is TaskUpdateAssistantReplaceChunk =>
-                chunk.type === 'assistant_replace' && chunk.task_status === 'stopped'
+                chunk.type === 'assistant_replace' && chunk.finalized === true
         );
         expect(finalReplaces.length).toBeGreaterThanOrEqual(1);
         const finalReplace = finalReplaces[finalReplaces.length - 1];
+        expect(finalReplace.task_status).toBe('running');
         const textPart = finalReplace.parts.find((part) => part.type === 'text') as
             { type: string; text: string; rendered?: string } | undefined;
         expect(textPart).toBeDefined();

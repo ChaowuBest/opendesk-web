@@ -2443,7 +2443,10 @@ class TaskView extends HTMLElement {
             }
         }
         const previousRenderState = this._assistantRenderStateByMessage.get(progress.message_id);
-        if (previousRenderState?.isRunning === false && progress.task_status === 'running') {
+        // 定型快照（finalized）发出时任务可能仍为 running，本条消息仍需
+        // 按非流式处理，不得因 task_status 为 running 而提前返回
+        const messageFinalized = progress.finalized === true;
+        if (previousRenderState?.isRunning === false && progress.task_status === 'running' && !messageFinalized) {
             return;
         }
         const history_container = this.getHistoryContainer();
@@ -2487,7 +2490,8 @@ class TaskView extends HTMLElement {
         if (!message_content) return;
         const processScrollFollowState = this._captureProcessScrollFollowState(message_content);
 
-        const isRunning = progress.task_status === 'running';
+        // 定型快照（finalized）即使 task_status=running 也按非流式处理
+        const isRunning = progress.task_status === 'running' && progress.finalized !== true;
         const parts = progress.parts;
         const turnDurationMs = extractAssistantTurnDurationMs(progress);
         this._rememberAssistantOutput(progress.message_id, parts, {
