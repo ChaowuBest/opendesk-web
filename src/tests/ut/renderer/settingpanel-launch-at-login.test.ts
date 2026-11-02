@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 beforeAll(async () => {
@@ -14,9 +14,15 @@ beforeAll(async () => {
     await import('../../../renderer/components/settingpanel.js');
 });
 const panels: any[] = [];
+const sendNotification = jest.fn();
+beforeEach(() => {
+    sendNotification.mockClear();
+    (window as any).notificationAPI = { sendNotification };
+});
 afterEach(() => {
     panels.splice(0).forEach((p) => p.disconnectedCallback());
     delete (window as any).native;
+    delete (window as any).notificationAPI;
     visibility('visible');
 });
 function nativeStartup(handlers: {
@@ -90,7 +96,14 @@ test('saves through system API, blocks concurrent changes, and rolls back on fai
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(input.checked).toBe(false);
     expect(input.disabled).toBe(false);
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'Unable to read or change startup settings. Please try again.'
+    );
+    expect(p.querySelector('#launch-at-login-status').textContent).toBe('');
 });
 test('shows system refusal instead of claiming a successful enable', async () => {
     nativeStartup({
@@ -104,7 +117,13 @@ test('shows system refusal instead of claiming a successful enable', async () =>
     input.dispatchEvent(new Event('change'));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(input.checked).toBe(false);
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('system');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'The system did not apply this change. Check startup permissions in system settings.'
+    );
 });
 
 test('successful changes read the actual system state without saving the shared config', async () => {
@@ -127,6 +146,7 @@ test('successful changes read the actual system state without saving the shared 
     expect(input.disabled).toBe(false);
     expect(p.launchAtLoginState.enabled).toBe(true);
     expect(p.saveImmediately).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
 });
 
 test('read failure keeps the switch disabled and reports a localized error', async () => {
@@ -138,19 +158,26 @@ test('read failure keeps the switch disabled and reports a localized error', asy
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login').disabled).toBe(true);
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'Unable to read or change startup settings. Please try again.'
+    );
+    expect(p.querySelector('#launch-at-login-status').textContent).toBe('');
 });
 
-test('supported instances remain interactive without an installation notice', async () => {
+test('supported instances remain interactive without a redundant startup description', async () => {
     nativeStartup({
         getLaunchAtLogin: async () => ({ supported: true, enabled: false })
     });
     const p = panel();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login').disabled).toBe(false);
-    expect(p.querySelector('#launch-at-login-status').textContent).toBe(
-        'Automatically open OpenDesk when you sign in to your computer.'
-    );
+    expect(p.querySelector('#launch-at-login-status').textContent).toBe('');
+    expect(p.querySelector('#launch-at-login-status').hidden).toBe(true);
+    expect(p.textContent).not.toContain('Automatically open OpenDesk when you sign in to your computer.');
     expect(p.textContent).not.toContain('Available in the installed app');
 });
 
@@ -191,7 +218,13 @@ test('Harmony settings failure is visible and does not turn startup on', async (
     p.querySelector('#launch-at-login-manage').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login-state').textContent).toBe('Off');
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable to open');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'Unable to open System Settings. Go to Apps & services → App startup management manually.'
+    );
     expect(p.querySelector('#launch-at-login-manage').disabled).toBe(false);
     p.disconnectedCallback();
 });
@@ -239,7 +272,13 @@ test('Harmony read failure stays unknown but still allows opening system setting
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.querySelector('#launch-at-login-state').textContent).toBe('Status unknown');
     expect(p.querySelector('#launch-at-login-manage').disabled).toBe(false);
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'Unable to read or change startup settings. Please try again.'
+    );
     p.querySelector('#launch-at-login-manage').click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(openStartupSettings).toHaveBeenCalledTimes(1);
@@ -289,7 +328,13 @@ test('transport failure after delegation becomes unknown instead of restoring a 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(p.launchAtLoginState.enabled).toBeNull();
     expect(input.disabled).toBe(true);
-    expect(p.querySelector('#launch-at-login-status').textContent).toContain('Unable');
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+        'error',
+        expect.any(String),
+        'Start OpenDesk at login',
+        'Unable to read or change startup settings. Please try again.'
+    );
 });
 
 test('unsupported native status queries do not block independent system settings delegation', async () => {
