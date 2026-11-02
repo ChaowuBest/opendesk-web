@@ -27,6 +27,7 @@ export const enUs: Record<string, string> = {
     'error.concurrencyInvalid': 'Concurrency must be between 1 and 20',
     'error.datasetInvalidState': 'The dataset content is broken, please import it again',
     'error.catalogNotFound': 'That dataset download entry does not exist',
+    'error.registryUnknown': 'Unknown benchmark registry: ${name}',
     'error.downloadInProgress': 'This dataset is already downloading, please wait',
     'error.downloadHttpStatus': 'Download failed: HTTP ${status}',
     'error.downloadTooLarge': 'The archive exceeds the maximum allowed size',
@@ -44,7 +45,6 @@ export const enUs: Record<string, string> = {
     'error.catalogEntryDuplicateId': 'duplicate id: ${id}',
 
     'benchmark.title': 'Benchmarks',
-    'benchmark.tab.catalog': 'Download datasets',
     'benchmark.tab.datasets': 'Datasets',
     'benchmark.tab.history': 'History',
     'benchmark.action.import': 'Import dataset',
@@ -111,6 +111,7 @@ export const enUs: Record<string, string> = {
     'error.datasetTracksInvalid': 'dataset.json tracks must be a non-empty array',
     'error.datasetTrackItemInvalid': 'dataset.json tracks entries must be strings or objects',
     'error.datasetTrackEmpty': 'dataset.json declares no valid track',
+    'error.datasetVersionInvalid': 'dataset.json version must be a SemVer version (e.g. 1.2.3), got "${version}"',
     'error.caseRunPrepareMissing': 'Run prepare script of case ${case} not found: ${file}',
     'error.caseVerifyPrepareMissing': 'Verify prepare script of case ${case} not found: ${file}',
     'error.caseRunPromptMissing': 'Case ${case} is missing its run instruction file: ${file}',

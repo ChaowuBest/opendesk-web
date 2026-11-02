@@ -34,7 +34,7 @@ import path from 'node:path';
 import http from 'node:http';
 import AdmZip from 'adm-zip';
 import { setRuntimeLocale } from '../../../locale/index.js';
-import type { CatalogDatasetEntry, DatasetSummary } from '../../../main/applications/benchmark/common.js';
+import type { BenchmarkSummary, InstalledBenchmarkSummary } from '../../../main/applications/benchmark/common.js';
 
 beforeEach(() => {
     setRuntimeLocale('zh-CN');
@@ -46,13 +46,13 @@ afterEach(() => {
 
 // ── 纯函数 ───────────────────────────────────────────────────────────────
 
-function makeSummary(patch: Partial<DatasetSummary>): DatasetSummary {
+function makeSummary(patch: Partial<InstalledBenchmarkSummary>): InstalledBenchmarkSummary {
     return {
         id: 'local-1',
         name: 'WorkBuddy Bench',
         description: '',
         homepage: '',
-        version: '1.0',
+        version: '1.0.0',
         importedAt: 0,
         caseCount: 2,
         tracks: [],
@@ -61,19 +61,34 @@ function makeSummary(patch: Partial<DatasetSummary>): DatasetSummary {
 }
 
 describe('compareVersions', () => {
-    test('按数字段比较，缺失段视为 0', () => {
-        expect(compareVersions('1.0', '1.1')).toBe(-1);
-        expect(compareVersions('1.1', '1.0')).toBe(1);
-        expect(compareVersions('1.10', '1.9')).toBe(1);
-        expect(compareVersions('1.0.1', '1.0')).toBe(1);
+    test('按 SemVer 优先级比较', () => {
+        expect(compareVersions('1.0.0', '1.1.0')).toBe(-1);
+        expect(compareVersions('1.1.0', '1.0.0')).toBe(1);
+        expect(compareVersions('1.10.0', '1.9.0')).toBe(1);
+        expect(compareVersions('1.0.1', '1.0.0')).toBe(1);
         expect(compareVersions('v1.2.3', '1.2.3')).toBe(0);
-        expect(compareVersions('', '1.0')).toBe(-1);
-        expect(compareVersions('2.0', '2.0')).toBe(0);
+        expect(compareVersions('2.0.0', '2.0.0')).toBe(0);
+        // 构建元数据不参与优先级
+        expect(compareVersions('1.2.3+build.5', '1.2.3')).toBe(0);
+    });
+
+    test('预发布版本低于同号正式版', () => {
+        expect(compareVersions('1.2.3-beta', '1.2.3')).toBe(-1);
+        expect(compareVersions('1.2.3-alpha', '1.2.3-beta')).toBe(-1);
+        expect(compareVersions('1.2.3-rc.1', '1.2.4')).toBe(-1);
+    });
+
+    test('无法解析成版本的字符串视为最低优先级', () => {
+        // 历史数据里的自由文本版本（如 2024-09）不再参与数值切段比较
+        expect(compareVersions('2024-09', '1.0.0')).toBe(-1);
+        expect(compareVersions('1.0.0', '2024-09')).toBe(1);
+        expect(compareVersions('', '1.0.0')).toBe(-1);
+        expect(compareVersions('', '')).toBe(0);
     });
 });
 
 describe('resolveCatalogInstallState', () => {
-    const entry = { name: 'WorkBuddy Bench', version: '1.1' };
+    const entry = { name: 'WorkBuddy Bench', version: '1.1.0' };
 
     test('本地没有同名测评集时是未安装', () => {
         expect(resolveCatalogInstallState(entry, [])).toBe('not-installed');
@@ -81,12 +96,12 @@ describe('resolveCatalogInstallState', () => {
     });
 
     test('本地版本更低时可更新', () => {
-        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '1.0' })])).toBe('update-available');
+        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '1.0.0' })])).toBe('update-available');
     });
 
     test('本地版本不低于清单版本时已是最新', () => {
-        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '1.1' })])).toBe('installed');
-        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '2.0' })])).toBe('installed');
+        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '1.1.0' })])).toBe('installed');
+        expect(resolveCatalogInstallState(entry, [makeSummary({ version: '2.0.0' })])).toBe('installed');
     });
 
     test('按名称匹配时忽略大小写与首尾空白', () => {
@@ -153,7 +168,7 @@ async function startServer(routes: Record<string, Buffer | null>): Promise<Stati
     };
 }
 
-function makeEntry(baseUrl: string, options: { version: string; fileName?: string }): CatalogDatasetEntry {
+function makeEntry(baseUrl: string, options: { version: string; fileName?: string }): BenchmarkSummary {
     return {
         id: 'workbuddy-bench',
         name: 'WorkBuddy Bench',
@@ -176,6 +191,15 @@ function tmpFiles(dataDir: string): string[] {
     return fs.readdirSync(path.join(dataDir, 'tmp'));
 }
 
+/** 清单项 id 只在同一 registry 内唯一，下载一律带上 registry 名 */
+function download(
+    manager: InstanceType<typeof BenchmarkManager>,
+    entry: BenchmarkSummary,
+    options: { fetchImpl?: typeof fetch; stallTimeoutMs?: number } = {}
+) {
+    return manager.downloadDataset(entry, { registryName: 'official', ...options });
+}
+
 async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
     const start = Date.now();
     while (!condition()) {
@@ -187,7 +211,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
 describe('BenchmarkManager 测评集下载', () => {
     test('下载 zip 后自动安装，并实时上报进度', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'workbuddy-bench'), { name: 'WorkBuddy Bench', version: '1.0' });
+        writeDataset(path.join(fixtureDir, 'workbuddy-bench'), { name: 'WorkBuddy Bench', version: '1.0.0' });
         const archive = zipDir(fixtureDir, 'workbuddy-bench');
         const server = await startServer({ '/workbuddy-bench.zip': archive });
 
@@ -206,9 +230,9 @@ describe('BenchmarkManager 测评集下载', () => {
         const datasetChangesBeforeDownload = datasetChangeCount;
 
         try {
-            const summary = await manager.downloadDataset(makeEntry(server.baseUrl, { version: '1.0' }));
+            const summary = await download(manager, makeEntry(server.baseUrl, { version: '1.0.0' }));
             expect(summary.name).toBe('WorkBuddy Bench');
-            expect(summary.version).toBe('1.0');
+            expect(summary.version).toBe('1.0.0');
             expect(summary.caseCount).toBe(2);
 
             const datasets = manager.listDatasets();
@@ -220,6 +244,7 @@ describe('BenchmarkManager 测评集下载', () => {
             const states = manager.listDownloads();
             expect(states).toHaveLength(1);
             expect(states[0]).toMatchObject({
+                registryName: 'official',
                 catalogId: 'workbuddy-bench',
                 status: 'done',
                 totalBytes: archive.length
@@ -239,7 +264,7 @@ describe('BenchmarkManager 测评集下载', () => {
 
     test('下载过程中按已接收字节上报进度', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'workbuddy-bench'), { name: 'WorkBuddy Bench', version: '1.0' });
+        writeDataset(path.join(fixtureDir, 'workbuddy-bench'), { name: 'WorkBuddy Bench', version: '1.0.0' });
         const archive = zipDir(fixtureDir, 'workbuddy-bench');
         const half = Math.floor(archive.length / 2);
 
@@ -260,7 +285,7 @@ describe('BenchmarkManager 测评集下载', () => {
             )) as unknown as typeof fetch;
 
         const { manager } = makeManager();
-        const pending = manager.downloadDataset(makeEntry('http://127.0.0.1/mock.zip', { version: '1.0' }), {
+        const pending = download(manager, makeEntry('http://127.0.0.1/mock.zip', { version: '1.0.0' }), {
             fetchImpl
         });
 
@@ -286,8 +311,8 @@ describe('BenchmarkManager 测评集下载', () => {
 
     test('已安装同名测评集时按更新覆盖，沿用原 datasetId', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0' });
-        writeDataset(path.join(fixtureDir, 'v2'), { name: 'WorkBuddy Bench', version: '1.1', cases: 3 });
+        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0.0' });
+        writeDataset(path.join(fixtureDir, 'v2'), { name: 'WorkBuddy Bench', version: '1.1.0', cases: 3 });
         const server = await startServer({
             '/workbuddy-bench-1.0.zip': zipDir(path.join(fixtureDir, 'v1'), 'workbuddy-bench'),
             '/workbuddy-bench-1.1.zip': zipDir(path.join(fixtureDir, 'v2'), 'workbuddy-bench')
@@ -295,26 +320,28 @@ describe('BenchmarkManager 测评集下载', () => {
         const { manager } = makeManager();
 
         try {
-            const first = await manager.downloadDataset(
-                makeEntry(server.baseUrl, { version: '1.0', fileName: 'workbuddy-bench-1.0.zip' })
+            const first = await download(
+                manager,
+                makeEntry(server.baseUrl, { version: '1.0.0', fileName: 'workbuddy-bench-1.0.zip' })
             );
-            expect(manager.listDatasets()[0]).toMatchObject({ id: first.id, version: '1.0' });
+            expect(manager.listDatasets()[0]).toMatchObject({ id: first.id, version: '1.0.0' });
 
             // 清单版本更高 → 界面会给「更新」
             const listBefore = manager.listDatasets();
-            expect(resolveCatalogInstallState({ name: 'WorkBuddy Bench', version: '1.1' }, listBefore)).toBe(
+            expect(resolveCatalogInstallState({ name: 'WorkBuddy Bench', version: '1.1.0' }, listBefore)).toBe(
                 'update-available'
             );
 
-            const updated = await manager.downloadDataset(
-                makeEntry(server.baseUrl, { version: '1.1', fileName: 'workbuddy-bench-1.1.zip' })
+            const updated = await download(
+                manager,
+                makeEntry(server.baseUrl, { version: '1.1.0', fileName: 'workbuddy-bench-1.1.zip' })
             );
             expect(updated.id).toBe(first.id);
-            expect(updated.version).toBe('1.1');
+            expect(updated.version).toBe('1.1.0');
             expect(updated.caseCount).toBe(3);
             const datasets = manager.listDatasets();
             expect(datasets).toHaveLength(1);
-            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.1', caseCount: 3 });
+            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.1.0', caseCount: 3 });
         } finally {
             await server.close();
         }
@@ -325,7 +352,7 @@ describe('BenchmarkManager 测评集下载', () => {
         const { manager, dataDir } = makeManager();
 
         try {
-            await expect(manager.downloadDataset(makeEntry(server.baseUrl, { version: '1.0' }))).rejects.toThrow();
+            await expect(download(manager, makeEntry(server.baseUrl, { version: '1.0.0' }))).rejects.toThrow();
             expect(manager.listDatasets()).toEqual([]);
             const state = manager.listDownloads()[0];
             expect(state.status).toBe('failed');
@@ -338,12 +365,12 @@ describe('BenchmarkManager 测评集下载', () => {
 
     test('压缩包内的测评集与清单名称不一致时拒绝安装', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'other'), { name: 'Somebody Else Bench', version: '1.0' });
+        writeDataset(path.join(fixtureDir, 'other'), { name: 'Somebody Else Bench', version: '1.0.0' });
         const server = await startServer({ '/workbuddy-bench.zip': zipDir(fixtureDir, 'other') });
         const { manager } = makeManager();
 
         try {
-            await expect(manager.downloadDataset(makeEntry(server.baseUrl, { version: '1.0' }))).rejects.toThrow(
+            await expect(download(manager, makeEntry(server.baseUrl, { version: '1.0.0' }))).rejects.toThrow(
                 'WorkBuddy Bench'
             );
             expect(manager.listDatasets()).toEqual([]);
@@ -352,10 +379,28 @@ describe('BenchmarkManager 测评集下载', () => {
         }
     });
 
+    test('压缩包内版本号不是 SemVer 时拒绝安装', async () => {
+        const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
+        writeDataset(path.join(fixtureDir, 'legacy'), { name: 'WorkBuddy Bench', version: '2024-09' });
+        const server = await startServer({
+            '/workbuddy-bench.zip': zipDir(path.join(fixtureDir, 'legacy'), 'workbuddy-bench')
+        });
+        const { manager } = makeManager();
+
+        try {
+            // 自由文本版本一旦装进本地，就永远比清单里的 SemVer 版本低、每次都提示更新，
+            // 所以在安装入口就拦住（历史已装数据只在读取时放行）
+            await expect(download(manager, makeEntry(server.baseUrl, { version: '1.0.0' }))).rejects.toThrow('SemVer');
+            expect(manager.listDatasets()).toEqual([]);
+        } finally {
+            await server.close();
+        }
+    });
+
     test('更新失败时不破坏本地已安装的测评集', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0' });
-        writeDataset(path.join(fixtureDir, 'broken'), { name: 'WorkBuddy Bench', version: '1.1', cases: 0 });
+        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0.0' });
+        writeDataset(path.join(fixtureDir, 'broken'), { name: 'WorkBuddy Bench', version: '1.1.0', cases: 0 });
         const server = await startServer({
             '/workbuddy-bench-1.0.zip': zipDir(path.join(fixtureDir, 'v1'), 'workbuddy-bench'),
             '/workbuddy-bench-1.1.zip': zipDir(path.join(fixtureDir, 'broken'), 'workbuddy-bench')
@@ -363,19 +408,18 @@ describe('BenchmarkManager 测评集下载', () => {
         const { manager, dataDir } = makeManager();
 
         try {
-            const first = await manager.downloadDataset(
-                makeEntry(server.baseUrl, { version: '1.0', fileName: 'workbuddy-bench-1.0.zip' })
+            const first = await download(
+                manager,
+                makeEntry(server.baseUrl, { version: '1.0.0', fileName: 'workbuddy-bench-1.0.zip' })
             );
             // 新包一个用例都没有 → 安装失败，旧版本必须原地还在
             await expect(
-                manager.downloadDataset(
-                    makeEntry(server.baseUrl, { version: '1.1', fileName: 'workbuddy-bench-1.1.zip' })
-                )
+                download(manager, makeEntry(server.baseUrl, { version: '1.1.0', fileName: 'workbuddy-bench-1.1.zip' }))
             ).rejects.toThrow();
 
             const datasets = manager.listDatasets();
             expect(datasets).toHaveLength(1);
-            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.0', caseCount: 2 });
+            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.0.0', caseCount: 2 });
             expect(fs.existsSync(path.join(dataDir, 'datasets', first.id, 'dataset.json'))).toBe(true);
         } finally {
             await server.close();
@@ -384,8 +428,8 @@ describe('BenchmarkManager 测评集下载', () => {
 
     test('更新时新目录换位失败会回滚，旧测评集不会丢', async () => {
         const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
-        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0' });
-        writeDataset(path.join(fixtureDir, 'v2'), { name: 'WorkBuddy Bench', version: '1.1', cases: 3 });
+        writeDataset(path.join(fixtureDir, 'v1'), { name: 'WorkBuddy Bench', version: '1.0.0' });
+        writeDataset(path.join(fixtureDir, 'v2'), { name: 'WorkBuddy Bench', version: '1.1.0', cases: 3 });
         const server = await startServer({
             '/workbuddy-bench-1.0.zip': zipDir(path.join(fixtureDir, 'v1'), 'workbuddy-bench'),
             '/workbuddy-bench-1.1.zip': zipDir(path.join(fixtureDir, 'v2'), 'workbuddy-bench')
@@ -393,8 +437,9 @@ describe('BenchmarkManager 测评集下载', () => {
         const { manager, dataDir } = makeManager();
 
         try {
-            const first = await manager.downloadDataset(
-                makeEntry(server.baseUrl, { version: '1.0', fileName: 'workbuddy-bench-1.0.zip' })
+            const first = await download(
+                manager,
+                makeEntry(server.baseUrl, { version: '1.0.0', fileName: 'workbuddy-bench-1.0.zip' })
             );
             // Windows 上杀毒/索引进程短暂占用目标目录时 rename 会失败，模拟这一步
             const realRenameSync = fs.renameSync;
@@ -408,8 +453,9 @@ describe('BenchmarkManager 测评集下载', () => {
             };
             try {
                 await expect(
-                    manager.downloadDataset(
-                        makeEntry(server.baseUrl, { version: '1.1', fileName: 'workbuddy-bench-1.1.zip' })
+                    download(
+                        manager,
+                        makeEntry(server.baseUrl, { version: '1.1.0', fileName: 'workbuddy-bench-1.1.zip' })
                     )
                 ).rejects.toThrow();
             } finally {
@@ -418,7 +464,7 @@ describe('BenchmarkManager 测评集下载', () => {
 
             const datasets = manager.listDatasets();
             expect(datasets).toHaveLength(1);
-            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.0', caseCount: 2 });
+            expect(datasets[0]).toMatchObject({ id: first.id, version: '1.0.0', caseCount: 2 });
             expect(fs.existsSync(path.join(dataDir, 'datasets', first.id, 'dataset.json'))).toBe(true);
             // 回滚用的备份目录不能留在 tmp 里
             expect(tmpFiles(dataDir).filter((name) => name.startsWith('replace-'))).toEqual([]);
@@ -441,7 +487,7 @@ describe('BenchmarkManager 测评集下载', () => {
 
         const { manager, dataDir } = makeManager();
         await expect(
-            manager.downloadDataset(makeEntry('http://127.0.0.1/mock.zip', { version: '1.0' }), {
+            download(manager, makeEntry('http://127.0.0.1/mock.zip', { version: '1.0.0' }), {
                 fetchImpl,
                 stallTimeoutMs: 80
             })
@@ -478,7 +524,7 @@ describe('BenchmarkManager 测评集下载', () => {
 
         try {
             await expect(
-                manager.downloadDataset(makeEntry('http://127.0.0.1/mock.zip', { version: '1.0' }), {
+                download(manager, makeEntry('http://127.0.0.1/mock.zip', { version: '1.0.0' }), {
                     fetchImpl,
                     stallTimeoutMs: 80
                 })
@@ -512,7 +558,7 @@ describe('BenchmarkManager 测评集下载', () => {
         const { manager } = makeManager();
 
         await expect(
-            manager.downloadDataset(makeEntry('http://127.0.0.1/mock.zip', { version: '1.0' }), {
+            download(manager, makeEntry('http://127.0.0.1/mock.zip', { version: '1.0.0' }), {
                 fetchImpl,
                 stallTimeoutMs: 60
             })

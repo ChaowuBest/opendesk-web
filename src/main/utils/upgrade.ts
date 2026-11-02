@@ -15,6 +15,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { asyncShellExec } from './shellExec.js';
+import { isNewerVersion } from './version.js';
 
 const PACKAGE_NAME = '@bitclub.ai/opendesk-cli';
 
@@ -238,36 +239,12 @@ export async function getVersionInfo(forceRefresh: boolean = false): Promise<Ver
     cachedVersionInfo = {
         current: installInfo.version,
         latest,
-        needsUpdate: latest !== null && installInfo.version !== null && installInfo.version !== latest,
+        needsUpdate: isNewerVersion(latest, installInfo.version),
         isNpmInstalled: installInfo.isInstalled
     };
     cachedVersionInfoTime = now;
 
     return cachedVersionInfo;
-}
-
-/**
- * 比较两个语义化版本号
- * @returns 1 if a > b, -1 if a < b, 0 if equal
- */
-export function compareVersions(a: string, b: string): number {
-    const parseVersion = (v: string): number[] => {
-        const cleanV = v.split('-')[0];
-        return cleanV.split('.').map((n) => parseInt(n, 10) || 0);
-    };
-
-    const partsA = parseVersion(a);
-    const partsB = parseVersion(b);
-    const maxLen = Math.max(partsA.length, partsB.length);
-
-    for (let i = 0; i < maxLen; i++) {
-        const numA = partsA[i] || 0;
-        const numB = partsB[i] || 0;
-        if (numA > numB) return 1;
-        if (numA < numB) return -1;
-    }
-
-    return 0;
 }
 
 /**

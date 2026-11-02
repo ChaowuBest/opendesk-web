@@ -27,6 +27,7 @@ export const zhCn: Record<string, string> = {
     'error.concurrencyInvalid': '并发数需在 1-20 之间',
     'error.datasetInvalidState': '测评集内容已损坏，请重新导入',
     'error.catalogNotFound': '测评集下载项不存在',
+    'error.registryUnknown': '未知的测评集来源：${name}',
     'error.downloadInProgress': '该测评集正在下载，请等待完成',
     'error.downloadHttpStatus': '下载失败：HTTP ${status}',
     'error.downloadTooLarge': '压缩包体积超出上限',
@@ -42,7 +43,6 @@ export const zhCn: Record<string, string> = {
     'error.catalogEntryDuplicateId': 'id 重复：${id}',
 
     'benchmark.title': '测评',
-    'benchmark.tab.catalog': '测评集下载',
     'benchmark.tab.datasets': '测评集管理',
     'benchmark.tab.history': '测评历史',
     'benchmark.action.import': '导入测评集',
@@ -109,6 +109,7 @@ export const zhCn: Record<string, string> = {
     'error.datasetTracksInvalid': 'dataset.json 的 tracks 必须是非空数组',
     'error.datasetTrackItemInvalid': 'dataset.json 的 tracks 项必须是字符串或对象',
     'error.datasetTrackEmpty': 'dataset.json 未声明任何有效 track',
+    'error.datasetVersionInvalid': 'dataset.json 的 version 必须是 SemVer 版本号（如 1.2.3），实际为「${version}」',
     'error.caseRunPrepareMissing': '用例 ${case} 的运行准备脚本不存在：${file}',
     'error.caseVerifyPrepareMissing': '用例 ${case} 的验证准备脚本不存在：${file}',
     'error.caseRunPromptMissing': '用例 ${case} 缺少运行任务指令文件：${file}',

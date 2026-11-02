@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { compareVersions } from './release-feed.js';
+import { isNewerVersion, isValidVersion } from '../utils/version.js';
 import type { ReadyUpdateRecord, UpdateRelease, UpdateServiceResponse, UpdateState } from './types.js';
 
 export interface UpdateCoordinatorDependencies {
@@ -69,10 +69,14 @@ export class UpdateCoordinator {
                 typeof raw.requestId !== 'string' ||
                 !/^[0-9a-f-]{36}$/i.test(raw.requestId) ||
                 typeof raw.version !== 'string' ||
+                // 版本号必须是合法 SemVer：isNewerVersion 对解析不了的版本会退化成字符串不等于，
+                // 记录里写坏的版本号就会绕过下面「必须比本地新」这道闸门
+                !isValidVersion(raw.version) ||
                 typeof raw.installerPath !== 'string' ||
                 typeof raw.sha256 !== 'string' ||
                 !/^[0-9a-f]{64}$/i.test(raw.sha256) ||
-                compareVersions(raw.version, this.dependencies.currentVersion) <= 0 ||
+                // 远端发布版本必须比本地更新（本地可能是预发布/开发构建，按 SemVer 优先级比较）
+                !isNewerVersion(raw.version, this.dependencies.currentVersion) ||
                 path.dirname(path.resolve(raw.installerPath)) !== path.resolve(this.dependencies.stateDirectory) ||
                 !raw.installerPath.toLowerCase().endsWith('.exe') ||
                 !fs.existsSync(raw.installerPath)
@@ -115,7 +119,7 @@ export class UpdateCoordinator {
         this.setState({ status: 'checking' });
         try {
             const release = await this.dependencies.fetchRelease();
-            if (compareVersions(release.version, this.dependencies.currentVersion) <= 0) {
+            if (!isNewerVersion(release.version, this.dependencies.currentVersion)) {
                 return this.setState({ status: 'upToDate', checkedAt: new Date().toISOString() });
             }
             const safeName = path.basename(release.installerName);

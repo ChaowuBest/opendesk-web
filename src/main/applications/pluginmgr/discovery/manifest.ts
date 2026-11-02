@@ -20,6 +20,7 @@ import {
     type PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { AGENT_MANIFEST_ERROR_CODES, loadAgentsFromDirectory } from './agent-resource.js';
+import { isValidVersion } from '../../../utils/version.js';
 
 export interface PluginManifestResources {
     skills?: string[];
@@ -54,6 +55,14 @@ function optionalString(value: unknown, code: string): string | undefined {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !value.trim()) throw new Error(code);
     return value.trim();
+}
+
+/** 版本类字段：非空且必须是合法 SemVer（允许 `v` 前缀与首尾空白） */
+function optionalVersion(value: unknown, code: string): string | undefined {
+    const text = optionalString(value, code);
+    if (text === undefined) return undefined;
+    if (!isValidVersion(text)) throw new Error(code);
+    return text;
 }
 
 /**
@@ -202,12 +211,12 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         id,
         displayName: optionalLocalizedText(value.displayName, 'plugin.manifest_invalid_display_name'),
         description: optionalLocalizedText(value.description, 'plugin.manifest_invalid_description'),
-        version: optionalString(value.version, 'plugin.manifest_invalid_version'),
+        version: optionalVersion(value.version, 'plugin.manifest_invalid_version'),
         apiVersion: apiVersion as number,
         capabilities,
         platforms,
-        minOpenDeskVersion: optionalString(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
-        maxOpenDeskVersion: optionalString(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
+        minOpenDeskVersion: optionalVersion(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
+        maxOpenDeskVersion: optionalVersion(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
         resources
     };
 }
@@ -357,20 +366,4 @@ export function loadPluginResources(manifest: PluginManifest | undefined, rootDi
         mcpServers,
         agents
     };
-}
-
-function parseVersion(value: string): [number, number, number] | undefined {
-    const match = value.trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
-    if (!match) return undefined;
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-export function comparePluginVersions(left: string, right: string): number | undefined {
-    const a = parseVersion(left);
-    const b = parseVersion(right);
-    if (!a || !b) return undefined;
-    for (let index = 0; index < a.length; index++) {
-        if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
-    }
-    return 0;
 }

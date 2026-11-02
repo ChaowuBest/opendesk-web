@@ -68,6 +68,28 @@ describe('parseDatasetManifest', () => {
         expect(() => parseDatasetManifest({ name: 'x', tracks: [] })).toThrow('tracks');
         expect(() => parseDatasetManifest('nope')).toThrow();
     });
+
+    test('版本号归一化为 SemVer', () => {
+        expect(parseDatasetManifest({ name: 'x', version: '1.2.3', tracks: ['a'] }).version).toBe('1.2.3');
+        expect(parseDatasetManifest({ name: 'x', version: 'v1.2.3', tracks: ['a'] }).version).toBe('1.2.3');
+        // 线上清单当前是两段式（如 0.2），补齐 PATCH 后按 SemVer 处理
+        expect(parseDatasetManifest({ name: 'x', version: '0.2', tracks: ['a'] }).version).toBe('0.2.0');
+        // 未声明版本时保持空串，界面不展示
+        expect(parseDatasetManifest({ name: 'x', tracks: ['a'] }).version).toBe('');
+    });
+
+    test('非 SemVer 的版本号默认报错', () => {
+        expect(() => parseDatasetManifest({ name: 'x', version: '2024-09', tracks: ['a'] })).toThrow('SemVer');
+        expect(() => parseDatasetManifest({ name: 'x', version: 'latest', tracks: ['a'] })).toThrow('SemVer');
+    });
+
+    test('读取历史数据时放行非 SemVer 版本号', () => {
+        const manifest = parseDatasetManifest(
+            { name: 'x', version: '2024-09', tracks: ['a'] },
+            { allowLegacyVersion: true }
+        );
+        expect(manifest.version).toBe('2024-09');
+    });
 });
 
 describe('resolveCaseSpec', () => {

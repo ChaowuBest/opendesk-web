@@ -23,6 +23,7 @@ import './runtime/task-extension.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { t } from '../../../locale/index.js';
 import { logger } from '../../utils/logger.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../utils/version.js';
 import type { McpMgrApplication } from '../mcpmgr/app.js';
 import { createAcpAgentDeclarations, resolveAcpMcpServers } from './agent.js';
 import { AcpAgentProfileSchema, AcpMgrConfigSchema, type AcpAgentProfile, type AcpMgrConfig } from './common.js';
@@ -194,7 +195,7 @@ export class AcpMgrApplication extends BaseApplication {
                                           : {})
                                   }
                                 : {},
-                        clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                        clientInfo: { name: 'OpenDesk', version: OPENDESK_RUNTIME_VERSION }
                     })
                 ),
                 profile.timeouts.connectMs,

@@ -18,14 +18,14 @@ import { createTranslatorForBenchmark } from '../locale/renderer.js';
 import { labelForStoredReasoningEffort, REASONING_EFFORT_UI_OPTIONS } from '../../../../common/reasoning-effort.ts';
 import type {
     CaseRunState,
-    CatalogDatasetEntry,
-    DatasetSummary,
+    BenchmarkSummary,
+    InstalledBenchmarkSummary,
     DownloadState,
     ModelOption,
     RunListItem,
     RunRecord
 } from '../common.js';
-import { findLocalDatasetByName, resolveCatalogInstallState } from '../catalog-common.js';
+import { downloadStateKey, findLocalDatasetByName, resolveCatalogInstallState } from '../catalog-common.js';
 import css from './style.css?inline';
 // 复用 agentinput 的模型面板样式（同一套 ctx-menu / ctx-item 视觉与暗色处理）
 import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
@@ -34,8 +34,27 @@ import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
 const SHADOW_CSS = `${ctxCss}\n${css}`;
 
 type Translator = ReturnType<typeof createTranslatorForBenchmark>;
-type TabId = 'catalog' | 'datasets' | 'history';
+/** Tab id：`registry:<name>` 表示某个 registry 的清单，另有 datasets / history */
+type TabId = string;
 type DetailTab = 'overview' | 'cases';
+
+/** registry Tab 的 id 前缀：每个 registry 在界面上占一个独立 Tab */
+const REGISTRY_TAB_PREFIX = 'registry:';
+
+function registryTabId(name: string): TabId {
+    return `${REGISTRY_TAB_PREFIX}${name}`;
+}
+
+/** Tab id 对应的 registry 名；datasets / history 这类内置 Tab 返回 null */
+function registryNameOfTab(tab: TabId): string | null {
+    return tab.startsWith(REGISTRY_TAB_PREFIX) ? tab.slice(REGISTRY_TAB_PREFIX.length) : null;
+}
+
+/** 主进程给出的 registry 描述 */
+interface BenchmarkRegistryTab {
+    name: string;
+    displayName: string;
+}
 
 interface RunModalState {
     datasetId: string;
@@ -177,10 +196,15 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private _onDownloadsChanged: (() => void) | null = null;
     private _onRunsChanged: (() => void) | null = null;
 
-    private activeTab: TabId = 'catalog';
+    private activeTab: TabId = '';
     private detailTab: DetailTab = 'overview';
-    private datasets: DatasetSummary[] = [];
-    private catalog: CatalogDatasetEntry[] = [];
+    private datasets: InstalledBenchmarkSummary[] = [];
+    /** 当前生效的 registry 列表（每个占一个 Tab） */
+    private registries: BenchmarkRegistryTab[] = [];
+    /** 各 registry 的清单，按 registry 名分开存：Tab 之间互不影响 */
+    private catalogs = new Map<string, BenchmarkSummary[]>();
+    /** 各 registry 的测评集总数（Tab 角标）；拉不到清单的 registry 没有角标 */
+    private registryCounts = new Map<string, number>();
     private downloads = new Map<string, DownloadState>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
@@ -190,7 +214,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private importing = false;
     private banner: BannerState | null = null;
     private datasetModalId: string | null = null;
-    private catalogModalId: string | null = null;
+    /** 清单项详情弹窗：清单项 id 只在同一 registry 内唯一，必须带上 registry */
+    private catalogModal: { registryName: string; catalogId: string } | null = null;
     private runModal: RunModalState | null = null;
     private detailRunId: string | null = null;
     private detail: RunRecord | null = null;
@@ -249,9 +274,18 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         getAPI().subscribe('downloadsChanged', this._onDownloadsChanged);
         getAPI().subscribe('runsChanged', this._onRunsChanged);
 
-        await Promise.all([this.loadCatalog(), this.loadDatasets(true), this.loadRuns(true), this.loadModels()]);
+        await this.loadRegistries();
+        const registryName = this.activeRegistryName();
+        await Promise.all([
+            registryName ? this.loadCatalog(registryName) : Promise.resolve(),
+            this.loadDatasets(true),
+            this.loadRuns(true),
+            this.loadModels()
+        ]);
         this.loading = false;
         this.render();
+        // 角标只是锦上添花：主界面先出来，再把各 registry 的测评集数量补上
+        void this.loadRegistryCounts().then(() => this.renderUnlessModalOpen());
     }
 
     disconnectedCallback() {
@@ -295,6 +329,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             if (resolveRendererLocale(setting) === this._locale) return;
             this._applyLocaleSetting(setting);
             this.render();
+            // registry 的显示名由主进程按当前语言解析，换语言后要重新取一次
+            void this.loadRegistries().then(() => this.renderUnlessModalOpen());
         });
         if (typeof unsubscribe === 'function') {
             this._settingUnsubscribe = unsubscribe;
@@ -311,15 +347,91 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
     // ── 数据加载 ──────────────────────────────────────────────────────────
 
-    private async loadCatalog(forceRefresh = false) {
+    /** 当前 Tab 对应的 registry 名（内置 Tab 返回 null） */
+    private activeRegistryName(): string | null {
+        return registryNameOfTab(this.activeTab);
+    }
+
+    private catalogOf(registryName: string): BenchmarkSummary[] {
+        return this.catalogs.get(registryName) ?? [];
+    }
+
+    /**
+     * 当前清单弹窗对应的清单项。
+     *
+     * 清单是远程数据，刷新后弹窗对应的那一项可能已经下架：这时弹窗没有内容可画，
+     * 见 `loadCatalog` 处的失效清理。
+     */
+    private catalogModalEntry(): BenchmarkSummary | null {
+        const modal = this.catalogModal;
+        if (!modal) return null;
+        return this.catalogOf(modal.registryName).find((item) => item.id === modal.catalogId) ?? null;
+    }
+
+    /** registry 列表来自主进程，加载完才知道默认落到哪个 Tab */
+    private async loadRegistries() {
+        try {
+            const registries = await getAPI().callMainWorld<BenchmarkRegistryTab[]>('listBenchmarkRegistries');
+            this.registries = Array.isArray(registries) ? registries : [];
+        } catch (error: any) {
+            this.registries = [];
+            this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
+        }
+        // 当前 Tab 指向的 registry 不在了（比如换了配置）就回落到第一个
+        const currentRegistry = registryNameOfTab(this.activeTab);
+        if (!this.activeTab || (currentRegistry !== null && !this.hasRegistry(currentRegistry))) {
+            this.activeTab = this.registries.length > 0 ? registryTabId(this.registries[0].name) : 'datasets';
+        }
+    }
+
+    private hasRegistry(name: string): boolean {
+        return this.registries.some((registry) => registry.name === name);
+    }
+
+    /**
+     * 各 registry 的测评集总数（Tab 角标）。
+     *
+     * 与清单共用同一份缓存，所以不会额外触发一次下载；某个 registry 拉不到清单时
+     * 只是没有角标，Tab 本身照常显示——一个 registry 挂掉不影响别的 registry。
+     */
+    private async loadRegistryCounts() {
+        const registries = this.registries;
+        const counts = await Promise.all(
+            registries.map(async (registry) => {
+                try {
+                    const count = await getAPI().callMainWorld<number>('getBenchmarkCount', registry.name);
+                    return typeof count === 'number' ? count : null;
+                } catch {
+                    return null;
+                }
+            })
+        );
+        // 期间 registry 列表可能被重新加载（换语言）过，按名字回填而不是按下标
+        counts.forEach((count, index) => {
+            if (count !== null) this.registryCounts.set(registries[index].name, count);
+        });
+    }
+
+    private async loadCatalog(registryName: string, forceRefresh = false) {
         // 清单要联网，弱网下先转圈，别先闪一屏「暂无可下载的测评集」
-        const showLoading = this.catalog.length === 0;
+        const showLoading = this.catalogOf(registryName).length === 0;
         if (showLoading) {
             this.catalogLoading += 1;
             this.renderUnlessModalOpen();
         }
         try {
-            this.catalog = await getAPI().callMainWorld<CatalogDatasetEntry[]>('listCatalogDatasets', forceRefresh);
+            const entries = await getAPI().callMainWorld<BenchmarkSummary[]>(
+                'listCatalogDatasets',
+                registryName,
+                forceRefresh
+            );
+            const list = Array.isArray(entries) ? entries : [];
+            this.catalogs.set(registryName, list);
+            this.registryCounts.set(registryName, list.length);
+            // 远端清单刷新后，弹窗对应的那一项可能已经下架：留着弹窗只会挡住后续整窗刷新
+            if (this.catalogModal?.registryName === registryName && !this.catalogModalEntry()) {
+                this.catalogModal = null;
+            }
             this.downloads = await this.fetchDownloads();
         } catch (error: any) {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
@@ -330,7 +442,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
     private async fetchDownloads(): Promise<Map<string, DownloadState>> {
         const states = await getAPI().callMainWorld<DownloadState[]>('listDownloads');
-        return new Map(states.map((state) => [state.catalogId, state]));
+        return new Map(states.map((state) => [downloadStateKey(state.registryName, state.catalogId), state]));
     }
 
     /**
@@ -343,8 +455,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         } catch {
             return;
         }
-        if (this.catalogModalId) {
-            const state = this.downloads.get(this.catalogModalId);
+        if (this.catalogModal) {
+            const state = this.downloadStateOf(this.catalogModal.registryName, this.catalogModal.catalogId);
             // 下载中只刷进度条；进入安装/落地态要重建一次，按钮和提示才会跟着变
             if (state && state.status === 'downloading') {
                 this.patchDownloadProgress();
@@ -357,10 +469,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             this.render();
             return;
         }
-        if (this.activeTab === 'catalog' && !this.datasetModalId && !this.runModal && !this.detailRunId) {
+        if (this.activeRegistryName() && !this.datasetModalId && !this.runModal && !this.detailRunId) {
             // 卡片上只有状态标签随进度变化，定点更新即可，别整窗重建打断 hover
             this.patchCatalogStatusPills();
         }
+    }
+
+    private downloadStateOf(registryName: string, catalogId: string): DownloadState | undefined {
+        return this.downloads.get(downloadStateKey(registryName, catalogId));
     }
 
     private async loadDatasets(showLoading: boolean) {
@@ -369,7 +485,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             this.render();
         }
         try {
-            this.datasets = await getAPI().callMainWorld<DatasetSummary[]>('listDatasets');
+            this.datasets = await getAPI().callMainWorld<InstalledBenchmarkSummary[]>('listDatasets');
             this.banner = null;
         } catch (error: any) {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
@@ -603,7 +719,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     /* 弹窗/详情打开时后台刷新只更新数据，不重建 DOM：
        弹窗重建会闪一下并丢输入，详情重建会打乱滚动位置与 hover */
     private renderUnlessModalOpen() {
-        if (this.datasetModalId || this.catalogModalId || this.runModal || this.detailRunId) return;
+        if (this.datasetModalId || this.catalogModal || this.runModal || this.detailRunId) return;
         this.render();
     }
 
@@ -664,28 +780,39 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             case 'import':
                 await this.importDataset();
                 return;
-            case 'refresh':
+            case 'refresh': {
                 // 手动刷新要拿到线上最新清单，不能命中主进程的 5 分钟缓存
-                await Promise.all([this.loadCatalog(true), this.loadDatasets(false), this.loadRuns(false)]);
+                const registryName = this.activeRegistryName();
+                await Promise.all([
+                    registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
+                    this.loadDatasets(false),
+                    this.loadRuns(false)
+                ]);
                 // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
                 // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
                 this.renderUnlessModalOpen();
                 return;
+            }
             case 'open-dataset':
                 this.datasetModalId = actionEl.dataset.datasetId || null;
-                this.catalogModalId = null;
+                this.catalogModal = null;
                 this.runModal = null;
                 this.render();
                 return;
-            case 'open-catalog':
-                this.catalogModalId = actionEl.dataset.catalogId || null;
+            case 'open-catalog': {
+                const registryName = actionEl.dataset.registryName || this.activeRegistryName() || '';
+                const catalogId = actionEl.dataset.catalogId || '';
+                if (!registryName || !catalogId) return;
+                this.catalogModal = { registryName, catalogId };
                 this.datasetModalId = null;
                 this.runModal = null;
                 this.render();
                 return;
+            }
             case 'download-dataset': {
-                const catalogId = actionEl.dataset.catalogId || this.catalogModalId;
-                if (catalogId) await this.downloadDataset(catalogId);
+                const registryName = actionEl.dataset.registryName || this.catalogModal?.registryName || '';
+                const catalogId = actionEl.dataset.catalogId || this.catalogModal?.catalogId || '';
+                if (registryName && catalogId) await this.downloadDataset(registryName, catalogId);
                 return;
             }
             case 'close-dataset':
@@ -864,14 +991,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             event.stopPropagation();
             return;
         }
-        if (this.datasetModalId || this.runModal || this.catalogModalId) {
+        if (this.datasetModalId || this.runModal || this.catalogModal) {
             this.closeModals();
         }
     };
 
     private closeModals() {
         this.datasetModalId = null;
-        this.catalogModalId = null;
+        this.catalogModal = null;
         this.runModal = null;
         this.modelPanel = null;
         this.effortMenu = null;
@@ -988,12 +1115,13 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.detailRunId = null;
         this.detail = null;
         this.clearPoll();
-        // 清单要联网：切到下载中心时先把加载态摆上再渲染，否则会先闪一屏「暂无可下载的测评集」
-        const catalogPending = tab === 'catalog' && this.catalog.length === 0;
+        // 清单要联网：切到某个 registry 的 Tab 时先把加载态摆上再渲染，否则会先闪一屏空态
+        const registryName = registryNameOfTab(tab);
+        const catalogPending = registryName !== null && this.catalogOf(registryName).length === 0;
         if (catalogPending) this.catalogLoading += 1;
         this.render();
         try {
-            if (tab === 'catalog') await Promise.all([this.loadCatalog(), this.loadDatasets(false)]);
+            if (registryName !== null) await Promise.all([this.loadCatalog(registryName), this.loadDatasets(false)]);
             else if (tab === 'datasets') await this.loadDatasets(false);
             else await this.loadRuns(false);
         } finally {
@@ -1060,7 +1188,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.banner = { text: this._t('benchmark.import.importing'), isError: false };
         this.render();
         try {
-            const dataset = await getAPI().callMainWorld<DatasetSummary>('importDataset', archivePath);
+            const dataset = await getAPI().callMainWorld<InstalledBenchmarkSummary>('importDataset', archivePath);
             this.banner = { text: this._t('benchmark.import.success', { name: dataset.name }), isError: false };
             await this.loadDatasets(false);
         } catch (error: any) {
@@ -1080,12 +1208,12 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
      * 触发下载：主进程后台下载并推送进度，这里拿到「已开始」就可以返回，
      * 随后拉一次下载状态把弹窗切到进度条形态。
      */
-    private async downloadDataset(catalogId: string) {
-        const entry = this.catalog.find((item) => item.id === catalogId);
+    private async downloadDataset(registryName: string, catalogId: string) {
+        const entry = this.catalogOf(registryName).find((item) => item.id === catalogId);
         if (!entry) return;
         this.banner = null;
         try {
-            await getAPI().callMainWorld('downloadDataset', catalogId);
+            await getAPI().callMainWorld('downloadDataset', registryName, catalogId);
         } catch (error: any) {
             this.banner = {
                 text: this._t('benchmark.catalog.downloadError', {
@@ -1252,17 +1380,36 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                    </button>`
                 : refreshButton;
 
+        const activeRegistryName = this.activeRegistryName();
         const body = this.detailRunId
             ? this.renderDetail()
-            : this.activeTab === 'catalog'
-              ? this.renderCatalog()
+            : activeRegistryName !== null
+              ? this.renderCatalog(activeRegistryName)
               : this.activeTab === 'datasets'
                 ? this.renderDatasets()
                 : this.renderRuns();
 
-        const pendingDownloads = this.catalog.filter(
-            (entry) => resolveCatalogInstallState(entry, this.datasets) !== 'installed'
-        ).length;
+        // 每个 registry 一个 Tab：清单项来自哪个 registry，就在哪个 Tab 里展示
+        const registryTabs = this.registries
+            .map((registry) => {
+                const tabId = registryTabId(registry.name);
+                const count = this.registryCounts.get(registry.name) ?? 0;
+                return `<button type="button" class="seg-item ${this.activeTab === tabId ? 'active' : ''}" data-action="tab" data-tab="${escapeHtml(tabId)}">
+                            ${escapeHtml(registry.displayName || registry.name)}${count > 0 ? `<span class="seg-badge">${count}</span>` : ''}
+                        </button>`;
+            })
+            .join('');
+        // registry 列表还没回来时先不画 Tab 条：否则会闪一帧「没有一个 Tab 被选中」的半截页签
+        const tabs =
+            this.activeTab === ''
+                ? ''
+                : `${registryTabs}
+                        <button type="button" class="seg-item ${this.activeTab === 'datasets' ? 'active' : ''}" data-action="tab" data-tab="datasets">
+                            ${escapeHtml(this._t('benchmark.tab.datasets'))}${this.datasets.length > 0 ? `<span class="seg-badge">${this.datasets.length}</span>` : ''}
+                        </button>
+                        <button type="button" class="seg-item ${this.activeTab === 'history' ? 'active' : ''}" data-action="tab" data-tab="history">
+                            ${escapeHtml(this._t('benchmark.tab.history'))}${this.runs.length > 0 ? `<span class="seg-badge">${this.runs.length}</span>` : ''}
+                        </button>`;
 
         return `
         <div class="app">
@@ -1270,15 +1417,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <div class="header-title">${escapeHtml(this._t('benchmark.title'))}</div>
                 <div class="seg-row">
                     <div class="seg-control">
-                        <button type="button" class="seg-item ${this.activeTab === 'catalog' ? 'active' : ''}" data-action="tab" data-tab="catalog">
-                            ${escapeHtml(this._t('benchmark.tab.catalog'))}${pendingDownloads > 0 ? `<span class="seg-badge">${pendingDownloads}</span>` : ''}
-                        </button>
-                        <button type="button" class="seg-item ${this.activeTab === 'datasets' ? 'active' : ''}" data-action="tab" data-tab="datasets">
-                            ${escapeHtml(this._t('benchmark.tab.datasets'))}${this.datasets.length > 0 ? `<span class="seg-badge">${this.datasets.length}</span>` : ''}
-                        </button>
-                        <button type="button" class="seg-item ${this.activeTab === 'history' ? 'active' : ''}" data-action="tab" data-tab="history">
-                            ${escapeHtml(this._t('benchmark.tab.history'))}${this.runs.length > 0 ? `<span class="seg-badge">${this.runs.length}</span>` : ''}
-                        </button>
+                        ${tabs}
                     </div>
                     <div class="header-actions">${actions}</div>
                 </div>
@@ -1294,14 +1433,15 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         </div>`;
     }
 
-    // ── 测评集下载 ─────────────────────────────────────────────────────────
+    // ── 测评集下载（每个 registry 一个 Tab） ─────────────────────────────────
 
-    private renderCatalog(): string {
-        // 首次挂载/切页签时清单还没回来，先转圈；否则会先闪一下「暂无可下载的测评集」
-        if ((this.loading || this.catalogLoading > 0) && this.catalog.length === 0) {
+    private renderCatalog(registryName: string): string {
+        const catalog = this.catalogOf(registryName);
+        // 首次挂载/切 Tab 时清单还没回来，先转圈；否则会先闪一下空态
+        if ((this.loading || this.catalogLoading > 0) && catalog.length === 0) {
             return `<div class="loading-state"><div class="spinner"></div></div>`;
         }
-        if (this.catalog.length === 0) {
+        if (catalog.length === 0) {
             return `
             <div class="empty-state">
                 <div class="empty-icon">⤓</div>
@@ -1309,20 +1449,20 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 <div class="empty-hint">${escapeHtml(this._t('benchmark.catalog.emptyHint'))}</div>
             </div>`;
         }
-        const cards = this.catalog.map((entry) => this.renderCatalogCard(entry)).join('');
+        const cards = catalog.map((entry) => this.renderCatalogCard(registryName, entry)).join('');
         return `<div class="card-grid">${cards}</div>`;
     }
 
-    private renderCatalogCard(entry: CatalogDatasetEntry): string {
+    private renderCatalogCard(registryName: string, entry: BenchmarkSummary): string {
         const colors = colorFor(entry.name);
         const initial = entry.name.trim().charAt(0) || 'B';
         const tags = entry.tracks
             .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)}</span>`)
             .join('');
         const description = entry.description ? `<div class="card-desc">${escapeHtml(entry.description)}</div>` : '';
-        const pill = this.catalogStatusView(entry);
+        const pill = this.catalogStatusView(registryName, entry);
         return `
-        <article class="dataset-card" data-action="open-catalog" data-catalog-id="${escapeHtml(entry.id)}">
+        <article class="dataset-card" data-action="open-catalog" data-registry-name="${escapeHtml(registryName)}" data-catalog-id="${escapeHtml(entry.id)}">
             <div class="card-header">
                 <div class="card-icon" style="background:${colors.bg};color:${colors.text}">${escapeHtml(initial)}</div>
                 <div class="card-info">
@@ -1332,7 +1472,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                         ${escapeHtml(this._t('benchmark.catalog.version', { version: entry.version }))}
                     </div>
                 </div>
-                <span class="status-pill ${pill.className}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
+                <span class="status-pill ${pill.className}" data-registry-name="${escapeHtml(registryName)}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
             </div>
             ${description}
             <div class="card-footer">
@@ -1342,8 +1482,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     /** 卡片/弹窗右上角的状态标签：下载中 > 下载失败 > 安装状态 */
-    private catalogStatusView(entry: CatalogDatasetEntry): { className: string; label: string } {
-        const state = this.downloads.get(entry.id);
+    private catalogStatusView(registryName: string, entry: BenchmarkSummary): { className: string; label: string } {
+        const state = this.downloadStateOf(registryName, entry.id);
         if (state?.status === 'installing') {
             return { className: 'running', label: this._t('benchmark.catalog.installing') };
         }
@@ -1388,7 +1528,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         return `<div class="card-grid">${cards}</div>`;
     }
 
-    private renderDatasetCard(dataset: DatasetSummary): string {
+    private renderDatasetCard(dataset: InstalledBenchmarkSummary): string {
         const colors = colorFor(dataset.name);
         const initial = dataset.name.trim().charAt(0) || 'B';
         const tags = dataset.tracks
@@ -2000,17 +2140,18 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     private renderCatalogModal(): string {
-        const catalogId = this.catalogModalId;
-        if (!catalogId) return '';
-        const entry = this.catalog.find((item) => item.id === catalogId);
+        const modal = this.catalogModal;
+        if (!modal) return '';
+        const { registryName, catalogId } = modal;
+        const entry = this.catalogModalEntry();
         if (!entry) return '';
         const colors = colorFor(entry.name);
         const initial = entry.name.trim().charAt(0) || 'B';
         const local = findLocalDatasetByName(this.datasets, entry.name);
         const installState = resolveCatalogInstallState(entry, this.datasets);
-        const state = this.downloads.get(catalogId);
+        const state = this.downloadStateOf(registryName, catalogId);
         const busy = state?.status === 'downloading' || state?.status === 'installing';
-        const pill = this.catalogStatusView(entry);
+        const pill = this.catalogStatusView(registryName, entry);
         // 本地 meta 可能没写版本号（dataset.json 里 version 可省略），这时不摆一个空的「本地版本 v」
         const localVersionSuffix = local?.version.trim()
             ? ` · ${escapeHtml(this._t('benchmark.catalog.installedVersion', { version: local.version.trim() }))}`
@@ -2059,7 +2200,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 installState === 'update-available'
                     ? this._t('benchmark.action.update')
                     : this._t('benchmark.action.download');
-            primaryButton = `<button type="button" class="btn btn-primary" data-action="download-dataset" data-catalog-id="${escapeHtml(entry.id)}">${escapeHtml(label)}</button>`;
+            primaryButton = `<button type="button" class="btn btn-primary" data-action="download-dataset" data-registry-name="${escapeHtml(registryName)}" data-catalog-id="${escapeHtml(entry.id)}">${escapeHtml(label)}</button>`;
         }
 
         return `
@@ -2074,7 +2215,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                             ${escapeHtml(this._t('benchmark.catalog.version', { version: entry.version }))}${localVersionSuffix}
                         </div>
                     </div>
-                    <span class="status-pill ${pill.className}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
+                    <span class="status-pill ${pill.className}" data-registry-name="${escapeHtml(registryName)}" data-catalog-status="${escapeHtml(entry.id)}">${escapeHtml(pill.label)}</span>
                     <button type="button" class="modal-close" data-action="close-catalog">✕</button>
                 </div>
                 <div class="modal-body">
@@ -2144,9 +2285,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private patchDownloadProgress(): void {
         this.patchCatalogStatusPills();
         const root = this.shadowRoot;
-        const catalogId = this.catalogModalId;
-        if (!root || !catalogId) return;
-        const state = this.downloads.get(catalogId);
+        const modal = this.catalogModal;
+        if (!root || !modal) return;
+        const state = this.downloadStateOf(modal.registryName, modal.catalogId);
         if (!state) return;
 
         const view = this.downloadProgressView(state);
@@ -2173,9 +2314,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const root = this.shadowRoot;
         if (!root) return;
         root.querySelectorAll<HTMLElement>('[data-catalog-status]').forEach((element) => {
-            const entry = this.catalog.find((item) => item.id === element.dataset.catalogStatus);
+            const registryName = element.dataset.registryName ?? '';
+            const entry = this.catalogOf(registryName).find((item) => item.id === element.dataset.catalogStatus);
             if (!entry) return;
-            const view = this.catalogStatusView(entry);
+            const view = this.catalogStatusView(registryName, entry);
             const className = `status-pill ${view.className}`;
             if (element.className !== className) element.className = className;
             if (element.textContent !== view.label) element.textContent = view.label;

@@ -92,6 +92,31 @@ test('automatic installation leaves active tasks and the running application unt
     assert.deepEqual(calls, ['service']);
 });
 
+test('check treats a prerelease local build as older than the same stable release', async (t) => {
+    // 设置界面「检查更新」：本地是 0.3.7-beta.1 这类预发布/开发构建时，
+    // 远端 0.3.7 应当算作有新版本，而不是因为本地版本不是正式版就报错
+    const { coordinator, calls, root } = createCoordinator({ currentVersion: '0.3.7-beta.1' });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const state = await coordinator.checkForUpdates();
+
+    assert.equal(state.status, 'installed');
+    assert.deepEqual(calls, ['service']);
+});
+
+test('check reports up to date when the release is not newer than the local version', async (t) => {
+    for (const currentVersion of ['0.3.7', '0.3.8']) {
+        const { coordinator, calls, root } = createCoordinator({ currentVersion });
+        t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+        const state = await coordinator.checkForUpdates();
+
+        // 远端落后于本地时不能把降级当成更新
+        assert.equal(state.status, 'upToDate', `currentVersion=${currentVersion}`);
+        assert.deepEqual(calls, []);
+    }
+});
+
 test('a service busy response is shown as an error without falling back to the legacy helper', async (t) => {
     const { coordinator, calls, root } = createCoordinator({
         submitToService: async () => ({
@@ -167,6 +192,30 @@ test('restore makes a pending package available for automatic resubmission', asy
     assert.equal(state.version, '0.3.7');
     assert.equal(await restored.submitPendingUpdate(), true);
     assert.equal(restored.getState().status, 'installed');
+});
+
+test('restore discards a ready record whose version is not a valid SemVer', async (t) => {
+    const { coordinator, root } = createCoordinator();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const installerPath = path.join(root, 'OpenDesk-0.3.7-Setup.exe');
+    fs.writeFileSync(installerPath, 'installer');
+    fs.writeFileSync(
+        path.join(root, 'ready.json'),
+        JSON.stringify({
+            requestId: '00000000-0000-4000-8000-000000000002',
+            // 版本号写坏：isNewerVersion 对解析不了的版本会退化成「字符串不相等」，
+            // 这条记录必须在这里被拦住，否则一个坏版本号就能绕过「必须比本地新」
+            version: 'latest',
+            installerPath,
+            sha256: 'b'.repeat(64)
+        })
+    );
+
+    const state = await coordinator.restore();
+
+    assert.equal(state.status, 'idle');
+    assert.equal(fs.existsSync(path.join(root, 'ready.json')), false);
+    assert.equal(fs.existsSync(installerPath), false);
 });
 
 test('manual restart stops active work only after installation has completed', async (t) => {

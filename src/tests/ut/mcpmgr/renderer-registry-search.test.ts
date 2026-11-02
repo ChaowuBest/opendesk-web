@@ -9,6 +9,12 @@ describe('MCP manager registry search experience', () => {
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
+        // 断言文案取自 zh-CN 词条；Node 的全局 navigator.language 随运行环境解析
+        //（本地中文环境得 zh-CN，英文 CI 得 en-US），不锁定会让「刷新中」断言在英文环境翻转
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { language: 'zh-CN', languages: ['zh-CN'] },
+            configurable: true
+        });
         Object.assign(globalThis, {
             window,
             document: window.document,

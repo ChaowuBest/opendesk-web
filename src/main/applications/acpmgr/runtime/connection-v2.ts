@@ -23,6 +23,7 @@ import * as acpV2 from '@agentclientprotocol/sdk/experimental/v2';
 import type { AcpAgentProfile } from '../common.js';
 import type { AcpClientConnection, AcpClientHandlers, AcpConnectionHandle } from './connection.js';
 import { t } from '../../../../locale/index.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
 
 type V2Target = acpV2.Stream | acpV2.AgentApp;
 const MAX_TOOL_CONTENT_ITEMS = 10_000;
@@ -415,7 +416,7 @@ export function createV2ConnectionHandle(
                 info: {
                     name: params.clientInfo?.name ?? 'OpenDesk',
                     title: params.clientInfo?.title,
-                    version: params.clientInfo?.version ?? '0.3.4'
+                    version: params.clientInfo?.version ?? OPENDESK_RUNTIME_VERSION
                 }
             });
             capabilities = result.capabilities;

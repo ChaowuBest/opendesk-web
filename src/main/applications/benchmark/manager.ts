@@ -41,16 +41,17 @@ import {
     toSafeDirName,
     type CaseRunState,
     type CaseSpec,
-    type CatalogDatasetEntry,
+    type BenchmarkSummary,
     type DatasetManifest,
-    type DatasetSummary,
+    type InstalledBenchmarkSummary,
     type DatasetTrackRef,
     type DownloadState,
+    type ParseDatasetManifestOptions,
     type RunListItem,
     type RunRecord,
     type RunStatus
 } from './common.js';
-import { findLocalDatasetByName } from './catalog-common.js';
+import { downloadStateKey, findLocalDatasetByName } from './catalog-common.js';
 
 const META_FILE = 'benchmark-meta.json';
 const RUN_FILE = 'run.json';
@@ -123,14 +124,14 @@ export class BenchmarkManager {
 
     // ── 测评集 ─────────────────────────────────────────────────────────────
 
-    listDatasets(): DatasetSummary[] {
-        const result: DatasetSummary[] = [];
+    listDatasets(): InstalledBenchmarkSummary[] {
+        const result: InstalledBenchmarkSummary[] = [];
         for (const entry of this.safeReadDir(this.datasetsDir)) {
             const datasetDir = path.join(this.datasetsDir, entry);
             const metaPath = path.join(datasetDir, META_FILE);
             if (!fs.existsSync(metaPath)) continue;
             try {
-                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as DatasetSummary;
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as InstalledBenchmarkSummary;
                 if (!meta?.id) continue;
                 result.push(meta);
             } catch (error) {
@@ -140,7 +141,7 @@ export class BenchmarkManager {
         return result.sort((a, b) => b.importedAt - a.importedAt);
     }
 
-    getDataset(datasetId: string): DatasetSummary | null {
+    getDataset(datasetId: string): InstalledBenchmarkSummary | null {
         let metaPath: string;
         try {
             metaPath = path.join(this.resolveInside(this.datasetsDir, datasetId), META_FILE);
@@ -150,13 +151,13 @@ export class BenchmarkManager {
         }
         if (!fs.existsSync(metaPath)) return null;
         try {
-            return JSON.parse(fs.readFileSync(metaPath, 'utf8')) as DatasetSummary;
+            return JSON.parse(fs.readFileSync(metaPath, 'utf8')) as InstalledBenchmarkSummary;
         } catch {
             return null;
         }
     }
 
-    async importDataset(archivePath: string): Promise<DatasetSummary> {
+    async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         return this.installArchive(archivePath, {});
     }
 
@@ -170,24 +171,28 @@ export class BenchmarkManager {
      *
      * 本地已有同名测评集时按「更新」处理：沿用原 datasetId 覆盖目录，
      * 这样历史测评记录（按 datasetId 关联）不会因为换 id 变成孤儿。
+     *
+     * @param options.registryName 清单来自哪个 registry：清单项 id 只在同一 registry 内唯一
      */
     async downloadDataset(
-        entry: CatalogDatasetEntry,
-        options: { fetchImpl?: typeof fetch; stallTimeoutMs?: number } = {}
-    ): Promise<DatasetSummary> {
-        const current = this.downloads.get(entry.id);
+        entry: BenchmarkSummary,
+        options: { registryName: string; fetchImpl?: typeof fetch; stallTimeoutMs?: number }
+    ): Promise<InstalledBenchmarkSummary> {
+        const key = downloadStateKey(options.registryName, entry.id);
+        const current = this.downloads.get(key);
         if (current && (current.status === 'downloading' || current.status === 'installing')) {
             throw new BenchmarkDataError(t('error.downloadInProgress'));
         }
         const fetchImpl = options.fetchImpl ?? globalThis.fetch;
         const state: DownloadState = {
+            registryName: options.registryName,
             catalogId: entry.id,
             status: 'downloading',
             receivedBytes: 0,
             totalBytes: null,
             error: ''
         };
-        this.downloads.set(entry.id, state);
+        this.downloads.set(key, state);
 
         const archivePath = path.join(this.tmpDir, `download-${crypto.randomUUID()}${downloadExtension(entry)}`);
         try {
@@ -234,8 +239,8 @@ export class BenchmarkManager {
      */
     private async installArchive(
         archivePath: string,
-        options: { catalog?: CatalogDatasetEntry }
-    ): Promise<DatasetSummary> {
+        options: { catalog?: BenchmarkSummary }
+    ): Promise<InstalledBenchmarkSummary> {
         const normalized = archivePath.trim();
         if (!fs.existsSync(normalized)) {
             throw new BenchmarkDataError(t('error.fileNotFound', { file: normalized }));
@@ -260,6 +265,8 @@ export class BenchmarkManager {
             if (!datasetRoot) {
                 throw new BenchmarkDataError(t('error.datasetJsonMissing'));
             }
+            // 新装进来的测评集必须是合法 SemVer：放行自由文本版本会让它永远低于清单版本，
+            // 每次打开下载中心都提示更新。历史数据只在读取时放行，见 runDataset 处
             const manifest = this.readDatasetManifest(path.join(datasetRoot, 'dataset.json'));
             if (options.catalog && manifest.name.trim().toLowerCase() !== options.catalog.name.trim().toLowerCase()) {
                 // 下载地址可能被替换或镜像配错，装进来的东西和清单对不上就不要污染本地测评集
@@ -286,7 +293,7 @@ export class BenchmarkManager {
             const targetDir = path.join(this.datasetsDir, id);
             fs.mkdirSync(path.dirname(targetDir), { recursive: true });
 
-            const summary: DatasetSummary = {
+            const summary: InstalledBenchmarkSummary = {
                 id,
                 name: manifest.name,
                 description: manifest.description,
@@ -411,7 +418,8 @@ export class BenchmarkManager {
         if (!fs.existsSync(datasetJsonPath)) {
             throw new BenchmarkDataError(t('error.datasetInvalidState'));
         }
-        const manifest = this.readDatasetManifest(datasetJsonPath);
+        // 本地已安装的测评集可能是早期版本装的，版本号未必是 SemVer，读取时放行而不是判定损坏
+        const manifest = this.readDatasetManifest(datasetJsonPath, { allowLegacyVersion: true });
         const scanned = this.scanDataset(datasetDir, manifest);
         const allTrackIds = scanned.tracks.map((track) => track.id);
         const requested = Array.isArray(options.tracks) && options.tracks.length > 0 ? options.tracks : allTrackIds;
@@ -783,14 +791,14 @@ export class BenchmarkManager {
     // ── 工具方法 ───────────────────────────────────────────────────────────
 
     /** 读取并校验 dataset.json；JSON 语法错误也要转成可读的本地化错误 */
-    private readDatasetManifest(datasetJsonPath: string): DatasetManifest {
+    private readDatasetManifest(datasetJsonPath: string, options: ParseDatasetManifestOptions = {}): DatasetManifest {
         let raw: unknown;
         try {
             raw = JSON.parse(fs.readFileSync(datasetJsonPath, 'utf8'));
         } catch (error) {
             throw new BenchmarkDataError(t('error.invalidDataset', { reason: toErrorMessage(error) }));
         }
-        return parseDatasetManifest(raw);
+        return parseDatasetManifest(raw, options);
     }
 
     /** 流式下载到本地文件，边写边回调进度 */
@@ -991,7 +999,7 @@ function isInside(baseDir: string, targetPath: string): boolean {
 }
 
 /** 从下载地址推断压缩包后缀，便于复用按后缀分派的解压逻辑 */
-function downloadExtension(entry: CatalogDatasetEntry): string {
+function downloadExtension(entry: BenchmarkSummary): string {
     let pathname: string;
     try {
         pathname = new URL(entry.downloadUrl).pathname;

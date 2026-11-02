@@ -1,7 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { OPENDESK_RUNTIME_VERSION, resolvePluginEntry } from '../../../main/applications/pluginmgr/discovery/loader.js';
+import { resolvePluginEntry } from '../../../main/applications/pluginmgr/discovery/loader.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../main/utils/version.js';
 import { loadPluginResources, readPluginManifest } from '../../../main/applications/pluginmgr/discovery/manifest.js';
 
 describe('OpenDesk plugin loader', () => {

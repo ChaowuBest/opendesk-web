@@ -10,20 +10,19 @@
  */
 
 import { z } from 'zod';
-import path from 'node:path';
 import { BaseApplication, type EventDecl } from '../base.js';
 import { t } from './locale/index.js';
+import { getLocale } from '../../../locale/index.js';
 import { BenchmarkManager } from './manager.js';
 import {
-    BENCHMARK_CATALOG_CACHE_FILE,
-    findCatalogDataset,
-    loadCatalogDatasets,
-    type LoadCatalogOptions
-} from './catalog.js';
+    createBenchmarkRegistries,
+    resolveBenchmarkRegistryDisplayName,
+    type BaseBenchmarkRegistry
+} from './registry/index.js';
 import {
     BenchmarkDataError,
-    type CatalogDatasetEntry,
-    type DatasetSummary,
+    type BenchmarkSummary,
+    type InstalledBenchmarkSummary,
     type DownloadState,
     type ModelOption,
     type RunListItem,
@@ -51,6 +50,8 @@ function toPlatformFetchInput(input: RequestInfo | URL): string | URL {
 export class BenchmarkApplication extends BaseApplication {
     private manager: BenchmarkManager | null = null;
     private managerInit: Promise<void> | null = null;
+    /** 当前生效的 registry 列表，每个 registry 在界面上占一个 Tab */
+    private registries: BaseBenchmarkRegistry[] = [];
 
     constructor() {
         super('benchmark');
@@ -79,15 +80,16 @@ export class BenchmarkApplication extends BaseApplication {
     async beforeExit(): Promise<void> {
         this.manager = null;
         this.managerInit = null;
+        this.registries = [];
     }
 
     // ── 供渲染层调用（callMainWorld） ───────────────────────────────────────
 
-    async listDatasets(): Promise<DatasetSummary[]> {
+    async listDatasets(): Promise<InstalledBenchmarkSummary[]> {
         return this.requireManager().listDatasets();
     }
 
-    async importDataset(archivePath: string): Promise<DatasetSummary> {
+    async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         if (!archivePath || typeof archivePath !== 'string') {
             throw new BenchmarkDataError(t('error.operationFailed'));
         }
@@ -98,9 +100,30 @@ export class BenchmarkApplication extends BaseApplication {
         this.requireManager().deleteDataset(datasetId);
     }
 
-    /** 测评集下载中心的可下载清单（5 分钟内复用缓存，`forceRefresh` 强制重新拉取） */
-    async listCatalogDatasets(forceRefresh?: boolean): Promise<CatalogDatasetEntry[]> {
-        return loadCatalogDatasets(this.catalogLoadOptions(forceRefresh === true));
+    /** 当前启用哪些测评集 registry（每个 registry 在界面上占一个 Tab） */
+    async listBenchmarkRegistries(): Promise<{ name: string; displayName: string }[]> {
+        await this.ensureManager();
+        const locale = getLocale();
+        return this.registries.map((registry) => ({
+            name: registry.name,
+            displayName: resolveBenchmarkRegistryDisplayName(registry.displayName, locale)
+        }));
+    }
+
+    /** 某个 registry 收录了多少个测评集 */
+    async getBenchmarkCount(registryName: string): Promise<number> {
+        await this.ensureManager();
+        return this.requireRegistry(registryName).getBenchmarkCount();
+    }
+
+    /**
+     * 某个 registry 的可下载清单（清单有 5 分钟缓存，`forceRefresh` 强制重新拉取）。
+     */
+    async listCatalogDatasets(registryName: string, forceRefresh?: boolean): Promise<BenchmarkSummary[]> {
+        await this.ensureManager();
+        const registry = this.requireRegistry(registryName);
+        if (forceRefresh === true) registry.invalidate?.();
+        return registry.getCatalog();
     }
 
     /** 当前所有下载任务的状态（渲染层据此画进度条） */
@@ -109,14 +132,16 @@ export class BenchmarkApplication extends BaseApplication {
     }
 
     /**
-     * 下载清单里的某个测评集。
+     * 下载某个 registry 清单里的某个测评集。
      *
      * 下载在后台进行：进度通过 downloadsChanged 事件推动，完成后用通知中心告知用户，
      * 所以这里拿到任务已启动就返回，不阻塞渲染层。
      */
-    async downloadDataset(catalogId: string): Promise<void> {
+    async downloadDataset(registryName: string, catalogId: string): Promise<void> {
+        await this.ensureManager();
+        const registry = this.requireRegistry(registryName);
         const id = typeof catalogId === 'string' ? catalogId : '';
-        const entry = await findCatalogDataset(id, this.catalogLoadOptions());
+        const entry = (await registry.getCatalog()).find((item) => item.id === id);
         if (!entry) {
             throw new BenchmarkDataError(t('error.catalogNotFound'));
         }
@@ -124,6 +149,7 @@ export class BenchmarkApplication extends BaseApplication {
         const notifications = NotificationManager.getInstance();
         void manager
             .downloadDataset(entry, {
+                registryName: registry.name,
                 fetchImpl: (input, init) => getPlatform().fetch(toPlatformFetchInput(input), init)
             })
             .then((dataset) => {
@@ -280,14 +306,13 @@ export class BenchmarkApplication extends BaseApplication {
 
     // ── 内部 ──────────────────────────────────────────────────────────────
 
-    /** 清单请求走平台 fetch，以继承代理配置（本地调试仍可由环境变量指向本地文件） */
-    private catalogLoadOptions(forceRefresh = false): LoadCatalogOptions {
-        return {
-            fetchImpl: (input, init) => getPlatform().fetch(toPlatformFetchInput(input), init),
-            // 断网时回退到上次成功拉到的清单
-            cacheFile: path.join(this.getDataDirectory(), BENCHMARK_CATALOG_CACHE_FILE),
-            forceRefresh
-        };
+    private requireRegistry(registryName: string): BaseBenchmarkRegistry {
+        const name = typeof registryName === 'string' ? registryName.trim() : '';
+        const registry = this.registries.find((item) => item.name === name);
+        if (!registry) {
+            throw new BenchmarkDataError(t('error.registryUnknown', { name: name || '' }));
+        }
+        return registry;
     }
 
     private requireManager(): BenchmarkManager {
@@ -303,6 +328,11 @@ export class BenchmarkApplication extends BaseApplication {
             this.managerInit = (async () => {
                 const manager = new BenchmarkManager(this.getDataDirectory());
                 manager.init();
+                // 清单请求走平台 fetch，以继承代理配置（本地调试仍可由环境变量指向本地文件）
+                this.registries = createBenchmarkRegistries({
+                    dataDirectory: this.getDataDirectory(),
+                    fetchImpl: (input, init) => getPlatform().fetch(toPlatformFetchInput(input), init)
+                });
                 manager.onChange(() => {
                     void this.emitEvent('datasetsChanged').catch(() => undefined);
                     void this.emitEvent('runsChanged').catch(() => undefined);

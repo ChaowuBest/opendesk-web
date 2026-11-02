@@ -1,18 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-    compareVersions,
     fetchLatestRelease,
     parseNewsReleasePage,
     parseReleaseResponse
 } from '../../../../main/updater/release-feed.js';
-
-test('compareVersions compares stable numeric versions', () => {
-    assert.equal(compareVersions('0.3.6', '0.3.5'), 1);
-    assert.equal(compareVersions('0.3.5', '0.3.5'), 0);
-    assert.equal(compareVersions('0.3.4', '0.3.5'), -1);
-    assert.throws(() => compareVersions('0.3.6-beta.1', '0.3.5'), /stable semantic version/);
-});
 
 test('parseReleaseResponse selects the Windows release installer from GitCode', () => {
     const sha256 = 'b'.repeat(64);

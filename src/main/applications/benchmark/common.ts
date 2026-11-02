@@ -18,6 +18,7 @@
  */
 
 import { t } from './locale/index.js';
+import { normalizeVersion } from '../../utils/version.js';
 
 /** 测评集 dataset.json 中声明的 track 引用 */
 export interface DatasetTrackRef {
@@ -66,7 +67,8 @@ export interface DatasetTrackSummary {
     caseCount: number;
 }
 
-export interface DatasetSummary {
+/** 本地已安装测评集的摘要（写入 benchmark-meta.json） */
+export interface InstalledBenchmarkSummary {
     id: string;
     name: string;
     description: string;
@@ -78,11 +80,11 @@ export interface DatasetSummary {
 }
 
 /**
- * 测评集下载中心的一条清单项。
+ * 某个 registry 里的一条测评集摘要（下载清单项）。
  * 除下载地址外，其余字段语义与测评集自带的 dataset.json 保持一致。
  */
-export interface CatalogDatasetEntry {
-    /** 清单内稳定 id，不随版本变化 */
+export interface BenchmarkSummary {
+    /** 清单内稳定 id，不随版本变化（仅在同一 registry 内唯一） */
     id: string;
     name: string;
     description: string;
@@ -97,6 +99,8 @@ export type DownloadStatus = 'downloading' | 'installing' | 'done' | 'failed';
 
 /** 单个测评集的下载进度（主进程内存态，供渲染层订阅刷新） */
 export interface DownloadState {
+    /** 清单来自哪个 registry：不同 registry 的清单项 id 可以重名 */
+    registryName: string;
     catalogId: string;
     status: DownloadStatus;
     receivedBytes: number;
@@ -223,11 +227,19 @@ function asPositiveNumber(value: unknown, fallback: number): number {
     return Number.isFinite(num) && num > 0 ? num : fallback;
 }
 
+export interface ParseDatasetManifestOptions {
+    /**
+     * 容忍历史版本号（`2024-09` 这类非 SemVer 自由文本），保留原值而不是报错。
+     * 仅用于读取本地已安装的旧测评集；线上清单与安装入口保持严格校验。
+     */
+    allowLegacyVersion?: boolean;
+}
+
 /**
  * 解析并校验 dataset.json。
  * 兼容 tracks 为字符串数组或对象数组两种写法。
  */
-export function parseDatasetManifest(raw: unknown): DatasetManifest {
+export function parseDatasetManifest(raw: unknown, options: ParseDatasetManifestOptions = {}): DatasetManifest {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         throw new BenchmarkDataError(t('error.datasetManifestNotObject'));
     }
@@ -264,11 +276,21 @@ export function parseDatasetManifest(raw: unknown): DatasetManifest {
     if (tracks.length === 0) {
         throw new BenchmarkDataError(t('error.datasetTrackEmpty'));
     }
+    const declaredVersion = asString(obj.version);
+    let version = normalizeVersion(declaredVersion);
+    if (version === undefined) {
+        if (!declaredVersion || options.allowLegacyVersion) {
+            // 没声明版本，或本地历史数据里的自由文本版本：原样保留，比较时视为最低优先级
+            version = declaredVersion;
+        } else {
+            throw new BenchmarkDataError(t('error.datasetVersionInvalid', { version: declaredVersion }));
+        }
+    }
     return {
         name,
         description: asString(obj.description),
         homepage: asString(obj.homepage) || asString(obj.url) || asString(obj.website),
-        version: asString(obj.version),
+        version,
         tracks
     };
 }
