@@ -36,7 +36,7 @@ import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import { resolveModelReasoningEfforts, resolveModelVisionSupport } from '../../utils/model-context.js';
 import chalk from 'chalk';
-import type { Participant } from '../../plugins/types.js';
+import type { Participant } from '../../aikernel/types/index.js';
 import type { TodoChatModelCatalog, TodoWorkspaceConfig } from './common.js';
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
 

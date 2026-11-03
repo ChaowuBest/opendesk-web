@@ -30,7 +30,7 @@ import type {
     PermissionUserResponse
 } from '../../aikernel/security/permission.js';
 import { logger } from '../../utils/logger.js';
-import type { Participant } from '../../plugins/types.js';
+import type { Participant } from '../../aikernel/types/index.js';
 import { ChannelInteractionService, type ChannelAskUserQuestion, type ChannelAskUserRequest } from './interactions.js';
 import { t as tLocal } from './locale/index.js';
 

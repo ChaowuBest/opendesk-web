@@ -40,7 +40,7 @@ import type {
     ChannelMeta,
     ChannelCapabilities,
     InboundChannelMessage
-} from '../../plugins/types.js';
+} from './types.js';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { getPlatform } from '../../../platforms/base.js';
 
@@ -55,6 +55,18 @@ export interface NativeChannelHostDeps {
     setStatus: (channelId: string, accountId: string, status: ChannelAccountStatus) => void;
     /** 向 OpenDesk 应用事件总线发送扩展事件 */
     emit: (channelId: string, event: string, payload: Record<string, unknown>) => void;
+}
+
+/**
+ * channelmgr 内部的渠道容器：只承载渠道适配器本身。
+ *
+ * 历史版本把原生 channel 包装成 PluginEntry（附带伪造的 manifest / installRecord），
+ * 那些字段从未被读取；插件安装信息统一由 pluginmgr 管理，这里不再重复承载。
+ */
+export interface NativeChannelEntry {
+    /** 与 channelPlugin.id 一致，供状态展示与日志使用 */
+    id: string;
+    channelPlugin: ChannelPlugin;
 }
 
 /** 缓存的账号条目 */
@@ -411,38 +423,15 @@ export class NativeChannelAdapter implements ChannelPlugin {
     }
 }
 
-/** 为原生 Channel 构造伪 PluginEntry，塞入 channelmgr 的 plugins 数组以复用现有流程。 */
-export function createNativeChannelPluginEntry(
-    channel: Channel,
-    deps: NativeChannelHostDeps
-): { pluginId: string; entry: import('../../plugins/types.js').PluginEntry } {
-    const adapter = new NativeChannelAdapter(channel, deps);
-    const pluginId = channel.meta.id;
+/** 为原生 Channel 构造 channelmgr 内部条目，塞入 plugins 数组以复用现有流程。 */
+export function createNativeChannelPluginEntry(channel: Channel, deps: NativeChannelHostDeps): NativeChannelEntry {
     return {
-        pluginId,
-        entry: {
-            id: pluginId,
-            manifest: {
-                id: pluginId,
-                name: resolveDisplayLabel(channel.meta.label, pluginId),
-                description: channel.meta.description,
-                kind: 'native-channel',
-                channels: [pluginId]
-            },
-            installRecord: {
-                id: pluginId,
-                npmSpec: `builtin:${pluginId}`,
-                installedAt: new Date().toISOString(),
-                enabled: true,
-                source: 'local'
-            },
-            channelPlugin: adapter,
-            rootDir: undefined
-        }
+        id: channel.meta.id,
+        channelPlugin: new NativeChannelAdapter(channel, deps)
     };
 }
 
 /** 便捷断言：entry.channelPlugin 是否为原生 channel 适配器。 */
-export function isNativeChannelEntry(entry: import('../../plugins/types.js').PluginEntry): boolean {
+export function isNativeChannelEntry(entry: NativeChannelEntry): boolean {
     return entry.channelPlugin instanceof NativeChannelAdapter;
 }

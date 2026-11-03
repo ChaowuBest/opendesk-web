@@ -1,7 +1,7 @@
 import { afterAll, jest } from '@jest/globals';
 import { ChannelMessageRouter } from '../../../main/applications/channelmgr/router.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
-import type { InboundChannelMessage } from '../../../main/plugins/types.js';
+import type { InboundChannelMessage } from '../../../main/applications/channelmgr/types.js';
 
 // 避免测试环境依赖真实 agent system prompt 构建（SkillRegistry / 文件系统等）
 const originalBuildSystemPrompt = TaskState.prototype.buildSystemPrompt;

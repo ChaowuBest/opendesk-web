@@ -10,56 +10,12 @@
  */
 
 /**
- * Plugin system type definitions.
- * Core types for the plugin infrastructure.
+ * 渠道运行时内部契约。
+ *
+ * 这些类型描述 channelmgr 复用插件 channel 所需的适配器形状（配置/出站/状态/网关），
+ * 与插件作者侧的 plugin-sdk `Channel` 接口不是同一层：前者是宿主内部描述符，
+ * 后者是插件实现契约。仅 channelmgr 及其测试可以引用本文件。
  */
-
-// ── Plugin Manifest & Install Records ────────────────────────────────────────
-
-export interface PluginManifest {
-    id: string;
-    name?: string;
-    description?: string;
-    version?: string;
-    kind?: string;
-    channels?: string[];
-    skills?: string[];
-    configSchema?: object;
-}
-
-export interface PluginInstallRecord {
-    id: string;
-    npmSpec: string;
-    installedAt: string;
-    enabled: boolean;
-    source: 'npm' | 'local' | 'url';
-    path?: string;
-    /** Original URL if source is 'url' */
-    url?: string;
-}
-
-export interface PluginEntry {
-    id: string;
-    manifest: PluginManifest;
-    installRecord: PluginInstallRecord;
-    module?: any;
-    channelPlugin?: ChannelPlugin;
-    rootDir?: string;
-}
-
-// ── Participant (for task origin/deliver) ─────────────────────────────────────
-
-export interface Participant {
-    type: 'channel';
-    /** Channel identifier, e.g. 'feishu', 'slack' */
-    channel: string;
-    /** Bot's account within the channel (used as accountId in sendText) */
-    accountId: string;
-    /** Message recipient - senderId for direct messages, groupId for group chats */
-    recipientId: string;
-}
-
-// ── Channel Plugin Types ──────────────────────────────────────────────────────
 
 export type ChannelId = string;
 
@@ -177,8 +133,6 @@ export interface ChannelPlugin<ResolvedAccount = any, Probe = unknown, Audit = u
     /** 原生 channel 的结构化交互（权限审批 / askUser 卡片）发送入口 */
     sendInteraction?: (request: any) => Promise<any>;
 }
-
-// ── Plugin Logger ─────────────────────────────────────────────────────────────
 
 export interface PluginLogger {
     info: (...args: any[]) => void;
