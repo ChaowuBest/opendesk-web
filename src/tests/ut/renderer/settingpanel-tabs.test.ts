@@ -1,0 +1,173 @@
+import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { parseHTML } from 'linkedom';
+import { createRendererTranslator } from '../../../renderer/locale.ts';
+
+describe('setting-panel tabs', () => {
+    let window: any;
+    let document: any;
+
+    beforeAll(async () => {
+        const parsed = parseHTML('<!doctype html><html><body></body></html>');
+        window = parsed.window;
+        Object.assign(globalThis, {
+            window,
+            document: window.document,
+            HTMLElement: window.HTMLElement,
+            CustomEvent: window.CustomEvent,
+            Event: window.Event,
+            customElements: window.customElements,
+            requestAnimationFrame: (callback: FrameRequestCallback) => {
+                callback(0);
+                return 0;
+            },
+            cancelAnimationFrame: () => undefined
+        });
+        Object.defineProperty(globalThis, 'navigator', {
+            value: { languages: ['zh-CN'], language: 'zh-CN' },
+            configurable: true
+        });
+        await import('../../../renderer/components/settingpanel.js');
+    });
+
+    beforeEach(() => {
+        document = window.document;
+        document.body.innerHTML = '';
+        window.notificationAPI = { sendNotification: jest.fn(async () => undefined) };
+    });
+
+    function createPanel(locale = 'zh-CN') {
+        const panel = document.createElement('setting-panel') as any;
+        panel.currentData = {
+            locale,
+            resolved_locale: locale,
+            gui_config: {},
+            debug: {},
+            environ: {},
+            applications: {},
+            providers: [],
+            models: []
+        };
+        panel.gatewayHostOptions = [{ value: 'none', label: '无' }];
+        panel._t = createRendererTranslator(panel.currentData);
+        panel.updateDefaultModelSelects = jest.fn();
+        return panel;
+    }
+
+    function tabOrder(panel: any): string[] {
+        return Array.from(panel.querySelectorAll('.sp-nav-item[data-tab]')).map(
+            (btn: Element) => (btn as any).dataset.tab
+        );
+    }
+
+    test('general settings come first and channel settings follow search settings', () => {
+        const panel = createPanel();
+        panel.render();
+
+        const order = tabOrder(panel);
+        expect(order[0]).toBe('general');
+        expect(order[order.indexOf('search') + 1]).toBe('registries');
+        // 新 Tab 不能顶掉原有 Tab
+        expect(order).toEqual(['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard']);
+    });
+
+    test('general tab is the default visible tab', () => {
+        const panel = createPanel();
+        panel.render();
+
+        expect(panel.querySelector('#tab-general')?.classList.contains('hidden')).toBe(false);
+        expect(panel.querySelector('#tab-models')?.classList.contains('hidden')).toBe(true);
+    });
+
+    test('update section lives in the general tab, not the models tab', () => {
+        const panel = createPanel();
+        panel.updateState = { status: 'idle' };
+        panel.render();
+
+        expect(panel.querySelector('#tab-general #software-update-section')).toBeTruthy();
+        expect(panel.querySelector('#tab-models #software-update-section')).toBeNull();
+        // 通用设置区块独立于软件更新区块存在
+        expect(panel.querySelector('#tab-general #general-sections section')).toBeTruthy();
+    });
+
+    test('channel settings tab hosts the benchmark channel component', () => {
+        const panel = createPanel();
+        panel.render();
+
+        const tab = panel.querySelector('#tab-registries');
+        expect(tab).toBeTruthy();
+        expect(tab.querySelector('benchmark-channel-settings')).toBeTruthy();
+    });
+
+    test('switching to the channel settings tab unhides it only', () => {
+        const panel = createPanel();
+        panel.render();
+
+        panel._switchTab('registries');
+
+        expect(panel.querySelector('#tab-registries')?.classList.contains('hidden')).toBe(false);
+        expect(panel.querySelector('#tab-general')?.classList.contains('hidden')).toBe(true);
+        expect(panel.querySelector('#tab-search')?.classList.contains('hidden')).toBe(true);
+    });
+
+    test('channel settings nav label is localized', () => {
+        const zhPanel = createPanel('zh-CN');
+        zhPanel.render();
+        expect(zhPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('渠道设置');
+
+        const enPanel = createPanel('en-US');
+        enPanel.currentData.locale = 'en-US';
+        enPanel.currentData.resolved_locale = 'en-US';
+        enPanel._t = createRendererTranslator(enPanel.currentData);
+        enPanel.render();
+        expect(enPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('Benchmark Channels');
+    });
+
+    test('saving aligns benchmark channels with the main process first', async () => {
+        // 渠道由「渠道设置」组件直接写进主进程配置，面板手里的副本会变旧；
+        // 保存整份配置前必须先对齐，否则刚加/删的渠道会被写回旧值。
+        const panel = createPanel();
+        const order: string[] = [];
+        panel.currentData.applications = { benchmark: { channels: [{ id: 'stale', isEnabled: true }] } };
+        panel.showSaveIndicator = jest.fn();
+        window.settingAPI = {
+            loadSettingObject: jest.fn(async () => {
+                order.push('load');
+                return {
+                    applications: {
+                        benchmark: { enabled: true, channels: [{ id: 'official', isEnabled: false }] }
+                    }
+                };
+            }),
+            saveSettingObjectDetailed: jest.fn(async (data: any) => {
+                order.push('save');
+                return { data, sideEffectFailures: [] };
+            })
+        };
+
+        await panel.saveCurrentData();
+
+        expect(order).toEqual(['load', 'save']);
+        expect(panel.currentData.applications.benchmark).toEqual({
+            enabled: true,
+            channels: [{ id: 'official', isEnabled: false }]
+        });
+    });
+
+    test('a failing channel sync still lets the save proceed', async () => {
+        const panel = createPanel();
+        panel.showSaveIndicator = jest.fn();
+        window.settingAPI = {
+            loadSettingObject: jest.fn(async () => {
+                throw new Error('ipc down');
+            }),
+            saveSettingObjectDetailed: jest.fn(async (data: any) => ({
+                data,
+                sideEffectFailures: []
+            }))
+        };
+
+        await panel.saveCurrentData();
+
+        expect(window.settingAPI.saveSettingObjectDetailed).toHaveBeenCalledTimes(1);
+    });
+});

@@ -195,6 +195,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private _onDataChanged: (() => void) | null = null;
     private _onDownloadsChanged: (() => void) | null = null;
     private _onRunsChanged: (() => void) | null = null;
+    private _onRegistriesChanged: (() => void) | null = null;
 
     private activeTab: TabId = '';
     private detailTab: DetailTab = 'overview';
@@ -203,8 +204,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private registries: BenchmarkRegistryTab[] = [];
     /** 各 registry 的清单，按 registry 名分开存：Tab 之间互不影响 */
     private catalogs = new Map<string, BenchmarkSummary[]>();
-    /** 各 registry 的测评集总数（Tab 角标）；拉不到清单的 registry 没有角标 */
-    private registryCounts = new Map<string, number>();
     private downloads = new Map<string, DownloadState>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
@@ -270,9 +269,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             void this.loadRuns(false);
             if (this.detailRunId) void this.loadDetail(this.detailRunId, false);
         };
+        // 渠道（设置界面 → 渠道设置）变化后，Tab 条要立刻跟着变，不用等整窗重开
+        this._onRegistriesChanged = () => {
+            void this.reloadRegistries();
+        };
         getAPI().subscribe('datasetsChanged', this._onDataChanged);
         getAPI().subscribe('downloadsChanged', this._onDownloadsChanged);
         getAPI().subscribe('runsChanged', this._onRunsChanged);
+        getAPI().subscribe('registriesChanged', this._onRegistriesChanged);
 
         await this.loadRegistries();
         const registryName = this.activeRegistryName();
@@ -284,8 +288,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         ]);
         this.loading = false;
         this.render();
-        // 角标只是锦上添花：主界面先出来，再把各 registry 的测评集数量补上
-        void this.loadRegistryCounts().then(() => this.renderUnlessModalOpen());
     }
 
     disconnectedCallback() {
@@ -300,6 +302,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (this._onRunsChanged) {
             getAPI().unsubscribe('runsChanged');
             this._onRunsChanged = null;
+        }
+        if (this._onRegistriesChanged) {
+            getAPI().unsubscribe('registriesChanged');
+            this._onRegistriesChanged = null;
         }
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
@@ -389,27 +395,30 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     /**
-     * 各 registry 的测评集总数（Tab 角标）。
+     * 渠道配置变化后的增量刷新：重新取 registry 列表、丢掉已消失渠道的本地状态，
+     * 再重画一次界面。
      *
-     * 与清单共用同一份缓存，所以不会额外触发一次下载；某个 registry 拉不到清单时
-     * 只是没有角标，Tab 本身照常显示——一个 registry 挂掉不影响别的 registry。
+     * 这里只重建 Tab 条与当前 Tab 的内容，不重启应用也不重开窗口：设置界面改完渠道
+     * 关掉再切回测评应用时，用户看到的应该已经是新的一组 Tab。
      */
-    private async loadRegistryCounts() {
-        const registries = this.registries;
-        const counts = await Promise.all(
-            registries.map(async (registry) => {
-                try {
-                    const count = await getAPI().callMainWorld<number>('getBenchmarkCount', registry.name);
-                    return typeof count === 'number' ? count : null;
-                } catch {
-                    return null;
-                }
-            })
-        );
-        // 期间 registry 列表可能被重新加载（换语言）过，按名字回填而不是按下标
-        counts.forEach((count, index) => {
-            if (count !== null) this.registryCounts.set(registries[index].name, count);
-        });
+    private async reloadRegistries() {
+        await this.loadRegistries();
+        const alive = new Set(this.registries.map((registry) => registry.name));
+        for (const name of [...this.catalogs.keys()]) {
+            if (!alive.has(name)) this.catalogs.delete(name);
+        }
+        // 清单弹窗指向已被删除/禁用的渠道时，留着它只会画出一张空弹窗把整窗刷新挡住
+        if (this.catalogModal && !alive.has(this.catalogModal.registryName)) {
+            this.catalogModal = null;
+        }
+        // 有弹窗打开时先不重建 DOM（会打断用户输入），弹窗关闭后的那次渲染会带上新 Tab
+        this.renderUnlessModalOpen();
+
+        // 渠道地址可能刚被改过：重新取一次当前渠道的清单（主进程侧的 registry 已重建，
+        // 地址变了就会走新的缓存文件重新下载）
+        const registryName = this.activeRegistryName();
+        if (registryName) await this.loadCatalog(registryName);
+        this.renderUnlessModalOpen();
     }
 
     private async loadCatalog(registryName: string, forceRefresh = false) {
@@ -427,7 +436,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             );
             const list = Array.isArray(entries) ? entries : [];
             this.catalogs.set(registryName, list);
-            this.registryCounts.set(registryName, list.length);
             // 远端清单刷新后，弹窗对应的那一项可能已经下架：留着弹窗只会挡住后续整窗刷新
             if (this.catalogModal?.registryName === registryName && !this.catalogModalEntry()) {
                 this.catalogModal = null;
@@ -1393,9 +1401,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const registryTabs = this.registries
             .map((registry) => {
                 const tabId = registryTabId(registry.name);
-                const count = this.registryCounts.get(registry.name) ?? 0;
                 return `<button type="button" class="seg-item ${this.activeTab === tabId ? 'active' : ''}" data-action="tab" data-tab="${escapeHtml(tabId)}">
-                            ${escapeHtml(registry.displayName || registry.name)}${count > 0 ? `<span class="seg-badge">${count}</span>` : ''}
+                            ${escapeHtml(registry.displayName || registry.name)}
                         </button>`;
             })
             .join('');

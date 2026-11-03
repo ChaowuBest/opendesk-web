@@ -117,9 +117,6 @@ describe('benchmark 测评集下载中心', () => {
         widget.loading = false;
         widget.registries = options.registries ?? [{ name: 'official', displayName: '官方测评集' }];
         widget.catalogs = options.catalogs ?? new Map<string, BenchmarkSummary[]>([['official', [{ ...ENTRY }]]]);
-        widget.registryCounts = new Map(
-            [...widget.catalogs.entries()].map(([name, entries]) => [name, entries.length])
-        );
         widget.activeTab = options.activeTab ?? 'registry:official';
         widget.datasets = options.datasets ?? [];
         widget.downloads = new Map(
@@ -318,15 +315,16 @@ describe('benchmark 测评集下载中心', () => {
         });
     }
 
-    test('每个 registry 占一个独立 Tab，文案用 registry 的显示名', () => {
+    test('每个 registry 占一个独立 Tab，文案只显示 registry 显示名（不带测评集数量）', () => {
         const widget = createMultiRegistryWidget();
 
         const officialTab = tabButton(widget, 'registry:official');
         const communityTab = tabButton(widget, 'registry:community');
         expect(officialTab?.textContent).toContain('官方测评集');
         expect(communityTab?.textContent).toContain('社区测评集');
-        // Tab 角标是该 registry 的测评集数量
-        expect(communityTab?.querySelector('.seg-badge')?.textContent).toBe('1');
+        // 渠道 Tab 后面不再跟测评集数量角标
+        expect(communityTab?.querySelector('.seg-badge')).toBeNull();
+        expect(officialTab?.querySelector('.seg-badge')).toBeNull();
         // 内置 Tab 仍在
         expect(tabButton(widget, 'datasets')).not.toBeNull();
         expect(tabButton(widget, 'history')).not.toBeNull();
@@ -391,39 +389,6 @@ describe('benchmark 测评集下载中心', () => {
         widget.renderUnlessModalOpen();
         expect(widget.shadowRoot.querySelector('.modal-overlay')).toBeNull();
         expect(widget.shadowRoot.querySelector('.empty-state')).not.toBeNull();
-    });
-
-    test('补角标期间 registry 列表被重新加载也不会把数量算到别人头上', async () => {
-        const widget = createWidget({
-            registries: [
-                { name: 'official', displayName: '官方测评集' },
-                { name: 'community', displayName: '社区测评集' }
-            ]
-        });
-        widget.registryCounts = new Map();
-        let releaseOfficial: (count: number) => void = () => undefined;
-        callMainWorld = jest.fn(async (method: string, name: string) => {
-            if (method !== 'getBenchmarkCount') return undefined;
-            if (name === 'official') {
-                return new Promise<number>((resolve) => {
-                    releaseOfficial = resolve;
-                });
-            }
-            return 7;
-        });
-        (globalThis as any).window.applicationAPI.callMainWorld = callMainWorld;
-
-        const pending = widget.loadRegistryCounts();
-        // 期间换语言会重新取 registry 列表，顺序可能变
-        widget.registries = [
-            { name: 'community', displayName: 'Community' },
-            { name: 'official', displayName: 'Official' }
-        ];
-        releaseOfficial(3);
-        await pending;
-
-        expect(widget.registryCounts.get('official')).toBe(3);
-        expect(widget.registryCounts.get('community')).toBe(7);
     });
 
     test('registry 列表还没回来时不画半截 Tab 条', () => {
