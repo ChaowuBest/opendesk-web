@@ -55,6 +55,10 @@ import { downloadStateKey, findLocalDatasetByName } from './catalog-common.js';
 
 const META_FILE = 'benchmark-meta.json';
 const RUN_FILE = 'run.json';
+/** 工作空间占用的缓存时长：已结束的轮次基本不再变化，缓存可以长一点 */
+const RUN_USAGE_TTL_MS = 5 * 60_000;
+/** 扫盘并发上限：再高对机械盘没有收益，反而拖慢单次 readdir/stat */
+const MEASURE_CONCURRENCY = 32;
 /** 下载体积上限：防止清单或镜像给出异常大的文件把磁盘写满 */
 const DOWNLOAD_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 /** 传输停滞上限：连续这么久没有任何字节推进就判定连接假死（0 = 不检测） */
@@ -72,6 +76,67 @@ interface ScannedDataset {
     }>;
 }
 
+/**
+ * 递归量一个目录的占用字节数。
+ *
+ * 目录不存在按 0 算；单个文件/子目录在统计途中被删掉（用例清理工作空间时会这样）就跳过，
+ * 统计本身不该因为这种竞态失败。
+ *
+ * 并发是有意的：一轮的 cases 目录常有十几万文件，串行 stat 实测要一分多钟，
+ * 限并发下能压到十分之一。并发数不拉太高，否则机械盘上的寻道反而更慢。
+ */
+async function measureDirectoryBytes(root: string): Promise<number> {
+    let total = 0;
+    let active = 0;
+    const waiting: Array<() => void> = [];
+    /** 同一时刻最多 MEASURE_CONCURRENCY 个 FS 操作在跑 */
+    const withSlot = async <T>(task: () => Promise<T>): Promise<T> => {
+        if (active < MEASURE_CONCURRENCY) active += 1;
+        else await new Promise<void>((resolve) => waiting.push(resolve));
+        try {
+            return await task();
+        } finally {
+            const next = waiting.shift();
+            // 名额直接转交给排队的调用方，active 不变
+            if (next) next();
+            else active -= 1;
+        }
+    };
+    const walk = async (dir: string): Promise<void> => {
+        const entries = await withSlot(async () => {
+            try {
+                return await fs.promises.readdir(dir, { withFileTypes: true });
+            } catch {
+                return [] as fs.Dirent[];
+            }
+        });
+        // 大目录一次铺开会堆出几十万个 Promise，分批推进入即可，并发由 withSlot 兜住
+        for (let i = 0; i < entries.length; i += MEASURE_CONCURRENCY) {
+            await Promise.all(
+                entries.slice(i, i + MEASURE_CONCURRENCY).map(async (entry) => {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        await walk(full);
+                        return;
+                    }
+                    if (!entry.isFile()) return;
+                    const size = await withSlot(async () => {
+                        try {
+                            return (await fs.promises.stat(full)).size;
+                        } catch {
+                            // 竞态：文件刚被清理掉，跳过即可
+                            return 0;
+                        }
+                    });
+                    total += size;
+                })
+            );
+        }
+    };
+    await walk(root);
+    return total;
+}
+
 export class BenchmarkManager {
     private readonly datasetsDir: string;
     private readonly runsDir: string;
@@ -84,6 +149,10 @@ export class BenchmarkManager {
     private readonly downloads = new Map<string, DownloadState>();
     private notifyTimer: NodeJS.Timeout | null = null;
     private downloadNotifyTimer: NodeJS.Timeout | null = null;
+    /** runId → 工作空间占用的短期缓存，避免界面每次局部刷新都重扫一遍 */
+    private readonly runUsageCache = new Map<string, { bytes: number; at: number }>();
+    /** 正在扫描中的轮次：界面在扫描期间反复刷新时复用同一个 Promise，不重复遍历目录 */
+    private readonly usageInFlight = new Map<string, Promise<number>>();
 
     constructor(private readonly dataDirectory: string) {
         this.datasetsDir = path.join(dataDirectory, 'datasets');
@@ -159,6 +228,53 @@ export class BenchmarkManager {
 
     async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         return this.installArchive(archivePath, {});
+    }
+
+    /** 丢掉所有占用缓存，让下一次查询重新扫盘（只有手动刷新会调） */
+    clearRunWorkspaceUsageCache(): void {
+        this.runUsageCache.clear();
+    }
+
+    /**
+     * 某轮运行当前占用的磁盘空间（字节）—— 整个 runs/<runId> 目录的实时大小。
+     *
+     * 不要改成只统计 cases：界面文案是「已占用 X 磁盘空间」，用户会拿它和目录实际大小对照，
+     * 漏掉 run.json 之类的边角文件就会对不上。
+     *
+     * 逐轮来拿，不要做成「一次返回全部」：单轮耗时跟文件数成正比，十几万文件的轮次
+     * 实测要一分多钟（158 GB / 76s），一次全量返回会把整张列表一起拖住，谁先量完谁先显示才好。
+     *
+     * 已结束的轮次基本不再变化，缓存 5 分钟即可；运行中的轮次不量，见下面的早退分支。
+     */
+    async getRunWorkspaceUsage(runId: string): Promise<number | null> {
+        // 运行中的轮次不扫盘：这种量级的目录要遍历十几秒到一分多钟，会和它自己的 git/编译抢 IO。
+        // 返回 null 表示「这轮先不算」，收尾时缓存失效，跑完第一次拿到的就是最终值。
+        if (this.readRun(runId)?.status === 'running') return null;
+        const cached = this.runUsageCache.get(runId);
+        if (cached && Date.now() - cached.at < RUN_USAGE_TTL_MS) return cached.bytes;
+        // 同一轮扫描可能要几十秒，界面在这期间会反复刷新；直接复用正在跑的那次，
+        // 否则同一个目录会被同时遍历好几遍，把磁盘打满
+        const pending = this.usageInFlight.get(runId);
+        if (pending) return pending;
+        const task = this.measureRunWorkspace(runId);
+        this.usageInFlight.set(runId, task);
+        try {
+            return await task;
+        } finally {
+            this.usageInFlight.delete(runId);
+        }
+    }
+
+    private async measureRunWorkspace(runId: string): Promise<number> {
+        let runDir: string;
+        try {
+            runDir = this.resolveInside(this.runsDir, runId);
+        } catch {
+            return 0;
+        }
+        const bytes = await measureDirectoryBytes(runDir);
+        this.runUsageCache.set(runId, { bytes, at: Date.now() });
+        return bytes;
     }
 
     /** 当前所有下载任务的状态快照（渲染层据此画进度条） */
@@ -641,6 +757,8 @@ export class BenchmarkManager {
         run.summary = summarizeCases(run.cases);
         this.writeRun(run);
         this.notifyNow();
+        // 收尾后不再写入，占用已经定型：缓存立即失效，下次读取重算一遍拿到最终值
+        this.runUsageCache.delete(runId);
     }
 
     /**
