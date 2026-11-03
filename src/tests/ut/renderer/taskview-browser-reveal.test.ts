@@ -56,7 +56,9 @@ describe('task-view pending browser reveal', () => {
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
             renderMermaidBlocks: jest.fn(),
-            untrackPreviewerContainers: jest.fn()
+            untrackPreviewerContainers: jest.fn(),
+            prepareSearchPreviews: async () => {},
+            revealSearchPreview: jest.fn()
         }));
 
         window.settingAPI = {

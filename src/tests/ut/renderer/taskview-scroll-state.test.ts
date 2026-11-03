@@ -81,7 +81,9 @@ describe('task-view 滚动锁定状态与缩放事件', () => {
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
             renderMermaidBlocks: jest.fn(),
-            untrackPreviewerContainers: jest.fn()
+            untrackPreviewerContainers: jest.fn(),
+            prepareSearchPreviews: async () => {},
+            revealSearchPreview: jest.fn()
         }));
 
         window.settingAPI = {

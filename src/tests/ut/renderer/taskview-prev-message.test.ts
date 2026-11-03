@@ -56,7 +56,9 @@ describe('task-view _scrollToUserMessage with lazy-loaded history', () => {
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
             renderMermaidBlocks: jest.fn(),
-            untrackPreviewerContainers: jest.fn()
+            untrackPreviewerContainers: jest.fn(),
+            prepareSearchPreviews: async () => {},
+            revealSearchPreview: jest.fn()
         }));
 
         window.settingAPI = {
@@ -243,6 +245,50 @@ describe('task-view _scrollToUserMessage with lazy-loaded history', () => {
         history.dispatchEvent(new window.Event('scroll'));
         expect(taskView.auto_scrolling_to_bottom).toBe(true);
         taskView._chatNavigation.destroy();
+    });
+
+    test('conversation find loads old history, holds scrolling detached, and closes in place on task switch', () => {
+        Object.assign(globalThis, { CSS: { escape: (value: string) => value } });
+        const taskView = document.createElement('task-view') as any;
+        try {
+            taskView.task_id = 'find-history';
+            taskView.render();
+            taskView.setUpEventListeners();
+            const messages = Array.from({ length: 60 }, (_, i) => createUserMessage(`u${i}`, `Question ${i}`));
+            taskView._renderInitialHistoryWindow(messages);
+            const history = taskView.getHistoryContainer();
+            expect(history.querySelector('#user-msg-u0')).toBeNull();
+            taskView.setAutoScrollingToBottom(true);
+            taskView.openChatFind();
+            const search = taskView.querySelector('.od-chat-find input');
+            search.value = 'Question 0';
+            search.dispatchEvent(new window.Event('input'));
+            search.dispatchEvent(Object.assign(new window.Event('keydown', { bubbles: true }), { key: 'Enter' }));
+            expect(history.querySelector('#user-msg-u0')).not.toBeNull();
+            expect(taskView.auto_scrolling_to_bottom).toBe(false);
+            Object.defineProperty(history, 'scrollHeight', { value: 1000, configurable: true });
+            Object.defineProperty(history, 'clientHeight', { value: 500, configurable: true });
+            history.scrollTop = 499;
+            history.dispatchEvent(new window.Event('scroll'));
+            expect(taskView.auto_scrolling_to_bottom).toBe(false);
+            history.scrollTop = 321;
+            taskView.markViewHidden();
+            expect(taskView._chatFind.visible).toBe(false);
+            expect(history.scrollTop).toBe(321);
+            taskView.markViewShown();
+            expect(taskView._chatFind.visible).toBe(false);
+            taskView.openChatFind();
+            taskView.tryScrollToEnd = jest.fn();
+            taskView.querySelector('#taskview-scroll-to-bottom-button').click();
+            expect(taskView._chatFind.visible).toBe(false);
+            expect(taskView.auto_scrolling_to_bottom).toBe(true);
+        } finally {
+            taskView._chatFind?.destroy();
+            taskView._chatNavigation?.destroy();
+            taskView._poolSegObserver?.disconnect();
+            taskView._domSanitizer?.disconnect();
+            document.removeEventListener('keydown', taskView._historyScrollKeydownHandler);
+        }
     });
 
     test('重复点击已到达的位置不等待不会发生的 scrollend；无效目标不改变跟随状态', () => {

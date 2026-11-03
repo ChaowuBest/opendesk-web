@@ -16,6 +16,7 @@ import { updateStreamingText } from '../utils/streaming-text.js';
 import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
 import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
 import { ChatNavigation, buildConversationStops, mergeRenderedConversationStops } from './chatNavigation.js';
+import { ChatFind } from './chatFind.js';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
@@ -579,6 +580,7 @@ class TaskView extends HTMLElement {
     _historyResizeObserver = null;
 
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
+        if (auto_scrolling_to_bottom && this._chatFind?.visible) return;
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollControls = this.querySelector('#taskview-scroll-controls');
         if (auto_scrolling_to_bottom) {
@@ -1995,6 +1997,7 @@ class TaskView extends HTMLElement {
     }
 
     _renderInitialHistoryWindow(messages, options = {}) {
+        this._chatFind?.refresh();
         this._navigationHistorySource = null;
         this._historyMessages = Array.isArray(messages) ? messages : [];
         this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
@@ -2139,6 +2142,7 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserProgressToHistory(progress) {
+        this._chatFind?.refresh();
         this._navigationHistorySource = null;
         this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
@@ -2162,6 +2166,7 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenUserReplaceToHistory(progress) {
+        this._chatFind?.refresh();
         this._navigationHistorySource = null;
         this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
@@ -2178,6 +2183,7 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantProgressToHistory(progress) {
+        this._chatFind?.refresh();
         this._navigationHistorySource = null;
         this._chatNavigation?.refresh();
         const index = this._getHistoryMessageIndexById(progress.message_id);
@@ -2196,6 +2202,7 @@ class TaskView extends HTMLElement {
     }
 
     _applyHiddenAssistantReplaceToHistory(progress) {
+        this._chatFind?.refresh();
         this._navigationHistorySource = null;
         this._chatNavigation?.refresh();
         // 增量 replace 的隐藏历史路径：被省略的前缀以 _historyMessages 中该消息的
@@ -2228,6 +2235,7 @@ class TaskView extends HTMLElement {
      * 任务结束后立即复制不到内容、导出 HTML 缺少刚完成的整轮对话。
      */
     _syncAssistantMessageToHistory(messageId, parts, extra = {}) {
+        this._chatFind?.refresh();
         if (!messageId || !Array.isArray(parts) || parts.length === 0) return;
         const index = this._getHistoryMessageIndexById(messageId);
         if (index >= 0) {
@@ -2255,6 +2263,7 @@ class TaskView extends HTMLElement {
 
     /** 可见用户消息的历史同步：首帧 push 新消息，同消息的后续 part 帧按 partIndex 合并。 */
     _syncUserMessageToHistory(progress, parts, partIndex) {
+        this._chatFind?.refresh();
         if (!progress.message_id) return;
         let index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) {
@@ -2285,6 +2294,7 @@ class TaskView extends HTMLElement {
 
     /** 可见用户消息 replace（slash skill 替换文本）的历史同步，与 _applyHiddenUserReplaceToHistory 对齐。 */
     _syncUserReplaceToHistory(progress) {
+        this._chatFind?.refresh();
         if (!progress.message_id) return;
         let index = this._getHistoryMessageIndexById(progress.message_id);
         if (index < 0) {
@@ -3047,6 +3057,7 @@ class TaskView extends HTMLElement {
 
     /** 记录视图进入后台不可见状态（切换任务 / 后台创建时由宿主调用）。 */
     markViewHidden() {
+        this._chatFind?.hide();
         if (!this._viewHiddenAt) this._viewHiddenAt = Date.now();
     }
 
@@ -3137,6 +3148,7 @@ class TaskView extends HTMLElement {
      * 消息发出时也应重新锁定并回到底部，避免错过最新内容。
      */
     forceScrollToEnd() {
+        this._chatFind?.hide();
         this.setAutoScrollingToBottom(true);
         // 组件可能尚未渲染历史容器（如仅存在于 model 层的最小 task-view），此时仅锁定状态
         if (this.getHistoryContainer()) {
@@ -3334,6 +3346,10 @@ class TaskView extends HTMLElement {
         if (this._scrollToGoalMessage(messageId, options)) return true;
         if (!this._ensureHistoryLoadedThroughMessage(messageId)) return false;
         return this._scrollToGoalMessage(messageId, options);
+    }
+
+    openChatFind() {
+        this._chatFind?.show();
     }
 
     _handleGoalMessageAnchor = (event) => {
@@ -6619,6 +6635,8 @@ class TaskView extends HTMLElement {
 
     disconnectedCallback() {
         this._assistantProgressBuffer.clear();
+        this._chatFind?.destroy();
+        this._chatFind = null;
         this._chatNavigation?.destroy();
         this._chatNavigation = null;
         // previewer 的容器注册表对历史/消息容器是强引用，销毁前显式解除，
@@ -6722,7 +6740,7 @@ class TaskView extends HTMLElement {
 
     _renderEmbedded() {
         this.innerHTML = `
-        <div class="bg-gray-30 h-full flex flex-col" data-agent-input-height-reference>
+        <div class="bg-gray-30 h-full flex flex-col" data-agent-input-height-reference data-chat-find-scope tabindex="-1">
             <div class="relative flex-1 overflow-hidden min-h-0">
                 <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-3"></div>
                 <!-- 滚动控制按钮组 -->
@@ -6776,6 +6794,8 @@ class TaskView extends HTMLElement {
 
     render() {
         this._conversationJumpInProgress = false;
+        this._chatFind?.destroy();
+        this._chatFind = null;
         this._chatNavigation?.destroy();
         this._chatNavigation = null;
         if (this.isEmbedded) {
@@ -6790,7 +6810,7 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
-                <div class="flex-1 flex flex-col min-w-0" data-agent-input-height-reference>
+                <div class="flex-1 flex flex-col min-w-0" data-agent-input-height-reference data-chat-find-scope tabindex="-1">
                     <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
                         <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
@@ -7038,6 +7058,19 @@ class TaskView extends HTMLElement {
         }
 
         const chatHistory = this.querySelector('#taskview-chat-history');
+        this._chatFind?.destroy();
+        // 搜索复用当前会话的完整内存记录；命中旧消息时，先补载 DOM，再由搜索控制器定位。
+        this._chatFind = new ChatFind(chatHistory, {
+            // 使用回调读取最新列表，而非只搜索已经渲染出来的消息。
+            getMessages: () => this._historyMessages,
+            ensureMessage: (messageId) => this._ensureHistoryLoadedThroughMessage(messageId),
+            // 暂停底部自动跟随，避免搜索定位被持续生成的新内容打断。
+            pauseFollow: () => {
+                this.setAutoScrollingToBottom(false);
+                this._cancelPendingScrollFollow();
+            },
+            translate: (key, params) => taskViewT(key, params)
+        });
         this._chatNavigation?.destroy();
         this._chatNavigation = new ChatNavigation(chatHistory, {
             navigate: (messageId) => this._navigateConversation(messageId),
@@ -7234,8 +7267,7 @@ class TaskView extends HTMLElement {
 
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
-            this.setAutoScrollingToBottom(true);
-            this.tryScrollToEnd();
+            this.forceScrollToEnd();
         });
 
         const prevUserMsgButton = this.querySelector('#taskview-prev-user-msg-button');

@@ -28,6 +28,12 @@
  */
 
 import { filePathToFileUrl } from '../../common/file-url.js';
+import {
+    MARKDOWN_DOM,
+    PREVIEW_CONTENT_CHANGED,
+    PREVIEWABLE_CODE_LANGUAGES,
+    SEARCH_PREVIEW_TEMPLATE
+} from '../utils/markdown.js';
 import { createRendererTranslator } from '../locale.js';
 import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
 
@@ -52,7 +58,7 @@ const PREVIEW_RENDERERS: Record<string, PreviewRenderer> = {
 };
 
 /** Set of language identifiers that support live preview */
-const PREVIEWABLE_LANGS = new Set(Object.keys(PREVIEW_RENDERERS));
+const PREVIEWABLE_LANGS = PREVIEWABLE_CODE_LANGUAGES;
 
 /**
  * 预览 iframe 的子框架来源限制：预览卡片承载的是任意生成的 HTML，其中的第三方
@@ -116,6 +122,7 @@ function renderHtmlPreview(shadowRoot: ShadowRoot, rawCode: string, baseDir?: st
                 if (height > 0) {
                     iframe.style.height = height + 'px';
                 }
+                notifyPreviewContentChanged(shadowRoot.host);
             }
         } catch {
             // cross-origin access blocked — leave default min-height
@@ -160,7 +167,7 @@ function detectLangFromBody(codeBody: Element): string | null {
  * original source.
  */
 function extractRawCodeFromTable(codeBody: Element): string | null {
-    const lines = codeBody.querySelectorAll('span.code-line, td.code-line');
+    const lines = codeBody.querySelectorAll(`span.${MARKDOWN_DOM.codeLine}, td.${MARKDOWN_DOM.codeLine}`);
     if (lines.length === 0) return null;
     const parts: string[] = [];
     for (const td of lines) {
@@ -190,7 +197,7 @@ function createToggleButton(checked: boolean): HTMLLabelElement {
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = checked;
-    input.className = 'code-preview-toggle-input';
+    input.className = MARKDOWN_DOM.previewToggle;
 
     const slider = document.createElement('span');
     slider.className = 'code-preview-toggle-slider';
@@ -236,9 +243,9 @@ function addCopyButton(header: Element, getCode: () => string): void {
     header.appendChild(btn);
 }
 
-function enhanceBlock(block: HTMLElement): void {
-    const header = block.querySelector('.code-block-header');
-    const codeBody = block.querySelector<HTMLElement>('.code-block-body');
+function enhanceBlock(block: HTMLElement, searchProjection = false): void {
+    const header = block.querySelector(`.${MARKDOWN_DOM.codeHeader}`);
+    const codeBody = block.querySelector<HTMLElement>(`.${MARKDOWN_DOM.codeBody}`);
     if (!header || !codeBody) return;
 
     // 为所有代码块添加复制按钮
@@ -278,21 +285,29 @@ function enhanceBlock(block: HTMLElement): void {
 
     // -- preview container with shadow DOM --
     const previewContainer = document.createElement('div');
-    previewContainer.className = 'code-preview-container';
+    previewContainer.className = MARKDOWN_DOM.preview;
     if (lang === 'svg' || lang === 'html' || lang === 'htm') {
         previewContainer.classList.add('code-preview-container--auto-height');
     }
     const shadowHost = document.createElement('div');
-    shadowHost.className = 'code-preview-shadow-host';
+    shadowHost.className = MARKDOWN_DOM.previewHost;
     const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
-    renderer(shadowRoot, rawCode);
+    if (searchProjection) {
+        // 历史搜索只需要读取文字：将 HTML/SVG 放进惰性模板，避免加载资源、执行事件或升级自定义元素。
+        const template = block.ownerDocument.createElement('template');
+        template.setAttribute(SEARCH_PREVIEW_TEMPLATE, '');
+        template.innerHTML = rawCode;
+        shadowRoot.append(template);
+    } else {
+        renderer(shadowRoot, rawCode);
+    }
     previewContainer.appendChild(shadowHost);
     codeBody.insertAdjacentElement('afterend', previewContainer);
 
     // -- toggle (defaults to preview-on) --
     const toggle = createToggleButton(true);
     header.appendChild(toggle);
-    const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+    const checkbox = toggle.querySelector<HTMLInputElement>(`.${MARKDOWN_DOM.previewToggle}`)!;
 
     // default state: preview visible, code hidden
     codeBody.style.display = 'none';
@@ -302,7 +317,55 @@ function enhanceBlock(block: HTMLElement): void {
         const showPreview = checkbox.checked;
         codeBody.style.display = showPreview ? 'none' : '';
         previewContainer.style.display = showPreview ? '' : 'none';
+        notifyPreviewContentChanged(block);
     });
+    notifyPreviewContentChanged(block);
+}
+
+/** 预览渲染或切换后通知聊天搜索刷新；composed 允许事件穿过 Shadow DOM 边界。 */
+function notifyPreviewContentChanged(element: Element): void {
+    const EventType = element.ownerDocument.defaultView!.CustomEvent;
+    element.dispatchEvent(new EventType(PREVIEW_CONTENT_CHANGED, { bubbles: true, composed: true }));
+}
+
+// 历史 Mermaid 渲染共用串行队列，避免打开搜索时同时启动大量图形渲染。
+let searchPreviewQueue = Promise.resolve();
+/**
+ * 为尚未挂载的历史消息准备显示文字：HTML/SVG 同步放入惰性模板，Mermaid 异步生成图形。
+ * 无 Mermaid 时返回 undefined，调用方可立即释放临时 DOM；有 Mermaid 时返回完成通知。
+ * 搜索内容提取会排除源码和失败回退区域，只使用准备后的显示效果。
+ */
+export function prepareSearchPreviews(container: HTMLElement, signal?: AbortSignal): Promise<void> | undefined {
+    for (const block of container.querySelectorAll<HTMLElement>(
+        `.${MARKDOWN_DOM.codeBlock}:not([data-preview-enhanced])`
+    )) {
+        enhanceBlock(block, true);
+    }
+    const blocks = Array.from(container.querySelectorAll<HTMLElement>(`.${MARKDOWN_DOM.mermaid}[data-mermaid-code]`));
+    if (!blocks.length) return undefined;
+    // 按消息顺序串行处理，图形之间让出事件循环；搜索关闭后跳过尚未开始的任务。
+    const prepared = searchPreviewQueue.then(async () => {
+        for (const block of blocks) {
+            if (signal?.aborted) return;
+            // 流式代码围栏尚未闭合时，不尝试为半段源码生成搜索图形。
+            if (block.dataset.mermaidComplete === 'false') continue;
+            await renderMermaidBlock(block, getMermaidTheme(container.ownerDocument));
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+    });
+    // 当前任务仍向调用方报告错误，但不让一次失败阻断后续消息的队列。
+    searchPreviewQueue = prepared.catch(() => {});
+    return prepared;
+}
+
+/** 命中跳转时切到显示效果；复用原切换事件，让页面状态与手动操作保持一致。 */
+export function revealSearchPreview(element: Element): void {
+    if (!element.matches(`.${MARKDOWN_DOM.preview},.${MARKDOWN_DOM.mermaidPreview}`)) return;
+    const toggle = element.parentElement?.querySelector<HTMLInputElement>(`.${MARKDOWN_DOM.previewToggle}`);
+    if (toggle && !toggle.checked) {
+        toggle.checked = true;
+        toggle.dispatchEvent(new element.ownerDocument.defaultView!.Event('change', { bubbles: true }));
+    }
 }
 
 /**
@@ -312,7 +375,7 @@ function enhanceBlock(block: HTMLElement): void {
  */
 export function enhanceCodeBlocks(container: HTMLElement): void {
     trackPreviewerContainer(container);
-    const blocks = container.querySelectorAll<HTMLElement>('.code-block-wrapper:not([data-preview-enhanced])');
+    const blocks = container.querySelectorAll<HTMLElement>(`.${MARKDOWN_DOM.codeBlock}:not([data-preview-enhanced])`);
     for (const block of blocks) {
         enhanceBlock(block);
     }
@@ -348,7 +411,7 @@ export function enhanceToolPreviewCards(container: HTMLElement): void {
         card.setAttribute('data-preview-enhanced', 'true');
 
         const shadowHost = document.createElement('div');
-        shadowHost.className = 'code-preview-shadow-host';
+        shadowHost.className = MARKDOWN_DOM.previewHost;
         const shadowRoot = shadowHost.attachShadow({ mode: 'open' });
         renderer(shadowRoot, rawCode, baseDir);
         card.appendChild(shadowHost);
@@ -822,7 +885,9 @@ function installMermaidThemeListener(doc: Document): void {
                 containers.delete(container);
                 continue;
             }
-            for (const block of container.querySelectorAll<HTMLElement>('.mermaid-block[data-mermaid-code]')) {
+            for (const block of container.querySelectorAll<HTMLElement>(
+                `.${MARKDOWN_DOM.mermaid}[data-mermaid-code]`
+            )) {
                 blocks.add(block);
             }
         }
@@ -844,8 +909,8 @@ export function renderMermaidBlocks(container: HTMLElement, options: { defer?: b
     installMermaidThemeListener(container.ownerDocument);
     trackPreviewerContainer(container);
     const selector = options.defer
-        ? '.mermaid-block[data-mermaid-code]'
-        : '.mermaid-block:not([data-mermaid-rendered]):not([data-mermaid-rendering])';
+        ? `.${MARKDOWN_DOM.mermaid}[data-mermaid-code]`
+        : `.${MARKDOWN_DOM.mermaid}:not([data-mermaid-rendered]):not([data-mermaid-rendering])`;
     const blocks = container.querySelectorAll<HTMLElement>(selector);
     for (const block of blocks) {
         void renderMermaidBlock(block, getMermaidTheme(block.ownerDocument), options.defer === true);
@@ -854,21 +919,21 @@ export function renderMermaidBlocks(container: HTMLElement, options: { defer?: b
 
 function applyMermaidRender(block: HTMLElement, source: string, sanitized: string, theme: MermaidTheme): void {
     delete block.dataset.mermaidRendering;
-    const showPreview = block.querySelector<HTMLInputElement>('.code-preview-toggle-input')?.checked ?? true;
+    const showPreview = block.querySelector<HTMLInputElement>(`.${MARKDOWN_DOM.previewToggle}`)?.checked ?? true;
     const wrapper = document.createElement('div');
-    wrapper.className = 'mermaid-rendered';
+    wrapper.className = MARKDOWN_DOM.mermaidPreview;
     mountMermaidSvg(wrapper, sanitized);
     wrapper.style.display = showPreview ? '' : 'none';
 
     // 源码视图（默认隐藏，切换开关后显示）
     const sourcePre = document.createElement('pre');
-    sourcePre.className = 'mermaid-source';
+    sourcePre.className = MARKDOWN_DOM.mermaidSource;
     sourcePre.textContent = source;
     sourcePre.style.display = showPreview ? 'none' : '';
 
     // header + 预览开关（默认显示渲染结果，可切到源码）
     const header = document.createElement('div');
-    header.className = 'mermaid-block-header';
+    header.className = MARKDOWN_DOM.mermaidHeader;
     const langLabel = document.createElement('span');
     langLabel.className = 'mermaid-block-lang';
     langLabel.textContent = 'Mermaid';
@@ -876,16 +941,18 @@ function applyMermaidRender(block: HTMLElement, source: string, sanitized: strin
     const toggle = createToggleButton(showPreview);
     header.appendChild(toggle);
     addCopyButton(header, () => source);
-    const checkbox = toggle.querySelector<HTMLInputElement>('.code-preview-toggle-input')!;
+    const checkbox = toggle.querySelector<HTMLInputElement>(`.${MARKDOWN_DOM.previewToggle}`)!;
     checkbox.addEventListener('change', () => {
         const showPreview = checkbox.checked;
         sourcePre.style.display = showPreview ? 'none' : '';
         wrapper.style.display = showPreview ? '' : 'none';
+        notifyPreviewContentChanged(block);
     });
 
     block.replaceChildren(header, sourcePre, wrapper);
     block.dataset.mermaidRendered = 'true';
     block.dataset.mermaidTheme = theme;
+    notifyPreviewContentChanged(block);
 }
 
 function getOrCreateMermaidSvg(encoded: string, source: string, theme: MermaidTheme): Promise<string> {
@@ -949,7 +1016,7 @@ async function renderMermaidBlock(block: HTMLElement, theme: MermaidTheme, defer
         return;
     }
 
-    if (!block.querySelector('.mermaid-rendered')) {
+    if (!block.querySelector(`.${MARKDOWN_DOM.mermaidPreview}`)) {
         showMermaidSourceFallback(block, source);
     }
     block.dataset.mermaidRendering = theme;
@@ -979,7 +1046,8 @@ async function renderMermaidBlock(block: HTMLElement, theme: MermaidTheme, defer
 
 function showMermaidSourceFallback(block: HTMLElement, source: string): void {
     const pre = document.createElement('pre');
-    pre.className = 'mermaid-fallback';
+    pre.className = MARKDOWN_DOM.mermaidFallback;
     pre.textContent = source;
     block.replaceChildren(pre);
+    notifyPreviewContentChanged(block);
 }
