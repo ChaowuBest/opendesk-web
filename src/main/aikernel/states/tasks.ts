@@ -2474,7 +2474,10 @@ export class TaskState {
                 try {
                     return callback?.(chunkUpdate);
                 } finally {
-                    if (chunkUpdate.task_status === 'stopped') {
+                    // 携带 finalized 标记的是消息级定型快照，不代表任务停止；
+                    // 此处只对真实的状态迁移（task_status=stopped 且非定型快照）唤醒等待者
+                    const isFinalizedSnapshot = 'finalized' in chunkUpdate && chunkUpdate.finalized === true;
+                    if (chunkUpdate.task_status === 'stopped' && !isFinalizedSnapshot) {
                         settle();
                     }
                 }
@@ -2889,9 +2892,12 @@ export class TaskState {
      *
      * hook 拒绝后的重试会丢弃当前 assistant 消息并新建空消息重跑，若不补发快照，
      * 被打断的消息将永远停留在流式原始态：主进程从未执行最终 markdown+KaTeX
-     * 渲染（流式期间的增量快照有意跳过渲染），前端会看到 `$...$` 等 LaTeX 源码，
-     * 思考块也停在"思考中"。快照的 task_status 用 stopped 仅表示"本条消息已定型"，
-     * 任务整体状态仍由 turn 循环正常流转，不影响后续重跑轮次。
+     * 渲染（流式期间的增量快照有意跳过渲染），前端会看到 `$...$` 等 LaTeX
+     * 源码，思考块也停在"思考中"。
+     *
+     * 消息是否定型由 finalized 标记表达，task_status 必须携带真实值（快照
+     * 发出时任务通常仍为 running）。若误报 stopped，waitUntilFinished 的
+     * 等待者会被提前释放，headless 将在续跑轮次执行前导出退出（exit=0）。
      */
     private async sendFinalizedAssistantSnapshot(message: AssistantMessage): Promise<void> {
         this.retainAvailableTaskUpdateSubscribers('assistant final snapshot');
@@ -2904,7 +2910,8 @@ export class TaskState {
                 {
                     type: 'assistant_replace',
                     task_id: this.task_id,
-                    task_status: 'stopped',
+                    task_status: this.task_status,
+                    finalized: true,
                     message_id: message.message_id,
                     parts: Array.isArray(message.content) ? [...message.content] : [],
                     usage: message.usage,
