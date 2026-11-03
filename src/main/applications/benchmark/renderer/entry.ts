@@ -26,6 +26,7 @@ import type {
     RunRecord
 } from '../common.js';
 import { downloadStateKey, findLocalDatasetByName, resolveCatalogInstallState } from '../catalog-common.js';
+import { countTagsFitting, resolveColumnGap } from './tag-fit.js';
 import css from './style.css?inline';
 // 复用 agentinput 的模型面板样式（同一套 ctx-menu / ctx-item 视觉与暗色处理）
 import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
@@ -205,6 +206,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     /** 各 registry 的清单，按 registry 名分开存：Tab 之间互不影响 */
     private catalogs = new Map<string, BenchmarkSummary[]>();
     private downloads = new Map<string, DownloadState>();
+    /** runId → 该轮当前占用的磁盘空间（字节）；扫盘慢，先渲染行再逐个补上 */
+    private runUsage = new Map<string, number>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
     private loading = true;
@@ -258,6 +261,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot!.addEventListener('input', this.handleInput);
         this.shadowRoot!.addEventListener('contextmenu', this.handleContextMenu);
         document.addEventListener('keydown', this.handleKeydown);
+        // 面板宽度变了，卡片能容下几个 track 胶囊也跟着变
+        window.addEventListener('resize', this.handleResize);
 
         this._onDataChanged = () => {
             void this.loadDatasets(false);
@@ -268,6 +273,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this._onRunsChanged = () => {
             void this.loadRuns(false);
             if (this.detailRunId) void this.loadDetail(this.detailRunId, false);
+            // 运行收尾后占用已定型，这一轮的数字重算一次
+            void this.loadRunUsage();
         };
         // 渠道（设置界面 → 渠道设置）变化后，Tab 条要立刻跟着变，不用等整窗重开
         this._onRegistriesChanged = () => {
@@ -317,6 +324,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot?.removeEventListener('input', this.handleInput);
         this.shadowRoot?.removeEventListener('contextmenu', this.handleContextMenu);
         document.removeEventListener('keydown', this.handleKeydown);
+        window.removeEventListener('resize', this.handleResize);
         this.clearPoll();
     }
 
@@ -501,17 +509,106 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.renderUnlessModalOpen();
     }
 
-    private async loadRuns(showLoading: boolean) {
+    private async loadRuns(showLoading: boolean, rescanUsage = false) {
         if (showLoading && this.runs.length === 0) {
             this.loading = true;
             this.render();
         }
+        const before = new Map(this.runs.map((run) => [run.id, run.status]));
         try {
             this.runs = await getAPI().callMainWorld<RunListItem[]>('listRuns');
         } catch (error: any) {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
         }
+        // 状态流转：开跑就把旧占用藏起来（运行中不统计），刚跑完的必须重算——
+        // 原地重跑会重写 workspace，留着旧值就是错的
+        const finished: string[] = [];
+        for (const run of this.runs) {
+            const previous = before.get(run.id);
+            if (!previous || previous === run.status) continue;
+            if (run.status === 'running') this.runUsage.delete(run.id);
+            else if (previous === 'running') finished.push(run.id);
+        }
         this.renderUnlessModalOpen();
+        // 只有手动刷新才重扫全部轮次：一轮 158 GB 的目录要扫一分多钟，而用户恰恰最常在有
+        // 任务跑着的时候打开面板，那时候全量扫盘就是纯粹的 IO 抢占。平时靠主进程 5 分钟
+        // 缓存，没量过的轮次仍会按需补上。
+        if (rescanUsage) {
+            try {
+                await getAPI().callMainWorld('clearRunWorkspaceUsageCache');
+            } catch {
+                // 清不掉只影响数字新鲜度，不影响列表本身
+            }
+        }
+        void this.loadRunUsage(rescanUsage, finished);
+    }
+
+    /**
+     * 逐轮拿回当前磁盘占用，谁先量完谁先显示。
+     *
+     * 重扫时机只有两个：手动刷新（refresh=true，主进程缓存也被清掉），
+     * 以及刚跑完的轮次（此时本地还没有它的值）。其余刷新一律不再碰磁盘。
+     * 运行中的轮次不统计——重扫这种量级的目录要几十秒，会和它自己的 git/编译抢 IO。
+     */
+    private async loadRunUsage(refresh = false, forceIds: string[] = []): Promise<void> {
+        const queue = this.runs
+            .filter(
+                (run) =>
+                    run.status !== 'running' && (refresh || forceIds.includes(run.id) || !this.runUsage.has(run.id))
+            )
+            .map((run) => run.id);
+        if (queue.length === 0) return;
+        const worker = async (): Promise<void> => {
+            for (;;) {
+                const runId = queue.shift();
+                if (!runId) return;
+                let bytes: number | null;
+                try {
+                    bytes = await getAPI().callMainWorld<number | null>('getRunWorkspaceUsage', runId);
+                } catch {
+                    continue;
+                }
+                if (bytes === null) continue;
+                this.runUsage.set(runId, bytes);
+                this.refreshRunUsageTags();
+            }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+    }
+
+    /** 把已量到的占用写进列表里的对应行；没量到的行保持不显示，不摆一个假占位 */
+    private refreshRunUsageTags(): void {
+        for (const el of Array.from(this.shadowRoot?.querySelectorAll<HTMLElement>('[data-run-usage]') ?? [])) {
+            const runId = el.dataset.runUsage;
+            if (!runId) continue;
+            const bytes = this.runUsage.get(runId);
+            if (bytes === undefined) continue;
+            const size = formatBytes(bytes);
+            el.dataset.runUsageLong = this._t('benchmark.run.workspace', { size });
+            el.dataset.runUsageShort = this._t('benchmark.run.workspaceShort', { size });
+            el.textContent = el.dataset.runUsageLong;
+            el.hidden = false;
+        }
+        this.fitRunUsageLabels();
+    }
+
+    /**
+     * 标题行放不下时，把占用胶囊退回短文案（「占用 1.85 GB 磁盘空间」→「占用 1.85 GB」）。
+     *
+     * 判定看标题名有没有被省略号截断：被截断说明这行挤了，先让占用让位给标题，
+     * 毕竟标题是主信息。
+     */
+    private fitRunUsageLabels(): void {
+        for (const row of Array.from(this.shadowRoot?.querySelectorAll<HTMLElement>('.run-title-row') ?? [])) {
+            const tag = row.querySelector<HTMLElement>('[data-run-usage]');
+            const name = row.querySelector<HTMLElement>('.run-name');
+            const long = tag?.dataset.runUsageLong ?? '';
+            const short = tag?.dataset.runUsageShort ?? '';
+            if (!tag || !name || tag.hidden || !long || !short) continue;
+            tag.textContent = long;
+            if (name.scrollWidth <= name.clientWidth) continue;
+            tag.textContent = short;
+        }
     }
 
     private async loadModels() {
@@ -794,7 +891,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 await Promise.all([
                     registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
                     this.loadDatasets(false),
-                    this.loadRuns(false)
+                    // 手动刷新是唯一会强制重扫磁盘占用的入口
+                    this.loadRuns(false, true)
                 ]);
                 // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
                 // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
@@ -1377,6 +1475,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
         this.detailSignature = this.detail && this.detailRunId ? this.computeDetailSignature(this.detail) : null;
         this.markFocusedRow();
+        // 卡片宽度取决于面板布局，所以 track 胶囊要在插入 DOM 之后按实际宽度裁一遍
+        this.fitCardTrackTags();
+        this.fitRunUsageLabels();
     }
 
     private renderShell(): string {
@@ -1460,12 +1561,66 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         return `<div class="card-grid">${cards}</div>`;
     }
 
+    /**
+     * 卡片底部的 track 标签：先全量渲染出来，再由 fitCardTrackTags() 按卡片实际宽度
+     * 决定留几个、尾部折成「等 N 个 track」，保证这块永远只占一行。
+     */
+    private renderCardTrackTags(tracks: Array<{ name: string; caseCount?: number }>): string {
+        const tags = tracks
+            .map((track) => {
+                const label = typeof track.caseCount === 'number' ? `${track.name} · ${track.caseCount}` : track.name;
+                return `<span class="tag-pill tag-blue" data-track-tag>${escapeHtml(label)}</span>`;
+            })
+            .join('');
+        // 只有 1 个 track 时没有「等 N 个」可言，省掉这个占位胶囊
+        if (tracks.length < 2) return tags;
+        const restLabel = this._t('benchmark.datasets.tracksMore', { count: tracks.length });
+        return `${tags}<span class="tag-pill" data-track-more hidden>${escapeHtml(restLabel)}</span>`;
+    }
+
+    /** 按可用宽度裁剪卡片底部的 track 胶囊：放不下就从尾部收起，用「等 N 个 track」兜住 */
+    private fitCardTrackTags(): void {
+        const metas = this.shadowRoot?.querySelectorAll<HTMLElement>('.dataset-card .card-meta');
+        if (!metas) return;
+        const widthOf = (el: HTMLElement): number => el.getBoundingClientRect().width;
+        for (const meta of Array.from(metas)) {
+            const tags = Array.from(meta.querySelectorAll<HTMLElement>('[data-track-tag]'));
+            if (tags.length === 0) continue;
+            const more = meta.querySelector<HTMLElement>('[data-track-more]');
+            for (const tag of tags) tag.hidden = false;
+            if (more) more.hidden = true;
+            // 面板还没完成布局（宽度为 0）时不裁，等下一次渲染/resize 再算
+            const available = meta.clientWidth;
+            if (available <= 0) continue;
+            // 一次量出所有胶囊的实际宽度再算预算：靠 scrollWidth 反复试探会在
+            // 边界上多收一个胶囊（差的往往就是一两个 gap）
+            const gap = resolveColumnGap(meta);
+            const widths = tags.map(widthOf);
+            const totalAll = widths.reduce((sum, width) => sum + width, 0) + gap * (tags.length - 1);
+            if (totalAll <= available) continue;
+
+            let keep: number;
+            if (more) {
+                // 提示胶囊自己也占位，先把它和它的 gap 扣掉；它一旦露头就至少收掉一个 track
+                more.hidden = false;
+                keep = countTagsFitting(widths, available - widthOf(more) - gap, gap, tags.length - 1);
+            } else {
+                // 没有兜底胶囊可用时只能硬收，至少保住一行
+                keep = countTagsFitting(widths, available, gap, tags.length);
+            }
+            for (let i = keep; i < tags.length; i += 1) tags[i].hidden = true;
+        }
+    }
+
+    private handleResize = () => {
+        this.fitCardTrackTags();
+        this.fitRunUsageLabels();
+    };
+
     private renderCatalogCard(registryName: string, entry: BenchmarkSummary): string {
         const colors = colorFor(entry.name);
         const initial = entry.name.trim().charAt(0) || 'B';
-        const tags = entry.tracks
-            .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)}</span>`)
-            .join('');
+        const tags = this.renderCardTrackTags(entry.tracks);
         const description = entry.description ? `<div class="card-desc">${escapeHtml(entry.description)}</div>` : '';
         const pill = this.catalogStatusView(registryName, entry);
         return `
@@ -1538,9 +1693,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private renderDatasetCard(dataset: InstalledBenchmarkSummary): string {
         const colors = colorFor(dataset.name);
         const initial = dataset.name.trim().charAt(0) || 'B';
-        const tags = dataset.tracks
-            .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)} · ${track.caseCount}</span>`)
-            .join('');
+        const tags = this.renderCardTrackTags(dataset.tracks);
         const description = dataset.description
             ? `<div class="card-desc">${escapeHtml(dataset.description)}</div>`
             : '';
@@ -1593,12 +1746,18 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const progress = summary.total > 0 ? finished / summary.total : 0;
         const statusKey = RUN_STATUS_KEYS[run.status] || 'benchmark.status.stopped';
         const scoreText = summary.maxScore > 0 ? summary.totalScore.toFixed(2) : '-';
+        // 占用要扫盘，没量到之前先不显示这个胶囊，量完由 refreshRunUsageTags 填上并露出来
+        const usageBytes = this.runUsage.get(run.id);
+        const usageSize = usageBytes === undefined ? '' : formatBytes(usageBytes);
+        const usageLong = usageBytes === undefined ? '' : this._t('benchmark.run.workspace', { size: usageSize });
+        const usageShort = usageBytes === undefined ? '' : this._t('benchmark.run.workspaceShort', { size: usageSize });
         return `
         <div class="run-row" data-run-id="${escapeHtml(run.id)}">
             <div>
                 <div class="run-title-row">
                     <span class="run-name">${escapeHtml(run.datasetName)}</span>
                     <span class="status-pill ${escapeHtml(run.status)}"><span class="dot"></span>${escapeHtml(this._t(statusKey))}</span>
+                    <span class="tag-pill tag-usage" data-run-usage="${escapeHtml(run.id)}" data-run-usage-long="${escapeHtml(usageLong)}" data-run-usage-short="${escapeHtml(usageShort)}" ${usageBytes === undefined ? 'hidden' : ''}>${escapeHtml(usageLong)}</span>
                 </div>
                 <div class="run-sub">
                     ${escapeHtml(this._t('benchmark.detail.models', { test: run.runModel, verify: run.verifyModel }))} ·

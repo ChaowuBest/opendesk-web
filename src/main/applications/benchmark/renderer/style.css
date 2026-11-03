@@ -466,6 +466,25 @@ select {
     white-space: nowrap;
 }
 
+/* 卡片底部的 track 胶囊固定占一行：渲染后由脚本按实际宽度收起放不下的部分 */
+.dataset-card .card-meta {
+    /* 定宽占满卡片可用宽度：否则 flex 项宽度跟着内容缩，脚本无法判断「还放不放得下」 */
+    flex: 1 1 0;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+/* 宁可少放几个胶囊，也不让胶囊自身被压变形；宽度不够由脚本决定收哪几个 */
+.dataset-card .card-meta .tag-pill {
+    flex: 0 0 auto;
+}
+
+/* .tag-pill 自带 display，会盖掉 [hidden] 的浏览器默认样式，这里显式压住 */
+.dataset-card .card-meta .tag-pill[hidden] {
+    display: none;
+}
+
 .tag-blue {
     background: var(--accent-soft);
     color: var(--accent-ink);
@@ -525,6 +544,19 @@ select {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 运行占用的磁盘空间：常驻标题行右侧，不允许被标题挤压或省略 */
+.run-title-row .tag-usage {
+    flex: 0 0 auto;
+    background: rgba(127, 127, 127, 0.12);
+    color: var(--ink3);
+    font-variant-numeric: tabular-nums;
+}
+
+/* .tag-pill 自带 display 会盖掉 [hidden] 的默认样式，量到占用之前必须真的不占位 */
+.run-title-row .tag-usage[hidden] {
+    display: none;
 }
 
 .mini-progress {

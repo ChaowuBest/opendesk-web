@@ -129,6 +129,16 @@ export class BenchmarkApplication extends BaseApplication {
         return this.requireManager().listDatasets();
     }
 
+    /** 丢掉磁盘占用的缓存，让下一次查询重新扫盘 */
+    async clearRunWorkspaceUsageCache(): Promise<void> {
+        this.requireManager().clearRunWorkspaceUsageCache();
+    }
+
+    /** 某轮运行当前占用的磁盘空间（字节）；运行中的轮次返回 null 表示暂不统计 */
+    async getRunWorkspaceUsage(runId: string): Promise<number | null> {
+        return this.requireManager().getRunWorkspaceUsage(runId);
+    }
+
     async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         if (!archivePath || typeof archivePath !== 'string') {
             throw new BenchmarkDataError(t('error.operationFailed'));
