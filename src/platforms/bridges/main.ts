@@ -11,7 +11,7 @@
 
 import { NativeBridge, NaiveNativeBridge } from './common.js';
 import { logger } from '../../main/utils/logger.js';
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
 import { getNativeBridge as getDarwinNativeBridge } from './darwin/index.js';
 
@@ -66,6 +66,10 @@ export function registerNativeBridge(): void {
                 data = await registeredBridge.getStartupKit().then((kit) => kit.getState());
                 break;
             case 'startupKit:delegateSetting':
+                // Unpackaged Electron would register its bare executable without the dev app entrypoint.
+                // Keep removal available so existing development startup entries can be cleaned up.
+                // The internal IPC error token is translated into a localized notice by the renderer.
+                if (args[0] === true && !app.isPackaged) throw new Error('STARTUP_DEV_MODE');
                 data = await registeredBridge.getStartupKit().then((kit) => kit.delegateSetting(args[0]));
                 break;
             case 'speechKit:available':
