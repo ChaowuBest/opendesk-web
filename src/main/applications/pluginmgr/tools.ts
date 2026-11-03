@@ -34,6 +34,8 @@ interface PluginView {
     source?: string;
     removable?: boolean;
     enabled?: boolean;
+    /** 启停由清单固定（内置插件的 system: true）：不允许通过 setPluginEnabled 修改 */
+    system?: boolean;
     manifest?: {
         displayName?: PluginDisplayName;
         description?: PluginLocalizedText;
@@ -105,6 +107,7 @@ function summarizePlugin(plugin: PluginView): Record<string, unknown> {
         source: plugin.source,
         removable: plugin.removable ?? false,
         enabled: plugin.enabled ?? true,
+        system: plugin.system ?? false,
         version: plugin.manifest?.version ?? plugin.runtime?.version,
         apiVersion: plugin.manifest?.apiVersion ?? plugin.runtime?.apiVersion,
         capabilities: plugin.manifest?.capabilities ?? plugin.runtime?.capabilities ?? [],
@@ -242,7 +245,7 @@ export class SetPluginEnabledTool extends BaseTool<typeof SetPluginEnabledArgsSc
     constructor(private readonly pluginApp: PluginManagementApplication) {
         super(
             'setPluginEnabled',
-            'Enable or disable a discovered OpenDesk plugin.',
+            'Enable or disable a discovered OpenDesk plugin. Plugins whose enabled state is fixed by their manifest (system plugins) cannot be toggled.',
             SetPluginEnabledArgsSchema,
             undefined,
             {

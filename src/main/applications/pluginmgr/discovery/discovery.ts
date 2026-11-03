@@ -9,6 +9,7 @@ import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { computePluginIntegrity } from './integrity.js';
 import type { PluginCandidate } from './loader.js';
+import { readManifestDeclaration, resolveManifestControlFields } from './manifest.js';
 import { ensurePluginDirectories, getBuiltinPluginsDirectory, getPluginsDirectory } from '../management/paths.js';
 import { listPluginRecords, type PluginRegistryRecord, type PluginSourceKind } from '../management/registry.js';
 
@@ -16,6 +17,8 @@ export interface DiscoveredPluginCandidate extends PluginCandidate {
     id: string;
     source: PluginSourceKind;
     enabled: boolean;
+    /** 内置插件在清单里声明了 system: true：启停由清单固定，pluginmgr 不允许修改开关 */
+    system: boolean;
 }
 
 export interface PluginDiscoveryConflict {
@@ -68,11 +71,7 @@ function inferPluginId(spec: string): string {
     const stat = fs.statSync(spec);
     const root = stat.isDirectory() ? spec : path.dirname(spec);
     const basename = path.basename(spec, stat.isFile() ? path.extname(spec) : undefined);
-    const sidecar = stat.isFile()
-        ? (readJson(path.join(root, `${basename}.opendesk.plugin.json`)) ??
-          readJson(path.join(root, `${basename}.plugin.json`)))
-        : undefined;
-    const manifest = sidecar ?? readJson(path.join(root, 'opendesk.plugin.json'));
+    const manifest = readManifestDeclaration(spec);
     if (typeof manifest?.id === 'string' && PLUGIN_ID_PATTERN.test(manifest.id)) return manifest.id;
     const packageJson = stat.isDirectory() ? readJson(path.join(root, 'package.json')) : undefined;
     if (isRecord(packageJson?.opendesk) && typeof packageJson.opendesk.id === 'string') {
@@ -80,6 +79,14 @@ function inferPluginId(spec: string): string {
     }
     if (typeof packageJson?.name === 'string') return normalizePluginId(packageJson.name);
     return normalizePluginId(basename);
+}
+
+/**
+ * 读取内置插件清单里的启停控制字段。
+ * 清单缺失或损坏时按「未声明」处理：这类问题由加载阶段报 plugin.* 诊断。
+ */
+function readBuiltinControlFields(spec: string) {
+    return resolveManifestControlFields(readManifestDeclaration(spec), { builtin: true });
 }
 
 function resolveStoredPath(
@@ -101,13 +108,18 @@ function toCandidate(
     if (!fs.existsSync(spec)) return undefined;
     const stat = fs.statSync(spec);
     if (!stat.isDirectory() && !(stat.isFile() && PLUGIN_FILE_PATTERN.test(spec))) return undefined;
+    // system/enabled 只对内置插件生效，后装插件声明了也不会锁住自己的开关
+    const control = source === 'builtin' ? readBuiltinControlFields(spec) : undefined;
+    const system = control?.system === true;
     return {
         id: record?.id ?? inferPluginId(spec),
         spec,
         origin,
         // 'managed' 仅存在于旧版注册表数据中，对外统一视为本地目录插件。
         source: source === 'managed' ? 'local' : source,
-        enabled: record?.enabled ?? true,
+        system,
+        // 清单固定启停的内置插件不再采信注册表里的开关状态
+        enabled: system ? (control?.enabled ?? true) : (record?.enabled ?? true),
         options: record?.options,
         grantedCapabilities: record?.grantedCapabilities,
         integrity: record?.integrity
@@ -175,12 +187,14 @@ export function discoverPlugins(
     const knownPaths = new Set<string>();
 
     for (const record of records) {
-        if (!record.enabled) continue;
         if (record.source !== 'builtin' && builtinIds.has(record.id)) continue;
         const spec = resolveStoredPath(record, configDirectory, builtinDirectory);
         const origin = record.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
         const candidate = toCandidate(spec, record.source, origin, record);
         if (!candidate) continue;
+        // 清单固定启停的内置插件即使当前禁用也保留在发现结果里，加载阶段会跳过它：
+        // 这样 pluginmgr 列表仍能展示「已禁用且不可更改」的状态。
+        if (!candidate.enabled && !candidate.system) continue;
         const realPath = fs.realpathSync(spec);
         knownPaths.add(realPath);
         candidates.push(candidate);
@@ -190,10 +204,13 @@ export function discoverPlugins(
         const realPath = fs.realpathSync(candidate.spec);
         if (knownPaths.has(realPath)) continue;
         const policy = records.find((record) => record.id === candidate.id && record.source === 'builtin');
-        if (policy?.enabled === false) continue;
+        // 清单固定启停时以清单为准，忽略用户开关留下的注册表记录
+        const enabled = candidate.system ? candidate.enabled : (policy?.enabled ?? true);
+        if (!enabled && !candidate.system) continue;
         knownPaths.add(realPath);
         candidates.push({
             ...candidate,
+            enabled,
             options: policy?.options,
             grantedCapabilities: policy?.grantedCapabilities
         });

@@ -29,6 +29,7 @@ import { resolvePluginEntry } from './discovery/loader.js';
 import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
 import {
     installPlugin,
+    isPluginEnabledFixed,
     listInstalledPlugins,
     resolveUninstallTarget,
     setPluginEnabled,
@@ -231,12 +232,17 @@ export class PluginMgrApplication extends BaseApplication {
                 if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
                     return undefined;
                 }
+                // system/enabled 以 discovery 候选为准（与 bootstrap 加载、listVisiblePlugins 同口径）。
+                // 不能按 record.source 重新解析清单判定：同名 local 记录残留时（插件后来变成内置）
+                // 会出现「GUI 显示可切换、后端 setEnabled 却以 system 拒绝」的分裂。
+                const system = candidate?.system === true;
                 return {
                     id,
                     source,
                     path: candidate?.spec ?? record?.path,
                     removable: source !== 'builtin' && source !== 'external',
-                    enabled: record?.enabled ?? true,
+                    system,
+                    enabled: system ? (candidate?.enabled ?? true) : (record?.enabled ?? true),
                     installedAt: record?.installedAt,
                     spec: record?.spec,
                     verification: record ? verifyInstalledPlugin(id) : undefined,
@@ -339,6 +345,10 @@ export class PluginMgrApplication extends BaseApplication {
             externalPaths: config?.externalPaths ?? [],
             pluginDirectories: getRuntimePluginDirectories()
         };
+        // 清单固定启停的内置插件不允许改开关，实际状态由清单的 enabled 决定
+        if (isPluginEnabledFixed(id, options)) {
+            throw new Error(translate('plugin.enabledFixed', { id }));
+        }
         if (!setPluginEnabled(id, enabled, options)) {
             throw new Error(translate('plugin.notFound', { id }));
         }

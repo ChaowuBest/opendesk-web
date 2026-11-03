@@ -14,8 +14,8 @@ import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';
 import { InfoOverlay } from '../../tui/components/notice';
-import { listVisiblePlugins, setPluginEnabled } from '../pluginmgr/index.js';
-import type { PluginRegistryRecord, PluginSourceKind } from '../pluginmgr/index.js';
+import { isPluginEnabledFixed, listVisiblePlugins, setPluginEnabled } from '../pluginmgr/index.js';
+import type { PluginRegistryRecord, PluginSourceKind, VisiblePluginRecord } from '../pluginmgr/index.js';
 import { t } from '../../../locale/index.js';
 
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
@@ -46,7 +46,7 @@ export class PluginsListOverlay implements Component {
     private list?: SelectList;
     private loader?: Loader;
     private state: ViewState = 'list';
-    private plugins: PluginRegistryRecord[] = [];
+    private plugins: VisiblePluginRecord[] = [];
     private onToggle: (id: string, enabled: boolean) => Promise<void>;
     private onUninstall: (id: string, removeData: boolean) => Promise<void>;
 
@@ -91,9 +91,13 @@ export class PluginsListOverlay implements Component {
                     ? chalk.green(`✓ ${t('plugin.list.status.enabled')}`)
                     : chalk.red(`✗ ${t('plugin.list.status.disabled')}`);
                 const spec = r.spec ?? r.path;
+                // 与 GUI 一致：启停由清单固定时在来源后标出「系统」，提示该插件不可切换
+                const source = r.system
+                    ? `${pluginSourceLabel(r.source)}·${t('plugin.center.systemTag')}`
+                    : pluginSourceLabel(r.source);
                 return {
                     value: r.id,
-                    label: `${chalk.bold(r.id)} ${chalk.dim(`[${pluginSourceLabel(r.source)}]`)} ${chalk.dim(`(${spec})`)} [${status}]`
+                    label: `${chalk.bold(r.id)} ${chalk.dim(`[${source}]`)} ${chalk.dim(`(${spec})`)} [${status}]`
                 };
             });
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
@@ -110,7 +114,7 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this);
     }
 
-    private getSelectedPlugin(): PluginRegistryRecord | undefined {
+    private getSelectedPlugin(): VisiblePluginRecord | undefined {
         if (!this.list || this.plugins.length === 0) return undefined;
         const item = this.list.getSelectedItem();
         if (!item || item.value === '__empty__') return undefined;
@@ -122,10 +126,17 @@ export class PluginsListOverlay implements Component {
     private onToggleKey() {
         const plugin = this.getSelectedPlugin();
         if (!plugin) return;
+        // 启停由清单固定（内置插件 system: true）的插件不接受切换：直接说明原因，
+        // 不进入确认框，避免用户先确认「禁用 xxx」再被告知无法修改（与 GUI 开关置灰一致）。
+        // 列表数据已带 system 标记，无需再次全量发现；setPluginEnabled 仍有底层兜底。
+        if (plugin.system) {
+            this.showResultMessage(t('plugin.enabledFixed', { id: plugin.id }));
+            return;
+        }
         this.showConfirmToggle(plugin);
     }
 
-    private showConfirmToggle(plugin: PluginRegistryRecord) {
+    private showConfirmToggle(plugin: VisiblePluginRecord) {
         this.cleanup();
         this.state = 'confirm-toggle';
         const action = plugin.enabled ? t('plugin.tui.action.disable') : t('plugin.tui.action.enable');
@@ -152,9 +163,16 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private async performToggle(plugin: PluginRegistryRecord) {
+    private async performToggle(plugin: VisiblePluginRecord) {
         const enabled = !plugin.enabled;
         const action = plugin.enabled ? t('plugin.tui.action.disable') : t('plugin.tui.action.enable');
+        // 执行前再按当前清单确认一次：列表快照可能已过期（面板打开期间清单被改），
+        // 否则 setPluginEnabled 会拒绝并让这里误报成「未找到插件」。
+        if (isPluginEnabledFixed(plugin.id)) {
+            this.showList();
+            this.showResultMessage(t('plugin.enabledFixed', { id: plugin.id }));
+            return;
+        }
         if (!setPluginEnabled(plugin.id, enabled)) {
             this.showList();
             this.showResultMessage(t('plugin.tui.notFound', { id: plugin.id }));

@@ -48,6 +48,8 @@ export interface SkillDetailAction {
     label: string;
     variant?: 'default' | 'primary' | 'danger';
     data?: string;
+    /** 置灰且不可点击：用于当前上下文不允许执行的动作（如启停被清单固定的插件） */
+    disabled?: boolean;
 }
 
 export interface SkillDetailCardModel {
@@ -68,6 +70,8 @@ export interface SkillDetailCardModel {
     headerExtraHtml?: string;
     extraSectionsHtml?: string;
     actions: SkillDetailAction[];
+    /** 底部操作区左侧的小字说明：解释动作为何不可用等 */
+    footerHint?: string;
 }
 
 const STYLE = `
@@ -102,7 +106,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 .agent-row-usage { overflow:hidden; color:#777; font-size: var(--fs-sm); line-height:1.4; text-overflow:ellipsis; white-space:nowrap; }
 .agent-flag { flex:none; padding:2px 8px; color:#999; background:#f0f0f0; border-radius:10px; font-size:10px; font-weight:600; }
 .agent-chevron { width:15px; height:15px; flex:none; color:#b6b9be; }
-.detail-footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 24px; border-top:1px solid #f0f0f0; background:#fff; }.detail-footer[hidden] { display:none; }.detail-action { display:inline-flex; align-items:center; gap:6px; padding:7px 16px; border:1px solid rgba(0,0,0,.08); border-radius:8px; background:#fff; color:#333; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,transform .15s; }.detail-action:hover { background:#f8f8f8; }.detail-action:active { transform:scale(.97); }.detail-action.primary { border-color:#DF4436; background:#DF4436; color:#fff; }.detail-action.primary:hover { background:#C43A2E; }.detail-action.danger { border-color:rgba(224,96,96,.2); color:#e06060; }.detail-action.danger:hover { background:#fff5f5; }
+.detail-footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 24px; border-top:1px solid #f0f0f0; background:#fff; }.detail-footer[hidden] { display:none; }.detail-footer-hint { margin-right:auto; align-self:center; color:#999; font-size: var(--fs-sm); line-height:1.4; }.detail-action { display:inline-flex; align-items:center; gap:6px; padding:7px 16px; border:1px solid rgba(0,0,0,.08); border-radius:8px; background:#fff; color:#333; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,transform .15s; }.detail-action:not(:disabled):hover { background:#f8f8f8; }.detail-action:not(:disabled):active { transform:scale(.97); }.detail-action:disabled { opacity:.45; cursor:not-allowed; }.detail-action.primary { border-color:#DF4436; background:#DF4436; color:#fff; }.detail-action.primary:not(:disabled):hover { background:#C43A2E; }.detail-action.danger { border-color:rgba(224,96,96,.2); color:#e06060; }.detail-action.danger:not(:disabled):hover { background:#fff5f5; }
 .tag-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:12px; font-size: var(--fs-sm); font-weight:500; }.tag-star { background:#fff7e0; color:#d4a028; }.tag-download { background:#ebf3fe; color:#5b8def; }
 .detail-tools-list { display:flex; flex-direction:column; gap:8px; }.detail-tool-item { padding:12px 14px; border:1px solid #f0f0f0; border-radius:10px; background:#fafafa; }.detail-tool-header { margin-bottom:8px; }.detail-tool-name { margin-bottom:3px; color:#1d1d1f; font-size: var(--fs-base); font-weight:600; }.detail-tool-desc { color:#777; font-size: var(--fs-md); line-height:1.5; }.detail-tool-no-params { margin-top:4px; color:#bbb; font-size: var(--fs-sm); }.detail-tool-params-toggle { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border:1px solid rgba(0,0,0,.06); border-radius:6px; background:#fff; color:#555; font:inherit; font-size: var(--fs-sm); font-weight:500; cursor:pointer; }.detail-tool-params-toggle:hover { background:#f0f0f0; color:#333; }.toggle-icon { display:inline-block; font-size: var(--icon-xs); transition:transform .15s; }.detail-tool-params-toggle.expanded .toggle-icon { transform:rotate(90deg); }.detail-tool-params { margin-top:10px; overflow:hidden; border:1px solid #f0f0f0; border-radius:8px; }.detail-tool-params-header,.detail-tool-param { display:grid; grid-template-columns:1fr .7fr .5fr 1.5fr; gap:8px; padding:6px 12px; }.detail-tool-params-header { background:#f5f5f5; color:#999; font-size: var(--fs-xs); font-weight:600; letter-spacing:.03em; text-transform:uppercase; }.detail-tool-param { border-top:1px solid #f5f5f5; font-size: var(--fs-sm); }.param-name { color:#333; font-family:'SF Mono','Cascadia Code',monospace; font-weight:500; }
 .detail-body::-webkit-scrollbar,.detail-body-content::-webkit-scrollbar { width:4px; height:4px; }.detail-body::-webkit-scrollbar-track,.detail-body-content::-webkit-scrollbar-track { background:transparent; }.detail-body::-webkit-scrollbar-thumb,.detail-body-content::-webkit-scrollbar-thumb { border-radius:2px; background:#d1d5db; }
@@ -126,11 +130,12 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 :host([data-theme='dark']) .meta-value,:host-context([data-theme='dark']) .meta-value { color:#e4e4e4; }
 :host([data-theme='dark']) .detail-resource-tag,:host-context([data-theme='dark']) .detail-resource-tag { background:#3f3f46; color:#ccc; }
 :host([data-theme='dark']) .detail-footer,:host-context([data-theme='dark']) .detail-footer { border-top-color:rgba(255,255,255,.12); background:#252526; }
+:host([data-theme='dark']) .detail-footer-hint,:host-context([data-theme='dark']) .detail-footer-hint { color:#858990; }
 :host([data-theme='dark']) .detail-action,:host-context([data-theme='dark']) .detail-action { border-color:rgba(255,255,255,.2); background:#333; color:#ccc; }
-:host([data-theme='dark']) .detail-action:hover,:host-context([data-theme='dark']) .detail-action:hover { background:#3f3f46; }
+:host([data-theme='dark']) .detail-action:not(:disabled):hover,:host-context([data-theme='dark']) .detail-action:not(:disabled):hover { background:#3f3f46; }
 :host([data-theme='dark']) .detail-action.primary,:host-context([data-theme='dark']) .detail-action.primary { border-color:#E85A5A; background:#E85A5A; color:#fff; }
 :host([data-theme='dark']) .detail-action.danger,:host-context([data-theme='dark']) .detail-action.danger { border-color:rgba(224,96,96,.3); color:#f08a8a; }
-:host([data-theme='dark']) .detail-action.danger:hover,:host-context([data-theme='dark']) .detail-action.danger:hover { background:rgba(224,96,96,.12); }
+:host([data-theme='dark']) .detail-action.danger:not(:disabled):hover,:host-context([data-theme='dark']) .detail-action.danger:not(:disabled):hover { background:rgba(224,96,96,.12); }
 :host([data-theme='dark']) .detail-tool-item,:host-context([data-theme='dark']) .detail-tool-item { border-color:rgba(255,255,255,.12); background:#333; }:host([data-theme='dark']) .detail-tool-name,:host-context([data-theme='dark']) .detail-tool-name { color:inherit; }
 :host([data-theme='dark']) .detail-tool-params-toggle,:host-context([data-theme='dark']) .detail-tool-params-toggle { border-color:rgba(255,255,255,.16); background:#3f3f46; color:#ccc; }
 :host([data-theme='dark']) .detail-tool-params,:host-context([data-theme='dark']) .detail-tool-params { border-color:rgba(255,255,255,.12); }:host([data-theme='dark']) .detail-tool-params-header,:host-context([data-theme='dark']) .detail-tool-params-header { background:#3f3f46; }:host([data-theme='dark']) .detail-tool-param,:host-context([data-theme='dark']) .detail-tool-param { border-top-color:rgba(255,255,255,.1); }:host([data-theme='dark']) .param-name,:host-context([data-theme='dark']) .param-name { color:inherit; }
@@ -212,7 +217,8 @@ export class SkillDetailCard extends HTMLElement {
         // footer 按钮与工具参数折叠使用事件委托，内容更新后无需重复绑定
         shadowRoot.querySelector('.detail-footer')?.addEventListener('click', (event) => {
             const button = (event.target as Element).closest<HTMLElement>('[data-detail-action]');
-            if (!button) return;
+            // 禁用态按钮不派发动作：防御性拦截，避免其它前端用脚本点击绕过
+            if (!button || (button as HTMLButtonElement).disabled) return;
             this.emitAction(button.dataset.detailAction!, button.dataset.detailActionValue || undefined);
         });
         shadowRoot.querySelector('.detail-body')?.addEventListener('click', (event) => {
@@ -281,14 +287,17 @@ export class SkillDetailCard extends HTMLElement {
 
         const footer = this.shadowRoot.querySelector<HTMLElement>('.detail-footer');
         if (footer) {
-            if (model.actions.length > 0) {
+            if (model.actions.length > 0 || model.footerHint) {
                 footer.hidden = false;
-                footer.innerHTML = model.actions
+                const hint = model.footerHint
+                    ? `<span class="detail-footer-hint">${escapeHtml(model.footerHint)}</span>`
+                    : '';
+                footer.innerHTML = `${hint}${model.actions
                     .map(
                         (action) =>
-                            `<button type="button" class="detail-action ${action.variant === 'default' || !action.variant ? '' : action.variant}" data-detail-action="${escapeHtml(action.id)}" data-detail-action-value="${escapeHtml(action.data ?? '')}">${escapeHtml(action.label)}</button>`
+                            `<button type="button" class="detail-action ${action.variant === 'default' || !action.variant ? '' : action.variant}" data-detail-action="${escapeHtml(action.id)}" data-detail-action-value="${escapeHtml(action.data ?? '')}"${action.disabled ? ' disabled' : ''}>${escapeHtml(action.label)}</button>`
                     )
-                    .join('');
+                    .join('')}`;
             } else {
                 footer.hidden = true;
                 footer.innerHTML = '';

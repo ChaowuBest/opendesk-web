@@ -75,6 +75,25 @@ describe('PluginConfigPage', () => {
         expect(application.setEnabled).toHaveBeenCalledWith('external-plugin', true);
     });
 
+    test('a plugin whose enabled state is fixed by the manifest has no toggle entry', async () => {
+        application.list = jest.fn(async () => [
+            { id: 'system-plugin', source: 'builtin', removable: false, enabled: true, system: true }
+        ]);
+        const page = createPage() as any;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        // 主列表标出锁定原因，让用户知道开关不可用
+        const mainText = page.render(120).join('\n');
+        expect(mainText).toContain('system-plugin');
+        expect(mainText).toContain('Enabled state is fixed by OpenDesk');
+
+        // 操作列表只给说明与返回，不提供切换入口
+        page.list.onSelect({ value: 'system-plugin' });
+        expect(page.list.items.map((item: any) => item.value)).toEqual(['locked', 'back']);
+        expect(page.render(120).join('\n')).toContain('Enabled state is fixed by OpenDesk');
+        expect(application.setEnabled).not.toHaveBeenCalled();
+    });
+
     test('uninstall keeps the plugin data directory by default', async () => {
         const page = createPage() as any;
         await new Promise((resolve) => setTimeout(resolve, 0));

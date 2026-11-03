@@ -103,7 +103,14 @@ export const OpenDeskPluginManifestSchema = z.object({
     platforms: z.array(z.enum(OPENDESK_PLUGIN_PLATFORMS)).optional(),
     minOpenDeskVersion: SemverSchema.optional(),
     maxOpenDeskVersion: SemverSchema.optional(),
-    resources: PluginResourcesSchema.optional()
+    resources: PluginResourcesSchema.optional(),
+    /**
+     * 仅内置插件生效：由清单固定启停状态，pluginmgr 不再允许修改该插件开关。
+     * 后装插件声明这两个字段时，宿主在加载时记一条 warning 并忽略。
+     */
+    system: z.boolean().optional(),
+    /** 与 system 配合：固定启用（true，默认）或固定禁用（false） */
+    enabled: z.boolean().optional()
 });
 
 const PackagePluginDeclarationSchema = OpenDeskPluginManifestSchema.omit({ entry: true }).extend({

@@ -7,6 +7,8 @@
         "zh": "为指向 OpenCode Zen 网关（Go 订阅端点）的模型自动注入会话归属请求头，使订阅无需手工配置即可使用"
     },
     "version": "1.0.0",
+    "system": true,
+    "enabled": true,
     "entry": "./index.mjs",
     "apiVersion": 1,
     "capabilities": ["hook"]

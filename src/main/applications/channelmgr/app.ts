@@ -21,7 +21,7 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';
-import { getPluginHost, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
+import { getPluginHost, isPluginEnabledFixed, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
 import type { Participant } from '../../aikernel/types/index.js';
 import type { ChannelPlugin, ChannelAccountStatus, ChannelGatewayContext, InboundChannelMessage } from './types.js';
 import { recordContact, getContacts } from './contacts.js';
@@ -1840,6 +1840,10 @@ export class ChannelMgrApplication extends BaseApplication {
                     showInfo(t('plugin.usage.hint'), '/plugins enable <plugin-id>');
                     return;
                 }
+                if (isPluginEnabledFixed(rest)) {
+                    showInfo(t('plugin.enable.fail'), t('plugin.enabledFixed', { id: rest }));
+                    return;
+                }
                 if (!setPluginEnabled(rest, true)) {
                     showInfo(t('plugin.enable.fail'), `未找到插件: ${rest}`);
                     return;
@@ -1858,6 +1862,10 @@ export class ChannelMgrApplication extends BaseApplication {
             case 'disable': {
                 if (!rest) {
                     showInfo(t('plugin.usage.hint'), '/plugins disable <plugin-id>');
+                    return;
+                }
+                if (isPluginEnabledFixed(rest)) {
+                    showInfo(t('plugin.disable.fail'), t('plugin.enabledFixed', { id: rest }));
                     return;
                 }
                 if (setPluginEnabled(rest, false)) {

@@ -417,6 +417,14 @@ export function listInstalledPlugins(configDirectory?: string): PluginRegistryRe
 }
 
 /**
+ * 展示口径的插件记录：比 registry 多一个「启停由清单固定」标记。
+ * CLI/TUI 列表据此标明固定启停的原因，与 GUI 插件中心的系统标记保持一致。
+ */
+export interface VisiblePluginRecord extends PluginRegistryRecord {
+    system?: boolean;
+}
+
+/**
  * 对外展示口径的插件列表：registry 记录与 discovery 候选合并，与 GUI 插件
  * 管理页（PluginMgrApplication.list）保持一致，内置、本地散装与外部路径
  * 插件均可见。平台不匹配的插件（如鸿蒙专属插件）不出现在列表中。
@@ -427,7 +435,7 @@ export function listVisiblePlugins(
         externalPaths?: readonly string[];
         pluginDirectories?: readonly string[];
     } = {}
-): PluginRegistryRecord[] {
+): VisiblePluginRecord[] {
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
     const records = listPluginRecords(resolvedConfigDirectory);
     const discovery = discoverPlugins({
@@ -438,14 +446,15 @@ export function listVisiblePlugins(
         pluginDirectories: options.pluginDirectories ?? getRuntimePluginDirectories()
     });
     const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
-    const merged = new Map(records.map((record) => [record.id, record]));
+    const merged = new Map<string, VisiblePluginRecord>(records.map((record) => [record.id, record]));
     for (const candidate of discovery.candidates) {
         if (merged.has(candidate.id)) continue;
         merged.set(candidate.id, {
             id: candidate.id,
             source: candidate.source,
             path: candidate.spec,
-            enabled: true,
+            enabled: candidate.enabled,
+            system: candidate.system,
             options: candidate.options ?? {},
             grantedCapabilities: candidate.grantedCapabilities
         });
@@ -453,11 +462,12 @@ export function listVisiblePlugins(
     // 展示路径与 GUI 列表对齐（candidate?.spec ?? record?.path）：registry 记录
     // （启停/安装策略会写相对路径）优先采用 discovery 的绝对 spec，未被
     // discovery 覆盖的记录（如被禁用插件）按来源解析为绝对路径。
-    const platformFiltered: PluginRegistryRecord[] = [];
+    // 启停状态同样以 discovery 为准：清单固定启停（system）的内置插件不采信 registry。
+    const platformFiltered: VisiblePluginRecord[] = [];
     for (const [id, record] of merged) {
         const candidate = candidatesById.get(id);
         const displayRecord = candidate
-            ? { ...record, path: candidate.spec }
+            ? { ...record, path: candidate.spec, enabled: candidate.enabled, system: candidate.system }
             : {
                   ...record,
                   path: path.isAbsolute(record.path)
@@ -486,6 +496,22 @@ export function listVisiblePlugins(
     return platformFiltered.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * 插件是否由清单固定启停（内置插件在清单里声明了 `system: true`）。
+ *
+ * 固定后 pluginmgr 不再允许切换开关，实际状态直接沿用清单里的 `enabled`：
+ * `true`（或缺省）恒启用，`false` 恒禁用。
+ */
+export function isPluginEnabledFixed(id: string, options: SetPluginEnabledOptions = {}): boolean {
+    const candidate = discoverPlugins({
+        configDirectory: options.configDirectory,
+        builtinDirectory: options.builtinDirectory,
+        externalPaths: options.externalPaths,
+        pluginDirectories: options.pluginDirectories
+    }).candidates.find((entry) => entry.id === id);
+    return candidate?.system === true;
+}
+
 export function setPluginEnabled(
     id: string,
     enabled: boolean,
@@ -496,33 +522,34 @@ export function setPluginEnabled(
             ? { configDirectory: configDirectoryOrOptions }
             : (configDirectoryOrOptions ?? {});
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
+    const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
+    // 一次发现同时给出「能否改开关」与「候选记录」：清单固定启停的插件写注册表也不会生效
+    //（发现阶段始终以清单为准），直接拒绝，避免留下「注册表说启用、运行时仍然禁用」的假状态。
+    const candidate = discoverPlugins({
+        configDirectory: resolvedConfigDirectory,
+        builtinDirectory,
+        externalPaths: options.externalPaths,
+        pluginDirectories: options.pluginDirectories
+    }).candidates.find((entry) => entry.id === id);
+    if (candidate?.system) return false;
     let record = getPluginRecord(id, resolvedConfigDirectory);
     if (!record) {
-        const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
-        const candidate = discoverPlugins({
-            configDirectory: resolvedConfigDirectory,
-            builtinDirectory,
-            externalPaths: options.externalPaths,
-            pluginDirectories: options.pluginDirectories
-        }).candidates.find((entry) => entry.id === id);
-        if (candidate) {
-            const root =
-                candidate.source === 'builtin'
-                    ? builtinDirectory
-                    : candidate.source === 'local'
-                      ? getPluginsDirectory(resolvedConfigDirectory)
-                      : undefined;
-            record = {
-                id,
-                source: candidate.source,
-                path: root ? path.relative(root, candidate.spec) : candidate.spec,
-                enabled: true,
-                options: candidate.options ?? {},
-                grantedCapabilities: candidate.grantedCapabilities
-            };
-        }
+        if (!candidate) return false;
+        const root =
+            candidate.source === 'builtin'
+                ? builtinDirectory
+                : candidate.source === 'local'
+                  ? getPluginsDirectory(resolvedConfigDirectory)
+                  : undefined;
+        record = {
+            id,
+            source: candidate.source,
+            path: root ? path.relative(root, candidate.spec) : candidate.spec,
+            enabled: true,
+            options: candidate.options ?? {},
+            grantedCapabilities: candidate.grantedCapabilities
+        };
     }
-    if (!record) return false;
     upsertPluginRecord({ ...record, enabled }, resolvedConfigDirectory);
     return true;
 }

@@ -41,6 +41,10 @@ export interface PluginManifest {
     minOpenDeskVersion?: string;
     maxOpenDeskVersion?: string;
     resources?: PluginManifestResources;
+    /** 仅内置插件生效：由清单固定启停状态，pluginmgr 不再允许更改开关 */
+    system?: boolean;
+    /** 与 system 配合：固定启用（true，默认）或固定禁用（false） */
+    enabled?: boolean;
 }
 
 const capabilitySet = new Set<string>(OPENDESK_PLUGIN_CAPABILITIES);
@@ -55,6 +59,12 @@ function optionalString(value: unknown, code: string): string | undefined {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !value.trim()) throw new Error(code);
     return value.trim();
+}
+
+function optionalBoolean(value: unknown, code: string): boolean | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'boolean') throw new Error(code);
+    return value;
 }
 
 /** 版本类字段：非空且必须是合法 SemVer（允许 `v` 前缀与首尾空白） */
@@ -217,8 +227,70 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         platforms,
         minOpenDeskVersion: optionalVersion(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
         maxOpenDeskVersion: optionalVersion(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
-        resources
+        resources,
+        system: optionalBoolean(value.system, 'plugin.manifest_invalid_system'),
+        enabled: optionalBoolean(value.enabled, 'plugin.manifest_invalid_enabled')
     };
+}
+
+/** 清单里声明的启停控制字段（原始 JSON 或已解析清单皆可） */
+export interface PluginManifestControlFields {
+    /** 由清单固定启停：pluginmgr 不允许修改该插件的开关 */
+    system: boolean;
+    /** system 为 true 时的固定状态：true（默认）恒启用，false 恒禁用 */
+    enabled?: boolean;
+}
+
+/**
+ * 解析清单里的启停控制字段。
+ *
+ * `system` / `enabled` 只对内置插件生效：后装插件（plugins 目录、外部路径、运行时目录）
+ * 即使声明了也不能锁住自己的开关，加载时由 loader 记 warning 后忽略。
+ */
+export function resolveManifestControlFields(
+    declaration: { system?: unknown; enabled?: unknown } | undefined,
+    options: { builtin: boolean }
+): PluginManifestControlFields | undefined {
+    if (!options.builtin || !declaration) return undefined;
+    if (declaration.system === undefined && declaration.enabled === undefined) return undefined;
+    return {
+        system: declaration.system === true,
+        enabled: typeof declaration.enabled === 'boolean' ? declaration.enabled : undefined
+    };
+}
+
+/** 清单是否声明了 system / enabled（不区分来源，用于给后装插件打 warning） */
+export function declaresManifestControlFields(manifest: PluginManifest | undefined): boolean {
+    return manifest?.system !== undefined || manifest?.enabled !== undefined;
+}
+
+/**
+ * 轻量读取插件位置上的清单声明（不解析、不校验），用于只关心个别字段的场景。
+ * 与 readPluginManifest 的查找顺序一致：根目录 opendesk.plugin.json 优先，其次入口
+ * 同名清单，最后 package.json#opendesk 声明。顺序或回落路径不一致会导致 discovery
+ * 与加载/GUI 列表对同一插件采信不同清单（如 package 声明的内置插件锁定状态分裂）。
+ * 清单不可读或不是合法 JSON 时返回 undefined：这类问题留给加载阶段报 plugin.* 诊断。
+ */
+export function readManifestDeclaration(spec: string): Record<string, unknown> | undefined {
+    try {
+        const stat = fs.statSync(spec);
+        const root = stat.isDirectory() ? spec : path.dirname(spec);
+        const basename = path.basename(spec, stat.isFile() ? path.extname(spec) : undefined);
+        const readIfExists = (file: string) => (fs.existsSync(file) ? readJson(file) : undefined);
+        const directoryManifest = readIfExists(path.join(root, 'opendesk.plugin.json'));
+        const sidecar = stat.isFile()
+            ? (readIfExists(path.join(root, `${basename}.opendesk.plugin.json`)) ??
+              readIfExists(path.join(root, `${basename}.plugin.json`)))
+            : undefined;
+        const packageManifest = () => {
+            const packageJson = readIfExists(path.join(root, 'package.json'));
+            return isRecord(packageJson) && isRecord(packageJson.opendesk) ? packageJson.opendesk : undefined;
+        };
+        const declared = directoryManifest ?? sidecar ?? packageManifest();
+        return isRecord(declared) ? declared : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function readJson(file: string): unknown {
@@ -242,7 +314,9 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
         capabilities: declaration.capabilities,
         minOpenDeskVersion: declaration.minOpenDeskVersion,
         maxOpenDeskVersion: declaration.maxOpenDeskVersion,
-        resources: declaration.resources
+        resources: declaration.resources,
+        system: declaration.system,
+        enabled: declaration.enabled
     };
     return parsePluginManifest(manifestFields);
 }

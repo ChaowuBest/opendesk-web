@@ -498,8 +498,9 @@ export default definePlugin({
 插件之间互不可见。`network`、`auth`、`secrets` 和 `registerBackend` 的每次调用都会校验插件已声明并获授 `account`
 capability。
 
-随产品包发布的 `opendesk-account` 是当前内置实现，约定始终启用且不可卸载；现阶段这只是产品约定，插件管理层没有增加
-`required` / `system` 等额外机制。
+随产品包发布的 `opendesk-account` 是当前内置实现，约定始终启用且不可卸载；这一状态目前靠产品约定维持
+（未在其清单里用 `system` 固定），用户仍可自行禁用。内置插件可以用清单里的 `system: true` 把启停状态
+真正固定下来（见下文「system 与 enabled」），但插件管理层没有提供 `required` 这类「必备插件」机制。
 
 ## 使用 opendesk.plugin.json
 
@@ -565,6 +566,34 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 
 `minOpenDeskVersion` / `maxOpenDeskVersion` 分别是宿主版本的**下界与上界**（包含边界），
 不是区间表达式：写 `0.2.0` 表示"宿主 ≥ 0.2.0"。未声明时不限制。
+
+### system 与 enabled（仅内置插件）
+
+随产品一起发布的内置插件可以在清单里声明两个布尔字段，把启停状态固定下来（当前 `opencodego`
+即用该机制固定为始终启用）：
+
+```json
+{
+    "schemaVersion": 1,
+    "id": "example-builtin",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["hook"],
+    "system": true,
+    "enabled": true
+}
+```
+
+- `system: true`：该插件的开关由清单固定。插件中心（GUI / TUI）与 `opendesk plugins list`
+  都会标出系统插件（GUI 开关置灰、TUI 不提供切换入口），`opendesk plugins enable/disable`
+  与 `setPluginEnabled` 工具同样会被拒绝；
+- `enabled`：`system` 固定时的实际状态。`true`（或缺省）表示始终启用；`false` 表示始终禁用，
+  固定禁用的插件不会进入运行时，但仍会出现在插件列表里并标明原因。
+
+这两个字段**只对内置插件生效**。通过插件中心、`opendesk plugins install`、手工放入
+`plugins/` 目录、`externalPaths` 或运行时插件目录声明的插件即使写了 `system` / `enabled`，
+宿主也只会在加载时记录一条 warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔值，
+否则清单校验失败（`plugin.manifest_invalid_system` / `plugin.manifest_invalid_enabled`）。
 
 ### displayName 与 description 本地化
 

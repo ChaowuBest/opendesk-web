@@ -92,10 +92,11 @@ export {
     uninstallPlugin,
     listInstalledPlugins,
     listVisiblePlugins,
+    isPluginEnabledFixed,
     setPluginEnabled,
     verifyInstalledPlugin
 } from './management/manager.js';
-export type { UninstallPluginOptions } from './management/manager.js';
+export type { UninstallPluginOptions, VisiblePluginRecord } from './management/manager.js';
 export type {
     DiscoveredPluginCandidate,
     PluginDiscoveryConflict,

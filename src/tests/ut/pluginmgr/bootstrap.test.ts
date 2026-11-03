@@ -19,6 +19,7 @@ import { PLUGIN_SKILL_BUNDLE } from '../../../main/applications/pluginmgr/runtim
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { logger } from '../../../main/utils/logger.js';
 import { installPlugin } from '../../../main/applications/pluginmgr/management/manager.js';
+import { upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
@@ -646,6 +647,39 @@ Review the current changes.`
         } finally {
             warnSpy.mockRestore();
         }
+    });
+
+    test('同名 local 注册表记录不影响内置 system 插件的固定启停', async () => {
+        const builtinDirectory = path.join(configDirectory, 'builtin');
+        const pluginDirectory = path.join(builtinDirectory, 'account');
+        fs.mkdirSync(pluginDirectory, { recursive: true });
+        fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), `export default { id: 'account', setup() {} };`);
+        fs.writeFileSync(
+            path.join(pluginDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                schemaVersion: 1,
+                id: 'account',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: [],
+                system: true,
+                enabled: true
+            })
+        );
+        process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = builtinDirectory;
+        // 历史遗留：同名插件曾以 local 方式安装并被禁用，registry 里的过期记录不能让
+        // GUI 列表的 source 变成 local 从而绕过清单固定的启停
+        upsertPluginRecord(
+            { id: 'account', source: 'local', path: 'account', enabled: false, options: {} },
+            configDirectory
+        );
+
+        const application = new PluginMgrApplication();
+        const entry = (await application.list()).find((candidate) => candidate.id === 'account');
+
+        // system 与 enabled 以 discovery 候选为准：清单固定启用，不采信过期记录
+        expect(entry).toMatchObject({ system: true, enabled: true });
+        await expect(application.setEnabled('account', false)).rejects.toThrow(/account/);
     });
 
     test('插件贡献的 agent 经初始化后以插件 id 为作用域注册到 AgentRegistry', async () => {

@@ -57,6 +57,8 @@ interface PluginListEntry {
     path?: string;
     removable: boolean;
     enabled: boolean;
+    /** 启停由清单固定（内置插件的 system: true）：开关不可操作 */
+    system: boolean;
     installedAt?: string;
     spec?: string;
     verification?: {
@@ -471,15 +473,23 @@ button:hover { background: #f4f5f7; }
 .contribution-pill.browser { color: #c05a8a; background: #fbeaf2; }
 .card-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 2px; }
 .card-footer button { padding: 5px 12px; border-radius: 14px; font-size: 12px; font-weight: 600; }
-.builtin-tag {
-    margin-right: auto;
+/* 来源与启停标记靠左并排，右侧留给开关与卸载按钮 */
+.plugin-tags { display: flex; align-items: center; gap: 6px; margin-right: auto; }
+.builtin-tag, .system-tag {
     padding: 3px 9px;
-    color: #8a6d1f;
-    background: #fdf6e3;
-    border: 1px solid rgba(196, 154, 42, .25);
     border-radius: 12px;
     font-size: 11px;
     font-weight: 550;
+}
+.builtin-tag {
+    color: #8a6d1f;
+    background: #fdf6e3;
+    border: 1px solid rgba(196, 154, 42, .25);
+}
+.system-tag {
+    color: #4a6ab5;
+    background: #eef2fb;
+    border: 1px solid rgba(91, 141, 239, .25);
 }
 .card-footer .plugin-toggle { margin-left: auto; }
 .plugin-toggle {
@@ -518,6 +528,8 @@ button:hover { background: #f4f5f7; }
 .plugin-toggle input:checked + .plugin-toggle-slider::after { transform: translateX(16px); }
 .plugin-toggle input:focus-visible + .plugin-toggle-slider { outline: 2px solid #5b8def; outline-offset: 2px; }
 .plugin-toggle input:disabled + .plugin-toggle-slider { cursor: default; opacity: .45; }
+/* 启停由清单固定的插件：开关永久禁用，光标提示不可操作 */
+.plugin-toggle.is-locked input:disabled + .plugin-toggle-slider { cursor: not-allowed; }
 /* 启停请求发出后原地换成一个转圈（与侧边栏任务列表的进行中图标同款），等结果回来再恢复开关 */
 .plugin-toggle-spinner { display: none; }
 .plugin-toggle.is-pending .plugin-toggle-slider { display: none; }
@@ -574,6 +586,7 @@ button:hover { background: #f4f5f7; }
 :host([data-theme="dark"]) .contribution-pill.agent { color: #8bc2f2; background: rgba(47, 127, 191, .22); }
 :host([data-theme="dark"]) .contribution-pill.browser { color: #efa6c6; background: rgba(192, 90, 138, .22); }
 :host([data-theme="dark"]) .builtin-tag { color: #d9b96a; background: rgba(196, 154, 42, .14); border-color: rgba(196, 154, 42, .3); }
+:host([data-theme="dark"]) .system-tag { color: #9db8ef; background: rgba(91, 141, 239, .18); border-color: rgba(91, 141, 239, .3); }
 :host([data-theme="dark"]) .empty {
     color: #a4a7ad;
     background: #242426;
@@ -839,6 +852,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
      * 所以连续点几个开关也没问题，各自完成后各自恢复。
      */
     private async togglePlugin(id: string, enabled: boolean): Promise<void> {
+        // 启停由清单固定（system）的插件不接受开关操作；UI 已禁用开关，这里兜住其它触发路径
+        if (this.entries.find((entry) => entry.id === id)?.system === true) return;
         if (this.pendingToggles.has(id) || this.busy) return;
         this.pendingToggles.add(id);
         this.clearNotice();
@@ -900,13 +915,18 @@ export class PluginMgrEntryWidget extends HTMLElement {
         for (const card of this.cards()) this.syncCardControls(card);
     }
 
-    /** 一张卡片的控件可用性：本地在等结果（pending）或全局操作进行中（busy）都禁用 */
+    /**
+     * 一张卡片的控件可用性：本地在等结果（pending）、全局操作进行中（busy）
+     * 或启停由清单固定（system）时都禁用开关。
+     */
     private syncCardControls(card: HTMLElement): void {
-        const disabled = this.busy || this.pendingToggles.has(card.dataset.pluginId ?? '');
+        const id = card.dataset.pluginId ?? '';
+        const pending = this.pendingToggles.has(id);
+        const locked = this.entries.find((entry) => entry.id === id)?.system === true;
         const toggle = card.querySelector<HTMLInputElement>('[data-action="toggle"]');
-        if (toggle) toggle.disabled = disabled;
+        if (toggle) toggle.disabled = this.busy || locked || pending;
         const uninstall = card.querySelector<HTMLButtonElement>('[data-action="uninstall"]');
-        if (uninstall) uninstall.disabled = disabled;
+        if (uninstall) uninstall.disabled = this.busy || pending;
     }
 
     /** 更新通知条：状态与所在区域一处改，整树渲染时由 noticeHtml 输出同一份标记 */
@@ -1074,6 +1094,18 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const diagnostics = entry.runtime?.diagnostics ?? [];
         /** 该插件的启停还在等结果：开关换成转圈，等结果回来后再恢复 */
         const pending = this.pendingToggles.has(entry.id);
+        /** 启停由清单固定：开关不可点击，悬停提示说明原因 */
+        const locked = entry.system === true;
+        const toggleTitle = locked
+            ? this.t('plugin.center.systemLocked')
+            : this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable');
+        /** 来源标记：内置插件显示「内置」，启停固定的插件紧跟一个「系统」 */
+        const tags = [
+            entry.source === 'builtin'
+                ? `<span class="builtin-tag">${escapeHtml(this.t('plugin.center.builtinTag'))}</span>`
+                : '',
+            locked ? `<span class="system-tag">${escapeHtml(this.t('plugin.center.systemTag'))}</span>` : ''
+        ].filter(Boolean);
         const name = this.pluginName(entry);
         const color = getSkillPastel(name);
         const contributionPills = [
@@ -1124,15 +1156,13 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 )
                 .join('')}
             <div class="card-footer">
-                ${entry.source === 'builtin' ? `<span class="builtin-tag">${escapeHtml(this.t('plugin.center.builtinTag'))}</span>` : ''}
-                <label class="plugin-toggle${pending ? ' is-pending' : ''}" title="${escapeHtml(
-                    this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
+                ${tags.length ? `<div class="plugin-tags">${tags.join('')}</div>` : ''}
+                <label class="plugin-toggle${pending ? ' is-pending' : ''}${locked ? ' is-locked' : ''}" title="${escapeHtml(
+                    toggleTitle
                 )}" ${pending ? 'aria-busy="true"' : ''}>
                     <input type="checkbox" data-action="toggle" data-id="${escapeHtml(entry.id)}"
-                        aria-label="${escapeHtml(
-                            this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable')
-                        )}"
-                        ${entry.enabled ? 'checked' : ''} ${pending || this.busy ? 'disabled' : ''}>
+                        aria-label="${escapeHtml(toggleTitle)}"
+                        ${entry.enabled ? 'checked' : ''} ${locked || pending || this.busy ? 'disabled' : ''}>
                     <span class="plugin-toggle-slider"></span>
                     <span class="plugin-toggle-spinner" aria-hidden="true"></span>
                 </label>
@@ -1268,7 +1298,9 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 {
                     id: 'toggle',
                     label: this.t(entry.enabled ? 'plugin.center.disable' : 'plugin.center.enable'),
-                    variant: entry.enabled ? 'default' : 'primary'
+                    variant: entry.enabled ? 'default' : 'primary',
+                    // 启停由清单固定的插件（system）：按钮置灰不可点，原因写在左侧小字里
+                    disabled: entry.system === true
                 },
                 ...(entry.removable
                     ? [
@@ -1279,7 +1311,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
                           }
                       ]
                     : [])
-            ]
+            ],
+            footerHint: entry.system === true ? this.t('plugin.center.systemDetailHint') : undefined
         };
         const detail = this.shadowRoot?.querySelector<SkillDetailCard>('#plugin-detail-card');
         if (detail) {

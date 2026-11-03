@@ -28,7 +28,7 @@ description: 管理并协助用户开发 OpenDesk 插件 (查询、校验、安�
 - getPluginDetails：查看指定插件的声明、贡献项和校验结果。
 - installPlugin：安装本地目录、ZIP、TGZ、HTTP/HTTPS URL 或 npm spec。安装完成后运行时会自动刷新，不要紧接着重复调用 reloadPlugins。
 - uninstallPlugin：卸载 plugins 目录中的插件（包括通过 installPlugin 安装和手工放入的插件）。builtin 和 external 插件不能通过该工具删除。
-- setPluginEnabled：启用或禁用插件，并刷新该插件提供的能力。
+- setPluginEnabled：启用或禁用插件，并刷新该插件提供的能力。清单里声明了 "system: true" 的内置插件启停由 OpenDesk 固定，该工具会拒绝修改，应向用户说明原因。
 - reloadPlugins：重新发现并加载全部插件，适用于外部插件或运行时目录内容已经发生变化的情况。
 
 不要猜测工具归属，也不要调用上述列表之外的插件管理工具。卸载请求必须使用本技能的 uninstallPlugin，不能通过文件工具直接删除 plugins 目录中的插件。

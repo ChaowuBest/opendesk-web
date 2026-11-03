@@ -85,10 +85,34 @@ describe('PluginMgr management tools', () => {
                     source: 'local',
                     enabled: true,
                     version: '1.0.0',
-                    status: 'active'
+                    status: 'active',
+                    // 未声明 system 的插件缺省为 false，agent 据此判断能否切换
+                    system: false
                 })
             ]
         });
+    });
+
+    test('listPlugins marks plugins whose enabled state is fixed by the manifest', async () => {
+        const app = createPluginApp({
+            list: jest.fn(async () => [
+                {
+                    id: 'system-helper',
+                    source: 'builtin',
+                    removable: false,
+                    enabled: true,
+                    system: true,
+                    runtime: { status: 'active' },
+                    skills: [],
+                    mcpServers: []
+                }
+            ])
+        });
+        const tool = new ListPluginsTool(app as any);
+
+        const result = await tool.execute({});
+
+        expect(JSON.parse(result.result).plugins[0]).toMatchObject({ id: 'system-helper', system: true });
     });
 
     test('getPluginDetails returns manifest, contributions, capabilities and verification', async () => {

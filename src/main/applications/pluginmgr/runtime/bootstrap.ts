@@ -15,6 +15,7 @@ import { getPluginHost } from './host.js';
 import type { PluginChatRequestInput, PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
 import { registerSdkPackageMapping } from './package-mapping.js';
 import { loadPlugin } from '../discovery/loader.js';
+import { declaresManifestControlFields } from '../discovery/manifest.js';
 import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
 import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord, type DiscoveredPluginCandidate } from '../discovery/discovery.js';
@@ -309,6 +310,12 @@ async function loadCandidate(
     candidate: ResolvedCandidate,
     baseDirectory: string
 ): Promise<string | undefined> {
+    // 清单固定禁用的内置插件（system: true + enabled: false）不属于加载失败，静默跳过；
+    // 它与用户开关无关，pluginmgr 也不允许把它打开。
+    if (!candidate.enabled) {
+        logger.info(`Skipping OpenDesk plugin fixed as disabled: ${candidate.id}`);
+        return undefined;
+    }
     if (candidate.blockedCode) {
         host.recordError({
             id: candidate.id,
@@ -324,6 +331,12 @@ async function loadCandidate(
         const loaded = await loadPlugin(candidate, baseDirectory, {
             requireDeclaration: candidate.requireDeclaration
         });
+        // system/enabled 只对内置插件生效：后装插件声明这两个字段时告警并忽略
+        if (candidate.source !== 'builtin' && declaresManifestControlFields(loaded.manifest)) {
+            logger.warn(
+                `Ignoring "system"/"enabled" in plugin manifest: ${candidate.id} (only builtin plugins can fix their enabled state)`
+            );
+        }
         // 平台不匹配属于正常跳过场景：记录警告即可，不进入运行时与已安装插件列表。
         const platforms = loaded.plugin.platforms;
         if (platforms && platforms.length > 0 && !platforms.includes(process.platform as PluginPlatform)) {
