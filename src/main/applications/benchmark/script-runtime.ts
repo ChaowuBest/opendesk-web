@@ -263,10 +263,9 @@ export async function runScript(options: ScriptRunOptions): Promise<ScriptExecut
             if (typeof child?.stderr?.destroy === 'function') child.stderr.destroy();
             const resolveWith = () =>
                 resolve(result.ok ? result : { ...result, logError: readScriptLogTail(options.logPath) });
-            // 快速失败的脚本可能在本轮事件循环内就 close，同步读会拿到还没刷盘的空日志，
-            // 失败路径先等日志流刷盘（成功路径无需读日志，直接结束）
-            if (result.ok || !output || output.destroyed) {
-                output?.end();
+            // 快速脚本可能在本轮事件循环内就 close，同步读会拿到还没刷盘的空日志，
+            // 无论成败都先等日志流刷盘再 resolve，保证 resolve 时日志文件完整
+            if (!output || output.destroyed) {
                 resolveWith();
                 return;
             }
