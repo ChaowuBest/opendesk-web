@@ -908,13 +908,67 @@ test('globFiles ignores nested node_modules under a parent directory', async () 
 
         const taskState = { getWorkspace: () => root } as any;
         const output = await new GlobFilesTool().executeCommand(
-            { pattern: '**/*.ts', path: root, caseSensitive: false, maxResults: 200 } as any,
+            { pattern: '**/*.ts', path: root, maxResults: 200 } as any,
             taskState
         );
 
         assert.match(output, /app\.ts/);
         assert.doesNotMatch(output, /node_modules/);
     } finally {
+        cleanup(root);
+    }
+});
+
+/**
+ * 回归：模式匹配统一区分大小写（与 ripgrep / fast-glob / picomatch 的默认一致），
+ * 与文件系统是否大小写敏感无关。原 caseSensitive 参数既不生效，又只在 win32 上有后置过滤。
+ */
+test('globFiles matches patterns case-sensitively on every platform', async () => {
+    const root = makeTempDir();
+    try {
+        fs.writeFileSync(path.join(root, 'App.TS'), 'export {};\n', 'utf8');
+        fs.writeFileSync(path.join(root, 'lower.ts'), 'export {};\n', 'utf8');
+
+        const taskState = { getWorkspace: () => root } as any;
+        const output = await new GlobFilesTool().executeCommand(
+            { pattern: '**/*.ts', path: root, maxResults: 200 } as any,
+            taskState
+        );
+
+        assert.match(output, /lower\.ts/);
+        assert.doesNotMatch(output, /App\.TS/);
+    } finally {
+        cleanup(root);
+    }
+});
+
+/**
+ * 空结果的措辞必须区分"确实没有匹配"与"遍历被预算截断"：
+ * 后者的结论会让调用方误判"目录里没有这种文件"。
+ * 用 -1ms 预算让第一次时间检查必然超时，避免依赖真实耗时的抖动。
+ */
+test('globFiles reports why an empty result is not conclusive', async () => {
+    const root = makeTempDir();
+    const previousBudget = process.env['OPENDESK_GLOB_TIME_BUDGET_MS'];
+    try {
+        fs.writeFileSync(path.join(root, 'a.txt'), 'x\n', 'utf8');
+        const taskState = { getWorkspace: () => root } as any;
+        const tool = new GlobFilesTool();
+        const args = { pattern: '**/*.ts', path: root, maxResults: 200 } as any;
+
+        assert.equal(await tool.executeCommand(args, taskState), '未找到匹配的文件');
+
+        process.env['OPENDESK_GLOB_TIME_BUDGET_MS'] = '-1';
+        const output = await tool.executeCommand(args, taskState);
+
+        assert.match(output, /未找到匹配的文件（遍历在时间预算/);
+        assert.match(output, /可能仍有匹配/);
+    } finally {
+        if (previousBudget === undefined) {
+            delete process.env['OPENDESK_GLOB_TIME_BUDGET_MS'];
+        } else {
+            process.env['OPENDESK_GLOB_TIME_BUDGET_MS'] = previousBudget;
+        }
         cleanup(root);
     }
 });

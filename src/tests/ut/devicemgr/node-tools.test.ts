@@ -609,6 +609,24 @@ describe('devicemgr node tools', () => {
         expect(grepCli).not.toContain('(node)');
     });
 
+    /**
+     * 远端 glob 只转发 node 协议支持的参数：caseSensitive 不属于 fs.glob 协议（参考实现从不读它），
+     * 已从 schema 移除；历史调用残留的该参数会被 schema 丢弃，不会污染 node 协议消息。
+     */
+    test('forwards only declared glob params to the node without the removed caseSensitive switch', async () => {
+        const { app, invoke } = createFakeApp({ invokeResult: '找到 1 个文件:\nsrc/a.ts' });
+        const task = createTask(['fs.glob']);
+        const tool = createNodeToolset(app).getTool('globNodeFiles')!;
+
+        await tool.execute({ pattern: '**/*.ts', path: 'src', caseSensitive: false } as any, undefined, task);
+
+        const calls = invoke.mock.calls as unknown as Array<[{ command: string; params: Record<string, unknown> }]>;
+        expect(calls).toHaveLength(1);
+        expect(calls[0][0].command).toBe('fs.glob');
+        expect(calls[0][0].params).toMatchObject({ pattern: '**/*.ts', path: 'src' });
+        expect(calls[0][0].params).not.toHaveProperty('caseSensitive');
+    });
+
     test('routes to explicit nodeId when specified, bypassing selected node', async () => {
         const { app, invoke } = createFakeApp({
             invokeResult: { exitCode: 0, stdout: 'node-b-ok' },

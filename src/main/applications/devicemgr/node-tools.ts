@@ -1427,10 +1427,12 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
 
 const NodeGlobSchema = z.object({
     nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
-    pattern: z.string().min(1).describe('node 上的 glob 模式，如 **/*.ts、src/**/*.js、*.md'),
+    pattern: z
+        .string()
+        .min(1)
+        .describe('node 上的 glob 模式，如 **/*.ts、src/**/*.js、*.md；大小写是否敏感由 node 实现决定'),
     path: z.string().optional().describe('node 上的搜索根目录，默认使用 node 默认目录'),
     ignore: z.array(z.string()).optional().describe('额外忽略模式，是否生效取决于 node 实现'),
-    caseSensitive: z.boolean().optional().default(false).describe('是否区分大小写，是否生效取决于 node 实现'),
     maxResults: z.number().int().min(1).max(1000).optional().default(200).describe('最大返回结果数，默认 200')
 });
 
