@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { getConfiguredRegistry, compareVersions } from '../../../main/utils/upgrade';
+import { getConfiguredRegistry } from '../../../main/utils/upgrade';
 
 describe('upgrade utils', () => {
     describe('getConfiguredRegistry', () => {
@@ -81,16 +81,6 @@ describe('upgrade utils', () => {
         test('strips trailing slashes from registry URL', () => {
             process.env.npm_config_registry = 'https://registry.example.com///';
             expect(getConfiguredRegistry()).toBe('https://registry.example.com');
-        });
-    });
-
-    describe('compareVersions', () => {
-        test('compares semantic versions correctly', () => {
-            expect(compareVersions('1.0.0', '1.0.0')).toBe(0);
-            expect(compareVersions('1.0.1', '1.0.0')).toBe(1);
-            expect(compareVersions('1.0.0', '1.0.1')).toBe(-1);
-            expect(compareVersions('2.0.0', '1.9.9')).toBe(1);
-            expect(compareVersions('1.9.9', '2.0.0')).toBe(-1);
         });
     });
 });

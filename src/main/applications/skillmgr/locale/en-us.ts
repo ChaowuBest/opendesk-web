@@ -71,6 +71,7 @@ export const enUs: Record<string, string> = {
     'renderer.skill.search.placeholder.builtin': 'Search built-in skills...',
     'renderer.skill.search.placeholder.analyze': 'Search by skill name, ID or description...',
     'renderer.skill.search.searching': 'Searching...',
+    'renderer.skill.search.refreshing': 'Refreshing...',
     'renderer.skill.loading': 'Loading...',
     'renderer.skill.empty.noMatch': 'No matching skills',
     'renderer.skill.empty.noMatchTry': 'Try a different keyword',

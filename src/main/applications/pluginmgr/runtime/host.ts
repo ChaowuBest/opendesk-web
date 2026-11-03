@@ -49,7 +49,7 @@ import {
     OPENDESK_PLUGIN_PLATFORMS,
     resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
-import { comparePluginVersions } from '../discovery/manifest.js';
+import { compareVersion } from '../../../utils/version.js';
 import { ensurePluginDataDirectory } from '../management/paths.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
@@ -786,7 +786,7 @@ export class PluginHost {
             return this.replaceEntry(entry);
         }
         if (plugin.minOpenDeskVersion && options.hostVersion) {
-            const comparison = comparePluginVersions(options.hostVersion, plugin.minOpenDeskVersion);
+            const comparison = compareVersion(options.hostVersion, plugin.minOpenDeskVersion);
             if (comparison === undefined || comparison < 0) {
                 entry.status = 'error';
                 entry.diagnostics.push({
@@ -798,7 +798,7 @@ export class PluginHost {
             }
         }
         if (plugin.maxOpenDeskVersion && options.hostVersion) {
-            const comparison = comparePluginVersions(options.hostVersion, plugin.maxOpenDeskVersion);
+            const comparison = compareVersion(options.hostVersion, plugin.maxOpenDeskVersion);
             if (comparison === undefined || comparison > 0) {
                 entry.status = 'error';
                 entry.diagnostics.push({

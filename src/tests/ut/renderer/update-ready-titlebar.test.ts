@@ -28,17 +28,16 @@ describe('installed update titlebar entry', () => {
         expect(rendererEntry).not.toMatch(/onStateChanged\([^)]*showConfirmModal/);
     });
 
-    test('opens the model settings tab where software update is the first section', () => {
-        expect(rendererEntry).toContain("openSettingEditor({ tab: 'models' })");
-        expect(rendererHtml).toContain("options && options.tab === 'models'");
+    test('opens the general settings tab where software update is the first section', () => {
+        expect(rendererEntry).toContain("openSettingEditor({ tab: 'general' })");
+        expect(rendererHtml).toContain("options && options.tab === 'general'");
         expect(settingPanel).toContain("this.getAttribute('initial-tab')");
         expect(settingPanel).toMatch(
-            /id="tab-models"[\s\S]*?\$\{this\.renderUpdateSection\(\)\}[\s\S]*?\$\{this\.renderProvidersSection\(\)\}/
+            /id="tab-general"[^>]*>[\s\S]*?\$\{this\.renderUpdateSection\(\)\}[\s\S]*?id="general-sections"/
         );
-        expect(settingPanel).not.toMatch(
-            /renderGeneralSection\(\)[\s\S]*?return `\s*\$\{this\.renderUpdateSection\(\)\}/
-        );
-        expect(settingPanel).toContain("this.querySelector('#tab-models')?.insertAdjacentHTML('afterbegin', html)");
+        // 软件更新已经不在模型设置里了
+        expect(settingPanel).not.toMatch(/id="tab-models"[^>]*>[\s\S]*?\$\{this\.renderUpdateSection\(\)\}/);
+        expect(settingPanel).toContain("this.querySelector('#tab-general')?.insertAdjacentHTML('afterbegin', html)");
     });
 
     test('offers an optional restart without exposing the old install action', () => {

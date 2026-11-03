@@ -3,10 +3,10 @@ import { describe, expect, test } from '@jest/globals';
 import { zhCn } from '../../../main/applications/skillmgr/locale/zh-cn.js';
 import { enUs } from '../../../main/applications/skillmgr/locale/en-us.js';
 
-const source = fs.readFileSync(
-    new URL('../../../main/applications/skillmgr/renderer/entry.js', import.meta.url),
-    'utf8'
-);
+// 源码为 CRLF：统一成 LF，函数体切片才能用 '\n    }\n' 定位边界
+const source = fs
+    .readFileSync(new URL('../../../main/applications/skillmgr/renderer/entry.js', import.meta.url), 'utf8')
+    .replace(/\r\n/g, '\n');
 
 /* 技能中心批量操作（方案A：⋯ 菜单 = 批量选择 + 批量执行；已选托盘；无「全部xx」入口）结构回归 */
 describe('skill center batch operations (proposal A)', () => {
@@ -60,6 +60,31 @@ describe('skill center batch operations (proposal A)', () => {
         expect(source).toContain('for (const s of this._getFilteredSkills(scope)) selection.add(s.id);');
         expect(source).toContain('_batchPickAll');
         expect(source).toContain('_batchClearSelection');
+    });
+
+    test('the tray is patched chip by chip instead of rebuilt on every pick', () => {
+        const fnStart = source.indexOf('_syncBatchTray(scope) {');
+        expect(fnStart).toBeGreaterThan(-1);
+        const fnBody = source.slice(fnStart, source.indexOf('\n    }', fnStart));
+        // 回归：旧实现用 outerHTML 整条替换托盘，重新插入的 .batch-tray 会重播入场动画
+        // （dropdown-in，opacity 0 → 1），表现为每次勾选技能整条工具栏闪一下
+        expect(fnBody).not.toContain('outerHTML');
+        expect(fnBody).toContain('_renderTrayChipHtml');
+        expect(fnBody).toContain('chip.remove()');
+        // 托盘首次出现时才整条插入，此时入场动画是期望效果
+        expect(fnBody).toContain('insertAdjacentHTML');
+    });
+
+    test('the single-chip renderer stays the shared source of tray chip markup', () => {
+        const trayHtmlStart = source.indexOf('_renderTrayHtml(scope) {');
+        expect(trayHtmlStart).toBeGreaterThan(-1);
+        const trayHtmlBody = source.slice(trayHtmlStart, source.indexOf('\n    }', trayHtmlStart));
+        expect(trayHtmlBody).toContain('_renderTrayChipHtml(scope, id)');
+        const chipStart = source.indexOf('_renderTrayChipHtml(scope, id) {');
+        expect(chipStart).toBeGreaterThan(-1);
+        const chipBody = source.slice(chipStart, source.indexOf('\n    }', chipStart));
+        expect(chipBody).toContain('class="tray-chip"');
+        expect(chipBody).toContain('data-tray-remove');
     });
 
     test('the ⋯ button carries a live selection-count badge', () => {

@@ -35,7 +35,13 @@ import {
     partitionMcpToolsForContext
 } from './mcp-gateway-tools.js';
 import { Skill } from '../../aikernel/skill.js';
-import type { McpServerConfig, McpServerState, McpToolInfo } from './common.js';
+import type {
+    McpBatchFailure,
+    McpBatchOperationResult,
+    McpServerConfig,
+    McpServerState,
+    McpToolInfo
+} from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
 import { parseJsonWithRepair } from '../../../utils/json.js';
@@ -51,6 +57,7 @@ import {
 } from './registry/index.js';
 import { createHash } from 'crypto';
 import { logger } from '../../utils/logger.js';
+import { toErrorMessage } from '../../../common/utils/error.js';
 import { getProvidedMcpServers, onMcpServerProvidersChanged } from './provider.js';
 import {
     getHarmonyLocalRuntimeFeatureAvailability,
@@ -67,6 +74,10 @@ function getLocalRuntimeUnavailableMessage(availability: HarmonyLocalRuntimeFeat
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
     name: z.string().describe('MCP 显示名称，如 filesystem、github 等').default(''),
+    displayName: z
+        .string()
+        .describe('面向用户的展示名，如 Registry 条目名「天眼查MCP」；未设置时 UI 回退到 name')
+        .optional(),
     transport: z
         .enum(['stdio', 'sse', 'streamableHttp'])
         .describe('传输协议类型：stdio 本地命令行进程，sse 服务器推送事件，streamableHttp 流式 HTTP')
@@ -286,6 +297,55 @@ export class McpMgrApplication extends BaseApplication {
         this.sendEventToSubscribers('serversUpdated');
     }
 
+    /**
+     * 批量启用/禁用：一次读写配置，单条失败（不存在 / 本机运行时不满足）只记录到 failed，
+     * 不影响其余条目，也不再逐条触发 serversUpdated。
+     */
+    async setServersEnabled(ids: string[], enabled: boolean): Promise<McpBatchOperationResult> {
+        const servers = this.getServersFromConfig();
+        const byId = new Map(servers.map((server) => [server.id, server]));
+        const failed: McpBatchFailure[] = [];
+        let changed = 0;
+        for (const id of ids) {
+            const server = byId.get(id);
+            if (!server) {
+                failed.push({ id, error: t('error.serverNotFound') });
+                continue;
+            }
+            if (server.enabled === enabled) continue;
+            if (enabled) {
+                try {
+                    this.assertServerLocalRuntimeAvailable(server);
+                } catch (error) {
+                    failed.push({ id, error: toErrorMessage(error) });
+                    continue;
+                }
+            }
+            server.enabled = enabled;
+            changed += 1;
+        }
+        if (changed > 0) {
+            this.saveServersToConfig(servers);
+            this.sendEventToSubscribers('serversUpdated');
+        }
+        return { changed, failed };
+    }
+
+    /** 批量删除：一次写盘完成，缺失的 id 以失败明细返回 */
+    async deleteServers(ids: string[]): Promise<McpBatchOperationResult> {
+        const servers = this.getServersFromConfig();
+        const idSet = new Set(ids);
+        const existing = new Set(servers.map((server) => server.id));
+        const kept = servers.filter((server) => !idSet.has(server.id));
+        const removed = servers.length - kept.length;
+        if (removed > 0) {
+            this.saveServersToConfig(kept);
+            this.sendEventToSubscribers('serversUpdated');
+        }
+        const failed = ids.filter((id) => !existing.has(id)).map((id) => ({ id, error: t('error.serverNotFound') }));
+        return { changed: removed, failed };
+    }
+
     async importFromJson(jsonConfig: string): Promise<number> {
         const parsed = JSON.parse(jsonConfig);
         const mcpServers = parsed.mcpServers || parsed;
@@ -444,6 +504,13 @@ export class McpMgrApplication extends BaseApplication {
         });
         if (configs.length === 0)
             throw new Error(t('error.noInstallableServer', { source: detail.source, name: detail.name }));
+
+        // 注册表条目名（如「天眼查MCP」）常与配置里的技术名（如 tyc-mcp）不同：
+        // 单 server 配置时把注册表名记为展示名，避免安装前后名字对不上。
+        const registryDisplayName = (detail.displayName || detail.name || '').trim();
+        if (configs.length === 1 && registryDisplayName && registryDisplayName !== configs[0].name) {
+            configs[0].displayName = registryDisplayName;
+        }
 
         const installed: McpServerConfig[] = [];
         const updated: McpServerConfig[] = [];

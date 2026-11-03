@@ -28,6 +28,7 @@ export const zhCn: Record<string, string> = {
     'status.waitMs':
         '可选的有限等待时间（毫秒），范围 0-${max}，默认 0（立即查询）。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 0；确实需要很快再次观察进度时可用 1000-5000；下一步依赖完成结果时优先使用 10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续使用 0；对输出无变化的运行中进程重复查询会被限流冷却。',
     'shell.sandboxTag': '沙箱',
+    'shell.running': '执行中',
     'prompt.title': '# 终端执行环境',
     'prompt.active': '- 当前终端：${shell} (`${path}`)',
     'prompt.shell.powershell': 'PowerShell',

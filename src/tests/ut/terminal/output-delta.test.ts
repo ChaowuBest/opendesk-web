@@ -1,5 +1,8 @@
 import { describe, expect, test } from '@jest/globals';
-import { computeTerminalOutputDelta } from '../../../main/applications/terminal/output-delta.js';
+import {
+    computeTerminalLiveOutputFrame,
+    computeTerminalOutputDelta
+} from '../../../main/applications/terminal/output-delta.js';
 
 /**
  * 终端 live 输出增量的回归测试：
@@ -43,5 +46,48 @@ describe('computeTerminalOutputDelta', () => {
             sent = acc;
         }
         expect(sent).toBe('ab\nccc\n');
+    });
+});
+
+/**
+ * live tick 的增量帧必须在「剥离 ANSI 之后」求增量。
+ *
+ * 回归背景：渲染端整份渲染用的是 stripAnsi(toolcall.result)，而增量此前是在原始文本上
+ * 切分、再逐段 stripAnsi。转义序列恰好跨 tick 边界时，前后两段各残留半个序列，
+ * 「增量拼接结果」与「全量渲染结果」不再一致，要等终态全量渲染才自愈。
+ */
+describe('computeTerminalLiveOutputFrame', () => {
+    test('未截断时返回剥离后的增量，且与全量剥离结果一致', () => {
+        const frame = computeTerminalLiveOutputFrame('', '\u001b[32mok\u001b[0m line1\n');
+
+        expect(frame.reset).toBe(false);
+        expect(frame.delta).toBe('ok line1\n');
+        expect(frame.stripped).toBe('ok line1\n');
+
+        const next = computeTerminalLiveOutputFrame(frame.stripped, '\u001b[32mok\u001b[0m line1\nline2\n');
+        expect(next.delta).toBe('line2\n');
+        // 增量拼接 == 全量剥离
+        expect(frame.delta + next.delta).toBe(next.stripped);
+    });
+
+    test('转义序列跨 tick 边界时，增量拼接仍与全量渲染逐字一致', () => {
+        // tick1：输出停在转义序列中间（"\u001b[3"）
+        const frame1 = computeTerminalLiveOutputFrame('', 'abc\u001b[3');
+        expect(frame1.stripped).toBe('abc');
+        expect(frame1.delta).toBe('abc');
+
+        // tick2：补上剩余部分，完整序列 + 文本
+        const frame2 = computeTerminalLiveOutputFrame(frame1.stripped, 'abc\u001b[31mred\u001b[0m');
+        expect(frame2.stripped).toBe('abcred');
+        expect(frame2.delta).toBe('red');
+        // 若在原始文本上切分（旧实现），这里会残留 "31m" 之类的可见片段
+        expect(frame1.delta + frame2.delta).toBe(frame2.stripped);
+    });
+
+    test('截断后前缀关系破坏 → reset 且 delta 为剥离后的全量文本', () => {
+        const frame = computeTerminalLiveOutputFrame('head...tail-old', 'head...\u001b[33mmarker\u001b[0m...tail-new');
+
+        expect(frame.reset).toBe(true);
+        expect(frame.delta).toBe('head...marker...tail-new');
     });
 });

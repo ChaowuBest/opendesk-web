@@ -114,7 +114,8 @@ function updateUpdateReadyButton(state) {
 }
 
 const updateReadyButton = document.getElementById('update-ready-btn');
-updateReadyButton?.addEventListener('click', () => window.globalControlAPI?.openSettingEditor({ tab: 'models' }));
+// 软件更新区块在通用设置里（第一个区块），点标题栏入口直接落到通用设置
+updateReadyButton?.addEventListener('click', () => window.globalControlAPI?.openSettingEditor({ tab: 'general' }));
 window.updateAPI?.onStateChanged(updateUpdateReadyButton);
 window.updateAPI
     ?.getState()

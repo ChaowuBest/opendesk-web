@@ -23,6 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { JSONRPCMessage, RequestId } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { ClientWorkspaceRuntime } from './client-workspace.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
 import { t } from '../../../../locale/index.js';
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
@@ -154,7 +155,10 @@ export class ClientHostedWorkspaceMcp {
     }
 
     private createServer(): McpServer {
-        const server = new McpServer({ name: 'opendesk-workspace', version: '0.3.4' }, { capabilities: { tools: {} } });
+        const server = new McpServer(
+            { name: 'opendesk-workspace', version: OPENDESK_RUNTIME_VERSION },
+            { capabilities: { tools: {} } }
+        );
         server.registerTool(
             'read_text_file',
             {

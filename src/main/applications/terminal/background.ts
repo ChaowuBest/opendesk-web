@@ -15,7 +15,7 @@
  * 放到后台继续执行时，由此模块负责跟踪进程的输出、退出状态，并对外提供查询/终止接口。
  */
 
-import { execSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { ToolResult } from '../../aikernel/tool';
 import { createShellOutputDecoder, filterShellEnvironmentWarnings } from '../../utils/shellExec.js';
 import { BoundedOutputBuffer } from './output-buffer.js';
@@ -193,7 +193,7 @@ export class BackgroundProcessManager {
             const tailErr = filterShellEnvironmentWarnings(stderrDecoder.flush());
             if (tailOut) entry.output.append(tailOut);
             if (tailErr) entry.output.append(tailErr);
-            entry.output.closeArtifact();
+            void entry.output.closeArtifact();
         };
 
         // Windows 上 taskkill 后 close 事件可能不触发但 exit 事件会触发
@@ -258,13 +258,17 @@ export class BackgroundProcessManager {
     killProcess(pid: number): boolean {
         const entry = this.entries.get(pid);
         if (!entry || entry.finished) return false;
-        // 先用 proc.kill 确保 Node.js 事件能正确触发
-        try {
-            entry.proc.kill('SIGTERM');
-        } catch {
-            /* ignore */
+        // Windows 上必须先杀树：taskkill /T 需要父进程还活着才能枚举出子树，
+        // 先 proc.kill 会让子进程成为孤儿、逃过 /T（taskkill 不可用时由
+        // killProcessTree 内部回落到 proc.kill）。
+        // Unix 上先对进程本身发 SIGTERM，确保 Node 的 exit 事件尽快触发。
+        if (process.platform !== 'win32') {
+            try {
+                entry.proc.kill('SIGTERM');
+            } catch {
+                /* ignore */
+            }
         }
-        // 再用 killProcessTree 确保子进程树也被杀掉
         killProcessTree(entry.proc);
         return true;
     }
@@ -318,7 +322,27 @@ export function killProcessTree(proc: ChildProcess): void {
     const pid = proc.pid;
     try {
         if (process.platform === 'win32') {
-            execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+            // 必须异步：execSync 会在「停止」「超时转后台」「退出清理」时冻结主进程，
+            // 进程树较大或系统繁忙时可达数秒（GUI 表现为整窗卡死）
+            const killer = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
+                stdio: 'ignore',
+                windowsHide: true
+            });
+            // taskkill 不可用（ENOENT）或拒绝执行（非 0 退出）时回落到只杀父进程：
+            // 否则调用方会误以为已经终止，stop() 等 close 事件时可能永久挂住
+            const fallbackKill = () => {
+                try {
+                    proc.kill('SIGTERM');
+                } catch {
+                    /* 进程可能已退出 */
+                }
+            };
+            killer.on('error', fallbackKill);
+            killer.on('exit', (code) => {
+                if (code !== 0) fallbackKill();
+            });
+            // 不等待 taskkill 结束，避免阻塞调用方（unref 让事件循环不因它而保活）
+            killer.unref();
         } else {
             let killedProcessGroup = false;
             try {
@@ -495,65 +519,136 @@ export function installTimeoutBackgrounding(opts: {
     const clock = opts.clock ?? new ShellTimeoutClock(timeout, startTime);
 
     return new Promise<boolean>((resolve) => {
+        /**
+         * 事件/定时器回调里的异常不会被 Promise 捕获：一旦因此错过 settle()，
+         * 工具就永久挂起——closeArtifact 不会被调用（artifact 不落盘）、
+         * runningProcesses / stopPromises 不清理、stop() 的等待也永远等不到。
+         * 因此这些回调必须自己兜住异常，并把 settle() 放进 finally。
+         */
+        const logHandlerFailure = (label: string, err: unknown) => {
+            console.warn(
+                `[terminal] ${label} handler failed: ${err instanceof Error ? err.stack || err.message : String(err)}`
+            );
+        };
+
+        const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
         const settle = (backgrounded: boolean) => {
             if (settled) return;
             settled = true;
             clock.cancel();
-            onFinish(backgrounded);
-            resolve(backgrounded);
+            try {
+                onFinish(backgrounded);
+            } catch (err) {
+                // onFinish 是调用方注入的清理逻辑（关 artifact / 清定时器 / 复位队列），
+                // 即使它抛错也必须 resolve，否则工具永久挂起
+                logHandlerFailure('finish', err);
+            } finally {
+                resolve(backgrounded);
+            }
+        };
+
+        /**
+         * 终态/错误/转后台时写入最终输出。
+         *
+         * 必须先清掉 live tick 残留的 outputDelta：ToolResult 上的增量字段不会自动过期，
+         * 若带着它调用 updateResult，回调方（TaskState）会把上一帧的增量误判成新的
+         * live tick 再推一次，渲染端就会把同一段文本重复追加一次。
+         */
+        const updateFinalResult = (text: string) => {
+            result.outputDelta = undefined;
+            result.outputReset = undefined;
+            result.updateResult(text);
         };
 
         // 正常完成 / 被用户 stop
         const onClose = (code: number | null) => {
             if (timedOut) return;
-            let output = getOutput();
-            if (isKilledByStop()) output = `[中断] 命令被用户终止。\n` + output;
-            const message = output.trim() || `进程退出，代码 ${code ?? 'killed'}`;
-            result.updateResult(formatOutput?.(message) ?? message);
-            if (Number.isInteger(code)) {
-                result.updateResultObject({ exitCode: code });
+            try {
+                let output = getOutput();
+                if (isKilledByStop()) output = `[中断] 命令被用户终止。\n` + output;
+                const message = output.trim() || `进程退出，代码 ${code ?? 'killed'}`;
+                updateFinalResult(formatOutput?.(message) ?? message);
+                if (Number.isInteger(code)) {
+                    result.updateResultObject({ exitCode: code });
+                }
+            } catch (err) {
+                logHandlerFailure('close', err);
+            } finally {
+                settle(false);
             }
-            settle(false);
         };
 
         const onError = (err: Error) => {
             if (timedOut) return;
-            const message = `执行命令时出错: ${err.message}`;
-            result.updateResult(formatOutput?.(message) ?? message);
-            settle(false);
+            try {
+                const message = `执行命令时出错: ${err.message}`;
+                updateFinalResult(formatOutput?.(message) ?? message);
+            } catch (handlerError) {
+                logHandlerFailure('error', handlerError);
+            } finally {
+                settle(false);
+            }
         };
 
         proc.on('close', onClose);
         proc.on('error', onError);
 
+        /** 后台接管是否真的完成：失败时进程已无人跟踪，必须终止并关闭 artifact */
+        let handoffCompleted = false;
+
         clock.onTimeout(() => {
             if (settled) return;
             timedOut = true;
 
-            // 摘除工具自身的 listener，由后台管理器接管
-            detachListeners();
-            proc.removeListener('close', onClose);
-            proc.removeListener('error', onError);
+            try {
+                // 摘除工具自身的 listener，由后台管理器接管
+                detachListeners();
+                proc.removeListener('close', onClose);
+                proc.removeListener('error', onError);
 
-            const mgr = BackgroundProcessManager.getInstance();
-            // 权限弹窗等待时间不计入后台进程的“已执行时长”
-            const activeElapsedMs = clock.getActiveElapsedMs();
-            mgr.register(proc, command, getOutputBuffer?.() ?? getOutput(), Date.now() - activeElapsedMs);
+                const mgr = BackgroundProcessManager.getInstance();
+                // register 对缺失 pid 是静默 no-op：不提前拦住的话会把「没接管成功」
+                // 当成 handoffCompleted，artifact 就再也没人关了
+                if (!proc.pid) throw new Error('进程缺少 pid，无法转入后台跟踪');
+                // 权限弹窗等待时间不计入后台进程的“已执行时长”
+                const activeElapsedMs = clock.getActiveElapsedMs();
+                mgr.register(proc, command, getOutputBuffer?.() ?? getOutput(), Date.now() - activeElapsedMs);
+                handoffCompleted = true;
 
-            const elapsedSec = (activeElapsedMs / 1000).toFixed(1);
-            const pid = proc.pid ?? 'unknown';
-            const header = [
-                `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
-                `PID: ${pid}`,
-                `提示: 使用 checkShellStatus 工具并传入 pid=${pid}；waitMs 的允许范围是 0-30000 毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。`
-            ].join('\n');
-            const trimmedOutput = getOutput().trim();
-            const output = trimmedOutput || '(暂无输出)';
-            // 零输出转后台时说明"暂无输出"的含义：缓冲类管道属正常静默，否则提示排查方向
-            const silenceHint = trimmedOutput ? '' : `\n${silentBackgroundHint(command)}`;
-            const message = header + silenceHint + '\n---\n' + output;
-            result.updateResult(formatOutput?.(message) ?? message);
-            settle(true);
+                const elapsedSec = (activeElapsedMs / 1000).toFixed(1);
+                const pid = proc.pid ?? 'unknown';
+                const header = [
+                    `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
+                    `PID: ${pid}`,
+                    `提示: 使用 checkShellStatus 工具并传入 pid=${pid}；waitMs 的允许范围是 0-30000 毫秒。仅在确实需要即时状态、且查询后可继续其他独立工作时使用 waitMs=0；确实需要很快再次观察进度时可用 waitMs=1000-5000；若下一步依赖完成结果，优先使用 waitMs=10000-30000。进程完成时会提前返回，无需等满 waitMs。避免对同一运行中 PID 连续零等待查询；只有判断进程卡住时才使用 kill=true。`
+                ].join('\n');
+                const trimmedOutput = getOutput().trim();
+                const output = trimmedOutput || '(暂无输出)';
+                // 零输出转后台时说明"暂无输出"的含义：缓冲类管道属正常静默，否则提示排查方向
+                const silenceHint = trimmedOutput ? '' : `\n${silentBackgroundHint(command)}`;
+                const message = header + silenceHint + '\n---\n' + output;
+                updateFinalResult(formatOutput?.(message) ?? message);
+            } catch (err) {
+                logHandlerFailure('timeout', err);
+                if (!handoffCompleted) {
+                    // 接管失败：进程既查不到也杀不掉，继续跑只会泄漏，直接终止
+                    killProcessTree(proc);
+                }
+                try {
+                    // 这里不再走 formatOutput：它可能正是抛错的那一步
+                    const pid = proc.pid ?? 'unknown';
+                    updateFinalResult(
+                        handoffCompleted
+                            ? `[超时] 命令仍在后台运行（PID: ${pid}），但超时提示生成失败：${errorText(err)}\n\n${getOutput()}`
+                            : `[超时] 命令超时后的后台接管失败：${errorText(err)}\n\n${getOutput()}`
+                    );
+                } catch {
+                    /* 结算优先：结果文本写不进去也不能再抛 */
+                }
+            } finally {
+                settle(handoffCompleted);
+            }
         });
         clock.start();
     });

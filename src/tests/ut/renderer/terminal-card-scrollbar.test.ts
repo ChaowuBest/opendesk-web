@@ -61,6 +61,21 @@ describe('终端工具卡片滚动条', () => {
         expect(declaration(pathLine, 'word-break')).toBe('break-all');
         expect(declaration(pathLine, 'white-space')).toBeUndefined();
     });
+
+    it('运行中转圈与侧边栏 sb-running-spinner 同款：品牌红描边 + 同一条旋转动画', () => {
+        const spinner = ruleBody(customCss, '.terminal-tool-running');
+        expect(declaration(spinner, 'border-top-color')).toBe('#c94c40');
+        expect(declaration(spinner, 'animation')).toContain('sb-spinner');
+        // 12px 与标题文本同高，不撑高 summary 行（shell 标签胶囊本身约 18px）
+        expect(declaration(spinner, 'width')).toBe('12px');
+        expect(declaration(spinner, 'height')).toBe('12px');
+    });
+
+    it('运行中转圈在深色主题下换中性白轨道，避免淡红轨道隐入深色卡片底', () => {
+        const dark = ruleBody(themeDarkCss, "html[data-theme='dark'] .terminal-tool-running");
+        expect(declaration(dark, 'border-color')).toBe('rgba(255, 255, 255, 0.18)');
+        expect(declaration(dark, 'border-top-color')).toBe('#e0685c');
+    });
 });
 
 describe('终端工具卡片命令回显渲染', () => {

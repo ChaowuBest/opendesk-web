@@ -136,4 +136,62 @@ describe('ToolCall GUI render payload', () => {
         expect(tool).not.toHaveProperty('result');
         expect((update as any).last_part.rendered).toBe('<div class="terminal-tool">mainline terminal card</div>');
     });
+
+    /**
+     * 回归：终端 live tick 的增量字段必须进入 IPC payload。
+     *
+     * 背景：渲染端 patchRunningTerminalToolOutput 有「携带 outputDelta 时只追加文本」的
+     * 快路径（taskview.js），但 ToolCall.toRenderJSON 曾经不导出 outputDelta/outputReset，
+     * 导致该分支在生产链路中永远不可达：每个 200ms tick 都退化为
+     * 「重新解析整份 part HTML + 整体重写输出区」，超长输出下持续占用渲染进程主线程。
+     */
+    test('live 终端 tick 的 toolcall 载荷携带 outputDelta / outputReset', () => {
+        const call = new ToolCall(0, 'call-live', 'terminal-executePwsh', '{"command":"npm run build"}');
+        call.status = 'running';
+        call.result = 'line1\n';
+        call.outputDelta = 'line2\n';
+        call.outputReset = true;
+
+        const part = new ToolCallMessagePart();
+        part.toolcalls.push(call);
+        part.rendered = '<div class="terminal-tool">card</div>';
+
+        const update = serializeTaskUpdateForRender({
+            type: 'assistant',
+            task_id: 'task-1',
+            task_status: 'running',
+            message_id: 'message-1',
+            last_part_index: 0,
+            last_part: part
+        }) as any;
+        const tool = update.last_part.toolcalls[0];
+
+        expect(tool.outputDelta).toBe('line2\n');
+        expect(tool.outputReset).toBe(true);
+        // 原始大字段仍然不外泄
+        expect(tool).not.toHaveProperty('result');
+        expect(tool).not.toHaveProperty('args_string');
+    });
+
+    test('非 live 的 toolcall 载荷不携带增量字段（历史/终态载荷不膨胀）', () => {
+        const call = new ToolCall(0, 'call-done', 'terminal-executePwsh', '{"command":"npm run build"}');
+        call.status = 'success';
+        call.result = 'done';
+
+        const part = new ToolCallMessagePart();
+        part.toolcalls.push(call);
+        part.rendered = '<div class="terminal-tool">card</div>';
+
+        const update = serializeTaskUpdateForRender({
+            type: 'assistant',
+            task_id: 'task-1',
+            task_status: 'running',
+            message_id: 'message-1',
+            last_part_index: 0,
+            last_part: part
+        }) as any;
+
+        expect(update.last_part.toolcalls[0]).not.toHaveProperty('outputDelta');
+        expect(update.last_part.toolcalls[0]).not.toHaveProperty('outputReset');
+    });
 });

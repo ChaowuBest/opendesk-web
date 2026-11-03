@@ -26,7 +26,8 @@ import { runPluginShellEnv } from '../../pluginmgr/runtime/hooks.js';
 import { Setting, getTaskToolResultDirectory, getTaskTrashDirectory } from '../../../utils/setting.js';
 import { installTimeoutBackgrounding, ShellTimeoutClock } from '../background.js';
 import { BoundedOutputBuffer } from '../output-buffer.js';
-import { computeTerminalOutputDelta } from '../output-delta.js';
+import { computeTerminalLiveOutputFrame } from '../output-delta.js';
+import { TerminalLiveUpdateThrottle, TERMINAL_LIVE_UPDATE_INTERVAL_MS } from '../live-update-throttle.js';
 import {
     buildChildProcessEnv,
     createShellOutputDecoder,
@@ -59,8 +60,6 @@ export {
     stripUserPythonEnvironment
 } from '../../../utils/shellExec.js';
 export { findExecutableInPath, hasZsh } from '../../../utils/shellExec.js';
-
-const LIVE_UPDATE_INTERVAL_MS = 200;
 
 export function renderTerminalToolCallCli(
     shellLabel: string,
@@ -123,7 +122,11 @@ export function renderTerminalToolCallCli(
 export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sandboxed = false): string | undefined {
     const command = toolcall.args_object?.['command'] || '';
     const description: string | undefined = toolcall.args_object?.['description'];
+    // 实际语义是「还没有任何输出」：live tick 每 200ms 就把当前输出写回 result，
+    // 命令一出字它就变 false，只用来决定是否渲染输出块，不能当作「是否在跑」。
     const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
+    // 运行指示与 toolcall 状态同源：pending 是「尚未开始执行」，不算运行中。
+    const showRunningIndicator = toolcall.status === 'running';
     const isError = toolcall.status === 'error';
 
     const headerText = description
@@ -133,6 +136,12 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
     const borderColor = isError ? 'border-red-200' : 'border-gray-200';
     const iconColor = isError ? 'text-red-400' : 'text-gray-400';
     const headerTextColor = isError ? 'text-red-600' : 'text-gray-600';
+
+    // 运行中提示：与侧边栏「运行中任务」同款转圈，放在标签胶囊左侧。
+    // 只由 toolcall.status 决定，与输出渲染解耦；状态迁移会触发全量重渲，转圈随之消失。
+    const runningIndicator = showRunningIndicator
+        ? `\n            <span class="terminal-tool-running shrink-0" role="img" aria-label="${escapeHtml(t('shell.running'))}"></span>`
+        : '';
 
     // 命令回显行：.terminal-tool-command 保留多行命令的换行并允许长 token 折行（如超长 PATH），
     // 否则命令块会把卡片撑出横向溢出，让滚动区出现横向滚动条。
@@ -155,7 +164,7 @@ export function renderTerminalToolCall(cmdName: string, toolcall: ToolCall, sand
             <svg class="w-4 h-4 ${iconColor} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 9l3 3-3 3"/><line x1="14" y1="15" x2="16" y2="15"/>
             </svg>
-            <span class="text-[12px] ${headerTextColor} font-medium truncate min-w-0 flex-1">${headerText}</span>
+            <span class="text-[12px] ${headerTextColor} font-medium truncate min-w-0 flex-1">${headerText}</span>${runningIndicator}
             <span class="terminal-shell-tag terminal-shell-tag-${escapeHtml(cmdName)} shrink-0">${escapeHtml(cmdName)}</span>
             ${sandboxed ? `<span class="terminal-shell-tag terminal-shell-tag-sandbox shrink-0">${escapeHtml(t('shell.sandboxTag'))}</span>` : ''}
             <svg class="terminal-tool-chevron w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -335,7 +344,14 @@ export async function executeShellCommand(opts: {
                   detached: sandbox.detached ?? false,
                   windowsHide: true
               })
-            : spawn(shellPath, shellArgs, { cwd, env, detached: process.platform !== 'win32' });
+            : // 非沙箱路径同样不能弹出控制台窗口：Electron 主进程无控制台，
+              // 缺 windowsHide 时 Windows 会为子进程创建可见的控制台窗口
+              spawn(shellPath, shellArgs, {
+                  cwd,
+                  env,
+                  detached: process.platform !== 'win32',
+                  windowsHide: true
+              });
         sandbox?.attach(proc);
     } catch (error) {
         await sandbox?.cleanup();
@@ -345,13 +361,34 @@ export async function executeShellCommand(opts: {
     trackDetachedProcess(proc);
     runningProcesses.add(proc);
 
+    // artifact 落盘背压：磁盘跟不上时暂停子进程输出，避免异步写缓冲无限增长。
+    // 进程退出时必须恢复，否则 pause 状态下 stdout 的 'end'/'close' 不会触发，
+    // 会让命令看起来"卡住"。
+    const resumeChildOutput = () => {
+        proc.stdout?.resume();
+        proc.stderr?.resume();
+    };
+    proc.once('exit', resumeChildOutput);
+
     const output = new BoundedOutputBuffer(
         '',
         t('output.truncated'),
         getTerminalOutputArtifactPath(taskState, proc.pid),
-        t('output.artifactSaved')
+        t('output.artifactSaved'),
+        {
+            onBackpressure: (paused) => {
+                if (paused) {
+                    proc.stdout?.pause();
+                    proc.stderr?.pause();
+                } else {
+                    resumeChildOutput();
+                }
+            }
+        }
     );
     let lastSentOutput = '';
+    /** 上一次放行的快照（已剥离 ANSI）——增量与渲染端整份渲染同源的基准 */
+    let lastSentStripped = '';
     // zsh -i 等交互模式下，shell integration 会向 stdout/stderr 输出终端控制序列噪音，统一过滤
     // stdout 与 stderr 各自独立走流式解码器：UTF-8 多字节字符（中文/emoji）可能被管道分片
     // 切断在 chunk 边界，逐 chunk 解码会把半个字符误判为 GBK 产生乱码（锟斤拷）
@@ -376,17 +413,29 @@ export async function executeShellCommand(opts: {
     proc.on('close', flushDecoders);
     proc.on('exit', flushDecoders);
 
+    // 推送节奏按快照形态分层（见 TerminalLiveUpdateThrottle）：小快照 200ms 尾部增量、
+    // 大快照 400ms、截断态（reset + 全量文本）1s，避免每 tick 重传 256KiB 并让渲染端整体重写。
+    const updateThrottle = new TerminalLiveUpdateThrottle();
     const updateTimer = setInterval(() => {
+        // 兜底自愈：进程已退出（无论是否走过 settle）就停掉定时器，避免异常路径下
+        // 定时器与输出缓冲一直存活
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+            clearInterval(updateTimer);
+            return;
+        }
+        // 先过节流再取快照：被节流掉的 tick 不必 join 出 256KiB 文本
+        if (!updateThrottle.shouldPush(Date.now(), output.isTruncated(), output.getSnapshotLength())) return;
         const currentOutput = output.getText();
         if (currentOutput === lastSentOutput) return;
-        // live 推送携带增量：未截断时输出只做尾部追加，只传新增部分（剥离 ANSI）；
-        // 截断/重置时 outputReset 置位、delta 为全量，渲染端整体重写输出区。
-        const { reset, delta } = computeTerminalOutputDelta(lastSentOutput, currentOutput);
+        // 增量在「剥离 ANSI 后的文本」上计算：与渲染端整份渲染用的 stripAnsi(result)
+        // 完全同源，避免转义序列恰好跨 tick 边界时增量里残留半个序列。
+        const { stripped, reset, delta } = computeTerminalLiveOutputFrame(lastSentStripped, currentOutput);
         lastSentOutput = currentOutput;
-        result.outputDelta = stripAnsi(delta);
+        lastSentStripped = stripped;
+        result.outputDelta = delta;
         result.outputReset = reset || undefined;
         result.updateResult(currentOutput);
-    }, LIVE_UPDATE_INTERVAL_MS);
+    }, TERMINAL_LIVE_UPDATE_INTERVAL_MS);
 
     let resolveStopPromise: (() => void) | undefined;
     stopPromises.set(
@@ -418,11 +467,15 @@ export async function executeShellCommand(opts: {
         isKilledByStop,
         clock: timeoutClock,
         onFinish: (backgrounded) => {
-            if (!backgrounded) output.closeArtifact();
+            if (!backgrounded) void output.closeArtifact();
             clearInterval(updateTimer);
             runningProcesses.delete(proc);
             stopPromises.delete(proc);
             resolveStopPromise?.();
         }
+    }).finally(() => {
+        // 兜底：正常 settle 时 onFinish 已清过，这里再保证一次——异常路径（回调抛错
+        // 导致 Promise 永不 settle 之外的提前返回）不能让 live tick 定时器继续跑
+        clearInterval(updateTimer);
     });
 }

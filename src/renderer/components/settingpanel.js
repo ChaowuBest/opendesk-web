@@ -29,6 +29,7 @@ import {
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 import './channelSettings.js';
+import './benchmarkChannelSettings.js';
 import { showTaskTransfer } from './taskTransferDialog.js';
 import {
     parseTokenCount,
@@ -144,7 +145,7 @@ class SettingPanel extends HTMLElement {
         this.buildTime = null;
         this.updateState = { status: 'unsupported' };
         this._updateStateUnsubscribe = null;
-        this._activeTab = 'models';
+        this._activeTab = 'general';
         this._environEntries = [];
         this.gatewayHostOptions = [];
         this.launchAtLoginState = { supported: false, enabled: null };
@@ -156,7 +157,9 @@ class SettingPanel extends HTMLElement {
 
     connectedCallback() {
         const initialTab = this.getAttribute('initial-tab');
-        if (['models', 'tasks', 'channels', 'agents', 'search', 'general', 'wizard'].includes(initialTab)) {
+        if (
+            ['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard'].includes(initialTab)
+        ) {
             this._activeTab = initialTab;
         }
         (async () => {
@@ -171,6 +174,28 @@ class SettingPanel extends HTMLElement {
                 this.refreshUpdateSection();
             });
         })();
+    }
+
+    /**
+     * 把主进程里的渠道配置同步进 currentData。
+     *
+     * 测评集渠道由「渠道设置」组件直接写进主进程的 `applications.benchmark`，面板手里的
+     * 副本会因此变旧；保存前必须先对齐，否则会把刚加/删的渠道整块写回旧值。
+     * 只覆盖 `applications.benchmark`，不整份重新载入，避免冲掉其它 Tab 里还没保存的输入。
+     */
+    async _syncBenchmarkChannels() {
+        try {
+            const data = await window.settingAPI.loadSettingObject();
+            const benchmarkConfig = data?.applications?.benchmark;
+            if (!this.currentData || !benchmarkConfig) return;
+            if (!this.currentData.applications) this.currentData.applications = {};
+            this.currentData.applications.benchmark = {
+                ...(this.currentData.applications.benchmark || {}),
+                ...benchmarkConfig
+            };
+        } catch (error) {
+            console.warn('[setting] failed to sync benchmark channels:', error);
+        }
     }
 
     disconnectedCallback() {
@@ -243,6 +268,13 @@ class SettingPanel extends HTMLElement {
             `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
         const tabs = [
             {
+                id: 'general',
+                label: this._t('sp.tab.general'),
+                iconSvg: svg(
+                    '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
+                )
+            },
+            {
                 id: 'models',
                 label: this._t('sp.tab.models'),
                 iconSvg: svg(
@@ -274,11 +306,10 @@ class SettingPanel extends HTMLElement {
                 iconSvg: svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')
             },
             {
-                id: 'general',
-                label: this._t('sp.tab.general'),
-                iconSvg: svg(
-                    '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
-                )
+                // 测评集渠道：紧跟搜索设置之后（顺序见下方 render()）
+                id: 'registries',
+                label: this._t('sp.tab.registryChannels'),
+                iconSvg: svg('<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/>')
             },
             {
                 id: 'wizard',
@@ -955,8 +986,11 @@ class SettingPanel extends HTMLElement {
 
                     <!-- 可滚动内容区 -->
                     <div class="sp-scroll-content flex-1 overflow-y-auto" style="padding:16px 22px 8px;">
-                        <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-5">
+                        <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-5">
                             ${this.renderUpdateSection()}
+                            <div id="general-sections">${this.renderGeneralSection()}</div>
+                        </div>
+                        <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-5">
                             ${this.renderProvidersSection()}
                             ${this.renderModelsSection()}
                             ${this.renderDefaultModelsSection()}
@@ -973,8 +1007,8 @@ class SettingPanel extends HTMLElement {
                         <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-5">
                             ${this.renderSearchSection()}
                         </div>
-                        <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-5">
-                            ${this.renderGeneralSection()}
+                        <div id="tab-registries" class="${this._activeTab === 'registries' ? '' : 'hidden'} space-y-5">
+                            <benchmark-channel-settings></benchmark-channel-settings>
                         </div>
                         <div id="tab-wizard" class="${this._activeTab === 'wizard' ? '' : 'hidden'} space-y-5">
                             ${this.renderWizardSection()}
@@ -1007,7 +1041,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'channels', 'agents', 'search', 'general', 'wizard'];
+        const tabIds = ['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
@@ -2559,13 +2593,15 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshUpdateSection() {
+        // 「软件更新」区块住在通用设置里，刷新时只替换这一块（找不到就补到通用 Tab 最前面），
+        // 绝不整页重建：整页重建会连带把模型/渠道等区块的 DOM 与状态一起丢掉。
         const current = this.querySelector('#software-update-section');
         const html = this.renderUpdateSection();
         if (current) {
             if (html) current.outerHTML = html;
             else current.remove();
         } else if (html) {
-            this.querySelector('#tab-models')?.insertAdjacentHTML('afterbegin', html);
+            this.querySelector('#tab-general')?.insertAdjacentHTML('afterbegin', html);
         }
         this._bindUpdateEvent();
     }
@@ -3989,6 +4025,9 @@ class SettingPanel extends HTMLElement {
         this._saving = true;
         let sideEffectFailures = [];
         try {
+            // 渠道配置由主进程直接写盘：保存整份配置前先对齐一次，
+            // 否则这次保存会把刚加/删的渠道冲掉
+            await this._syncBenchmarkChannels();
             const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
             const savedData = result.data;
             sideEffectFailures = result.sideEffectFailures;
@@ -5087,96 +5126,98 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshGeneralSection() {
-        const tabGeneral = this.querySelector('#tab-general');
-        if (!tabGeneral) return;
-        const sections = tabGeneral.querySelectorAll('section');
-        if (sections.length >= 1) {
-            sections.forEach((s) => s.remove());
-            tabGeneral.innerHTML = this.renderGeneralSection();
-            // 重新绑定事件（#software-update-action 属于 tab-models，其绑定不受本次重建影响）
-            this.querySelector('#locale-select')?.addEventListener('change', (e) => {
-                this.currentData.locale = e.target.value;
-                this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
+        // 只重建「通用设置」自己的区块容器：#tab-general 里还有一个独立的「软件更新」
+        // 区块，按 section 整体清空会把它一起删掉（自动更新入口从此消失）。
+        const container = this.querySelector('#general-sections');
+        if (!container) return;
+        container.innerHTML = this.renderGeneralSection();
+        this._bindGeneralSectionEvents();
+    }
+
+    /** 绑定通用设置区块内的事件；区块被重建（refreshGeneralSection）后必须重绑一次 */
+    _bindGeneralSectionEvents() {
+        this.querySelector('#locale-select')?.addEventListener('change', (e) => {
+            this.currentData.locale = e.target.value;
+            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
+            this.refreshAll();
+            void this.saveImmediately().then(() => {
+                this._t = createRendererTranslator(this.currentData);
                 this.refreshAll();
-                void this.saveImmediately().then(() => {
-                    this._t = createRendererTranslator(this.currentData);
-                    this.refreshAll();
-                });
             });
-            this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
-                const preset = e.target.value;
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.font_preset = preset;
-                document.documentElement.setAttribute('data-font-preset', preset);
-                window.broadcastFontSettings?.(preset);
-                this.saveImmediately();
-            });
-            this.querySelector('#theme-preference-select')?.addEventListener('change', async (e) => {
-                const pref = e.target.value;
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.theme_preference = pref;
-                if (window.themeAPI?.setPreference) {
-                    try {
-                        const result = await window.themeAPI.setPreference(pref);
-                        if (result.status === 'ok' && result.data) {
-                            applyResolvedTheme(result.data);
-                            window.broadcastThemeSettings?.(result.data);
-                        }
-                    } catch (err) {
-                        console.warn('[setting] theme setPreference failed', err);
+        });
+        this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
+            const preset = e.target.value;
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.font_preset = preset;
+            document.documentElement.setAttribute('data-font-preset', preset);
+            window.broadcastFontSettings?.(preset);
+            this.saveImmediately();
+        });
+        this.querySelector('#theme-preference-select')?.addEventListener('change', async (e) => {
+            const pref = e.target.value;
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.theme_preference = pref;
+            if (window.themeAPI?.setPreference) {
+                try {
+                    const result = await window.themeAPI.setPreference(pref);
+                    if (result.status === 'ok' && result.data) {
+                        applyResolvedTheme(result.data);
+                        window.broadcastThemeSettings?.(result.data);
                     }
+                } catch (err) {
+                    console.warn('[setting] theme setPreference failed', err);
                 }
-                this.saveImmediately();
-            });
-            this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.gui_reason_display = e.target.value;
-                this.saveImmediately();
-            });
-            this.querySelector('#gui-output-mode-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.output_mode = e.target.value;
-                this.saveImmediately();
-            });
-            this.querySelector('#send-shortcut-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.ctrl_enter_send = e.target.value === 'ctrl-enter';
-                this.saveImmediately();
-                window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
-            });
-            this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                const val = e.target.value;
-                if (val === 'ask') {
-                    delete this.currentData.gui_config.on_mainwindow_close;
-                } else {
-                    this.currentData.gui_config.on_mainwindow_close = val;
-                }
-                this.saveImmediately();
-            });
-            this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.floating_window_mode = e.target.value;
-                this.saveImmediately();
-            });
-            this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {
-                if (!this.currentData.gui_config) this.currentData.gui_config = {};
-                this.currentData.gui_config.floating_window_position = e.target.value;
-                this.saveImmediately();
-            });
-            this._bindLaunchAtLoginEvents();
-            this._bindQuickCaptureEvents();
-            this._bindDebugModeEvents();
+            }
+            this.saveImmediately();
+        });
+        this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.gui_reason_display = e.target.value;
+            this.saveImmediately();
+        });
+        this.querySelector('#gui-output-mode-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.output_mode = e.target.value;
+            this.saveImmediately();
+        });
+        this.querySelector('#send-shortcut-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.ctrl_enter_send = e.target.value === 'ctrl-enter';
+            this.saveImmediately();
+            window.broadcastCtrlEnterSend?.(e.target.value === 'ctrl-enter');
+        });
+        this.querySelector('#on-mainwindow-close-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            const val = e.target.value;
+            if (val === 'ask') {
+                delete this.currentData.gui_config.on_mainwindow_close;
+            } else {
+                this.currentData.gui_config.on_mainwindow_close = val;
+            }
+            this.saveImmediately();
+        });
+        this.querySelector('#floating-window-mode-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.floating_window_mode = e.target.value;
+            this.saveImmediately();
+        });
+        this.querySelector('#floating-window-position-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.floating_window_position = e.target.value;
+            this.saveImmediately();
+        });
+        this._bindLaunchAtLoginEvents();
+        this._bindQuickCaptureEvents();
+        this._bindDebugModeEvents();
 
-            this._bindTelemetryEvents();
+        this._bindTelemetryEvents();
 
-            this._bindConfigManagementEvents();
+        this._bindConfigManagementEvents();
 
-            this._bindScaleEvents();
-            this._bindGatewayEvents();
-            this._bindEnvironEvents();
-            this._bindNetworkEvents();
-        }
+        this._bindScaleEvents();
+        this._bindGatewayEvents();
+        this._bindEnvironEvents();
+        this._bindNetworkEvents();
     }
 
     refreshDefaultModelsSection() {

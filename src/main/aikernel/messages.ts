@@ -339,6 +339,15 @@ function inferRequiresUserAttention(toolCall: ToolCall): boolean {
     return false;
 }
 
+/**
+ * 待送达 live 增量的长度上限。
+ *
+ * 增量在快照发布时才会被清空，因此「推送被长时间阻塞」或「任务没有订阅者」时
+ * 累积值会一直变长。超过上限时直接丢弃增量，让下一次快照退回全量渲染：
+ * 用一次较大的快照换取内存不随命令输出无界增长。
+ */
+const MAX_PENDING_OUTPUT_DELTA_CHARS = 256 * 1024;
+
 export class ToolCall implements BaseChatToolCall {
     index: number;
     id: string;
@@ -425,8 +434,43 @@ export class ToolCall implements BaseChatToolCall {
 
     /** 序列化时显式排除 tool，避免运行时引用被持久化后反序列化为纯对象导致渲染/执行异常 */
     toJSON(): object {
-        const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
+        const {
+            tool,
+            // live 增量是「尚未送达渲染端」的一次性载荷，不属于持久化状态：
+            // 落盘后会在历史渲染载荷里长期占位（单条最多 256KiB），任务被中断后
+            // 还可能被当成新增量重复追加一次。
+            outputDelta: _outputDelta,
+            outputReset: _outputReset,
+            ...rest
+        } = this as ToolCall & { tool?: BaseTool<any> };
         return rest;
+    }
+
+    /**
+     * 累积尚未送达渲染端的 live 增量。
+     *
+     * 推送合并器会跳过中间帧，因此这里不能用「覆盖」语义：被跳过那帧的文本不会
+     * 出现在任何后续增量里，渲染端「只追加」就会永久缺一段。reset 帧（缓冲截断/
+     * 重跑）携带全量文本，直接替换累积值。
+     */
+    queueOutputDelta(delta: string, reset: boolean | undefined): void {
+        if (reset === true || this.outputDelta === undefined) {
+            this.outputDelta = delta;
+        } else {
+            this.outputDelta += delta;
+        }
+        if (reset === true) {
+            this.outputReset = true;
+        }
+        if (this.outputDelta.length > MAX_PENDING_OUTPUT_DELTA_CHARS) {
+            this.clearOutputDelta();
+        }
+    }
+
+    /** 清空待送达的 live 增量（快照发布后，或工具进入终态）。 */
+    clearOutputDelta(): void {
+        delete this.outputDelta;
+        delete this.outputReset;
     }
 
     /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段。
@@ -440,6 +484,11 @@ export class ToolCall implements BaseChatToolCall {
             display_name: this.getResolvedToolDisplayName(),
             status: this.status,
             rendered: this.rendered,
+            // 终端 live tick 的增量必须先落到 IPC 载荷里，渲染端
+            // patchRunningTerminalToolOutput 的「只追加文本」快路径才可达；
+            // 缺失时每个 tick 都会退化为整份 part HTML 解析 + 输出区重写。
+            ...(this.outputDelta !== undefined ? { outputDelta: this.outputDelta } : {}),
+            ...(this.outputReset === true ? { outputReset: true } : {}),
             ...(requiresUserAttention ? { requires_user_attention: true } : {})
         };
     }

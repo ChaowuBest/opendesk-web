@@ -37,3 +37,38 @@ test('escapes terminal descriptions while keeping the badge visible', () => {
     expect(html).not.toContain('<script>');
     expect(html).toContain('terminal-shell-tag-bash');
 });
+
+test('执行中的终端卡片在 shell 标签左侧显示运行中转圈', () => {
+    const html = renderTerminalToolCall('bash', call())!;
+    const indicator = html.indexOf('terminal-tool-running');
+    expect(indicator).toBeGreaterThan(-1);
+    // 位置：标题文本之后、shell 标签之前（用户要求放在胶囊左侧）
+    expect(indicator).toBeGreaterThan(html.indexOf('Run command'));
+    expect(indicator).toBeLessThan(html.indexOf('terminal-shell-tag-bash'));
+    // 空元素的 role="status" 播报不可靠，改用可命名图形
+    expect(html).toContain('role="img"');
+    expect(html).toContain('aria-label="执行中"');
+});
+
+test('已有部分输出但仍在执行时转圈不消失', () => {
+    // live tick 每 200ms 就把当前输出写回 result：转圈只认 status，不能跟着 result 一起消失
+    const partial = call();
+    partial.result = 'building...\n';
+    const html = renderTerminalToolCall('bash', partial)!;
+    expect(html).toContain('terminal-tool-running');
+    expect(html).toContain('terminal-tool-output');
+});
+
+test('尚未开始执行（pending）的卡片不显示运行中转圈', () => {
+    const pending = call();
+    pending.status = 'pending';
+    expect(renderTerminalToolCall('bash', pending)!).not.toContain('terminal-tool-running');
+});
+
+test('命令结束（有输出）后不再显示运行中转圈', () => {
+    const done = call();
+    done.status = 'success';
+    done.result = 'hello';
+    const html = renderTerminalToolCall('bash', done)!;
+    expect(html).not.toContain('terminal-tool-running');
+});

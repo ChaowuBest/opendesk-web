@@ -554,6 +554,18 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
 或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
+### 版本字段
+
+`version`、`minOpenDeskVersion`、`maxOpenDeskVersion` 都是 **SemVer 版本号**（`1.2.3`，
+可带 `-beta.1` 这类预发布标识，允许 `v` 前缀），解析失败会直接让清单校验报错
+（`plugin.manifest_invalid_version` 等），不会退化成"跳过版本检查"。比较按 SemVer 优先级：
+`1.2.3-beta < 1.2.3`，构建元数据 `+build` 不参与排序。
+
+必须写足三段（`1.0.0`）：`1.0` 这类两段式不是合法 SemVer，会被拒绝而不是补齐成 `1.0.0`。
+
+`minOpenDeskVersion` / `maxOpenDeskVersion` 分别是宿主版本的**下界与上界**（包含边界），
+不是区间表达式：写 `0.2.0` 表示"宿主 ≥ 0.2.0"。未声明时不限制。
+
 ### displayName 与 description 本地化
 
 `displayName` 与 `description` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk`

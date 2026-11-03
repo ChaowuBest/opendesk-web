@@ -414,7 +414,7 @@ task-view .markdown-body .mermaid-block-lang {
 /* Code block styles with high-specificity font protection */
 html[data-font-preset] .markdown-body .code-block-body {
     overflow-x: auto !important;
-    background: #ffffff !important;
+    background: var(--chat-code-bg, #ffffff) !important;
     font-size: var(--fs-sm) !important;
     line-height: 1.55 !important;
     font-family:
@@ -440,7 +440,7 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
 .markdown-body .code-lines {
     display: block !important;
     margin: 0 !important;
-    padding: 0.5em 0 !important;
+    padding: 0 !important;
     counter-reset: codeln !important;
     white-space: pre !important;
     font-size: inherit !important;
@@ -452,7 +452,9 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
     position: relative !important;
     counter-increment: codeln !important;
     margin: 0 !important;
-    padding: 0 0.8em 0 3.4em !important;
+    /* 左侧 3.4em 让出 .code-line::before 的行号列，额外 0.8em 是代码与分隔线的间距，
+       否则首列字符会紧贴行号列的分隔线 */
+    padding: 0 0.8em 0 4.2em !important;
     white-space: pre !important;
     border: none !important;
     background: transparent !important;
@@ -474,6 +476,18 @@ html[data-theme='dark'][data-font-preset] .markdown-body .code-block-body {
     background: #f8fafc !important;
     border-right: 1px solid #f1f5f9 !important;
     font-family: inherit !important;
+}
+/* 上下留白改由首/末行承担：行号列（.code-line::before）高度跟随行框，
+   这样行号列能从语言栏一路贯通到代码块底部，不会在首行之前、末行之后留下
+   没有行号列、只有代码底色的“白条”（.code-lines 的纵向内边距会露出这种空隙）。 */
+.markdown-body .code-line:first-child {
+    padding-top: 0.5em !important;
+}
+.markdown-body .code-line:first-child::before {
+    padding-top: 0.5em !important;
+}
+.markdown-body .code-line:last-child {
+    padding-bottom: 0.5em !important;
 }
 .markdown-body .code-line:hover {
     background: #f8fafc !important;
@@ -1037,6 +1051,23 @@ details.terminal-tool .terminal-tool-path {
     color: #7c3aed;
     border-color: #c4b5fd;
     background: #f5f3ff;
+}
+/* 终端卡片「执行中」转圈：与侧边栏 sb-running-spinner 同款品牌红描边与旋转动画，
+   尺寸缩到 12px（侧边栏 15px）以便和 12px 标题文本同高，不撑高 summary 行 */
+.terminal-tool-running {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    border: 1.5px solid rgba(201, 76, 64, 0.18);
+    border-top-color: #c94c40;
+    border-radius: 50%;
+    animation: sb-spinner 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    /* 动效敏感用户：停在固定的缺口圆环上，不做无限旋转 */
+    .terminal-tool-running {
+        animation: none;
+    }
 }
 /* Dark mode terminal scrollbar */
 html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {

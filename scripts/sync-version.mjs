@@ -42,7 +42,7 @@ export const SYNC_TARGETS = [
         pattern: /(version: ')[\d.]+(?=',)/
     },
     {
-        file: 'src/main/applications/pluginmgr/discovery/loader.ts',
+        file: 'src/main/utils/version.ts',
         pattern: /(export const OPENDESK_RUNTIME_VERSION = ')[\d.]+(?=')/
     }
 ];

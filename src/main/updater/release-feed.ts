@@ -12,6 +12,7 @@
 import { parseHTML } from 'linkedom';
 import type { UpdateRelease } from './types.js';
 import { validateUpdateUrl } from './url-policy.js';
+import { isValidVersion, isNewerVersion } from '../utils/version.js';
 
 const STABLE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const SHA256 = /^[a-f\d]{64}$/i;
@@ -20,21 +21,17 @@ type ReleaseTrustMode = 'strict' | 'trusted-source';
 /** 更新包目标架构：process.arch 在 Windows 上只有 x64 / arm64 两种发布形态 */
 export type UpdaterTargetArch = 'x64' | 'arm64';
 
-function parseVersion(version: string): [number, number, number] {
-    const match = STABLE_VERSION.exec(version);
-    if (!match) {
+/**
+ * 更新器只接受 `x.y.z` 形式的稳定版本：预发布、构建元数据、`v` 前缀都不走发布流程。
+ * 版本号还要能被 SemVer 解析（如超大段号），否则后续比较没有意义。
+ *
+ * 注意这只约束**远端发布版本**；本地版本可能是预发布/开发构建，
+ * 两者谁更新由 utils/version.ts 的 isNewerVersion 按 SemVer 优先级判断。
+ */
+function assertStableVersion(version: string): void {
+    if (!STABLE_VERSION.test(version) || !isValidVersion(version)) {
         throw new Error(`Expected a stable semantic version, received: ${version}`);
     }
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-export function compareVersions(left: string, right: string): number {
-    const a = parseVersion(left);
-    const b = parseVersion(right);
-    for (let index = 0; index < a.length; index++) {
-        if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
-    }
-    return 0;
 }
 
 function validateUrl(value: unknown): string {
@@ -83,7 +80,7 @@ export function parseNewsReleasePage(
         const title = item.querySelector('.release-item__title')?.textContent?.trim();
         const version = title?.match(/\b(\d+\.\d+\.\d+)\b/)?.[1];
         if (!title || !version) continue;
-        parseVersion(version);
+        assertStableVersion(version);
 
         const exeLinks = Array.from(item.querySelectorAll('.release-downloads a'))
             .map((candidate) => ({
@@ -109,7 +106,8 @@ export function parseNewsReleasePage(
             sha256: rawChecksum && SHA256.test(rawChecksum) ? rawChecksum : undefined,
             notes: title
         };
-        if (!latestRelease || compareVersions(release.version, latestRelease.version) > 0) latestRelease = release;
+        // 页面上可能有多条稳定版：取版本号最高的那一条
+        if (!latestRelease || isNewerVersion(release.version, latestRelease.version)) latestRelease = release;
     }
 
     if (!latestRelease) throw new Error(`Update news page does not contain a stable Windows ${targetArch} release`);
@@ -144,7 +142,7 @@ export function parseReleaseResponse(
     const raw = input as Record<string, unknown>;
 
     if (typeof raw.version === 'string' && typeof raw.url === 'string') {
-        parseVersion(raw.version);
+        assertStableVersion(raw.version);
         const installerUrl = validateUrl(raw.url);
         const sha256 = typeof raw.sha256 === 'string' ? raw.sha256.toLowerCase() : undefined;
         if (sha256 && !SHA256.test(sha256) && trustMode === 'strict') {
@@ -163,7 +161,7 @@ export function parseReleaseResponse(
     if (raw.prerelease === true) throw new Error('Update feed returned a prerelease');
     if (typeof raw.tag_name !== 'string') throw new Error('GitCode release does not contain a version tag');
     const version = raw.tag_name.startsWith('v') ? raw.tag_name.slice(1) : raw.tag_name;
-    parseVersion(version);
+    assertStableVersion(version);
     if (!Array.isArray(raw.assets)) throw new Error('GitCode release does not contain assets');
     const winAssets = raw.assets.filter((candidate) => {
         if (!candidate || typeof candidate !== 'object') return false;

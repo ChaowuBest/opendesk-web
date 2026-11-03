@@ -63,6 +63,32 @@ const PluginResourcesSchema = z.object({
     agents: z.array(z.string().min(1)).optional()
 });
 
+/**
+ * 版本类字段必须是合法 SemVer。
+ *
+ * 规则与宿主侧 `src/main/utils/version.ts`（semver 库）逐条对齐，否则会出现
+ * 「CLI 打包通过、宿主加载报错」这类事后才发现的不一致；两边由
+ * `src/tests/ut/plugin/package.test.ts` 用同一批边界样例互检。
+ * 注意前三个捕获组依次是 major / minor / patch，下面的数值上限校验依赖这个顺序。
+ */
+const SEMVER_PATTERN =
+    /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+/** semver 库的版本号长度上限 */
+const MAX_SEMVER_LENGTH = 256;
+
+function isSemVerVersion(value: string): boolean {
+    const text = value.trim();
+    if (text.length > MAX_SEMVER_LENGTH) return false;
+    const match = text.match(SEMVER_PATTERN);
+    if (!match) return false;
+    // semver 库只接受能安全表示成 JS number 的主次修订号
+    return match.slice(1, 4).every((part) => Number(part) <= Number.MAX_SAFE_INTEGER);
+}
+
+const SemverSchema = z
+    .string()
+    .refine((value) => isSemVerVersion(value), { message: 'expected a SemVer version such as 1.2.3' });
+
 export const OpenDeskPluginManifestSchema = z.object({
     entry: z.string().min(1),
     schemaVersion: z.literal(1).default(1),
@@ -71,12 +97,12 @@ export const OpenDeskPluginManifestSchema = z.object({
         .regex(/^[a-zA-Z][a-zA-Z0-9._-]*$/)
         .optional(),
     displayName: DisplayNameSchema.optional(),
-    version: z.string().min(1).optional(),
+    version: SemverSchema.optional(),
     apiVersion: z.literal(OPENDESK_PLUGIN_API_VERSION),
     capabilities: z.array(z.enum(OPENDESK_PLUGIN_CAPABILITIES)),
     platforms: z.array(z.enum(OPENDESK_PLUGIN_PLATFORMS)).optional(),
-    minOpenDeskVersion: z.string().min(1).optional(),
-    maxOpenDeskVersion: z.string().min(1).optional(),
+    minOpenDeskVersion: SemverSchema.optional(),
+    maxOpenDeskVersion: SemverSchema.optional(),
     resources: PluginResourcesSchema.optional()
 });
 

@@ -2,12 +2,16 @@ import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globa
 import { parseHTML } from 'linkedom';
 import { createRendererTranslator } from '../../../renderer/locale.ts';
 
-// 回归背景：#tab-models 内的第一个 section 是条件渲染的"软件更新"区块
+// 回归背景（历史 bug 1）：#tab-models 内的第一个 section 曾经是条件渲染的"软件更新"区块
 // （renderUpdateSection 在 updateState.status === 'unsupported' 时返回空字符串），
 // 局部刷新函数如果按固定索引取 section，就会在软件更新区块存在时替换错目标，
 // 导致页面上出现两组"模型提供方"/"模型列表"/"默认模型"。
+//
+// 回归背景（历史 bug 2）：软件更新区块后来挪进了通用设置，而 refreshGeneralSection
+// 曾按 "清空 #tab-general 里所有 section" 的方式重建内容，会把同一个 Tab 里的软件更新
+// 区块一起删掉，自动更新入口直接消失。
 
-describe('setting-panel tab-models section refresh', () => {
+describe('setting-panel section refresh', () => {
     let window: any;
     let document: any;
 
@@ -61,6 +65,7 @@ describe('setting-panel tab-models section refresh', () => {
             locale: 'zh-CN',
             resolved_locale: 'zh-CN',
             gui_config: {},
+            applications: {},
             providers: [
                 {
                     name: 'openai',
@@ -84,36 +89,53 @@ describe('setting-panel tab-models section refresh', () => {
         return panel;
     }
 
-    // 与主渲染 render() 中 #tab-models 的结构保持一致
+    // 与主渲染 render() 中 #tab-models 的结构保持一致（软件更新区块不在这里）
     function renderTabModels(panel: any) {
         panel.innerHTML = `
             <div id="tab-models" class="space-y-5">
-                ${panel.renderUpdateSection()}
                 ${panel.renderProvidersSection()}
                 ${panel.renderModelsSection()}
                 ${panel.renderDefaultModelsSection()}
             </div>`;
     }
 
-    function countSections(panel: any, titleText: string): number {
-        return Array.from(panel.querySelectorAll('#tab-models h2.sp-section-title')).filter((h: any) =>
+    // 与主渲染 render() 中 #tab-general 的结构保持一致：软件更新区块是独立兄弟节点
+    function renderTabGeneral(panel: any) {
+        panel.innerHTML = `
+            <div id="tab-general" class="space-y-5">
+                ${panel.renderUpdateSection()}
+                <div id="general-sections">${panel.renderGeneralSection()}</div>
+            </div>`;
+    }
+
+    function countSections(root: any, titleText: string): number {
+        return Array.from(root.querySelectorAll('h2.sp-section-title')).filter((h: any) =>
             (h.textContent || '').includes(titleText)
         ).length;
     }
 
-    test('refreshProvidersSection keeps a single providers section when the update section exists', () => {
+    test('update section is not part of tab-models anymore', () => {
         const panel = createPanel({ status: 'idle' });
         renderTabModels(panel);
-        expect(panel.querySelector('#software-update-section')).toBeTruthy();
-        expect(countSections(panel, '模型提供方')).toBe(1);
+
+        expect(panel.querySelector('#tab-models #software-update-section')).toBeNull();
+        expect(countSections(panel.querySelector('#tab-models'), '模型提供方')).toBe(1);
+        expect(countSections(panel.querySelector('#tab-models'), '模型配置')).toBe(1);
+    });
+
+    test('refreshProvidersSection keeps a single providers section', () => {
+        const panel = createPanel({ status: 'idle' });
+        renderTabModels(panel);
 
         panel.refreshProvidersSection();
 
         expect(countSections(panel, '模型提供方')).toBe(1);
-        expect(panel.querySelector('#software-update-section')).toBeTruthy();
+        // 模型配置/默认模型区块不受影响
+        expect(countSections(panel, '模型配置')).toBe(1);
+        expect(countSections(panel, '默认模型')).toBe(1);
     });
 
-    test('refreshModelsSection keeps a single models section when the update section exists', () => {
+    test('refreshModelsSection keeps a single models section', () => {
         const panel = createPanel({ status: 'idle' });
         renderTabModels(panel);
 
@@ -123,7 +145,7 @@ describe('setting-panel tab-models section refresh', () => {
         expect(countSections(panel, '模型配置')).toBe(1);
     });
 
-    test('refreshDefaultModelsSection keeps a single default-models section when the update section exists', () => {
+    test('refreshDefaultModelsSection keeps a single default-models section', () => {
         const panel = createPanel({ status: 'idle' });
         renderTabModels(panel);
 
@@ -133,34 +155,45 @@ describe('setting-panel tab-models section refresh', () => {
         expect(countSections(panel, '模型配置')).toBe(1);
     });
 
-    test('refresh functions still work without the update section (unsupported)', () => {
+    test('update section omitted when unsupported', () => {
         const panel = createPanel({ status: 'unsupported' });
-        renderTabModels(panel);
+        renderTabGeneral(panel);
+
         expect(panel.querySelector('#software-update-section')).toBeNull();
-
-        panel.refreshProvidersSection();
-        panel.refreshModelsSection();
-        panel.refreshDefaultModelsSection();
-
-        expect(countSections(panel, '模型提供方')).toBe(1);
-        expect(countSections(panel, '模型配置')).toBe(1);
-        expect(countSections(panel, '默认模型')).toBe(1);
+        expect(panel.querySelectorAll('#general-sections section').length).toBeGreaterThan(0);
     });
 
-    test('no duplicated sections after the update section is inserted at runtime', () => {
+    test('refreshUpdateSection inserts the update section into the general tab only', () => {
         // 初始渲染时 updateState 为 unsupported（无软件更新区块），
-        // 之后 onStateChanged 推送新状态，refreshUpdateSection 会把区块插到 tab-models 开头
+        // 之后 onStateChanged 推送新状态，refreshUpdateSection 应该把它补到通用设置最前面
         const panel = createPanel({ status: 'unsupported' });
         renderTabModels(panel);
+        const tabGeneral = document.createElement('div');
+        tabGeneral.id = 'tab-general';
+        tabGeneral.innerHTML = '<div id="general-sections"></div>';
+        panel.appendChild(tabGeneral);
 
         panel.updateState = { status: 'idle' };
         panel.refreshUpdateSection();
+
+        expect(panel.querySelector('#tab-general > #software-update-section')).toBeTruthy();
+        expect(panel.querySelector('#tab-models #software-update-section')).toBeNull();
+        // 只补一次，重复通知不会叠出第二个区块
+        panel.refreshUpdateSection();
+        expect(panel.querySelectorAll('#software-update-section')).toHaveLength(1);
+    });
+
+    test('refreshGeneralSection keeps the update section alive', () => {
+        const panel = createPanel({ status: 'idle' });
+        renderTabGeneral(panel);
         expect(panel.querySelector('#software-update-section')).toBeTruthy();
 
-        panel.refreshProvidersSection();
+        panel.refreshGeneralSection();
 
-        expect(countSections(panel, '模型提供方')).toBe(1);
+        // 通用设置区块被重建，但同一个 Tab 里的软件更新区块必须还在
         expect(panel.querySelector('#software-update-section')).toBeTruthy();
+        expect(panel.querySelectorAll('#software-update-section')).toHaveLength(1);
+        expect(panel.querySelector('#general-sections h2.sp-section-title')).toBeTruthy();
     });
 
     test('default-models section omits the unsupported reranker model setting', () => {

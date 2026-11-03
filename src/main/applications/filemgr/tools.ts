@@ -52,7 +52,10 @@ function getWorkingDirectory(taskState?: TaskState): string {
 }
 
 /**
- * 将路径转换为统一使用正斜杠的形式（用于输出显示）
+ * 将路径转换为统一使用正斜杠的形式。
+ * 输出显示、以及 glob 模式与相对路径的比对都依赖这个形式：picomatch 把 `\` 当成转义符，
+ * Windows 风格的 `src\*.ts` 会被解释成"字面量 src*.ts"，从而静默匹配不到任何文件。
+ * 代价是模式里用 `\` 转义字面量的写法不再生效（实践中极少使用）。
  */
 function toForwardSlash(p: string): string {
     return p.replace(/\\/g, '/');
@@ -2591,6 +2594,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
  * 遍历在 readdir 阶段就跳过这些目录，node_modules 等超大目录不会被展开。
  * 注意不能只依赖 glob 的 ignore 模式：`node_modules/**` 只匹配搜索根目录下的同名目录，
  * 在 C:/Projects 这类多项目父目录下会遍历各子项目的 node_modules。
+ * 这是硬剪枝，.gitignore 的反向规则无法把其中内容重新纳入。
  */
 const PRUNED_DIR_NAMES = [
     'node_modules',
@@ -2615,13 +2619,16 @@ const GLOB_IGNORED_FILE_PATTERNS = ['**/*.tsbuildinfo'];
 const globSchema = z.object({
     pattern: z
         .string()
-        .describe('glob 模式，如 **/*.ts、src/**/*.js、*.md 等。不以 **/ 开头的模式会自动加上 **/ 前缀以递归搜索'),
+        .describe(
+            'glob 模式，如 **/*.ts、src/**/*.js、*.md 等。不以 **/ 开头的模式会自动加上 **/ 前缀以递归搜索；模式匹配区分大小写（与 ripgrep、fast-glob 默认一致）'
+        ),
     path: z.string().optional().describe('搜索根目录，默认为当前工作目录'),
     ignore: z
         .array(z.string())
         .optional()
-        .describe('额外的忽略模式列表（默认已忽略 node_modules, .git, dist, build 等）'),
-    caseSensitive: z.boolean().default(false).describe('是否区分大小写，默认 false'),
+        .describe(
+            '额外的忽略模式列表（默认已忽略 node_modules, .git, dist, build 等）。以 ! 开头表示重新纳入，以 / 结尾表示仅匹配目录（如 logs/）。注意 node_modules/.git/dist/build 等目录是遍历期硬剪枝，无法用 ! 撤回'
+        ),
     maxResults: z.number().min(1).max(1000).default(200).describe('最大返回结果数，默认 200')
 });
 
@@ -2724,7 +2731,8 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
     }
 
     async executeCommand(args: z.output<typeof globSchema>, taskState?: TaskState): Promise<string> {
-        let { pattern, path: searchPath, ignore, caseSensitive, maxResults } = args;
+        let { pattern, path: searchPath } = args;
+        const { ignore, maxResults } = args;
         const workingDir = getWorkingDirectory(taskState);
 
         if (!pattern || pattern.trim() === '') {
@@ -2735,8 +2743,8 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             searchPath = sanitizeLocalPath(searchPath, workingDir);
         }
 
-        // 自动为非递归模式添加 **/ 前缀
-        pattern = pattern.trim();
+        // 自动为非递归模式添加 **/ 前缀（分隔符先归一，见 toForwardSlash）
+        pattern = toForwardSlash(pattern.trim());
         if (!pattern.startsWith('**/') && !pattern.includes('/')) {
             pattern = '**/' + pattern;
         }
@@ -2745,29 +2753,26 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             const basePath = searchPath || workingDir;
             const startedAt = Date.now();
             const timeBudgetMs = Number(process.env['OPENDESK_GLOB_TIME_BUDGET_MS']) || GREP_TIME_BUDGET_MS;
-            let scanLimited = false;
+            // 遍历提前结束的原因：空结果时必须把"确实没有匹配"和"没扫完"区分开
+            let stopReason: 'time' | 'count' | undefined;
 
             // 流式收集并限制在 maxResults 个：遍历在 readdir 阶段剪枝，
             // 堆内存与目录树规模无关（一次性 fastGlob 会返回全量数组，直接耗尽堆内存）。
-            // Windows NTFS 不区分大小写，需要在应用层二次过滤。
-            let extFilter: string | undefined;
-            if (caseSensitive && process.platform === 'win32') {
-                const patternToMatch = pattern.replace(/\*\*\//g, '');
-                extFilter = patternToMatch.match(/\.\w+$/)?.[0];
-            }
-
+            // 模式匹配统一区分大小写：这是 picomatch / ripgrep / fast-glob 的共同默认，
+            // 与文件系统是否大小写敏感无关，跨平台结果因此可复现。
             const files: string[] = [];
             let truncated = false;
             for await (const filePath of walkFiles(basePath, {
                 filePattern: pattern,
-                ignorePatterns: [...GLOB_IGNORED_FILE_PATTERNS, ...(ignore || [])],
+                // 忽略模式与 filePattern 同样归一化分隔符：picomatch 在所有平台都把 \ 当转义符，
+                // Windows 风格的 src\gen\** 否则会静默匹配不到任何路径
+                ignorePatterns: [...GLOB_IGNORED_FILE_PATTERNS, ...(ignore || [])].map(toForwardSlash),
                 timeBudgetMs,
                 startedAt,
-                onLimitReached: () => {
-                    scanLimited = true;
+                onLimitReached: (reason) => {
+                    stopReason = reason;
                 }
             })) {
-                if (extFilter && !filePath.endsWith(extFilter)) continue;
                 if (files.length >= maxResults) {
                     truncated = true;
                     break;
@@ -2776,6 +2781,12 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             }
 
             if (files.length === 0) {
+                if (stopReason === 'time') {
+                    return `未找到匹配的文件（遍历在时间预算 ${timeBudgetMs}ms 内未完成，可能仍有匹配）`;
+                }
+                if (stopReason === 'count') {
+                    return `未找到匹配的文件（已扫描 ${WALK_MAX_SCANNED_FILES} 个文件后提前停止，可能仍有匹配）`;
+                }
                 return '未找到匹配的文件';
             }
 
@@ -2789,7 +2800,10 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             if (truncated) {
                 return `找到超过 ${maxResults} 个文件（显示前 ${maxResults} 个）:\n\n${result}\n\n… 还有更多文件未显示`;
             }
-            if (scanLimited) {
+            if (stopReason === 'time') {
+                return `找到 ${files.length} 个文件（遍历在时间预算 ${timeBudgetMs}ms 内未完成，可能不完整）:\n\n${result}`;
+            }
+            if (stopReason === 'count') {
                 return `已扫描 ${WALK_MAX_SCANNED_FILES} 个文件，找到 ${files.length} 个匹配（可能不完整）:\n\n${result}`;
             }
 
@@ -2831,8 +2845,12 @@ const WALK_DIR_CONCURRENCY = 8;
 interface WalkFilesOptions {
     /** 文件相对路径匹配模式（picomatch 语法），如 **\/*.ts */
     filePattern: string;
-    /** 额外忽略模式（相对搜索根，picomatch 语法），如 .gitignore 转换结果 */
+    /** 额外忽略模式（相对搜索根，picomatch 语法；`!` 前缀表示重新纳入，尾 `/` 表示仅目录），
+     *  如 .gitignore 转换结果。必须是 `/` 分隔：LLM 传入的 Windows 风格模式要在工具入口用 toForwardSlash 归一。 */
     ignorePatterns?: string[];
+    /** 是否按忽略规则过滤文件，默认 true。收集 .gitignore 时传 false：git 只用"目录是否被排除"
+     *  决定要不要遍历，被忽略的 .gitignore 文件本身照样会被读取（目录没被排除时） */
+    skipIgnoredFiles?: boolean;
     /** 是否进入以 . 开头的隐藏目录 / 匹配隐藏文件，默认 false（与 fast-glob 默认行为一致） */
     dot?: boolean;
     /** 时间预算（毫秒），从 startedAt 起算 */
@@ -2869,6 +2887,89 @@ async function readDirListing(dir: string): Promise<DirListing> {
     return { files, dirs };
 }
 
+interface IgnoreMatcher {
+    /** 文件是否被忽略 */
+    isIgnored(relativePath: string): boolean;
+    /** 目录是否整体被排除（此时子树不可能再被重新纳入，与 git 语义一致） */
+    isDirExcluded(relativePath: string): boolean;
+}
+
+/**
+ * 构造忽略判定器，遍历时用它的两个方法判定文件与目录。
+ *
+ * 规则按"尾 / 表示仅目录、`!` 表示重新纳入"分成四个桶：仅目录规则只参与目录判定，
+ * 其余规则参与两者判定。三条硬约束：
+ *
+ * 1. `!` 开头的规则是"重新纳入"，绝不能和普通模式塞进同一个 picomatch 匹配器：
+ *    picomatch 把 `!x` 解释为"匹配除 x 以外的一切"，数组里只要有一条否定规则，
+ *    匹配器就会对所有路径返回 true，整个搜索永远空结果。
+ * 2. 目录剪枝只认"目录自身被排除"：`X/**` 表达的是"X 的内容"，而 picomatch 会让它同时命中
+ *    X 本身。用这类内容规则判剪枝会漏掉 X 下被重新纳入的文件（X/** + !X/keep.ts）。
+ * 3. 仅目录规则不能进入文件判定：`!*\/`（"重新纳入所有目录"）一旦被当成"重新纳入所有路径"，
+ *    后面的所有忽略规则都会失效（`*` + `!*\/` + `!*.ts` 这类允许清单写法会什么都不忽略）。
+ *
+ * 传入的模式必须是 `/` 分隔：.gitignore 语法本身就用 `/`（`\` 在那里是转义符，不能被改写），
+ * LLM 传入的 Windows 风格模式由工具入口用 toForwardSlash 归一。
+ *
+ * 与 git 的差异（故意保留，方向安全）：git 逐行按"最后一个匹配的规则生效"，这里简化为
+ * "重新纳入优先"。因此 1) 同一文件内后写的排除规则赢不过先写的反向规则；2) 子目录 .gitignore
+ * 的排除规则赢不过父目录的反向规则（父 `!*.ts` + 子 `*.ts` 时子目录的 .ts 仍会被搜到）。
+ * 方向只多不漏：本实现的忽略集 = {有排除规则命中 且 无反向规则命中}，它是 git 忽略集的子集
+ * （git 还要求"最后一条命中的是排除规则"），所以结果集恒为 git 结果的超集。
+ * 要精确对齐需按"规则所在 .gitignore 层级"分组逐组判定，每个路径会多出与层级数成正比的
+ * 匹配调用，与搜索场景的收益不匹配。
+ */
+function createIgnoreMatcher(patterns: string[]): IgnoreMatcher {
+    const excludeAny: string[] = [];
+    const reincludeAny: string[] = [];
+    const excludeDirOnly: string[] = [];
+    const reincludeDirOnly: string[] = [];
+
+    for (const raw of patterns) {
+        // 空模式（含裸 `!`）要么让 picomatch 抛错，要么匹配一切路径，统一丢弃
+        if (raw.length === 0 || raw === '!') continue;
+        const isReinclude = raw.startsWith('!');
+        let pattern = isReinclude ? raw.slice(1) : raw;
+        const isDirOnly = pattern.endsWith('/');
+        if (isDirOnly) {
+            pattern = pattern.slice(0, -1);
+            // `X/**` 在 picomatch 下会命中 X 本身，但 `X/**` 语义是"X 内部"。
+            // 仅目录模式只判目录，补一层 `/*` 后既不命中 X，也能命中任意深度的子目录
+            if (pattern.endsWith('/**')) pattern += '/*';
+        }
+        if (!pattern) continue;
+
+        if (isDirOnly) {
+            (isReinclude ? reincludeDirOnly : excludeDirOnly).push(pattern);
+        } else {
+            (isReinclude ? reincludeAny : excludeAny).push(pattern);
+        }
+    }
+
+    const matcher = (list: string[]) => (list.length > 0 ? picomatch(list, { dot: true }) : undefined);
+    const excludeAnyMatch = matcher(excludeAny);
+    const reincludeAnyMatch = matcher(reincludeAny);
+    // `X/**` 只约束目录内容，不能用来判定 X 目录本身被排除
+    const excludeSelfAny = excludeAny.filter((pattern) => !pattern.endsWith('/**'));
+    // 只有在"没有内容规则被剔除、也没有仅目录规则加入"时，目录判定才能复用文件判定的匹配器
+    const excludeDirMatch =
+        excludeDirOnly.length === 0 && excludeSelfAny.length === excludeAny.length
+            ? excludeAnyMatch
+            : matcher([...excludeSelfAny, ...excludeDirOnly]);
+    const reincludeDirMatch =
+        reincludeDirOnly.length === 0 ? reincludeAnyMatch : matcher([...reincludeAny, ...reincludeDirOnly]);
+
+    const ignoreWhen =
+        (excludeMatch: typeof excludeAnyMatch, reincludeMatch: typeof reincludeAnyMatch) =>
+        (relativePath: string): boolean =>
+            excludeMatch?.(relativePath) === true && reincludeMatch?.(relativePath) !== true;
+
+    return {
+        isIgnored: ignoreWhen(excludeAnyMatch, reincludeAnyMatch),
+        isDirExcluded: ignoreWhen(excludeDirMatch, reincludeDirMatch)
+    };
+}
+
 /**
  * 流式文件遍历：逐个产出匹配的文件路径，堆占用与文件总数、目录宽度无关。
  *
@@ -2883,11 +2984,9 @@ async function readDirListing(dir: string): Promise<DirListing> {
  */
 async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerator<string> {
     const dot = options.dot === true;
+    const skipIgnoredFiles = options.skipIgnoredFiles !== false;
     const fileMatch = picomatch(options.filePattern, { dot });
-    const ignoreMatch =
-        options.ignorePatterns && options.ignorePatterns.length > 0
-            ? picomatch(options.ignorePatterns, { dot: true })
-            : undefined;
+    const ignoreMatcher = createIgnoreMatcher(options.ignorePatterns ?? []);
     const maxScannedFiles = options.maxScannedFiles ?? WALK_MAX_SCANNED_FILES;
 
     let scanned = 0;
@@ -2917,7 +3016,7 @@ async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerat
             for (const name of files) {
                 const relativePath = relativePrefix + name;
                 if (!fileMatch(relativePath)) continue;
-                if (ignoreMatch && ignoreMatch(relativePath)) continue;
+                if (skipIgnoredFiles && ignoreMatcher.isIgnored(relativePath)) continue;
                 if (scanned >= maxScannedFiles) {
                     stop('count');
                     return;
@@ -2938,9 +3037,10 @@ async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerat
                     if (PRUNED_DIR_NAME_SET.has(name)) continue;
                     // dot=false 时不进入隐藏目录，与 fast-glob 的默认语义保持一致
                     if (!dot && name.startsWith('.')) continue;
-                    // 用哨兵文件名匹配目录本身：gitignore 规则转换后形如 **\/out/**，
-                    // 直接拿目录路径去匹配无法命中
-                    if (ignoreMatch && ignoreMatch(relativePrefix + name + '/__opendesk__')) continue;
+                    // 目录自身被排除才整棵剪枝。注意不能用内容规则（out/*、src/**）判定：
+                    // 它们只约束目录内容，子项仍可能被重新纳入（src/** + !src/a.ts），
+                    // 剪掉整棵子树会漏文件。isDirExcluded 已把这类规则排除在外。
+                    if (ignoreMatcher.isDirExcluded(relativePrefix + name)) continue;
                     chunk.push(name);
                 }
                 if (chunk.length === 0) continue;
@@ -3283,12 +3383,21 @@ async function detectFileEncoding(filePath: string): Promise<string> {
 }
 
 /**
- * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
+ * 将单条 .gitignore 规则转换为相对于 basePath 的 picomatch ignore 模式。
  * 对齐 git 的语义：
  *  - 不含 / → basename 匹配（递归），同时匹配文件和目录内容
  *  - 含 / 或前导 / → 路径锚定：{prefix}{pattern}
- *  - 尾 / → 仅匹配目录
- *  - ! → 否定模式（fastGlob 原生支持）
+ *  - 尾 / → 仅目录，输出时保留尾 / 作为标记，由 createIgnoreMatcher 只在目录判定里使用
+ *  - ! → 重新纳入规则，输出时保留 `!` 前缀，由 createIgnoreMatcher 分组处理
+ *    （picomatch 没有原生的"重新纳入"语义）
+ *
+ * 普通规则输出"路径本身" + "路径内容（pattern/**）"两个模式：前者让目录自身被排除（目录剪枝
+ * 依赖它，`X/**` 不参与目录剪枝，见 createIgnoreMatcher），后者覆盖目录内的所有条目——这也
+ * 解释了 `*` + `!dir` 会连带放行 dir 的内容（`!dir` 同样带内容模式）。
+ *
+ * 仅目录规则只输出带尾 / 标记的"路径本身"，不展开内容：git 里内容只是被目录**间接**忽略，
+ * 目录一旦被重新纳入（`dir/` + `!dir/`），内容就重新可见；展开成内容模式会让内容永远无法恢复。
+ * 目录内的条目由目录剪枝兜住。
  */
 function convertGitignoreRule(rule: string, prefix: string): string[] | null {
     let line = rule.trim();
@@ -3303,10 +3412,10 @@ function convertGitignoreRule(rule: string, prefix: string): string[] | null {
 
     if (!line) return null;
 
-    let isDirOnly = false;
-    if (line.endsWith('/')) {
-        isDirOnly = true;
+    const isDirOnly = line.endsWith('/');
+    if (isDirOnly) {
         line = line.slice(0, -1);
+        if (!line) return null;
     }
 
     let isAnchored = false;
@@ -3317,33 +3426,21 @@ function convertGitignoreRule(rule: string, prefix: string): string[] | null {
 
     if (!line) return null;
 
-    const hasPathSep = line.includes('/');
+    // basename 模式匹配任意深度，路径模式相对 .gitignore 所在目录；仅目录规则再打上尾 / 标记
+    const self = isAnchored || line.includes('/') ? prefix + line : prefix + '**/' + line;
     const results: string[] = [];
     const addResult = (r: string) => {
         results.push(isNegation ? '!' + r : r);
     };
 
-    if (isAnchored || hasPathSep) {
-        // 路径锚定：相对于 .gitignore 所在目录
-        const base = prefix + line;
-        if (isDirOnly) {
-            addResult(base + '/**');
-        } else {
-            addResult(base);
-            // 路径模式也可能匹配同名目录
-            addResult(base + '/**');
-        }
-    } else {
-        // basename 模式：匹配任意深度。同时匹配文件和目录内容
-        addResult(prefix + '**/' + line);
-        addResult(prefix + '**/' + line + '/**');
-    }
+    addResult(isDirOnly ? self + '/' : self);
+    if (!isDirOnly) addResult(self + '/**');
 
     return results;
 }
 
 /**
- * 收集 basePath 下所有 .gitignore 中的规则，转换为 fastGlob 兼容的 ignore 模式。
+ * 收集 basePath 下所有 .gitignore 中的规则，转换为 picomatch 兼容的 ignore 模式。
  * 行为对齐 ripgrep：递归收集各层级 .gitignore 并按所在目录正确作用域化。
  */
 async function readGitignorePatterns(filePath: string, prefix: string): Promise<string[]> {
@@ -3391,6 +3488,8 @@ async function collectGitignorePatterns(basePath: string): Promise<string[]> {
             filePattern: '**/.gitignore',
             dot: true,
             ignorePatterns: rootPatterns,
+            // .gitignore 自身被忽略也照样要读（git 只用目录排除决定是否遍历）
+            skipIgnoredFiles: false,
             timeBudgetMs: GREP_GITIGNORE_TIME_BUDGET_MS,
             startedAt,
             maxScannedFiles: GREP_MAX_GITIGNORE_FILES
@@ -3544,19 +3643,21 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     }
 
     /**
-     * 将 grep filePattern 转换为 fastGlob 可用的模式，对齐 ripgrep 行为：
+     * 将 grep filePattern 转换为 picomatch 可用的模式，对齐 ripgrep 行为：
      * - 不含 / 的 pattern（如 *.ts）→ basename 匹配，递归所有子目录：**\/*.ts
      * - 含 / 的 pattern（如 src/*.ts）→ 路径匹配，原样传递
      * - 空值/未指定 → 默认 **\/* 匹配所有文件
+     * 分隔符统一走 toForwardSlash：相对路径是用 / 拼接的，Windows 风格的 \ 永远匹配不上。
      */
     private normalizeFilePattern(filePattern?: string): string {
         if (!filePattern) return '**/*';
+        const pattern = toForwardSlash(filePattern);
         // 含路径分隔符的是路径匹配，原样传递
-        if (filePattern.includes('/') || filePattern.includes('\\')) {
-            return filePattern;
+        if (pattern.includes('/')) {
+            return pattern;
         }
         // 纯 basename 模式：对齐 ripgrep，递归匹配
-        return `**/${filePattern}`;
+        return `**/${pattern}`;
     }
 
     async executeCommand(args: z.output<typeof grepSchema>, taskState?: TaskState): Promise<string> {
@@ -3586,21 +3687,17 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             let timedOut = false;
             let scanLimited = false;
 
-            // 预处理 pattern 中的 \uXXXX 字面量转义序列，将其转换为实际的 Unicode 字符
-            // 这样 AI agent 发送的 [\u4e00-\u9fa5] 等 Unicode 范围模式能被正确处理
-            const processedPattern = pattern.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
-                String.fromCharCode(parseInt(hex, 16))
-            );
-
+            // 直接编译原始 pattern：JS RegExp 原生支持 \uXXXX 转义（如 [\u4e00-\u9fa5]），
+            // 提前把它们替换成实际字符反而会让"搜索源码里的 \uXXXX 字面量"永远搜不到。
             // 优先使用 'u' (unicode) flag 以正确处理 Unicode 字符范围
             // 如果 unicode 模式不兼容（某些旧式正则语法），回退到非 unicode 模式
             const baseFlags = ignoreCase ? 'gi' : 'g';
             let regex: RegExp;
             try {
-                regex = new RegExp(processedPattern, baseFlags + 'u');
+                regex = new RegExp(pattern, baseFlags + 'u');
             } catch {
                 try {
-                    regex = new RegExp(processedPattern, baseFlags);
+                    regex = new RegExp(pattern, baseFlags);
                 } catch (e: any) {
                     return `错误: 无效的正则表达式 - ${e.message}`;
                 }
@@ -3610,6 +3707,8 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             const globPattern = this.normalizeFilePattern(filePattern);
 
             const matches: GrepMatch[] = [];
+            // 二进制内容与超大文件会被跳过，不统计出来会让调用方误以为"确实没有匹配"
+            let skippedFiles = 0;
 
             const searchFile = async (filePath: string): Promise<GrepMatch[]> => {
                 const fileMatches: GrepMatch[] = [];
@@ -3622,6 +3721,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
                     const stat = await fs.promises.stat(filePath);
                     if (stat.size > GREP_MAX_FILE_SIZE_BYTES) {
+                        skippedFiles++;
                         return fileMatches;
                     }
 
@@ -3725,7 +3825,10 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                             if (tailText) {
                                 lineNumber++;
                                 const content = tailText.endsWith('\r') ? tailText.slice(0, -1) : tailText;
-                                if (!NUL_RE.test(content)) {
+                                if (NUL_RE.test(content)) {
+                                    // 末尾不完整行同样参与二进制判定，否则 NUL 落在末行时会把二进制文件当文本处理
+                                    sawNul = true;
+                                } else {
                                     for (const m of pendingContextAfter) {
                                         if (m.contextAfter.length < contextLines) {
                                             m.contextAfter.push(content);
@@ -3774,10 +3877,12 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
                     // 流式 NUL 检测：任意位置出现 NUL 即判定为二进制，丢弃该文件全部结果
                     if (sawNul) {
+                        skippedFiles++;
                         return [];
                     }
                 } catch {
-                    // 跳过无法读取的文件
+                    // 读不到的文件（权限、占用、解码失败）同样要计入跳过数，否则结果会显得"什么也没有"
+                    skippedFiles++;
                 }
 
                 return fileMatches;
@@ -3831,12 +3936,23 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 }
             }
 
+            // 空结果时，"确实没有匹配"与"有文件根本没被搜索"必须区分开，否则结论会被误读；
+            // 已有匹配时不叠加这条提示，否则在含图片/二进制产物的仓库里每次搜索都会带上噪声
+            const skippedNote =
+                skippedFiles > 0
+                    ? `${skippedFiles} 个文件未参与搜索（二进制内容、体积超限或读取失败），结果可能不完整`
+                    : undefined;
+            const truncated = matches.length >= maxResults;
+
             if (matches.length === 0) {
                 if (timedOut) {
                     return `搜索超时（时间预算 ${timeBudgetMs}ms），未找到匹配的内容`;
                 }
                 if (scanLimited) {
                     return `已扫描 ${WALK_MAX_SCANNED_FILES} 个文件仍未找到匹配内容，已提前停止。建议缩小搜索范围或指定 filePattern`;
+                }
+                if (skippedNote) {
+                    return `未找到匹配的内容\n\n注意: ${skippedNote}`;
                 }
                 return '未找到匹配的内容';
             }
@@ -3853,8 +3969,9 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             }
 
             for (const [file, fileMatches] of fileGroups) {
+                // 单文件搜索时相对路径为空，用文件自身补位，否则结果块没有文件名标识
                 const relPath = path.relative(displayBasePath, file);
-                output.push(`\n${toForwardSlash(relPath.startsWith('..') ? file : relPath)}`);
+                output.push(`\n${toForwardSlash(!relPath || relPath.startsWith('..') ? file : relPath)}`);
 
                 // 计算该文件内最大行号（含上下文），确定行号宽度
                 let maxLineNum = 0;
@@ -3929,6 +4046,9 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 output.push(
                     `注意: 已扫描 ${WALK_MAX_SCANNED_FILES} 个文件，以上为部分结果。建议缩小搜索范围或指定 filePattern 后重试`
                 );
+            } else if (truncated) {
+                output.push('');
+                output.push(`注意: 结果已达到上限 ${maxResults} 处，可能还有更多匹配未显示`);
             }
 
             return output.join('\n');

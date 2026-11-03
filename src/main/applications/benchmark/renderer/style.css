@@ -137,6 +137,8 @@ select {
     border-radius: 10px;
     background: var(--chip);
     min-width: 0;
+    /* 测评集渠道可以有多个，Tab 条放不下时换行，别把右侧操作按钮挤出可视区 */
+    flex-wrap: wrap;
 }
 
 .seg-item {
@@ -168,9 +170,19 @@ select {
         0 0.5px 1px rgba(0, 0, 0, 0.03);
 }
 
-:host([data-theme='dark']) .seg-item.active {
+/* 深色态与技能中心的 segmented control 对齐：轨道 #333、选中项更深的 #252526 + 阴影 */
+:host([data-theme='dark']) .seg-control {
     background: #333333;
-    box-shadow: none;
+}
+
+:host([data-theme='dark']) .seg-item {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+:host([data-theme='dark']) .seg-item.active {
+    background: #252526;
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
 .seg-badge {

@@ -49,6 +49,7 @@ import type { AcpAgentProfile } from '../common.js';
 import { createSafeAcpProfileSnapshot } from './profile.js';
 import { getTaskArtifactDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
 import { AcpEventJournal } from './journal.js';
 import { AcpSessionUpdateMapper } from './mapper.js';
 import {
@@ -543,7 +544,7 @@ export class AcpTaskRuntime implements AcpClientHandlers {
                         this.connection.initialize({
                             protocolVersion: this.profile.protocolVersion,
                             clientCapabilities,
-                            clientInfo: { name: 'OpenDesk', version: '0.3.4' }
+                            clientInfo: { name: 'OpenDesk', version: OPENDESK_RUNTIME_VERSION }
                         })
                     ),
                     this.profile.timeouts.connectMs,

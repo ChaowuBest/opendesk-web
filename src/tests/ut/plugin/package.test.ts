@@ -2,10 +2,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+    OpenDeskPluginManifestSchema,
     OpenDeskPluginPackageError,
     validateOpenDeskPluginDirectory,
     validateOpenDeskPluginPackage
 } from '../../../../packages/plugin-sdk/src/package.js';
+import { isValidVersion } from '../../../main/utils/version.js';
 
 describe('OpenDesk plugin package validator', () => {
     let root: string;
@@ -242,5 +244,47 @@ describe('OpenDesk plugin package validator', () => {
         );
 
         expect(() => validateOpenDeskPluginDirectory(root)).toThrow(OpenDeskPluginPackageError);
+    });
+});
+
+/**
+ * 打包期（插件 SDK，自带正则）与运行期（宿主 pluginmgr，semver 库）对版本号的判定
+ * 必须完全一致，否则会出现「CLI 打包通过、宿主加载报错」这种事后才发现的问题。
+ */
+describe('版本号规则与宿主保持一致', () => {
+    const SAMPLES = [
+        '1.2.3',
+        'v1.2.3',
+        ' 1.2.3 ',
+        '0.0.0',
+        '1.2.3-alpha',
+        '1.2.3-0a',
+        '1.2.3-alpha.1',
+        '1.2.3-beta+exp.sha.5114f85',
+        '1.2.3+build.5',
+        '1.0',
+        'V1.2.3',
+        'latest',
+        '01.2.3',
+        '1.2.3-01',
+        '1.2.3-alpha..b',
+        '1.2.3-.',
+        '1.2.3+a..b',
+        '1.2.3-',
+        '1.2.3-a_b',
+        '9007199254740992.0.0',
+        ''
+    ];
+
+    test('SDK 清单校验与宿主 SemVer 判定结论一致', () => {
+        for (const version of SAMPLES) {
+            const parsed = OpenDeskPluginManifestSchema.safeParse({
+                entry: './dist/plugin.js',
+                apiVersion: 1,
+                capabilities: [],
+                version
+            });
+            expect({ version, accepted: parsed.success }).toEqual({ version, accepted: isValidVersion(version) });
+        }
     });
 });

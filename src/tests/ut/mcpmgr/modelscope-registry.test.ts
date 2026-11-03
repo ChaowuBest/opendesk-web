@@ -338,4 +338,65 @@ describe('ModelScope MCP registry', () => {
             allRegistries.splice(0, allRegistries.length, ...originalRegistries);
         }
     });
+
+    test('市场里的中文名在安装后作为 displayName 保留，配置技术名不被替换', async () => {
+        // 真实数据（ModelScope「天眼查MCP」）：配置里的 key 是内部技术名 tyc-mcp，
+        // 市场展示名是 ChineseName。安装后用户看到的必须是展示名，否则就是安装前后改名。
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse(
+                mcpAggResponse([
+                    {
+                        Name: 'tyc-mcp',
+                        Path: 'TianYanCha',
+                        ChineseName: '天眼查MCP',
+                        ServerConfig: [
+                            {
+                                mcpServers: {
+                                    'tyc-mcp': {
+                                        command: 'npx',
+                                        args: [
+                                            '-y',
+                                            'mcp-remote',
+                                            'https://mcp.tianyancha.com/v1',
+                                            '--header',
+                                            'Authorization:${YOUR_API_KEY}'
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ])
+            )
+        );
+
+        const definition = await loadModelScopeDefinition();
+        const adapter = new ContributedMCPRegistry(definition);
+        const originalRegistries = [...allRegistries];
+        allRegistries.splice(0, allRegistries.length, adapter);
+
+        try {
+            const app = Object.create(McpMgrApplication.prototype) as McpMgrApplication;
+            let servers: McpServerConfig[] = [];
+
+            jest.spyOn(app, 'getServersFromConfig').mockImplementation(() => JSON.parse(JSON.stringify(servers)));
+            (app as any).saveServersToConfig = jest.fn((nextServers: McpServerConfig[]) => {
+                servers = JSON.parse(JSON.stringify(nextServers));
+            });
+            (app as any).sendEventToSubscribers = jest.fn();
+
+            await app.installFromRegistry(`modelscope-mcp:${encodeURIComponent('TianYanCha/tyc-mcp')}`);
+
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toEqual(
+                expect.objectContaining({
+                    name: 'tyc-mcp',
+                    displayName: '天眼查MCP',
+                    command: 'npx'
+                })
+            );
+        } finally {
+            allRegistries.splice(0, allRegistries.length, ...originalRegistries);
+        }
+    });
 });
