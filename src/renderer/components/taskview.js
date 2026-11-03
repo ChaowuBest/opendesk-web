@@ -3420,7 +3420,6 @@ class TaskView extends HTMLElement {
                     const modelAlias = task_state.model || input_widget.selectedModel;
                     const model = input_widget.availableModels.find((m) => m.alias === modelAlias);
                     input_widget.setReasoningEffort(model?.reasoning_effort);
-                    input_widget._updateEffortIcon?.();
                 }
                 input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
                 input_widget.selectedExecutionNodeLabel = task_state.executionNodeLabel || '';

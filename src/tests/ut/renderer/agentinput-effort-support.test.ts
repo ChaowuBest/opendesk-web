@@ -128,11 +128,11 @@ describe('AgentInput reasoning effort support loading', () => {
         // 初始为默认档位，按钮上无推理图标
         expect(input.querySelector('#agent-input-model-btn .agent-effort-icon')).toBeNull();
 
-        // 选中非默认档位 low → _updateEffortIcon 必须能插入图标
+        // 选中非默认档位 low → 按钮内容必须能插入推理图标
         // （修复前使用裸的 `> span:last-child` 选择器，在真实 Chromium 中抛
         //   SyntaxError 导致图标永远无法插入）
         input.selectedReasoningEffort = 'low';
-        expect(() => input._updateEffortIcon()).not.toThrow();
+        expect(() => input._updateModelButton()).not.toThrow();
         const icon = input.querySelector('#agent-input-model-btn .agent-effort-icon');
         expect(icon).not.toBeNull();
         // low = 1 格绿色 + 3 格灰色
@@ -141,7 +141,7 @@ describe('AgentInput reasoning effort support loading', () => {
 
         // 切换到 max 档位 → 4 格全绿
         input.selectedReasoningEffort = 'max';
-        input._updateEffortIcon();
+        input._updateModelButton();
         const maxIcon = input.querySelector('#agent-input-model-btn .agent-effort-icon');
         expect(maxIcon).not.toBeNull();
         expect((maxIcon.innerHTML.match(/fill="#1F9D66"/g) || []).length).toBe(4);

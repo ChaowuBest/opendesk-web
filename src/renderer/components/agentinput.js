@@ -773,7 +773,7 @@ class AgentInput extends HTMLElement {
     setReasoningEffort(effort) {
         this.selectedReasoningEffort = effort || '';
         this._hasExplicitReasoningEffort = effort !== undefined;
-        this._updateEffortIcon();
+        this._updateModelButton();
     }
 
     /**
@@ -1410,26 +1410,7 @@ class AgentInput extends HTMLElement {
                       .join('')
                 : '';
 
-        const modelItems = this.availableModels
-            .map((m) => {
-                const isActive = m.alias === this.selectedModel ? 'active' : '';
-                const checkMark =
-                    m.alias === this.selectedModel
-                        ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
-                        : '';
-                const hasVision = this.visionMap[m.alias] === true;
-                const iconHTML = getModelIconTile(hasVision);
-                const visionTagHTML = hasVision
-                    ? `<span class="ctx-badge blue">${this.t('renderer.agentInput.model.visionTag')}</span>`
-                    : '';
-                return `<button class="ctx-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
-                    ${iconHTML}
-                    <span class="ctx-label">${m.alias}${visionTagHTML}</span>
-                    ${checkMark}
-                    <span class="ctx-arrow"><i class="fas fa-chevron-right"></i></span>
-                </button>`;
-            })
-            .join('');
+        const modelItems = this.availableModels.map((m) => this.renderModelItem(m)).join('');
 
         const modeItems = this.availableModes.map((m) => this.renderModeItem(m)).join('');
 
@@ -1464,12 +1445,7 @@ class AgentInput extends HTMLElement {
             })
         ].join('');
 
-        const currentModelLabel = this.getModelButtonLabel();
-        const currentModelHasVision = this.visionMap[this.selectedModel] === true;
-        const currentEffortIcon =
-            this.selectedReasoningEffort && this.selectedReasoningEffort !== ''
-                ? getEffortIconSVG(this.selectedReasoningEffort)
-                : '';
+        const currentModelButtonHTML = this._renderModelButtonContent();
         const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
         const currentNodeLabel = this.selectedExecutionNodeLabel || 'Local';
@@ -1539,9 +1515,7 @@ class AgentInput extends HTMLElement {
                                 ? `
                         <div class="agent-input-toolbar-item" data-toolbar-priority="1">
                             <button id="agent-input-model-btn" class="agent-input-toolbar-control">
-                                ${getModelIconTile(currentModelHasVision)}
-                                ${currentEffortIcon ? `<span class="agent-effort-icon">${currentEffortIcon}</span>` : ''}
-                                <span>${currentModelLabel}</span>
+                                ${currentModelButtonHTML}
                             </button>
                             <div id="agent-input-model-panel" class="ctx-menu ctx-menu-hidden">
                                 <div class="ctx-search">
@@ -1741,45 +1715,25 @@ class AgentInput extends HTMLElement {
     }
 
     /**
-     * 仅更新模型按钮的图标和文字，不全量重渲染。
-     * 当外部通过 setModel() 切换任务时调用。
+     * 生成模型按钮的内部 HTML：视觉能力图标 + 推理档位图标 + 模型名。
+     * 全量渲染与局部同步共用同一份逻辑，避免图标、文字与实际模型不一致。
+     */
+    _renderModelButtonContent() {
+        const hasVision = this.visionMap[this.selectedModel] === true;
+        const effortIcon = this.selectedReasoningEffort
+            ? `<span class="agent-effort-icon">${getEffortIconSVG(this.selectedReasoningEffort)}</span>`
+            : '';
+        return `${getModelIconTile(hasVision)}${effortIcon}<span>${escapeHtml(this.getModelButtonLabel())}</span>`;
+    }
+
+    /**
+     * 仅更新模型按钮的内容（模型名、视觉图标、推理档位图标），不全量重渲染。
+     * 切换模型或推理档位时调用，保证三者始终与当前选择一致。
      */
     _updateModelButton() {
         const btn = this.querySelector('#agent-input-model-btn');
         if (!btn) return;
-        const hasVision = this.visionMap[this.selectedModel] === true;
-        const iconSpan = btn.querySelector(':scope > span:first-child');
-        if (iconSpan) {
-            iconSpan.className = `agent-icon-tile ${hasVision ? 'model-vision' : 'model-chat'}`;
-        }
-        const labelSpan = btn.querySelector(':scope > span:last-child');
-        if (labelSpan) labelSpan.textContent = this.getModelButtonLabel();
-        this._updateEffortIcon();
-    }
-
-    /**
-     * 更新模型按钮中的推理深度图标（非默认时显示）
-     */
-    _updateEffortIcon() {
-        const btn = this.querySelector('#agent-input-model-btn');
-        if (!btn) return;
-        const existing = btn.querySelector('.agent-effort-icon');
-        if (this.selectedReasoningEffort && this.selectedReasoningEffort !== '') {
-            const svg = getEffortIconSVG(this.selectedReasoningEffort);
-            if (existing) {
-                existing.innerHTML = svg;
-            } else {
-                const span = document.createElement('span');
-                span.className = 'agent-effort-icon';
-                span.innerHTML = svg;
-                // 注意：必须使用 `:scope >` 形式，裸的 `> span` 在 Chromium 的
-                // querySelector 中会抛 SyntaxError，导致图标无法插入
-                const labelSpan = btn.querySelector(':scope > span:last-child');
-                if (labelSpan) btn.insertBefore(span, labelSpan);
-            }
-        } else if (existing) {
-            existing.remove();
-        }
+        btn.innerHTML = this._renderModelButtonContent();
     }
 
     /**
@@ -1956,6 +1910,27 @@ class AgentInput extends HTMLElement {
         this.bindModeItemEvents();
     }
 
+    /**
+     * 渲染模型面板中的单个模型项。
+     * 首次渲染与搜索过滤后的重渲染共用这一份逻辑，避免两条路径的
+     * 图标、视觉标签与转义处理出现分歧。
+     */
+    renderModelItem(m) {
+        const isActive = m.alias === this.selectedModel ? 'active' : '';
+        const checkMark =
+            m.alias === this.selectedModel ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
+        const hasVision = this.visionMap[m.alias] === true;
+        const visionTagHTML = hasVision
+            ? `<span class="ctx-badge blue">${this.t('renderer.agentInput.model.visionTag')}</span>`
+            : '';
+        return `<button class="ctx-item model-panel-item ${isActive}" data-model-alias="${escapeHtml(m.alias)}">
+            ${getModelIconTile(hasVision)}
+            <span class="ctx-label">${escapeHtml(m.alias)}${visionTagHTML}</span>
+            ${checkMark}
+            <span class="ctx-arrow"><i class="fas fa-chevron-right"></i></span>
+        </button>`;
+    }
+
     renderModelList(filter = '') {
         const listEl = this.querySelector('#agent-input-model-list');
         if (!listEl) return;
@@ -1967,26 +1942,7 @@ class AgentInput extends HTMLElement {
         if (filtered.length === 0) {
             listEl.innerHTML = '<div class="ctx-empty">未找到匹配的模型</div>';
         } else {
-            listEl.innerHTML = filtered
-                .map((m) => {
-                    const isActive = m.alias === this.selectedModel ? 'active' : '';
-                    const checkMark =
-                        m.alias === this.selectedModel
-                            ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>'
-                            : '';
-                    const hasVision = this.visionMap[m.alias] === true;
-                    const iconHTML = getModelIconTile(hasVision);
-                    const visionTagHTML = hasVision
-                        ? `<span class="ctx-badge blue">${this.t('renderer.agentInput.model.visionTag')}</span>`
-                        : '';
-                    return `<button class="ctx-item model-panel-item ${isActive}" data-model-alias="${m.alias}">
-                        ${iconHTML}
-                        <span class="ctx-label">${m.alias}${visionTagHTML}</span>
-                        ${checkMark}
-                        <span class="ctx-arrow"><i class="fas fa-chevron-right"></i></span>
-                    </button>`;
-                })
-                .join('');
+            listEl.innerHTML = filtered.map((m) => this.renderModelItem(m)).join('');
         }
         this.bindModelItemEvents();
     }
@@ -2039,9 +1995,9 @@ class AgentInput extends HTMLElement {
                     modelAlias === this.selectedModel && o.value === this.selectedReasoningEffort ? 'active' : '';
                 const checkMark = isActive ? '<span class="ctx-item-check"><i class="fas fa-check"></i></span>' : '';
                 const effortIcon = getEffortIconSVG(o.value);
-                return `<button class="ctx-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
+                return `<button class="ctx-item ${isActive}" data-model-alias="${escapeHtml(modelAlias)}" data-effort-value="${escapeHtml(o.value)}">
                 ${effortIcon}
-                <span class="ctx-label">${o.label}</span>
+                <span class="ctx-label">${escapeHtml(o.label)}</span>
                 ${checkMark}
             </button>`;
             })
@@ -2101,20 +2057,18 @@ class AgentInput extends HTMLElement {
                 const effortValue = item.dataset.effortValue;
                 if (!alias || effortValue === undefined) return;
                 this.selectedModel = alias;
+                // setReasoningEffort 会一并刷新按钮的模型名、视觉图标与推理图标；
+                // 该刷新必须发生在写设置的 await 之前，否则按钮会滞后一拍才更新
                 this.setReasoningEffort(effortValue);
-                if (!this.taskId) {
-                    await updateSettingForModelChange(alias, effortValue);
-                }
                 this.closeModelPanel();
                 this.hideEffortSubmenu();
-                // 更新按钮文字和推理图标
-                const modelBtn = this.querySelector('#agent-input-model-btn > span:last-child');
-                if (modelBtn) modelBtn.textContent = this.getModelButtonLabel();
-                this._updateEffortIcon();
                 // 如果之前因为模型未选择而禁用，现在启用了输入
                 if (this.isModelNotSelected) {
                     this.isModelNotSelected = false;
                     this.updateInputState();
+                }
+                if (!this.taskId) {
+                    await updateSettingForModelChange(alias, effortValue);
                 }
                 this.dispatchEvent(
                     new CustomEvent('model-changed', {
