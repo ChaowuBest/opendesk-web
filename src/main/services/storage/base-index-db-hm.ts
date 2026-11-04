@@ -21,7 +21,14 @@ import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
 import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
-import type { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-indexer.js';
+import {
+    compileOrGroup,
+    literalContainsPattern,
+    type BaseQueryCondition,
+    type BaseQueryOptions,
+    type BaseQueryOperator,
+    type IBaseIndexDB
+} from './base-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // ── SQL 绑定工具（鸿蒙 SELECT 不支持 prepared statement 参数，用字面量替换）──
@@ -482,6 +489,12 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         const clauses: string[] = [];
         const params: any[] = [];
         for (const condition of conditions) {
+            if ('or' in condition) {
+                const group = compileOrGroup(condition.or, (child) => this.buildWhereClause([child]));
+                clauses.push(group.whereClause);
+                params.push(...group.params);
+                continue;
+            }
             const { field, operator, value } = condition;
             const op = operator.toLowerCase() as BaseQueryOperator;
             this.validateField(field);
@@ -501,6 +514,9 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             } else if (op === '!=') {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
+            } else if (op === 'contains_literal') {
+                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
+                params.push(literalContainsPattern(value));
             } else if (op === 'like') {
                 clauses.push(`${field} LIKE ?`);
                 params.push(value);

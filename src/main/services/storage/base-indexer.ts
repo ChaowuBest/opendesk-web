@@ -17,22 +17,25 @@ import {
     ColumnSchema,
     validateColumnSchema,
     QueryOperator,
+    SearchCondition,
     FilterCondition,
     Item,
     ItemType,
     ScalarOperator
 } from './abstract-storage.js';
-import { normalizePathDescendantOrSelfValues } from './path-scope.js';
+import { escapeSqlLikePattern, normalizePathDescendantOrSelfValues } from './path-scope.js';
 
 // BaseIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;
 
 // 查询条件接口
-export interface BaseQueryCondition {
+export interface BaseQueryLeafCondition {
     field: string;
     operator: BaseQueryOperator;
     value: string | string[] | number | number[] | [number, number] | [string, string];
 }
+
+export type BaseQueryCondition = BaseQueryLeafCondition | { or: BaseQueryLeafCondition[] };
 
 // 查询选项接口
 export interface BaseQueryOptions {
@@ -78,6 +81,46 @@ export interface IBaseIndexDB {
     getSchema(): ColumnSchema;
     getValidFields(): string[];
 }
+type CompiledCondition = { whereClause: string; params: any[] };
+
+export function compileOrGroup(
+    conditions: BaseQueryLeafCondition[],
+    compileCondition: (condition: BaseQueryLeafCondition) => CompiledCondition
+): CompiledCondition {
+    assertFlatOrConditions(conditions);
+    const branches = conditions.map(compileCondition);
+    return {
+        whereClause: `(${branches.map((branch) => branch.whereClause).join(' OR ')})`,
+        params: branches.flatMap((branch) => branch.params)
+    };
+}
+
+/** Internal query validation; these errors are developer diagnostics, not UI copy. */
+export function assertFlatOrConditions(value: unknown): asserts value is Record<string, unknown>[] {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new Error('OR groups require a non-empty array of conditions');
+    }
+    for (const child of value) {
+        if (
+            !child ||
+            typeof child !== 'object' ||
+            Array.isArray(child) ||
+            'or' in child ||
+            typeof child.field !== 'string' ||
+            typeof child.operator !== 'string' ||
+            !('value' in child)
+        ) {
+            throw new Error('OR groups only support flat scalar conditions');
+        }
+    }
+}
+
+export function literalContainsPattern(value: unknown): string {
+    // Internal query-contract diagnostic, not user-visible application copy.
+    if (typeof value !== 'string') throw new Error('contains_literal operator requires a string value');
+    return `%${escapeSqlLikePattern(value)}%`;
+}
+
 // ============================================================================
 // BaseIndexer - 动态 Schema 的 SQLite 索引器
 // ============================================================================
@@ -101,6 +144,7 @@ export class BaseIndexer extends Indexer {
         '>=',
         '<=',
         'like',
+        'contains_literal',
         'notlike',
         'in',
         'notin',
@@ -190,15 +234,36 @@ export class BaseIndexer extends Indexer {
         }
     }
 
+    validateOrGroups(conditions: SearchCondition[]): void {
+        for (const condition of conditions) {
+            if ('or' in condition) this.toQueryCondition(condition);
+        }
+    }
+
     /**
      * 转换 FilterCondition 为 BaseQueryCondition
      */
-    private toQueryCondition(cond: FilterCondition): BaseQueryCondition {
+    private toQueryCondition(cond: SearchCondition): BaseQueryCondition {
+        if ('or' in cond) {
+            if (cond.indexer !== 'BaseIndexer') throw new Error('OR groups only support BaseIndexer');
+            assertFlatOrConditions(cond.or);
+            return {
+                or: cond.or.map((child) => {
+                    if (child.indexer !== 'BaseIndexer') throw new Error('OR groups only support BaseIndexer');
+                    return this.toLeafQueryCondition(child);
+                })
+            };
+        }
+        return this.toLeafQueryCondition(cond);
+    }
+
+    private toLeafQueryCondition(cond: FilterCondition): BaseQueryLeafCondition {
         this.validateField(cond.field);
         this.validateOperator(cond.operator);
         if (cond.operator === 'path_descendant_or_self') {
             normalizePathDescendantOrSelfValues(cond.value);
         }
+        if (cond.operator === 'contains_literal') literalContainsPattern(cond.value);
 
         return {
             field: cond.field,
@@ -210,7 +275,8 @@ export class BaseIndexer extends Indexer {
     /**
      * 搜索匹配条件的 Item
      */
-    async search(conditions: FilterCondition[], options?: BaseIndexerSearchOptions): Promise<IndexerSearchResult> {
+    async search(conditions: SearchCondition[], options?: BaseIndexerSearchOptions): Promise<IndexerSearchResult> {
+        this.validateOrGroups(conditions);
         // 转换条件
         const queryConditions = conditions
             .filter((c) => c.indexer === 'BaseIndexer')
@@ -266,7 +332,7 @@ export class BaseIndexer extends Indexer {
         return { items, totalCount };
     }
 
-    async countGrouped(fields: string[], conditions: FilterCondition[]): Promise<BaseCountGroup[]> {
+    async countGrouped(fields: string[], conditions: SearchCondition[]): Promise<BaseCountGroup[]> {
         if (conditions.some((condition) => condition.indexer !== 'BaseIndexer')) {
             throw new Error('Grouped counts only support BaseIndexer conditions');
         }
@@ -276,7 +342,8 @@ export class BaseIndexer extends Indexer {
         );
     }
 
-    async count(conditions: FilterCondition[]): Promise<number> {
+    async count(conditions: SearchCondition[]): Promise<number> {
+        this.validateOrGroups(conditions);
         const queryConditions = conditions
             .filter((c) => c.indexer === 'BaseIndexer')
             .map((c) => this.toQueryCondition(c));
@@ -313,8 +380,9 @@ export class BaseIndexer extends Indexer {
         await this.ensureDB().upsertMany(this.buildRecords(items));
     }
 
-    async resetField(field: string, value: any, conditions: FilterCondition[]): Promise<number> {
+    async resetField(field: string, value: any, conditions: SearchCondition[]): Promise<number> {
         this.validateField(field);
+        this.validateOrGroups(conditions);
         const queryConditions = conditions
             .filter((c) => c.indexer === 'BaseIndexer')
             .map((c) => this.toQueryCondition(c));

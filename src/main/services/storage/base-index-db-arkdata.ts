@@ -13,12 +13,14 @@ import type { BaseCountGroup } from './grouped-count.js';
 import { createHash } from 'node:crypto';
 import { setImmediate as yieldToWorker } from 'node:timers/promises';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
-import type {
-    BaseIndexStoreProbeResult,
-    BaseQueryCondition,
-    BaseQueryOptions,
-    BaseQueryOperator,
-    IBaseIndexDB
+import {
+    compileOrGroup,
+    literalContainsPattern,
+    type BaseIndexStoreProbeResult,
+    type BaseQueryCondition,
+    type BaseQueryOptions,
+    type BaseQueryOperator,
+    type IBaseIndexDB
 } from './base-indexer.js';
 import type {
     ArkDataBatchOptions,
@@ -758,7 +760,8 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
     async findById(itemId: string): Promise<Record<string, any> | undefined> {
         await this.ensureInitialized();
         return (await this.queryOneSql(`SELECT * FROM ${this.tableName} WHERE item_id = ?`, [itemId])) as
-            Record<string, any> | undefined;
+            | Record<string, any>
+            | undefined;
     }
 
     async findByIds(itemIds: string[]): Promise<Record<string, any>[]> {
@@ -941,6 +944,12 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         const clauses: string[] = [];
         const params: any[] = [];
         for (const condition of conditions) {
+            if ('or' in condition) {
+                const group = compileOrGroup(condition.or, (child) => this.buildWhereClause([child]));
+                clauses.push(group.whereClause);
+                params.push(...group.params);
+                continue;
+            }
             const { field, operator, value } = condition;
             const op = operator.toLowerCase() as BaseQueryOperator;
             this.validateField(field);
@@ -967,6 +976,9 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             } else if (op === '!=') {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
+            } else if (op === 'contains_literal') {
+                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
+                params.push(literalContainsPattern(value));
             } else if (op === 'like') {
                 clauses.push(`${field} LIKE ?`);
                 params.push(value);

@@ -1667,7 +1667,7 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
 
     const empty = await worker.searchIndexedFiles('plan', { topK: 5, scope });
     assert.deepEqual(calls, [
-        ['keyword', { limit: 15, scope }],
+        ['keyword', { limit: 15, scope, terms: ['plan'] }],
         ['name', { topK: 10, scope }],
         ['content', { topK: 15, scope }]
     ]);
@@ -1757,7 +1757,7 @@ async function testMultiPathSubsetRunsEachRouteOnce() {
     assert.equal(result.code, undefined);
     assert.equal(calls.length, 3);
     assert.deepEqual(calls, [
-        ['keyword', { limit: 15, scope }],
+        ['keyword', { limit: 15, scope, terms: ['plan'] }],
         ['name', { topK: 10, scope }],
         ['content', { topK: 15, scope }]
     ]);
@@ -1773,7 +1773,7 @@ async function testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalid
     const acceptedResult = await accepted.worker.searchIndexedFiles('plan', { topK: 5, scope });
     assert.equal(acceptedResult.code, undefined);
     assert.deepEqual(accepted.calls, [
-        ['keyword', { limit: 15, scope }],
+        ['keyword', { limit: 15, scope, terms: ['plan'] }],
         ['name', { topK: 10, scope }],
         ['content', { topK: 15, scope }]
     ]);
