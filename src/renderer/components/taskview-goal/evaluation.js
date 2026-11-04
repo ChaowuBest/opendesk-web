@@ -127,7 +127,7 @@ export function renderGoalEvalProgressHtml(progress, selectorId, translate) {
         .join(' ');
 
     return `
-        <div ${attrs} style="margin:8px 0;padding:12px 14px;border:1px solid ${colors.border};border-left:3px solid ${colors.accent};border-radius:14px;background:${colors.bg};display:flex;flex-direction:column;gap:8px;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
+        <div ${attrs} style="margin:8px 0;padding:12px 14px;border:1px solid ${colors.border};border-left:3px solid ${colors.accent};border-radius:14px;background:${colors.bg};display:flex;flex-direction:column;gap:8px;font-size:12px;font-family:var(--font-sans);">
             <div style="display:flex;align-items:center;gap:7px;">
                 <i class="fa-solid ${getGoalEvalIconClass(evaluation)}" style="color:${colors.accent};flex:none;" aria-hidden="true"></i>
                 <span style="font-size:12px;font-weight:600;color:${colors.titleColor};">${escapeHtml(title)}</span>

@@ -10,6 +10,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import { FONT_PRESET_CHANNEL } from './theme/font-preset.js';
 
 /**
  * 快速截图遮罩窗口的 preload：只暴露受控的 IPC 通道，
@@ -19,5 +20,11 @@ contextBridge.exposeInMainWorld('quickCaptureOverlayAPI', {
     ready: () => ipcRenderer.invoke('quickcapture-overlay:ready'),
     commit: (rect) => ipcRenderer.invoke('quickcapture-overlay:commit', rect),
     copy: (rect) => ipcRenderer.invoke('quickcapture-overlay:copy', rect),
-    close: () => ipcRenderer.invoke('quickcapture-overlay:close')
+    close: () => ipcRenderer.invoke('quickcapture-overlay:close'),
+    getFontPreset: () => ipcRenderer.invoke('theme:getFontPreset'),
+    onFontPresetChanged: (callback) => {
+        const handler = (_event, preset) => callback(preset);
+        ipcRenderer.on(FONT_PRESET_CHANNEL, handler);
+        return () => ipcRenderer.removeListener(FONT_PRESET_CHANNEL, handler);
+    }
 });

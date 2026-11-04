@@ -144,7 +144,8 @@ const theme = {
     additionalStyles: {
         // 根容器 - 超紧凑布局 + 统一背景
         Root: {
-            'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+            'font-family':
+                'var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif)',
             'font-size': '11px',
             'line-height': '1.35',
             color: '#1e293b',
@@ -1188,7 +1189,7 @@ class A2UIToHTMLConverter {
         return `
 /* A2UI 超紧凑布局基础样式 */
 .a2ui-root {
-  ${rootStyles || 'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #1e293b;'}
+  ${rootStyles || 'font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif); font-size: 11px; line-height: 1.35; color: #1e293b;'}
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   word-wrap: break-word;

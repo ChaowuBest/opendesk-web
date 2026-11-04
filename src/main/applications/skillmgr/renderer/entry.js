@@ -122,10 +122,11 @@ const REGISTRY_TABS = [
 ];
 
 const STYLE = `
+:where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${OVERLAY_CSS}
 :host {
     display: flex; flex-direction: column; height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    font-family: var(--font-sans);
     font-size: 13px; color: #1d1d1f; box-sizing: border-box;
     overflow: hidden; background: #fff;
     -webkit-font-smoothing: antialiased;

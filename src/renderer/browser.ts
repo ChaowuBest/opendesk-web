@@ -375,7 +375,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 flex: 1; min-width: 0;
                 border: none; background: transparent; outline: none;
                 font-size: var(--fs-sm); color: #1f2937;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
                 line-height: 1.4;
             }
             .bw-url-input::placeholder { color: #9ca3af; }
@@ -395,7 +395,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                 box-shadow: 0 8px 32px rgba(0,0,0,0.12);
                 z-index: 200;
                 padding: 6px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
             }
             .bw-tool-menu.bw-visible { display: block; }
             .bw-tm-item {

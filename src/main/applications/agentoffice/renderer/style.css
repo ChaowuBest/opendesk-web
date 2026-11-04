@@ -14,6 +14,9 @@
  * 设计语言：暖灰底、白面板、珊瑚红点缀、细分隔线、无气泡消息流、HarmonyOS Sans。
  */
 
+:where(button, input, select, textarea, option, optgroup) {
+    font-family: inherit;
+}
 :host {
     display: block;
     width: 100%;
@@ -228,7 +231,7 @@ p {
     flex-direction: column;
     background: var(--surface);
     color: var(--ink);
-    font-family: 'HarmonyOS Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-family: var(--font-sans);
     font-size: var(--fs-base);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;

@@ -71,6 +71,7 @@ function formatUserError(error) {
 }
 
 const STYLE = `
+:where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${OVERLAY_CSS}
 :host {
     display: flex;
@@ -79,7 +80,7 @@ ${OVERLAY_CSS}
     overflow: hidden;
     background: #fff;
     color: #1d1d1f;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-family: var(--font-sans);
     font-size: 13px;
 }
 :host([data-theme="dark"]) {

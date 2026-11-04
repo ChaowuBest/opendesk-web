@@ -72,9 +72,10 @@ export interface SkillDetailCardModel {
 
 const STYLE = `
 ${OVERLAY_CSS}
-:host { position:relative; z-index:10000; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Microsoft YaHei','Helvetica Neue',sans-serif; color:#1d1d1f; }
+:host { position:relative; z-index:10000; font-family:var(--font-sans); color:#1d1d1f; }
 * { box-sizing:border-box; }
 button { font:inherit; }
+button, input, select, option, optgroup, textarea { font-family:inherit; }
 .detail-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:20px; animation:fade-in .15s ease; }
 .detail-dialog { width:680px; max-width:94%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; border:1px solid rgba(0,0,0,.05); border-radius:16px; background:#fff; box-shadow:0 24px 80px -16px rgba(0,0,0,.22); animation:dialog-in .2s ease-out; }
 .detail-header { display:flex; align-items:center; gap:12px; padding:16px 24px; border-bottom:1px solid #f0f0f0; }
