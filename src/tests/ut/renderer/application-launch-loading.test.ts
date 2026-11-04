@@ -4,6 +4,8 @@
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { parseHTML } from 'linkedom';
+import { makeEnsureSidebarScript } from '../../../main/applications/browser/utils.js';
 
 const rendererHtml = readFileSync(new URL('../../../renderer/index.html', import.meta.url), 'utf8');
 const applicationHostSource = readFileSync(
@@ -52,6 +54,46 @@ describe('应用启动加载占位', () => {
         );
     });
 
+    test('切到测评后，后台 Browser Use 不会让旧任务重新可见', () => {
+        const { document } = parseHTML(`
+            <div id="nonAppSlot">
+                <task-view id="previous"><nav class="od-chat-nav"></nav></task-view>
+                <task-view id="background" data-background="1" style="opacity:0">
+                    <task-artifacts id="task-background-artifacts"></task-artifacts>
+                </task-view>
+            </div>
+            <div id="app-frames-container" style="display:none"></div>
+        `);
+        const previous = Object.assign(document.getElementById('previous')!, { markViewHidden: jest.fn() });
+        const background = document.getElementById('background')!;
+        const nonAppSlot = document.getElementById('nonAppSlot')!;
+        const appFramesContainer = document.getElementById('app-frames-container')!;
+        const getDisplay = (el: HTMLElement) => el.style.display || 'block';
+        const context = vm.createContext({
+            document,
+            window: { getComputedStyle: (el: HTMLElement) => ({ display: getDisplay(el) }) },
+            nonAppSlot,
+            appFramesContainer,
+            currentNonAppContent: 'task:previous',
+            currentOpenAppBundleName: 'benchmark',
+            ensureSlots: () => undefined,
+            notifyViewChanged: () => undefined
+        });
+        vm.runInContext(sourceBetween(rendererHtml, 'function showAppFrames()', '/**'), context);
+        vm.runInContext(sourceBetween(rendererHtml, 'function hideAllNonAppChildren(', '/**'), context);
+        vm.runInContext('showAppFrames()', context);
+
+        const backgroundWasRenderable = getDisplay(nonAppSlot) !== 'none' && getDisplay(background) !== 'none';
+        vm.runInContext(makeEnsureSidebarScript('background'), context);
+
+        expect(appFramesContainer.style.display).toBe('block');
+        expect(vm.runInContext('currentNonAppContent', context)).toBeNull();
+        expect(previous.style.display).toBe('none');
+        expect(previous.markViewHidden).toHaveBeenCalledTimes(1);
+        expect(backgroundWasRenderable).toBe(true);
+        expect(background.style.opacity).toBe('0');
+    });
+
     test('占位复用 content-loading-view，文案走本地化键', () => {
         const startSource = sourceBetween(
             rendererHtml,
@@ -93,7 +135,7 @@ describe('应用启动加载占位', () => {
         const finishSource = sourceBetween(
             rendererHtml,
             'function finishAppLaunchLoading(bundleName) {',
-            'function hideAllNonAppChildren()'
+            'function hideAllNonAppChildren('
         );
         expect(finishSource).toContain('clearTimeout(appLaunchLoadingTimer)');
         expect(finishSource.indexOf('clearTimeout(appLaunchLoadingTimer)')).toBeLessThan(
@@ -362,7 +404,7 @@ function loadLaunchLoadingContext(): {
         clearTimeout
     });
     vm.runInContext(
-        sourceBetween(rendererHtml, 'var appLaunchLoadingTimeoutMs = 15000;', 'function hideAllNonAppChildren()'),
+        sourceBetween(rendererHtml, 'var appLaunchLoadingTimeoutMs = 15000;', 'function hideAllNonAppChildren('),
         context
     );
     return { context, created, appended };
