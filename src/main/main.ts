@@ -69,7 +69,7 @@ import { broadcastToAllWindows, safeSendToWebContents, safeSendToWebFrame } from
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
-import { createReloadBudget, createWindowRecoveryController } from './utils/window-recovery.js';
+import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfile } from './utils/window-recovery.js';
 import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
 import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
@@ -685,10 +685,55 @@ const DEFAULT_WINDOW_HEIGHT = 1080;
 const MAIN_WINDOW_SHOW_FALLBACK_DELAY_MS = 1000;
 
 /*
+ * 冻结判定的运行档位：dev 下 vite 重编译、构建、全仓扫描都会把整机 CPU 打满，
+ * renderer 心跳饿死十几秒是常态，按生产阈值判死会在几分钟内反复重载；
+ * 生产环境相反，越早判死用户越早脱离冻结界面。
+ */
+const freezeProfile = freezeRecoveryProfile(is.dev);
+
+/*
  * 主窗口异常重载入口。入口页加载失败、renderer 崩溃、GPU 进程退出共享同一份重载配额，
  * 避免它们互相触发形成重载风暴。
  */
-const mainWindowReloadBudget = createReloadBudget();
+const mainWindowReloadBudget = createReloadBudget(freezeProfile.reloadBudget);
+
+/**
+ * 判定 renderer 冻结时补充进程侧证据。
+ *
+ * 心跳与探活都无回应只能证明 renderer 主线程没在跑 JS，区分不了「真冻结」和「整机
+ * CPU/IO 打满、renderer 抢不到时间片」。把渲染进程的 CPU/内存与实际加载状态一并记进
+ * 判死日志，事后才能判断该不该调整阈值——没有这层信息时，两类现场在日志里完全一样。
+ */
+function describeFrozenMainWindow(): string | null {
+    if (!globalMainWindow || globalMainWindow.isDestroyed()) return 'mainWindow=destroyed';
+    const contents = globalMainWindow.webContents;
+    if (contents.isDestroyed()) return 'webContents=destroyed';
+
+    const parts: string[] = [];
+    try {
+        parts.push(`loading=${contents.isLoading()}`, `crashed=${contents.isCrashed()}`);
+    } catch {
+        // 窗口销毁竞态下这些 getter 可能抛错，诊断缺失不影响恢复流程
+    }
+
+    try {
+        const osPid = contents.getOSProcessId();
+        if (osPid > 0) {
+            parts.push(`rendererPid=${osPid}`);
+            const metric = app.getAppMetrics().find((item) => item.pid === osPid);
+            if (metric) {
+                parts.push(`cpu=${metric.cpu.percentCPUUsage.toFixed(1)}%`);
+                // ProcessMetric.memory 单位为 KB
+                parts.push(`workingSet=${Math.round(metric.memory.workingSetSize / 1024)}MB`);
+                parts.push(`peakWorkingSet=${Math.round(metric.memory.peakWorkingSetSize / 1024)}MB`);
+            }
+        }
+    } catch {
+        // 同上：诊断失败不改变恢复决策
+    }
+
+    return parts.length > 0 ? parts.join(' ') : null;
+}
 
 /** 重新加载主窗口入口页；返回 false 表示窗口不可用或重载配额已耗尽 */
 function reloadMainWindowEntry(reason: string): boolean {
@@ -726,6 +771,9 @@ const windowRecovery = createWindowRecoveryController({
         globalMainWindow.isVisible() &&
         !globalMainWindow.isMinimized(),
     requestHeartbeatProbe: probeMainWindowHeartbeat,
+    heartbeatTimeoutMs: freezeProfile.heartbeatTimeoutMs,
+    probeTimeoutMs: freezeProfile.probeTimeoutMs,
+    describeFrozenRenderer: describeFrozenMainWindow,
     log: logger
 });
 

@@ -4,7 +4,22 @@
 /* 内嵌字体（HarmonyOS Sans / Maple Mono / LXGW WenKai）与字体变量统一在 fonts.css */
 @import './fonts.css';
 
-@source "../../**/*.{html,js,ts,jsx,tsx}";
+/*
+ * Tailwind 类名扫描范围。
+ *
+ * 默认写法是整棵 src（glob 为上级目录下的全部文件），代价是任意 src 文件被写入都会让
+ * @tailwindcss/vite 全量重扫，并把 ~370KB 的 common.css 重新注入 renderer。
+ * 任务执行期间 agent 连续编辑源码时，每次写入都等于一次全量样式重算，会持续占用
+ * 渲染进程主线程（心跳被饿死 → 冻结恢复反复重载）。
+ *
+ * 这里只保留真正会产出 Tailwind class 的目录：renderer 的模板与组件、main 里生成
+ * 工具卡片 HTML 的代码、common 的共享渲染片段。tests / locale / utils / platforms
+ * 已确认不含 Tailwind class，不再参与扫描。
+ * 新增目录若会产出带 Tailwind class 的 HTML，必须在这里补一行。
+ */
+@source '../**/*.{html,js,ts,jsx,tsx}';
+@source '../../main/**/*.{html,js,ts,jsx,tsx}';
+@source '../../common/**/*.{html,js,ts,jsx,tsx}';
 
 @theme {
     --font-sans:
