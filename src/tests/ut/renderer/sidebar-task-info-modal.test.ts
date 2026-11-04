@@ -169,20 +169,59 @@ describe('sidebar task info modal', () => {
         expect(copyBtn.dataset.copy).toBe(hostile);
     });
 
-    test('复制成功后按钮进入 copied 态并切换为对勾图标', async () => {
-        const sidebar = createSidebar();
-        mockTaskInfo({ task_name: 'n', task_id: 'task_1', task_status: 'done', task_json_path: 'p', model: 'm' });
-        sidebar._showTaskInfoModal('task_1');
-        await flushMicrotasks();
+    test('复制成功后进入 copied 态，1500ms 后还原且连点不叠加定时器', async () => {
+        // doNotFake setImmediate：flushMicrotasks 依赖它冲刷微任务，被 fake 会挂起。
+        // 用 fake timers 让还原定时器不产生真实句柄，避免泄漏拖住 worker 退出宽限期
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        try {
+            const sidebar = createSidebar();
+            mockTaskInfo({ task_name: 'n', task_id: 'task_1', task_status: 'done', task_json_path: 'p', model: 'm' });
+            sidebar._showTaskInfoModal('task_1');
+            await flushMicrotasks();
 
-        const btn = document.querySelector('.od-taskinfo-copy-btn') as HTMLElement;
-        btn.click();
-        await flushMicrotasks();
+            const btn = document.querySelector('.od-taskinfo-copy-btn') as HTMLElement;
+            btn.click();
+            await flushMicrotasks();
 
-        expect(clipboardWriteText).toHaveBeenCalledWith('n');
-        expect(btn.classList.contains('copied')).toBe(true);
-        const icon = btn.querySelector('i')!;
-        expect(icon.className).toContain('fa-check');
+            expect(clipboardWriteText).toHaveBeenCalledWith('n');
+            expect(btn.classList.contains('copied')).toBe(true);
+            expect(btn.querySelector('i')!.className).toContain('fa-check');
+
+            // 快速连点：先清掉上一次的还原定时器，只保留最后一个
+            btn.click();
+            await flushMicrotasks();
+            expect(jest.getTimerCount()).toBe(1);
+
+            jest.advanceTimersByTime(1500);
+            expect(btn.classList.contains('copied')).toBe(false);
+            expect(btn.querySelector('i')!.className).toContain('fa-copy');
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('复制后关闭弹窗时清理未触发的还原定时器', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+        try {
+            const sidebar = createSidebar();
+            mockTaskInfo({ task_name: 'n', task_id: 'task_1', task_status: 'done', task_json_path: 'p', model: 'm' });
+            sidebar._showTaskInfoModal('task_1');
+            await flushMicrotasks();
+
+            const btn = document.querySelector('.od-taskinfo-copy-btn') as HTMLElement;
+            btn.click();
+            await flushMicrotasks();
+            expect(jest.getTimerCount()).toBe(1);
+
+            const overlay = document.querySelector('.od-taskinfo-overlay') as HTMLElement;
+            (overlay.querySelector('[data-action="close"]') as HTMLElement).click();
+            // 关闭动画的 overlay.remove() 定时器（180ms）到期后，还原定时器应已一并清理
+            jest.advanceTimersByTime(300);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     test('样式基于 --mc-* token 与 --ti-success，不再硬编码浅色卡片', () => {
