@@ -62,6 +62,7 @@ export const enUs: Record<string, string> = {
     'benchmark.action.download': 'Download',
     'benchmark.action.update': 'Update',
     'benchmark.action.refresh': 'Refresh',
+    'benchmark.action.rescanning': 'Scanning…',
     'benchmark.action.run': 'Run',
     'benchmark.action.delete': 'Delete',
     'benchmark.action.back': 'Back',

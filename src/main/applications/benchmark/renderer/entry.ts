@@ -206,11 +206,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     /** 各 registry 的清单，按 registry 名分开存：Tab 之间互不影响 */
     private catalogs = new Map<string, BenchmarkSummary[]>();
     private downloads = new Map<string, DownloadState>();
-    /** runId → 该轮当前占用的磁盘空间（字节）；扫盘慢，先渲染行再逐个补上 */
-    private runUsage = new Map<string, number>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
     private loading = true;
+    /** 正在重扫磁盘占用：按钮置灰并换文案，避免连点触发多轮并发扫盘 */
+    private rescanning = false;
     /** 进行中的清单请求数：清单走网络，比本地测评集慢，不能和 loading 混在一起 */
     private catalogLoading = 0;
     private importing = false;
@@ -273,8 +273,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this._onRunsChanged = () => {
             void this.loadRuns(false);
             if (this.detailRunId) void this.loadDetail(this.detailRunId, false);
-            // 运行收尾后占用已定型，这一轮的数字重算一次
-            void this.loadRunUsage();
         };
         // 渠道（设置界面 → 渠道设置）变化后，Tab 条要立刻跟着变，不用等整窗重开
         this._onRegistriesChanged = () => {
@@ -514,82 +512,32 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             this.loading = true;
             this.render();
         }
-        const before = new Map(this.runs.map((run) => [run.id, run.status]));
         try {
             this.runs = await getAPI().callMainWorld<RunListItem[]>('listRuns');
         } catch (error: any) {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
         }
-        // 状态流转：开跑就把旧占用藏起来（运行中不统计），刚跑完的必须重算——
-        // 原地重跑会重写 workspace，留着旧值就是错的
-        const finished: string[] = [];
-        for (const run of this.runs) {
-            const previous = before.get(run.id);
-            if (!previous || previous === run.status) continue;
-            if (run.status === 'running') this.runUsage.delete(run.id);
-            else if (previous === 'running') finished.push(run.id);
-        }
         this.renderUnlessModalOpen();
-        // 只有手动刷新才重扫全部轮次：一轮 158 GB 的目录要扫一分多钟，而用户恰恰最常在有
-        // 任务跑着的时候打开面板，那时候全量扫盘就是纯粹的 IO 抢占。平时靠主进程 5 分钟
-        // 缓存，没量过的轮次仍会按需补上。
+        // 占用是用例收尾时记的账，和列表一起返回，读的时候不扫盘。
+        // 只有手动刷新才强制重扫写回：那一轮数字变化时会由主进程逐个 notify，列表逐行更新。
         if (rescanUsage) {
+            this.rescanning = true;
+            this.renderUnlessModalOpen();
             try {
-                await getAPI().callMainWorld('clearRunWorkspaceUsageCache');
+                await getAPI().callMainWorld('rescanRunUsage');
             } catch {
-                // 清不掉只影响数字新鲜度，不影响列表本身
+                // 重扫失败也要重新拉一次列表：主进程可能已经写回了一部分轮次，
+                // 把刷新放在 try 里会让这些已落盘的结果白等。
+            } finally {
+                this.rescanning = false;
             }
-        }
-        void this.loadRunUsage(rescanUsage, finished);
-    }
-
-    /**
-     * 逐轮拿回当前磁盘占用，谁先量完谁先显示。
-     *
-     * 重扫时机只有两个：手动刷新（refresh=true，主进程缓存也被清掉），
-     * 以及刚跑完的轮次（此时本地还没有它的值）。其余刷新一律不再碰磁盘。
-     * 运行中的轮次不统计——重扫这种量级的目录要几十秒，会和它自己的 git/编译抢 IO。
-     */
-    private async loadRunUsage(refresh = false, forceIds: string[] = []): Promise<void> {
-        const queue = this.runs
-            .filter(
-                (run) =>
-                    run.status !== 'running' && (refresh || forceIds.includes(run.id) || !this.runUsage.has(run.id))
-            )
-            .map((run) => run.id);
-        if (queue.length === 0) return;
-        const worker = async (): Promise<void> => {
-            for (;;) {
-                const runId = queue.shift();
-                if (!runId) return;
-                let bytes: number | null;
-                try {
-                    bytes = await getAPI().callMainWorld<number | null>('getRunWorkspaceUsage', runId);
-                } catch {
-                    continue;
-                }
-                if (bytes === null) continue;
-                this.runUsage.set(runId, bytes);
-                this.refreshRunUsageTags();
+            try {
+                this.runs = await getAPI().callMainWorld<RunListItem[]>('listRuns');
+            } catch (error: any) {
+                this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
             }
-        };
-        await Promise.all([worker(), worker(), worker()]);
-    }
-
-    /** 把已量到的占用写进列表里的对应行；没量到的行保持不显示，不摆一个假占位 */
-    private refreshRunUsageTags(): void {
-        for (const el of Array.from(this.shadowRoot?.querySelectorAll<HTMLElement>('[data-run-usage]') ?? [])) {
-            const runId = el.dataset.runUsage;
-            if (!runId) continue;
-            const bytes = this.runUsage.get(runId);
-            if (bytes === undefined) continue;
-            const size = formatBytes(bytes);
-            el.dataset.runUsageLong = this._t('benchmark.run.workspace', { size });
-            el.dataset.runUsageShort = this._t('benchmark.run.workspaceShort', { size });
-            el.textContent = el.dataset.runUsageLong;
-            el.hidden = false;
+            this.renderUnlessModalOpen();
         }
-        this.fitRunUsageLabels();
     }
 
     /**
@@ -1481,7 +1429,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     private renderShell(): string {
-        const refreshButton = `<button type="button" class="btn" data-action="refresh">${escapeHtml(this._t('benchmark.action.refresh'))}</button>`;
+        const refreshButton = `<button type="button" class="btn" data-action="refresh"${this.rescanning ? ' disabled' : ''}>${escapeHtml(this._t(this.rescanning ? 'benchmark.action.rescanning' : 'benchmark.action.refresh'))}</button>`;
         const actions =
             this.activeTab === 'datasets'
                 ? `<button type="button" class="btn btn-primary" data-action="import" ${this.importing ? 'disabled' : ''}>
@@ -1746,18 +1694,17 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const progress = summary.total > 0 ? finished / summary.total : 0;
         const statusKey = RUN_STATUS_KEYS[run.status] || 'benchmark.status.stopped';
         const scoreText = summary.maxScore > 0 ? summary.totalScore.toFixed(2) : '-';
-        // 占用要扫盘，没量到之前先不显示这个胶囊，量完由 refreshRunUsageTags 填上并露出来
-        const usageBytes = this.runUsage.get(run.id);
-        const usageSize = usageBytes === undefined ? '' : formatBytes(usageBytes);
-        const usageLong = usageBytes === undefined ? '' : this._t('benchmark.run.workspace', { size: usageSize });
-        const usageShort = usageBytes === undefined ? '' : this._t('benchmark.run.workspaceShort', { size: usageSize });
+        // 占用来自用例记账，跟列表一起返回；0 表示这轮还没记账（老记录，或刚开始跑还没收尾过用例）
+        const usageSize = run.usageBytes > 0 ? formatBytes(run.usageBytes) : '';
+        const usageLong = usageSize ? this._t('benchmark.run.workspace', { size: usageSize }) : '';
+        const usageShort = usageSize ? this._t('benchmark.run.workspaceShort', { size: usageSize }) : '';
         return `
         <div class="run-row" data-run-id="${escapeHtml(run.id)}">
             <div>
                 <div class="run-title-row">
                     <span class="run-name">${escapeHtml(run.datasetName)}</span>
                     <span class="status-pill ${escapeHtml(run.status)}"><span class="dot"></span>${escapeHtml(this._t(statusKey))}</span>
-                    <span class="tag-pill tag-usage" data-run-usage="${escapeHtml(run.id)}" data-run-usage-long="${escapeHtml(usageLong)}" data-run-usage-short="${escapeHtml(usageShort)}" ${usageBytes === undefined ? 'hidden' : ''}>${escapeHtml(usageLong)}</span>
+                    <span class="tag-pill tag-usage" data-run-usage="${escapeHtml(run.id)}" data-run-usage-long="${escapeHtml(usageLong)}" data-run-usage-short="${escapeHtml(usageShort)}" ${usageSize ? '' : 'hidden'}>${escapeHtml(usageLong)}</span>
                 </div>
                 <div class="run-sub">
                     ${escapeHtml(this._t('benchmark.detail.models', { test: run.runModel, verify: run.verifyModel }))} ·

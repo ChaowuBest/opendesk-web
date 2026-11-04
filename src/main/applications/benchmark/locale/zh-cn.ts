@@ -60,6 +60,7 @@ export const zhCn: Record<string, string> = {
     'benchmark.action.download': '下载',
     'benchmark.action.update': '更新',
     'benchmark.action.refresh': '刷新',
+    'benchmark.action.rescanning': '正在统计…',
     'benchmark.action.run': '运行',
     'benchmark.action.delete': '删除',
     'benchmark.action.back': '返回',
