@@ -78,9 +78,10 @@ const SORT_LABELS = {
 
 // ========== CSS ==========
 const NOTES_CSS = `
+:where(.notes-root) :where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 /* ---- Root ---- */
 .notes-root {
-    font-family: -apple-system, BlinkMacFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     color: #1d1d1f;
 }

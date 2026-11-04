@@ -119,6 +119,7 @@ interface PluginFileSystemAPI {
 }
 
 const STYLE = `
+:where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${OVERLAY_CSS}
 :host {
     display: block;
@@ -126,7 +127,7 @@ ${OVERLAY_CSS}
     overflow: hidden;
     color: #1d1d1f;
     background: #fff;
-    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font: 13px var(--font-sans);
 }
 * { box-sizing: border-box; }
 button, input { font: inherit; }

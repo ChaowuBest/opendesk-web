@@ -90,6 +90,7 @@ const CONTENT_MAX_HEIGHT = 240;
 const CONTENT_HEIGHT_RATIO = 0.5;
 
 const TODOMGR_CSS = `
+:where(.tm-root) :where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${TIME_SCHEDULE_CSS}
 /* ---- Root ---- */
 :root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
@@ -108,7 +109,7 @@ ${TIME_SCHEDULE_CSS}
     --tm-accent: #3B82F6;
     --tm-accent-hover: #2563EB;
     --tm-accent-soft: #EFF6FF;
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     color: #1d1d1f;
     display: flex;

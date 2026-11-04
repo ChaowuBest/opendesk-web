@@ -60,7 +60,7 @@ function generateJSONStyles() {
     return `
 /* JSON 渲染样式 - 与 a2ui 主题统一 */
 .json-container {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
     font-size: 11px;
     line-height: 1.35;
     color: #1e293b;

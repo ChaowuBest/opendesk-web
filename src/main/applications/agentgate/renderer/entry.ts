@@ -309,6 +309,7 @@ function tr(key: string): string {
 // ── CSS ──────────────────────────────────────────────────────────────────────
 
 const STYLE = `
+:where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 :host {
     display: block; width: 100%; height: 100%; overflow: hidden;
     --ag-bg: #f5f5f7;
@@ -351,7 +352,7 @@ const STYLE = `
     color-scheme: light;
     background: var(--ag-bg);
     color: var(--ag-text);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
 }
 :host([data-theme="dark"]) {

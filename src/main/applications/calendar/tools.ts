@@ -57,7 +57,7 @@ function renderCalendarItemCard(item: any, title: string, status: string): strin
               ? '<i class="fa-solid fa-circle-xmark" style="color:#FF3B30;font-size:14px;"></i>'
               : '<i class="fa-solid fa-spinner fa-spin" style="color:#007AFF;font-size:14px;"></i>';
 
-    return `<div style="max-width:380px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased; margin-top: 10px; margin-bottom: 10px;">
+    return `<div style="max-width:380px;font-family:var(--font-sans);-webkit-font-smoothing:antialiased; margin-top: 10px; margin-bottom: 10px;">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
         ${statusIcon}
         <span style="font-size:13px;font-weight:600;color:${text};">${escapeHtml(title)}</span>

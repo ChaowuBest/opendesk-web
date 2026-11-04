@@ -273,6 +273,7 @@ class BrowserEntryWidget extends HTMLElement {
     private render(): void {
         this.innerHTML = `
         <style>
+            :where(.wb) :where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
             :root { --fs-2xs: 9px; --fs-xs: 10px; --fs-sm: 11px; --fs-md: 12px; --fs-base: 13px; --fs-lg: 14px; --fs-xl: 16px; --icon-xs: 8px; --icon-sm: 10px; --icon-md: 12px; --icon-lg: 13px; }
             .wb {
                 width: 100%; height: 100%;
@@ -438,7 +439,7 @@ class BrowserEntryWidget extends HTMLElement {
                 flex: 1; min-width: 0;
                 border: none; background: transparent; outline: none;
                 font-size: var(--fs-base); color: #1f2937;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
                 line-height: 1.4;
             }
             .wb-url-input::placeholder { color: #9ca3af; }
@@ -577,7 +578,7 @@ class BrowserEntryWidget extends HTMLElement {
                 align-items: center;
                 background: white;
                 overflow-y: auto;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
             }
             .wb-hp-hero {
                 display: flex; flex-direction: column;
@@ -674,7 +675,7 @@ class BrowserEntryWidget extends HTMLElement {
                 box-shadow: 0 8px 32px rgba(0,0,0,0.12);
                 z-index: 200;
                 padding: 6px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
             }
             .wb-tool-menu.wb-visible { display: block; }
             .wb-tm-item {
@@ -899,7 +900,7 @@ class BrowserEntryWidget extends HTMLElement {
                 display: flex; flex-direction: column;
                 background: #f8f9fb;
                 overflow: hidden;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: var(--font-sans);
             }
             .wb-internal-header {
                 padding: 20px 24px 16px;

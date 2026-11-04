@@ -90,11 +90,13 @@ function getEffectiveTheme() {
 const CSS = `
 :host {
     display: block;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.4;
     color-scheme: light dark;
 }
+
+button, input, select, option, optgroup, textarea { font-family: inherit; }
 
 .agentgate-floating {
     position: fixed;

@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+:where(button, input, select, textarea, option, optgroup) {
+    font-family: inherit;
+}
 :host {
     --fs-2xs: 9px;
     --fs-xs: 10px;
@@ -49,9 +52,7 @@
     overflow: hidden;
     background: var(--page);
     color: var(--ink);
-    font-family:
-        -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei',
-        'Helvetica Neue', sans-serif;
+    font-family: var(--font-sans);
     font-size: var(--fs-base);
     -webkit-font-smoothing: antialiased;
 }

@@ -43,10 +43,11 @@ const HOUR_HEIGHT = 60;
  * ═══════════════════════════════════════════════════ */
 
 const CALENDAR_CSS = `
+:where(.cal-root) :where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${OVERLAY_CSS}
 /* ---- Root ---- */
 .cal-root {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     color: #1d1d1f;
 }

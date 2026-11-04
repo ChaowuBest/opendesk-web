@@ -755,6 +755,7 @@ class MemoryPanel extends HTMLElement {
             :host { display: block; height: 100%; min-height: 420px; }
             * { box-sizing: border-box; }
             button, input, textarea { font: inherit; }
+            button, input, select, option, optgroup, textarea { font-family: inherit; }
             button { cursor: pointer; }
             button:disabled { cursor: default; opacity: .56; }
             h2, h3, h4, p { margin: 0; }
@@ -774,7 +775,7 @@ class MemoryPanel extends HTMLElement {
                 height: 100%; min-height: 420px; position: relative;
                 display: flex; flex-direction: column; overflow: hidden;
                 background: var(--bg); color: var(--ink); font-size: 13px;
-                font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+                font-family: var(--font-sans);
             }
 
             /* ===== Design Tokens (dark) ===== */

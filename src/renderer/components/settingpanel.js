@@ -66,7 +66,8 @@ select.od-sp-fi {
 .od-modal-dark select.od-sp-fi {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%239B968F' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
 }
-textarea.od-sp-fi { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 12px; }
+textarea.od-sp-fi { resize: vertical; min-height: 80px; font-size: 12px; }
+textarea.od-sp-code { font-family: var(--font-mono); }
 .od-sp-fc { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .od-sp-fc input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--mc-accent); cursor: pointer; }
 .od-sp-fc label { font-size: 13px; color: var(--mc-ink2); cursor: pointer; }
@@ -360,7 +361,6 @@ class SettingPanel extends HTMLElement {
                 --sp-radius-xl: 14px;
                 --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
                 --sp-shadow-md: 0 1px 2px rgba(28,25,23,.04), 0 8px 24px rgba(28,25,23,.05);
-                --sp-font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
             }
 
             /* Dark theme overrides — use app-level variables */
@@ -490,7 +490,7 @@ class SettingPanel extends HTMLElement {
                 color: var(--sp-color-text);
                 transition: border-color 0.15s, box-shadow 0.15s;
                 outline: none;
-                font-family: var(--sp-font-sans);
+                font-family: var(--font-sans);
             }
             .sp-form-input::placeholder { color: var(--sp-color-text-quaternary); }
             .sp-form-input:focus {
@@ -585,7 +585,7 @@ class SettingPanel extends HTMLElement {
                 border: none;
                 cursor: pointer;
                 transition: all 0.15s;
-                font-family: var(--sp-font-sans);
+                font-family: var(--font-sans);
                 text-decoration: none;
             }
             .sp-btn-primary {
@@ -668,7 +668,7 @@ class SettingPanel extends HTMLElement {
                 border-radius: var(--sp-radius-lg);
                 cursor: pointer;
                 transition: all 0.15s;
-                font-family: var(--sp-font-sans);
+                font-family: var(--font-sans);
             }
             .sp-add-btn:hover {
                 color: var(--sp-color-primary);
@@ -878,7 +878,7 @@ class SettingPanel extends HTMLElement {
                 display: inline-block;
                 padding: 2px 8px;
                 font-size: 12px;
-                font-family: var(--sp-font-sans);
+                font-family: var(--font-sans);
                 font-weight: 600;
                 background: var(--sp-color-bg);
                 border: 1px solid var(--sp-color-border);
@@ -1381,12 +1381,12 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.args')}</label>
-                            <textarea id="acp-agent-args" class="od-sp-fi" spellcheck="false">${json(isHttp ? [] : transport.args)}</textarea>
+                            <textarea id="acp-agent-args" class="od-sp-fi od-sp-code" spellcheck="false">${json(isHttp ? [] : transport.args)}</textarea>
                             <div class="od-sp-hint">${this._t('sp.agents.field.args.hint')}</div>
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.env')}</label>
-                            <textarea id="acp-agent-env" class="od-sp-fi" spellcheck="false">${json(isHttp ? {} : transport.env)}</textarea>
+                            <textarea id="acp-agent-env" class="od-sp-fi od-sp-code" spellcheck="false">${json(isHttp ? {} : transport.env)}</textarea>
                             <div class="od-sp-hint">${this._t('sp.agents.field.template.hint')}</div>
                         </div>
                         <div class="od-sp-fc">
@@ -1404,7 +1404,7 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <div class="od-sp-fg">
                             <label class="od-sp-fl">${this._t('sp.agents.field.headers')}</label>
-                            <textarea id="acp-agent-headers" class="od-sp-fi" spellcheck="false">${json(isHttp ? transport.headers : {})}</textarea>
+                            <textarea id="acp-agent-headers" class="od-sp-fi od-sp-code" spellcheck="false">${json(isHttp ? transport.headers : {})}</textarea>
                             <div class="od-sp-hint">${this._t('sp.agents.field.template.hint')}</div>
                         </div>
                         <div class="od-sp-fg">
@@ -1547,7 +1547,7 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div class="od-sp-fg">
                         <label class="od-sp-fl">${this._t('sp.agents.field.configOptions')}</label>
-                        <textarea id="acp-agent-config-options" class="od-sp-fi" spellcheck="false">${json(session.configOptions)}</textarea>
+                        <textarea id="acp-agent-config-options" class="od-sp-fi od-sp-code" spellcheck="false">${json(session.configOptions)}</textarea>
                         <div class="od-sp-hint">${this._t('sp.agents.field.configOptions.hint')}</div>
                     </div>
                     <div id="acp-agent-discovered-config" class="od-sp-fg" hidden>
@@ -5260,7 +5260,7 @@ class SettingPanel extends HTMLElement {
                             <i class="fas fa-box" style="color:#7C3AED"></i>${this._t('sp.quickpass.export.all')}
                         </button>
                     </div>
-                    <textarea id="export-result" readonly class="od-sp-fi" style="height:120px" placeholder="${this._t('sp.quickpass.export.placeholder')}"></textarea>
+                    <textarea id="export-result" readonly class="od-sp-fi od-sp-code" style="height:120px" placeholder="${this._t('sp.quickpass.export.placeholder')}"></textarea>
                     <div style="margin-top:14px">
                         <button id="copy-quickpass-btn" class="od-confirm-btn od-confirm-btn-primary" style="width:100%" disabled>
                             <i class="fas fa-copy" style="margin-right:6px"></i>${this._t('sp.quickpass.export.copy')}
@@ -5331,7 +5331,7 @@ class SettingPanel extends HTMLElement {
                     <button class="od-confirm-modal-close modal-close-btn">${CLOSE_SVG}</button>
                 </div>
                 <div class="od-confirm-modal-body">
-                    <textarea id="import-input" class="od-sp-fi" style="height:120px" placeholder="${this._t('sp.quickpass.import.placeholder')}"></textarea>
+                    <textarea id="import-input" class="od-sp-fi od-sp-code" style="height:120px" placeholder="${this._t('sp.quickpass.import.placeholder')}"></textarea>
                     <div id="import-result" class="od-sp-import-result"></div>
                 </div>
                 <div class="od-confirm-modal-footer">

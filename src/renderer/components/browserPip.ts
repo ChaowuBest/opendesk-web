@@ -183,7 +183,7 @@ export class BrowserPip {
             white-space: nowrap;
             flex: 1;
             min-width: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             pointer-events: none;
         `;
         titleLabel.className = 'pip-title-label';
@@ -270,7 +270,7 @@ export class BrowserPip {
             border-top: 1px solid rgba(255,255,255,0.06);
             font-size: var(--fs-xs);
             color: rgba(255,255,255,0.55);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             gap: 5px;
             flex-shrink: 0;
         `;
