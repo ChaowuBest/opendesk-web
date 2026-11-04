@@ -9,6 +9,7 @@ import {
 } from '../../../main/applications/pluginmgr/management/manager.js';
 import { getPluginRecord, upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 function writePlugin(directory: string, id: string, manifestExtra: Record<string, unknown> = {}): void {
     fs.mkdirSync(directory, { recursive: true });
@@ -36,11 +37,16 @@ describe('内置插件清单固定启停（system / enabled）', () => {
         builtinDirectory = path.join(configDirectory, 'builtin');
         previousBuiltinDirectory = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = builtinDirectory;
+        // 附加插件目录经 Setting 读取配置，必须指向隔离目录，否则会读到开发机上的真实配置
+        setCustomOpendeskDirectory(configDirectory);
+        Setting.clearCache();
     });
 
     afterEach(() => {
         if (previousBuiltinDirectory === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previousBuiltinDirectory;
+        Setting.clearCache();
+        setCustomOpendeskDirectory(undefined);
         fs.rmSync(configDirectory, { recursive: true, force: true });
     });
 
@@ -142,7 +148,7 @@ describe('内置插件清单固定启停（system / enabled）', () => {
     test('listVisiblePlugins 展示清单固定的禁用状态，与是否有注册表记录无关', () => {
         writePlugin(path.join(builtinDirectory, 'account'), 'account', { system: true, enabled: false });
 
-        const records = listVisiblePlugins({ configDirectory, externalPaths: [], pluginDirectories: [] });
+        const records = listVisiblePlugins({ configDirectory });
 
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({ id: 'account', source: 'builtin', enabled: false, system: true });
@@ -151,7 +157,7 @@ describe('内置插件清单固定启停（system / enabled）', () => {
     test('listVisiblePlugins 对普通插件不标记 system，供 CLI/TUI 列表区分', () => {
         writePlugin(path.join(builtinDirectory, 'plain'), 'plain');
 
-        const records = listVisiblePlugins({ configDirectory, externalPaths: [], pluginDirectories: [] });
+        const records = listVisiblePlugins({ configDirectory });
 
         expect(records[0]?.system).toBe(false);
     });
@@ -169,7 +175,7 @@ describe('内置插件清单固定启停（system / enabled）', () => {
             configDirectory
         );
 
-        const records = listVisiblePlugins({ configDirectory, externalPaths: [], pluginDirectories: [] });
+        const records = listVisiblePlugins({ configDirectory });
 
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({ id: 'account', enabled: true });

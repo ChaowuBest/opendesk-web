@@ -97,6 +97,10 @@ describe('第三方注册表插件 E2E', () => {
     test('外部插件经 discovery → loadPlugin → 激活后扩充两侧注册表，停用后回收', async () => {
         const pluginDir = await writeAcmePlugin();
         const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acme-config-'));
+        // 附加插件目录经 Setting 读取 externalPaths，必须指向隔离目录，否则会带上开发机的真实配置
+        const { Setting, setCustomOpendeskDirectory } = await import('../../../main/utils/setting.js');
+        setCustomOpendeskDirectory(configDir);
+        Setting.clearCache();
         const globalHostModule = await import('../../../main/applications/pluginmgr/runtime/host.js');
         const { initializePluginRegistryProvider, disposePluginRegistryProvider } =
             await import('../../../main/applications/pluginmgr/runtime/registry-providers.js');
@@ -114,11 +118,11 @@ describe('第三方注册表插件 E2E', () => {
         };
 
         try {
-            // 1. 发现：外部路径插件以 'external' 来源进入候选
-            const discovery = discoverPlugins({ configDirectory: configDir, externalPaths: [pluginDir] });
+            // 1. 发现：附加插件目录里的插件以内置插件身份进入候选
+            const discovery = discoverPlugins({ configDirectory: configDir, builtinDirectories: [pluginDir] });
             const candidate = discovery.candidates.find((item) => item.id === 'acme-registry-plugin');
             expect(candidate).toBeDefined();
-            expect(candidate?.source).toBe('external');
+            expect(candidate?.source).toBe('builtin');
 
             // 2. 加载 + 激活：manifest 声明的 registry capability 被授予
             const loaded = await loadPlugin(candidate!, configDir, { requireDeclaration: true });
@@ -174,6 +178,8 @@ describe('第三方注册表插件 E2E', () => {
                 ...originalRegistries.skill
             );
             fs.rmSync(pluginDir, { recursive: true, force: true });
+            Setting.clearCache();
+            setCustomOpendeskDirectory(undefined);
             fs.rmSync(configDir, { recursive: true, force: true });
         }
     });

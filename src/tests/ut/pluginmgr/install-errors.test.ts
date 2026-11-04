@@ -59,7 +59,6 @@ describe('plugin uninstall error messages', () => {
         setRuntimeLocale('zh-CN');
 
         expect(formatPluginUninstallError('plugin.uninstall_builtin', 'demo')).toBe('demo 是内置插件，不能卸载');
-        expect(formatPluginUninstallError('plugin.uninstall_external', 'demo')).toContain('externalPaths');
         expect(formatPluginUninstallError('plugin.uninstall_invalid_path', 'demo')).toBe(
             'demo 的安装路径不在插件目录内，无法卸载'
         );

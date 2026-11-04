@@ -17,7 +17,6 @@ import { registerSdkPackageMapping } from './package-mapping.js';
 import { loadPlugin } from '../discovery/loader.js';
 import { declaresManifestControlFields } from '../discovery/manifest.js';
 import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
-import { getPluginManagerConfig, getRuntimePluginDirectories } from '../management/config.js';
 import { discoverPlugins, verifyPluginRecord, type DiscoveredPluginCandidate } from '../discovery/discovery.js';
 import { getPluginRecord } from '../management/registry.js';
 import {
@@ -100,14 +99,9 @@ interface ResolvedCandidate extends DiscoveredPluginCandidate {
     blockedDetail?: string;
 }
 
-/** 按当前配置发现全部插件候选（内置 / 插件目录 / 外部路径 / 运行时目录） */
+/** 按当前配置发现全部插件候选（默认内置目录 / 附加插件目录 / plugins 目录） */
 function discoverConfiguredPlugins(): ReturnType<typeof discoverPlugins> {
-    const config = getPluginManagerConfig();
-    return discoverPlugins({
-        configDirectory: getOpendeskDirectory(),
-        externalPaths: config.externalPaths,
-        pluginDirectories: getRuntimePluginDirectories()
-    });
+    return discoverPlugins({ configDirectory: getOpendeskDirectory() });
 }
 
 /**

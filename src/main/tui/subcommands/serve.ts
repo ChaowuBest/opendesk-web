@@ -21,7 +21,6 @@ interface ServeOptions {
     cors?: string;
     password?: string;
     username?: string;
-    configDirectory?: string;
     useConfigPermissions?: boolean;
     model?: string;
 }
@@ -39,11 +38,10 @@ export function registerServeCommand(prog: Command): void {
         .option('--cors <origins>', '允许的跨域源（逗号分隔）')
         .option('--password <password>', '启用 HTTP Basic Auth 密码')
         .option('--username <username>', 'HTTP Basic Auth 用户名 (默认 opencode)')
-        .option('--config-directory <path>', '指定 OpenDesk 应用数据目录')
         .option('--use-config-permissions', t('serve.useConfigPermissions'))
         .option('--model <alias>', '锁定 ACP 会话使用的模型别名（指定后客户端无法通过 setSessionModel 切换）')
         .action(async (opts: ServeOptions, command: Command) => {
-            await applyServeConfigDirectory(opts, command);
+            await applyServeConfigDirectory(command);
             const mode = getServeMode(opts);
             const model = opts.model || command.parent?.opts?.()?.model;
 
@@ -77,12 +75,18 @@ function getServeMode(opts: ServeOptions): string {
     return opts.mode || 'opencode';
 }
 
-async function applyServeConfigDirectory(opts: ServeOptions, command: Command): Promise<void> {
+/**
+ * 应用根命令的 `--config-directory`。
+ *
+ * serve 不重复声明它：commander 默认会在整条 argv 上解析根命令声明的选项，
+ * `opendesk serve --config-directory x` 与写在 `serve` 之前等价，值都会落到父命令上。
+ * 重复声明反而会让子命令把选项抢走（`--config-directory A serve --config-directory B`
+ * 时根级别的值丢失），所以只保留根命令一处声明。
+ */
+async function applyServeConfigDirectory(command: Command): Promise<void> {
     const parentOptions = command.parent?.opts?.() as { configDirectory?: string } | undefined;
-    const configDirectory = opts.configDirectory || parentOptions?.configDirectory;
-    if (!configDirectory) {
-        return;
-    }
+    const configDirectory = parentOptions?.configDirectory;
+    if (!configDirectory) return;
 
     const { setCustomOpendeskDirectory } = await import('../../utils/setting.js');
     const { reloadLoggerFileTransport } = await import('../../utils/logger.js');

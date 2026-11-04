@@ -1,0 +1,16 @@
+{
+    "schemaVersion": 1,
+    "id": "test-plugin",
+    "displayName": {
+        "en": "Plugin Directory Test Plugin",
+        "zh": "插件目录测试插件"
+    },
+    "description": {
+        "en": "A minimal plugin used to verify --plugins-directory / OPENDESK_PLUGINS_DIRECTORY loading, enable/disable and tool wiring.",
+        "zh": "用于验证 --plugins-directory / OPENDESK_PLUGINS_DIRECTORY 加载、启停与工具接线的最小插件。"
+    },
+    "version": "1.0.0",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["tool", "hook", "command"]
+}

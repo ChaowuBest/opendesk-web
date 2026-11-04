@@ -21,7 +21,7 @@ import {
     applyPluginInstall,
     applyPluginUninstall
 } from './runtime/bootstrap.js';
-import { discoverPlugins } from './discovery/discovery.js';
+import { discoverPlugins, resolvePluginRecordPath } from './discovery/discovery.js';
 import { getPluginHost } from './runtime/host.js';
 import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
 import { getPluginToolLocalName } from './runtime/tool-names.js';
@@ -39,8 +39,6 @@ import {
 import { setPluginGrantedCapabilities, setPluginOptions } from './management/policy.js';
 import { listPluginRecords } from './management/registry.js';
 import type { PluginCapability, PluginPlatform } from '../../../../packages/plugin-sdk/src/index.js';
-import { getRuntimePluginDirectories } from './management/config.js';
-import { getBuiltinPluginsDirectory, getPluginsDirectory } from './management/paths.js';
 import { formatPluginInstallError, formatPluginUninstallError } from './management/errors.js';
 import { validateOpenDeskPluginDirectory } from '../../../../packages/plugin-sdk/src/package.js';
 import { t } from './locale/index.js';
@@ -144,14 +142,8 @@ export class PluginMgrApplication extends BaseApplication {
                 .map((entry) => [entry.id, entry])
         );
         const configDirectory = getOpendeskDirectory();
-        const builtinDirectory = getBuiltinPluginsDirectory();
         const records = listPluginRecords();
-        const discovery = discoverPlugins({
-            configDirectory,
-            externalPaths:
-                (this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined)?.externalPaths ?? [],
-            pluginDirectories: getRuntimePluginDirectories()
-        });
+        const discovery = discoverPlugins({ configDirectory });
         const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
         const skillsByPlugin = new Map<string, ReturnType<ReturnType<typeof getPluginHost>['listSkills']>>();
         for (const skill of getPluginHost().listSkills()) {
@@ -198,22 +190,14 @@ export class PluginMgrApplication extends BaseApplication {
             .map((id) => {
                 const record = records.find((candidate) => candidate.id === id);
                 const candidate = candidatesById.get(id);
-                // 'managed' 仅存在于旧版注册表数据中，对外统一归为 local。
-                const rawSource = record?.source ?? candidate?.source ?? 'local';
-                const source = rawSource === 'managed' ? 'local' : rawSource;
+                // 来源以 discovery 候选为准：残留的 local 记录不该让实际按内置插件加载的
+                // 插件显示成「可卸载的本地插件」（source 与 path/removable 必须同一口径）。
+                const source = candidate?.source ?? record?.source ?? 'local';
                 let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let agents = agentsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
                 let manifest: PluginManifest | undefined;
-                const rootDirectory =
-                    record?.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
-                const spec =
-                    candidate?.spec ??
-                    (record
-                        ? path.isAbsolute(record.path)
-                            ? record.path
-                            : path.resolve(rootDirectory, record.path)
-                        : undefined);
+                const spec = candidate?.spec ?? (record ? resolvePluginRecordPath(record, configDirectory) : undefined);
                 if (spec) {
                     try {
                         const resolved = resolvePluginEntry(spec, configDirectory);
@@ -239,8 +223,10 @@ export class PluginMgrApplication extends BaseApplication {
                 return {
                     id,
                     source,
-                    path: candidate?.spec ?? record?.path,
-                    removable: source !== 'builtin' && source !== 'external',
+                    // 与 listVisiblePlugins 同口径：只有记录时也按记录解析成绝对路径
+                    // （registry 里内置插件的相对路径只对内置插件目录成立）。
+                    path: spec,
+                    removable: source !== 'builtin',
                     system,
                     enabled: system ? (candidate?.enabled ?? true) : (record?.enabled ?? true),
                     installedAt: record?.installedAt,
@@ -340,16 +326,11 @@ export class PluginMgrApplication extends BaseApplication {
     }
 
     async setEnabled(id: string, enabled: boolean) {
-        const config = this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined;
-        const options = {
-            externalPaths: config?.externalPaths ?? [],
-            pluginDirectories: getRuntimePluginDirectories()
-        };
         // 清单固定启停的内置插件不允许改开关，实际状态由清单的 enabled 决定
-        if (isPluginEnabledFixed(id, options)) {
+        if (isPluginEnabledFixed(id)) {
             throw new Error(translate('plugin.enabledFixed', { id }));
         }
-        if (!setPluginEnabled(id, enabled, options)) {
+        if (!setPluginEnabled(id, enabled)) {
             throw new Error(translate('plugin.notFound', { id }));
         }
         try {
@@ -357,7 +338,7 @@ export class PluginMgrApplication extends BaseApplication {
         } catch (error) {
             // 启用后加载失败（完整性校验、入口缺失、平台不支持等）：回滚注册表，
             // 避免留下「注册表已启用但运行时未生效」的状态
-            setPluginEnabled(id, !enabled, options);
+            setPluginEnabled(id, !enabled);
             throw error;
         }
         // channelmgr 收到插件 id 后按宿主注册表差量增删渠道，非渠道插件的事件对它无副作用；
@@ -391,10 +372,7 @@ export class PluginMgrApplication extends BaseApplication {
         return {
             runtime: getPluginHost().list(),
             installed: listInstalledPlugins().map((record) => verifyInstalledPlugin(record.id)),
-            discovery: discoverPlugins({
-                externalPaths:
-                    (this.getConfig() as z.output<typeof PluginMgrConfigSchema> | undefined)?.externalPaths ?? []
-            })
+            discovery: discoverPlugins()
         };
     }
 

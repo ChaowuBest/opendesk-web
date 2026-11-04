@@ -66,7 +66,20 @@ plugins/.pluginmgr/data/<插件ID>/
 > `node_modules`（例如鸿蒙端安装的目录插件无法执行 npm install）也能正常
 > 加载。其他第三方依赖仍必须由插件自带。
 
-还可以在 `setting.json` 中配置不复制到全局目录的外部插件路径：
+除了随应用发布的内置插件目录与 `plugins/` 目录，还可以指定若干「附加插件目录」。三个来源
+等价，按顺序合并去重：环境变量 `OPENDESK_PLUGINS_DIRECTORY`、CLI 参数 `--plugins-directory`、
+`setting.json` 里的 `applications.pluginmgr.externalPaths`：
+
+```bash
+# 逗号分隔多个目录，只对本次进程生效
+opendesk --plugins-directory ./team-plugins,./exp/plugins
+
+# --plugins-directory 是根命令的全局选项，写在子命令之后同样生效
+opendesk serve --plugins-directory ./team-plugins
+
+# 环境变量：对 CLI / TUI / GUI / serve 全部生效，语义与 CLI 参数一致
+OPENDESK_PLUGINS_DIRECTORY=./team-plugins,./exp/plugins opendesk
+```
 
 ```json
 {
@@ -78,17 +91,13 @@ plugins/.pluginmgr/data/<插件ID>/
 }
 ```
 
-相对的 `externalPaths` 以 OpenDesk 配置目录为基准。
+相对路径：CLI 与环境变量以当前工作目录为基准，`externalPaths` 以 OpenDesk 配置目录为基准。
+外部目录中的插件同样按内置插件处理（来源 `builtin`、不允许卸载），但**优先级低于默认内置
+插件目录**：与内置插件同 ID 的条目不参与发现（忽略并记一条 warning）；多个附加目录之间同 ID
+时，靠前的目录优先。
 
-启动 TUI 时也可以临时指定一个额外的插件集合目录：
-
-```bash
-opendesk --plugins-directory ./plugins
-```
-
-OpenDesk 会扫描该目录的一级子目录和 `.js`、`.mjs`、`.cjs` 单文件插件，并在 TUI
-启动前完成注册。相对路径以当前工作目录为基准；该参数只对本次进程生效，不修改全局插件目录或
-`setting.json`。
+想直接上手验证，仓库里的 `test/test-plugin` 就是一个最小样例（含 tool / command / hook 接线与
+验证步骤，见其 README）。
 
 ## 内置插件
 
@@ -132,7 +141,33 @@ CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发�
 
 内置插件在 pluginmgr 中的来源为 `builtin`，默认启用且不允许卸载。启停、权限和 options
 只作为用户策略写入 pluginmgr 注册表，不会修改内置插件文件。内置插件 ID 具有最高优先级；
-用户目录、安装到 plugins 目录或外部路径中的同 ID 插件不会覆盖内置插件。
+用户目录里安装到 plugins 目录的同 ID 插件不会覆盖内置插件。
+
+### 附加插件目录
+
+附加插件目录（见上文「插件目录」）与默认内置插件目录合并扫描，其中的插件同样按内置插件处理
+（来源 `builtin`、不允许卸载、清单里的 `system` 生效），但优先级低于默认内置插件目录。
+
+目录里的条目按「是否是合法插件」过滤：必须是包含 `opendesk.plugin.json`（或在 `package.json`
+中声明 `opendesk.plugin` 入口）的目录；整个目录本身就是一个插件目录时也能直接识别。文档、散装
+脚本等**不是插件**的条目直接跳过、不产生诊断，而**自称是插件却加载不了**的目录（清单入口写错、
+入口文件缺失、清单损坏等）会留一条 warning，避免插件只是从列表里悄悄消失。
+
+目录不存在或不是目录时其余目录照常加载：显式传入的 `--plugins-directory` 会在终端给出
+`[warn]`，环境变量与 `externalPaths` 则记 warning 日志（TUI 日志面板 / GUI 日志可见）。
+
+附加目录中的插件与内置插件一样只读：启停、权限与 options 写入 pluginmgr 注册表，插件文件
+不会被修改。位于默认内置目录之外的附加目录插件以绝对路径写入注册表——不同目录之间可能有
+同名容器目录，相对路径无法唯一还原到原目录。
+
+生效范围：
+
+- 附加目录只是补充，不覆盖内置插件：与内置插件同 ID 的条目不参与发现（忽略并记一条 warning）。
+  多个附加目录之间同 ID 时，靠前的目录优先（环境变量 → CLI 参数 → `externalPaths`）。
+- 「按内置插件处理」也包括清单里的 `system`：附加目录里的插件声明 `system: true` 后，启停同样
+  由清单固定，pluginmgr 不再允许切换开关。
+- 附加目录只在启动时生效。目录不再传入后，注册表里残留的启停/options 记录不会让插件继续加载；
+  该目录里的插件重新被发现时会沿用旧记录里的启停与 options。
 
 ## 最小 Tool 插件
 
@@ -590,9 +625,9 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 - `enabled`：`system` 固定时的实际状态。`true`（或缺省）表示始终启用；`false` 表示始终禁用，
   固定禁用的插件不会进入运行时，但仍会出现在插件列表里并标明原因。
 
-这两个字段**只对内置插件生效**。通过插件中心、`opendesk plugins install`、手工放入
-`plugins/` 目录、`externalPaths` 或运行时插件目录声明的插件即使写了 `system` / `enabled`，
-宿主也只会在加载时记录一条 warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔值，
+这两个字段**只对内置插件生效**（含附加插件目录）。通过插件中心、`opendesk plugins install`
+或手工放入 `plugins/` 目录的本地插件即使写了 `system` / `enabled`，宿主也只会在加载时记录一条
+warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔值，
 否则清单校验失败（`plugin.manifest_invalid_system` / `plugin.manifest_invalid_enabled`）。
 
 ### displayName 与 description 本地化
@@ -771,7 +806,8 @@ opendesk plugins uninstall review-helper --remove-data
 
 安装源可以是 npm spec、本地路径、ZIP、tarball 或 URL。GUI 中的 npm、目录、ZIP、TGZ 和 URL
 入口都会校验后复制到全局 `plugins` 目录并写入注册记录，因此可以通过 GUI 或 CLI 卸载。
-`externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
+`externalPaths` / `--plugins-directory` 只用于显式指向不复制到 `plugins/` 的插件目录（见上文
+「插件目录」），其中的插件按内置插件处理。
 
 CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk.plugin.json` 或
 `package.json#opendesk` 声明的插件目录，不要求 `package.json`。目录内容会直接复制到
@@ -780,7 +816,8 @@ CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk
 依赖；无运行时依赖的插件不要求 npm。ZIP 和 TGZ 位于同一归档层，统一下载、解压和校验。
 所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
 可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载适用于 `plugins/` 目录中的全部插件，
-包括手工放入的插件文件或目录；内置插件不能卸载，外部目录插件应从 `externalPaths` 移除。
+包括手工放入的插件文件或目录；内置插件与附加插件目录里的插件不能卸载，后者需要从
+`externalPaths` 或 `--plugins-directory` 中移除。
 卸载默认保留插件的私有数据目录（`plugins/.pluginmgr/data/<插件ID>/`），仅在 GUI 确认弹窗中
 勾选“同时删除该插件的数据目录”，或 CLI 显式传入 `--remove-data` 时才会一并清理。
 
@@ -833,7 +870,8 @@ discover
 Hook 按插件激活顺序串行执行。默认 `failureMode: 'open'` 会记录失败并继续主流程；
 安全或认证场景可以在注册 Hook 时指定 `failureMode: 'closed'`，让异常阻止对应操作。
 带有完整性基线（安装时写入的 integrity 记录）的插件在 import 前检查安装内容完整性；
-手工放入和外部插件没有基线，标记为 unmanaged，不进行内容锁定。
+手工放入（`plugins/` 目录）的插件没有基线，标记为 unmanaged，不进行内容锁定；附加插件目录里的
+插件按内置插件处理，同样不做完整性锁定。
 
 ## Runtime Hooks
 

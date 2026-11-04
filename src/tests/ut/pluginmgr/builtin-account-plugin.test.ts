@@ -35,7 +35,7 @@ describe('builtin account plugin', () => {
         registerSdkPackageMapping();
         const configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-account-plugin-'));
         const builtinDirectory = path.resolve('resources/plugins');
-        const candidate = discoverPlugins({ configDirectory, builtinDirectory }).candidates.find(
+        const candidate = discoverPlugins({ configDirectory, builtinDirectories: [builtinDirectory] }).candidates.find(
             (plugin) => plugin.id === 'opendesk-account'
         );
         expect(candidate).toMatchObject({

@@ -8,9 +8,14 @@ import path from 'path';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { computePluginIntegrity } from './integrity.js';
-import type { PluginCandidate } from './loader.js';
+import { resolvePluginEntry, type PluginCandidate } from './loader.js';
 import { readManifestDeclaration, resolveManifestControlFields } from './manifest.js';
-import { ensurePluginDirectories, getBuiltinPluginsDirectory, getPluginsDirectory } from '../management/paths.js';
+import {
+    ensurePluginDirectories,
+    getBuiltinPluginsDirectories,
+    getPluginRecordRoot,
+    getPluginsDirectory
+} from '../management/paths.js';
 import { listPluginRecords, type PluginRegistryRecord, type PluginSourceKind } from '../management/registry.js';
 
 export interface DiscoveredPluginCandidate extends PluginCandidate {
@@ -43,6 +48,15 @@ export interface PluginVerification {
 
 const PLUGIN_FILE_PATTERN = /\.(?:js|mjs|cjs)$/i;
 const PLUGIN_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9._-]*$/;
+
+/** 已告警过的发现期问题：插件发现会被反复调用，同一条配置问题只提示一次 */
+const warnedDiscoveryIssues = new Set<string>();
+
+function warnOnce(key: string, message: string): void {
+    if (warnedDiscoveryIssues.has(key)) return;
+    warnedDiscoveryIssues.add(key);
+    logger.warn(message);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -89,14 +103,17 @@ function readBuiltinControlFields(spec: string) {
     return resolveManifestControlFields(readManifestDeclaration(spec), { builtin: true });
 }
 
-function resolveStoredPath(
+/**
+ * 把注册表记录里的插件位置解析为绝对路径：内置记录相对内置插件目录，本地记录相对
+ * plugins 目录。附加插件目录里的插件记的是绝对路径（见 `toPluginRecordPath`），
+ * 所以这里不存在「相对路径要落到哪个内置目录」的歧义。
+ */
+export function resolvePluginRecordPath(
     record: PluginRegistryRecord,
-    configDirectory: string,
-    builtinDirectory: string = getBuiltinPluginsDirectory()
+    configDirectory: string = getOpendeskDirectory()
 ): string {
     if (path.isAbsolute(record.path)) return record.path;
-    const root = record.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
-    return path.resolve(root, record.path);
+    return path.resolve(getPluginRecordRoot(record.source, configDirectory), record.path);
 }
 
 function toCandidate(
@@ -115,8 +132,7 @@ function toCandidate(
         id: record?.id ?? inferPluginId(spec),
         spec,
         origin,
-        // 'managed' 仅存在于旧版注册表数据中，对外统一视为本地目录插件。
-        source: source === 'managed' ? 'local' : source,
+        source,
         system,
         // 清单固定启停的内置插件不再采信注册表里的开关状态
         enabled: system ? (control?.enabled ?? true) : (record?.enabled ?? true),
@@ -126,7 +142,11 @@ function toCandidate(
     };
 }
 
-function scanDirectory(directory: string, source: PluginSourceKind): DiscoveredPluginCandidate[] {
+function scanDirectory(
+    directory: string,
+    source: PluginSourceKind,
+    accept?: (spec: string) => boolean
+): DiscoveredPluginCandidate[] {
     if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) return [];
     const result: DiscoveredPluginCandidate[] = [];
     for (const entry of fs
@@ -134,47 +154,125 @@ function scanDirectory(directory: string, source: PluginSourceKind): DiscoveredP
         .sort((a, b) => a.name.localeCompare(b.name))) {
         if (entry.name.startsWith('.')) continue;
         const spec = path.join(directory, entry.name);
+        if (accept && !accept(spec)) continue;
         const candidate = toCandidate(spec, source, directory);
         if (candidate) result.push(candidate);
     }
     return result;
 }
 
-function externalCandidates(externalPaths: readonly string[], configDirectory: string): DiscoveredPluginCandidate[] {
-    const result: DiscoveredPluginCandidate[] = [];
-    for (const configuredPath of externalPaths) {
-        const resolved = path.isAbsolute(configuredPath)
-            ? configuredPath
-            : path.resolve(configDirectory, configuredPath);
-        if (!fs.existsSync(resolved)) continue;
-        const direct = toCandidate(resolved, 'external', configuredPath);
-        if (direct) result.push(direct);
-        else result.push(...scanDirectory(resolved, 'external'));
+/**
+ * 探测一个条目能否作为内置插件加载：可加载返回 undefined，否则返回不可加载的原因。
+ *
+ * stat 与清单解析都在 try 内：附加目录里出现失效的符号链接时 statSync 会抛错，
+ * 那只是「不是插件」，不能让整个发现流程失败。
+ */
+function probePluginDirectory(spec: string): string | undefined {
+    try {
+        if (!fs.statSync(spec).isDirectory()) return 'plugin.entry_not_found';
+        resolvePluginEntry(spec, path.dirname(spec), { requireDeclaration: true });
+        return undefined;
+    } catch (error) {
+        return error instanceof Error ? error.message : String(error);
     }
-    return result;
 }
 
-function pluginDirectoryCandidates(pluginDirectories: readonly string[]): DiscoveredPluginCandidate[] {
-    return pluginDirectories.flatMap((directory) => scanDirectory(path.resolve(directory), 'external'));
+/**
+ * 目录是否自称是插件：有清单文件（哪怕内容坏了），或在 package.json 里声明了 opendesk 入口。
+ *
+ * `readManifestDeclaration` 已覆盖目录清单、单文件 sidecar 与 package.json#opendesk，但清单
+ * 解析失败时它返回 undefined，所以清单文件本身要单独探一次——「清单损坏」正是最需要告警的一种。
+ */
+function declaresPlugin(spec: string): boolean {
+    if (fs.existsSync(path.join(spec, 'opendesk.plugin.json'))) return true;
+    return readManifestDeclaration(spec) !== undefined;
+}
+
+/**
+ * 附加目录里的条目是否可以作为插件加载。
+ *
+ * 附加目录由用户指定，里面常混有文档、临时文件等非插件条目，那些保持安静；但「自称是插件
+ * 却加载不了」的目录必须留一条告警，否则插件只会从列表里悄悄消失，排查时没有任何线索。
+ */
+function acceptAdditionalEntry(spec: string): boolean {
+    const reason = probePluginDirectory(spec);
+    if (reason === undefined) return true;
+    if (declaresPlugin(spec)) {
+        warnOnce(
+            `additional-plugin-invalid:${spec}`,
+            `Ignoring additional plugin entry that cannot be loaded: ${spec} (${reason})`
+        );
+    }
+    return false;
+}
+
+/**
+ * 扫描单个附加插件目录。它可能是「插件目录集合」，也可能直接就是某个插件目录，
+ * 两种都支持（与 `--plugins-directory` 的口径一致），避免把插件目录本身传进来时
+ * 静默发现 0 个插件。
+ */
+function scanAdditionalDirectory(directory: string): DiscoveredPluginCandidate[] {
+    const reason = probePluginDirectory(directory);
+    if (reason === undefined) {
+        const candidate = toCandidate(directory, 'builtin', directory);
+        return candidate ? [candidate] : [];
+    }
+    if (declaresPlugin(directory)) {
+        // 目录本身自称插件却加载不了：它不该再被当成集合扫描，直接留下可排查的告警
+        warnOnce(
+            `additional-plugin-invalid:${directory}`,
+            `Ignoring additional plugin directory that cannot be loaded: ${directory} (${reason})`
+        );
+        return [];
+    }
+    return scanDirectory(directory, 'builtin', acceptAdditionalEntry);
+}
+
+/**
+ * 扫描内置插件目录列表：首个是主内置目录，其余是附加插件目录。
+ *
+ * 附加插件目录额外支持直接指向单个插件目录。ID 冲突时先扫到的目录胜出（内置目录在最前），
+ * 避免同名条目让两边一起从发现结果里消失。
+ */
+function scanBuiltinDirectories(directories: readonly string[]): DiscoveredPluginCandidate[] {
+    const result: DiscoveredPluginCandidate[] = [];
+    const owners = new Map<string, string>();
+    for (const [index, directory] of directories.entries()) {
+        const candidates = index === 0 ? scanDirectory(directory, 'builtin') : scanAdditionalDirectory(directory);
+        logger.info(
+            `OpenDesk ${index === 0 ? 'builtin' : 'additional builtin'} plugins directory: ${directory} (exists: ${fs.existsSync(directory)}, found: ${candidates.length})`
+        );
+        // 同目录内的重复 ID 照常进入后续的冲突检测（那是插件自身的问题），跨目录才按顺序去重
+        const accepted = candidates.filter((candidate) => {
+            const owner = owners.get(candidate.id);
+            if (!owner) return true;
+            warnOnce(
+                `duplicate-builtin-plugin:${candidate.id}:${candidate.spec}`,
+                `Ignoring OpenDesk plugin from additional plugin directory: ${candidate.spec} (plugin id "${candidate.id}" is already provided by ${owner})`
+            );
+            return false;
+        });
+        for (const candidate of accepted) owners.set(candidate.id, directory);
+        result.push(...accepted);
+    }
+    return result;
 }
 
 export function discoverPlugins(
     options: {
         configDirectory?: string;
-        externalPaths?: readonly string[];
-        pluginDirectories?: readonly string[];
-        builtinDirectory?: string;
+        /** 内置插件目录列表：首个是默认内置目录，其余为附加插件目录 */
+        builtinDirectories?: readonly string[];
     } = {}
 ): PluginDiscoveryResult {
     const configDirectory = options.configDirectory ?? getOpendeskDirectory();
     ensurePluginDirectories(configDirectory);
     const root = getPluginsDirectory(configDirectory);
-    const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
-    const records = listPluginRecords(configDirectory);
-    const builtinCandidates = scanDirectory(builtinDirectory, 'builtin');
-    logger.info(
-        `OpenDesk builtin plugins directory: ${builtinDirectory} (exists: ${fs.existsSync(builtinDirectory)}, found: ${builtinCandidates.length})`
+    const builtinDirectories = (options.builtinDirectories ?? getBuiltinPluginsDirectories()).map((directory) =>
+        path.resolve(directory)
     );
+    const records = listPluginRecords(configDirectory);
+    const builtinCandidates = scanBuiltinDirectories(builtinDirectories);
     const builtinIds = new Set(builtinCandidates.map((candidate) => candidate.id));
     // Registry records inside the plugins directory start with their container
     // entry (directory or single plugin file); skip those during the loose scan.
@@ -187,14 +285,16 @@ export function discoverPlugins(
     const knownPaths = new Set<string>();
 
     for (const record of records) {
-        if (record.source !== 'builtin' && builtinIds.has(record.id)) continue;
-        const spec = resolveStoredPath(record, configDirectory, builtinDirectory);
-        const origin = record.source === 'builtin' ? builtinDirectory : getPluginsDirectory(configDirectory);
+        // 内置插件的候选一律来自当前内置目录的扫描（启停/options 从注册表读取）：记录不该
+        // 复活扫描已经排除的条目——被过滤的非插件目录、被去重的同名副本都会因此重新出现，
+        // 甚至与目录里的插件撞成发现冲突，让两边一起消失。
+        if (record.source === 'builtin') continue;
+        if (builtinIds.has(record.id)) continue;
+        const spec = resolvePluginRecordPath(record, configDirectory);
+        const origin = getPluginsDirectory(configDirectory);
         const candidate = toCandidate(spec, record.source, origin, record);
         if (!candidate) continue;
-        // 清单固定启停的内置插件即使当前禁用也保留在发现结果里，加载阶段会跳过它：
-        // 这样 pluginmgr 列表仍能展示「已禁用且不可更改」的状态。
-        if (!candidate.enabled && !candidate.system) continue;
+        if (!candidate.enabled) continue;
         const realPath = fs.realpathSync(spec);
         knownPaths.add(realPath);
         candidates.push(candidate);
@@ -204,7 +304,9 @@ export function discoverPlugins(
         const realPath = fs.realpathSync(candidate.spec);
         if (knownPaths.has(realPath)) continue;
         const policy = records.find((record) => record.id === candidate.id && record.source === 'builtin');
-        // 清单固定启停时以清单为准，忽略用户开关留下的注册表记录
+        // 清单固定启停时以清单为准，忽略用户开关留下的注册表记录。
+        // 清单固定禁用的内置插件即使当前禁用也保留在发现结果里，加载阶段会跳过它：
+        // 这样 pluginmgr 列表仍能展示「已禁用且不可更改」的状态。
         const enabled = candidate.system ? candidate.enabled : (policy?.enabled ?? true);
         if (!enabled && !candidate.system) continue;
         knownPaths.add(realPath);
@@ -212,40 +314,13 @@ export function discoverPlugins(
             ...candidate,
             enabled,
             options: policy?.options,
-            grantedCapabilities: policy?.grantedCapabilities
+            grantedCapabilities: policy?.grantedCapabilities,
+            integrity: policy?.integrity
         });
     }
 
     for (const candidate of scanDirectory(root, 'local')) {
         if (containerNames.has(path.basename(candidate.spec))) continue;
-        if (builtinIds.has(candidate.id)) continue;
-        const realPath = fs.realpathSync(candidate.spec);
-        if (knownPaths.has(realPath)) continue;
-        knownPaths.add(realPath);
-        const policy = records.find((record) => record.id === candidate.id);
-        if (policy?.enabled === false) continue;
-        candidates.push({
-            ...candidate,
-            options: policy?.options,
-            grantedCapabilities: policy?.grantedCapabilities
-        });
-    }
-
-    for (const candidate of externalCandidates(options.externalPaths ?? [], configDirectory)) {
-        if (builtinIds.has(candidate.id)) continue;
-        const realPath = fs.realpathSync(candidate.spec);
-        if (knownPaths.has(realPath)) continue;
-        knownPaths.add(realPath);
-        const policy = records.find((record) => record.id === candidate.id);
-        if (policy?.enabled === false) continue;
-        candidates.push({
-            ...candidate,
-            options: policy?.options,
-            grantedCapabilities: policy?.grantedCapabilities
-        });
-    }
-
-    for (const candidate of pluginDirectoryCandidates(options.pluginDirectories ?? [])) {
         if (builtinIds.has(candidate.id)) continue;
         const realPath = fs.realpathSync(candidate.spec);
         if (knownPaths.has(realPath)) continue;
@@ -277,7 +352,7 @@ export function discoverPlugins(
 
 export function verifyPluginRecord(record: PluginRegistryRecord, configDirectory?: string): PluginVerification {
     const resolvedConfigDirectory = configDirectory ?? getOpendeskDirectory();
-    const pluginPath = resolveStoredPath(record, resolvedConfigDirectory);
+    const pluginPath = resolvePluginRecordPath(record, resolvedConfigDirectory);
     if (!fs.existsSync(pluginPath)) {
         return {
             id: record.id,

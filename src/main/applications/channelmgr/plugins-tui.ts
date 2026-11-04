@@ -21,15 +21,7 @@ import { t } from '../../../locale/index.js';
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
 
 function pluginSourceLabel(source: PluginSourceKind): string {
-    // 'managed' 仅存在于旧版注册表数据中，对外统一视为本地插件。
-    switch (source) {
-        case 'builtin':
-            return t('plugin.list.source.builtin');
-        case 'external':
-            return t('plugin.list.source.external');
-        default:
-            return t('plugin.list.source.managed');
-    }
+    return source === 'builtin' ? t('plugin.list.source.builtin') : t('plugin.list.source.local');
 }
 
 /**
@@ -199,13 +191,9 @@ export class PluginsListOverlay implements Component {
     private onUninstallKey() {
         const plugin = this.getSelectedPlugin();
         if (!plugin) return;
-        // 与 GUI 的 removable 口径一致：内置与外部路径插件不可卸载
-        if (plugin.source === 'builtin' || plugin.source === 'external') {
-            const key =
-                plugin.source === 'builtin'
-                    ? 'plugin.tui.uninstallBlocked.builtin'
-                    : 'plugin.tui.uninstallBlocked.external';
-            this.showResultMessage(t(key, { id: plugin.id }));
+        // 与 GUI 的 removable 口径一致：内置插件（含附加插件目录）不可卸载
+        if (plugin.source === 'builtin') {
+            this.showResultMessage(t('plugin.tui.uninstallBlocked.builtin', { id: plugin.id }));
             return;
         }
         this.showConfirmUninstall(plugin);

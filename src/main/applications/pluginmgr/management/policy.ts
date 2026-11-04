@@ -3,9 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import path from 'path';
 import { discoverPlugins } from '../discovery/discovery.js';
-import { getBuiltinPluginsDirectory } from './paths.js';
+import { getPluginRecordRoot, toPluginRecordPath } from './paths.js';
 import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
 import { getPluginRecord, upsertPluginRecord, type PluginRegistryRecord } from './registry.js';
 
@@ -28,15 +27,15 @@ function toPolicyEntry(record: PluginRegistryRecord): PluginPolicyEntry {
 function updateEntry(id: string, update: (entry: PluginRegistryRecord) => PluginRegistryRecord): PluginPolicyEntry {
     let current = getPluginRecord(id);
     if (!current) {
-        const builtinDirectory = getBuiltinPluginsDirectory();
-        const builtin = discoverPlugins({ builtinDirectory }).candidates.find(
+        const builtin = discoverPlugins().candidates.find(
             (candidate) => candidate.id === id && candidate.source === 'builtin'
         );
         current = builtin
             ? {
                   id,
                   source: 'builtin',
-                  path: path.relative(builtinDirectory, builtin.spec),
+                  // 与 setPluginEnabled 共用同一个基准目录，见 getPluginRecordRoot
+                  path: toPluginRecordPath(builtin.spec, getPluginRecordRoot('builtin')),
                   enabled: true,
                   options: {}
               }

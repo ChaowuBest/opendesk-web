@@ -126,8 +126,9 @@ export const enUs: Record<string, string> = {
     'cli.resume.hint': 'Resume/continue the task with the following command:',
     'cli.resume.not_found': 'Task Not Found',
     'cli.resume.not_found.detail': 'Cannot find task with ID ${taskId}, unable to resume.',
-    'cli.plugins_directory.description': 'load plugins from an additional directory for this launch',
-    'cli.plugins_directory.invalid': 'Plugin directory does not exist or is not a directory: ${path}',
+    'cli.plugins_directory.description':
+        'comma-separated plugin directories loaded as built-in plugins for this launch',
+    'cli.plugins_directory.invalid': 'Plugin directory does not exist or is not a directory, ignored: ${path}',
     // CLI - external account
     'cli.account.description': 'External account login/logout/status',
     'cli.account.select_kind': 'Select account type',
@@ -331,7 +332,8 @@ export const enUs: Record<string, string> = {
     'plugin.install.error.invalidManifest': 'The OpenDesk plugin declaration is invalid.',
     'plugin.install.error.incompatibleApi': 'This plugin uses an unsupported OpenDesk plugin API version.',
     'plugin.install.error.invalidStructure': 'The plugin has missing files or contains an unsafe file path.',
-    'plugin.install.error.builtinConflict': 'A built-in plugin already uses this plugin ID and cannot be replaced.',
+    'plugin.install.error.builtinConflict':
+        'A built-in plugin or a plugin from an additional plugin directory already uses this plugin ID and cannot be replaced.',
     'plugin.install.error.unknown': 'The plugin could not be installed. Check the application logs for details.',
     'plugin.uninstall.description': 'Uninstall a plugin',
     'plugin.uninstall.removeData.description':
@@ -343,8 +345,6 @@ export const enUs: Record<string, string> = {
     'plugin.uninstall.fail': 'Uninstall Failed',
     'plugin.uninstall.failDetail': 'Plugin uninstall failed: ${error}',
     'plugin.uninstall.builtin': '${id} is a builtin plugin and cannot be uninstalled',
-    'plugin.uninstall.external':
-        '${id} is loaded from a configured external path. Remove it from the externalPaths configuration instead',
     'plugin.uninstall.invalidPath': '${id} is not located inside the plugins directory and cannot be uninstalled',
     'plugin.list.description': 'List installed plugins',
     'plugin.list.empty': 'No plugins are installed.',
@@ -353,8 +353,6 @@ export const enUs: Record<string, string> = {
     'plugin.list.status.disabled': 'disabled',
     'plugin.list.source.builtin': 'builtin',
     'plugin.list.source.local': 'local',
-    'plugin.list.source.external': 'external',
-    'plugin.list.source.managed': 'local',
     'plugin.list.item': '${id} (${spec}) [${source}] [${status}] installed: ${installedAt}',
     'plugin.tui.title': ' Plugin Management',
     'plugin.tui.empty': 'No plugins installed',
@@ -376,7 +374,6 @@ export const enUs: Record<string, string> = {
     'plugin.tui.uninstallDone': 'Plugin uninstalled: ${id}\n\nMessage channels were synced automatically.',
     'plugin.tui.uninstallError': 'Plugin uninstall error: ${error}',
     'plugin.tui.uninstallBlocked.builtin': 'Builtin plugins cannot be uninstalled: ${id}',
-    'plugin.tui.uninstallBlocked.external': 'External-path plugins cannot be uninstalled: ${id}',
     'plugin.tui.help.list': '  D enable/disable  U uninstall  Esc close',
     'plugin.tui.help.confirm': '  ↑↓ select  Enter confirm  Esc cancel',
     'plugin.enable.description': 'Enable a plugin',
@@ -475,7 +472,6 @@ export const enUs: Record<string, string> = {
     'plugin.center.source': 'Source',
     'plugin.center.source.builtin': 'Built into OpenDesk',
     'plugin.center.source.local': 'Local plugin directory',
-    'plugin.center.source.external': 'Configured path',
     'plugin.center.enable': 'Enable',
     'plugin.center.disable': 'Disable',
     'plugin.center.uninstall': 'Uninstall',

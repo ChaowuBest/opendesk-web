@@ -16,20 +16,25 @@ import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import type { PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
-import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
+import {
+    discoverPlugins,
+    resolvePluginRecordPath,
+    verifyPluginRecord,
+    type PluginVerification
+} from '../discovery/discovery.js';
 import { resolvePluginEntry } from '../discovery/loader.js';
 import { readPluginManifest } from '../discovery/manifest.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
-import { getPluginManagerConfig, getRuntimePluginDirectories } from './config.js';
 import {
     ensurePluginDirectories,
-    getBuiltinPluginsDirectory,
     getPluginCacheDirectory,
     getPluginDataDirectory,
+    getPluginRecordRoot,
     getPluginsDirectory,
     getPluginStagingDirectory,
-    getPluginTrashDirectory
+    getPluginTrashDirectory,
+    toPluginRecordPath
 } from './paths.js';
 import {
     getPluginRecord,
@@ -139,9 +144,6 @@ async function downloadPluginArchive(
 
 export interface SetPluginEnabledOptions {
     configDirectory?: string;
-    externalPaths?: readonly string[];
-    pluginDirectories?: readonly string[];
-    builtinDirectory?: string;
 }
 
 function readJson(file: string): Record<string, unknown> {
@@ -281,9 +283,15 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
             managedPath = relativeManagedPath(validated.id, packageName);
         }
         assertSafePluginId(validated.id);
-        const builtin = discoverPlugins({ configDirectory }).candidates.find(
-            (candidate) => candidate.source === 'builtin' && candidate.id === validated.id
-        );
+        // 内置插件（含附加插件目录）的 ID 具有最高优先级：同 ID 的本地插件装上去也只会被盖掉。
+        // 被禁用的内置插件不在发现结果里，因此再看一眼注册表记录；但只在记录指向的插件仍在
+        // 磁盘上时才算冲突——附加目录撤掉后留下的残留记录不该永久堵住同名插件的安装。
+        const previous = getPluginRecord(validated.id, configDirectory);
+        const builtin =
+            (previous?.source === 'builtin' && fs.existsSync(resolvePluginRecordPath(previous, configDirectory))) ||
+            discoverPlugins({ configDirectory }).candidates.some(
+                (candidate) => candidate.source === 'builtin' && candidate.id === validated.id
+            );
         if (builtin) throw new Error(`plugin.install_builtin_conflict:${validated.id}`);
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
@@ -291,7 +299,6 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
         await moveToTrash(destination, configDirectory);
         fs.renameSync(stagingDirectory, destination);
 
-        const previous = getPluginRecord(validated.id, configDirectory);
         const record: PluginRegistryRecord = {
             id: validated.id,
             source: 'local',
@@ -336,8 +343,9 @@ export type UninstallTargetResolution = { ok: true; target: string } | { ok: fal
 /**
  * 解析卸载要删除的磁盘目标，或在不能卸载时给出拒绝原因。
  *
- * 单独暴露出来是为了让宿主在**释放插件运行实例之前**先做检查：内置与外部插件、以及
- * 已不存在的插件都不该被 deactivate，否则会白白拆掉一个正在运行的内置渠道插件再装回来。
+ * 单独暴露出来是为了让宿主在**释放插件运行实例之前**先做检查：内置与附加插件目录里的
+ * 插件、以及已不存在的插件都不该被 deactivate，否则会白白拆掉一个正在运行的内置渠道
+ * 插件再装回来。
  */
 export function resolveUninstallTarget(
     id: string,
@@ -345,7 +353,9 @@ export function resolveUninstallTarget(
 ): UninstallTargetResolution {
     const pluginsRoot = path.resolve(getPluginsDirectory(configDirectory));
     const record = getPluginRecord(id, configDirectory);
-    if (record && record.source !== 'builtin' && !path.isAbsolute(record.path)) {
+    // 内置记录（含附加插件目录）与运行状态无关：即使插件当前被禁用，也不该报「找不到插件」
+    if (record?.source === 'builtin') return { ok: false, error: 'plugin.uninstall_builtin' };
+    if (record && !path.isAbsolute(record.path)) {
         // Registry records for plugins inside the plugins directory always start
         // with the container entry (directory or single plugin file).
         const target = path.resolve(pluginsRoot, record.path.split(/[\\/]/)[0]);
@@ -357,10 +367,9 @@ export function resolveUninstallTarget(
     const candidate = discoverPlugins({ configDirectory }).candidates.find((entry) => entry.id === id);
     if (!candidate) return { ok: false, error: `Plugin not found: ${id}` };
     if (candidate.source === 'builtin') return { ok: false, error: 'plugin.uninstall_builtin' };
-    if (candidate.source === 'external') return { ok: false, error: 'plugin.uninstall_external' };
     const spec = path.resolve(candidate.spec);
     if (!spec.startsWith(`${pluginsRoot}${path.sep}`)) {
-        return { ok: false, error: 'plugin.uninstall_external' };
+        return { ok: false, error: 'plugin.uninstall_invalid_path' };
     }
     return { ok: true, target: spec };
 }
@@ -426,25 +435,13 @@ export interface VisiblePluginRecord extends PluginRegistryRecord {
 
 /**
  * 对外展示口径的插件列表：registry 记录与 discovery 候选合并，与 GUI 插件
- * 管理页（PluginMgrApplication.list）保持一致，内置、本地散装与外部路径
+ * 管理页（PluginMgrApplication.list）保持一致，内置、附加插件目录与本地散装
  * 插件均可见。平台不匹配的插件（如鸿蒙专属插件）不出现在列表中。
  */
-export function listVisiblePlugins(
-    options: {
-        configDirectory?: string;
-        externalPaths?: readonly string[];
-        pluginDirectories?: readonly string[];
-    } = {}
-): VisiblePluginRecord[] {
+export function listVisiblePlugins(options: { configDirectory?: string } = {}): VisiblePluginRecord[] {
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
     const records = listPluginRecords(resolvedConfigDirectory);
-    const discovery = discoverPlugins({
-        configDirectory: resolvedConfigDirectory,
-        // 未显式传入时与 GUI 口径对齐：读取 settings.json 的 externalPaths 与
-        // 运行时注册的插件目录（CLI --plugins-directory 等）。
-        externalPaths: options.externalPaths ?? getPluginManagerConfig().externalPaths,
-        pluginDirectories: options.pluginDirectories ?? getRuntimePluginDirectories()
-    });
+    const discovery = discoverPlugins({ configDirectory: resolvedConfigDirectory });
     const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
     const merged = new Map<string, VisiblePluginRecord>(records.map((record) => [record.id, record]));
     for (const candidate of discovery.candidates) {
@@ -466,19 +463,17 @@ export function listVisiblePlugins(
     const platformFiltered: VisiblePluginRecord[] = [];
     for (const [id, record] of merged) {
         const candidate = candidatesById.get(id);
+        // 有候选时整条记录都采用 discovery 口径（来源、路径、启停、system）：只取部分字段
+        // 会出现「路径指向内置目录、来源却写着 local」这类自相矛盾的展示。
         const displayRecord = candidate
-            ? { ...record, path: candidate.spec, enabled: candidate.enabled, system: candidate.system }
-            : {
+            ? {
                   ...record,
-                  path: path.isAbsolute(record.path)
-                      ? record.path
-                      : path.resolve(
-                            record.source === 'builtin'
-                                ? getBuiltinPluginsDirectory()
-                                : getPluginsDirectory(resolvedConfigDirectory),
-                            record.path
-                        )
-              };
+                  source: candidate.source,
+                  path: candidate.spec,
+                  enabled: candidate.enabled,
+                  system: candidate.system
+              }
+            : { ...record, path: resolvePluginRecordPath(record, resolvedConfigDirectory) };
         // 平台过滤与 GUI 列表对齐：对所有条目生效（含 registry 记录），
         // 清单缺失或损坏时保持展示。
         try {
@@ -503,12 +498,9 @@ export function listVisiblePlugins(
  * `true`（或缺省）恒启用，`false` 恒禁用。
  */
 export function isPluginEnabledFixed(id: string, options: SetPluginEnabledOptions = {}): boolean {
-    const candidate = discoverPlugins({
-        configDirectory: options.configDirectory,
-        builtinDirectory: options.builtinDirectory,
-        externalPaths: options.externalPaths,
-        pluginDirectories: options.pluginDirectories
-    }).candidates.find((entry) => entry.id === id);
+    const candidate = discoverPlugins({ configDirectory: options.configDirectory }).candidates.find(
+        (entry) => entry.id === id
+    );
     return candidate?.system === true;
 }
 
@@ -522,29 +514,19 @@ export function setPluginEnabled(
             ? { configDirectory: configDirectoryOrOptions }
             : (configDirectoryOrOptions ?? {});
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
-    const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
     // 一次发现同时给出「能否改开关」与「候选记录」：清单固定启停的插件写注册表也不会生效
     //（发现阶段始终以清单为准），直接拒绝，避免留下「注册表说启用、运行时仍然禁用」的假状态。
-    const candidate = discoverPlugins({
-        configDirectory: resolvedConfigDirectory,
-        builtinDirectory,
-        externalPaths: options.externalPaths,
-        pluginDirectories: options.pluginDirectories
-    }).candidates.find((entry) => entry.id === id);
+    const candidate = discoverPlugins({ configDirectory: resolvedConfigDirectory }).candidates.find(
+        (entry) => entry.id === id
+    );
     if (candidate?.system) return false;
     let record = getPluginRecord(id, resolvedConfigDirectory);
     if (!record) {
         if (!candidate) return false;
-        const root =
-            candidate.source === 'builtin'
-                ? builtinDirectory
-                : candidate.source === 'local'
-                  ? getPluginsDirectory(resolvedConfigDirectory)
-                  : undefined;
         record = {
             id,
             source: candidate.source,
-            path: root ? path.relative(root, candidate.spec) : candidate.spec,
+            path: toPluginRecordPath(candidate.spec, getPluginRecordRoot(candidate.source, resolvedConfigDirectory)),
             enabled: true,
             options: candidate.options ?? {},
             grantedCapabilities: candidate.grantedCapabilities

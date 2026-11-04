@@ -53,7 +53,7 @@ interface PluginAgentInfo {
 
 interface PluginListEntry {
     id: string;
-    source: 'builtin' | 'local' | 'external';
+    source: 'builtin' | 'local';
     path?: string;
     removable: boolean;
     enabled: boolean;

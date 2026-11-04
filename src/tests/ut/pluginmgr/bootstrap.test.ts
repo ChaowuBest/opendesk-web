@@ -14,13 +14,15 @@ import {
     initializePluginHost,
     reloadPluginHost
 } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
-import { setRuntimePluginDirectories } from '../../../main/applications/pluginmgr/management/config.js';
 import { PLUGIN_SKILL_BUNDLE } from '../../../main/applications/pluginmgr/runtime/contributions.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { logger } from '../../../main/utils/logger.js';
 import { installPlugin } from '../../../main/applications/pluginmgr/management/manager.js';
 import { upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
-import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
+import {
+    getPluginsDirectory,
+    setRuntimePluginsDirectories
+} from '../../../main/applications/pluginmgr/management/paths.js';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { TaskState } from '../../../main/aikernel/states/tasks.js';
@@ -55,13 +57,13 @@ describe('OpenDesk plugin bootstrap', () => {
         previousBuiltinPluginsDirectory = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         setCustomOpendeskDirectory(configDirectory);
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
     });
 
     afterEach(async () => {
         await disposePluginHost();
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
         setCustomOpendeskDirectory(undefined);
         if (previousBuiltinPluginsDirectory === undefined) {
@@ -493,7 +495,7 @@ Extract decisions and actions.
                 }
             };`
         );
-        setRuntimePluginDirectories([pluginsDirectory]);
+        setRuntimePluginsDirectories(pluginsDirectory);
 
         await initializePluginHost();
 

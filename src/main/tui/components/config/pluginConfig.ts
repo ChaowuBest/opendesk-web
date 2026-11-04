@@ -19,7 +19,7 @@ import { defaultSelectListTheme } from '../../theme.js';
 
 interface PluginListEntry {
     id: string;
-    source: 'builtin' | 'local' | 'external';
+    source: 'builtin' | 'local';
     removable: boolean;
     enabled: boolean;
     /** 启停由清单固定（内置插件的 system: true）：不允许切换 */

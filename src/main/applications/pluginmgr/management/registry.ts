@@ -10,7 +10,21 @@ import { logger } from '../../../utils/logger.js';
 import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
 import { ensurePluginDirectories, getPluginRegistryPath } from './paths.js';
 
-export type PluginSourceKind = 'builtin' | 'managed' | 'local' | 'external';
+/**
+ * 插件来源：`builtin` 为内置级（默认内置目录 + 附加插件目录），`local` 为安装到
+ * `plugins/` 目录里的插件。附加插件目录与内置同级，因此不再单独区分外部来源。
+ */
+export type PluginSourceKind = 'builtin' | 'local';
+
+/**
+ * 旧版注册表可能写入的来源，读取时一次性归并，避免散落到各处判断：
+ * - `external`：附加插件目录（`--plugins-directory` / settings 的 externalPaths）已并入内置级；
+ * - `managed`：曾是托管安装的中介状态，现统一视为本地插件。
+ */
+const LEGACY_SOURCE_ALIASES: Record<string, PluginSourceKind> = {
+    external: 'builtin',
+    managed: 'local'
+};
 
 export interface PluginRegistryRecord {
     id: string;
@@ -29,9 +43,21 @@ export interface PluginRegistryData {
     plugins: PluginRegistryRecord[];
 }
 
+/**
+ * schema 仍接受旧来源取值，这样带旧记录的 registry.json 不会被整体判为损坏。
+ * 元素类型写成 `string`：取值里包含上面那些旧别名，用 `PluginSourceKind` 会与归一化前的
+ * 真实取值不符。
+ */
+const REGISTRY_SOURCE_VALUES: readonly [string, ...string[]] = [
+    'builtin',
+    'local',
+    ...Object.keys(LEGACY_SOURCE_ALIASES)
+];
+
 const PluginRegistryRecordSchema = z.object({
     id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9._-]*$/),
-    source: z.enum(['builtin', 'managed', 'local', 'external']),
+    // 旧来源取值在解析时立即归并，读取注册表的地方（发现、列表、卸载）只看得到新口径
+    source: z.enum(REGISTRY_SOURCE_VALUES).transform((source) => normalizeSource(source)),
     path: z.string().min(1),
     spec: z.string().optional(),
     enabled: z.boolean().default(true),
@@ -45,6 +71,11 @@ const PluginRegistrySchema = z.object({
     schemaVersion: z.literal(1),
     plugins: z.array(PluginRegistryRecordSchema).default([])
 });
+
+/** 把 schema 接受的来源取值归并成当前口径 */
+function normalizeSource(source: string): PluginSourceKind {
+    return LEGACY_SOURCE_ALIASES[source] ?? (source as PluginSourceKind);
+}
 
 function emptyRegistry(): PluginRegistryData {
     return { schemaVersion: 1, plugins: [] };
