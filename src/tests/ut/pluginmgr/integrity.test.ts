@@ -21,7 +21,6 @@ describe('OpenDesk plugin distribution security', () => {
                     type: 'module',
                     opendesk: {
                         plugin: './dist/plugin.js',
-                        schemaVersion: 1,
                         id: 'secure',
                         apiVersion: 1,
                         capabilities: ['tool']

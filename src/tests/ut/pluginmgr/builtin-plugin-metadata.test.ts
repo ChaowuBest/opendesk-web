@@ -45,31 +45,34 @@ describe('内置插件元数据声明', () => {
     });
 
     // ZIP 是已发布产物；验证哈希及导出值一致性，不对其入口套用源码正则规则。
-    test.each(artifactDirectories.map((directory) => [path.basename(directory), directory] as const))(
-        '%s 的 ZIP manifest 与入口元数据保持一致',
-        async (id, directory) => {
-            const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-plugin-metadata-'));
-            try {
-                const artifact = materializeBuiltinPluginZip(directory, temporary);
-                const manifest = parsePluginManifest(
-                    JSON.parse(fs.readFileSync(path.join(temporary, 'opendesk.plugin.json'), 'utf-8'))
-                );
-                expect(manifest.id).toBe(id);
-                expect(manifest.id).toBe(artifact.pluginId);
-                expect(manifest.version).toBe(artifact.pluginVersion);
-                expect(manifest.entry).toBeTruthy();
-                const entryFile = path.resolve(temporary, manifest.entry as string);
-                expect(fs.existsSync(entryFile)).toBe(true);
-                const entry = (await import(pathToFileURL(entryFile).href)).default;
-                expect(entry.id).toBe(manifest.id);
-                for (const key of MANIFEST_METADATA_KEYS) {
-                    if (Object.hasOwn(entry, key)) expect(entry[key]).toEqual(manifest[key]);
+    // 内置插件里暂时没有 ZIP 形态的产物时跳过这一组（test.each 不接受空表）。
+    if (artifactDirectories.length > 0) {
+        test.each(artifactDirectories.map((directory) => [path.basename(directory), directory] as const))(
+            '%s 的 ZIP manifest 与入口元数据保持一致',
+            async (id, directory) => {
+                const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-plugin-metadata-'));
+                try {
+                    const artifact = materializeBuiltinPluginZip(directory, temporary);
+                    const manifest = parsePluginManifest(
+                        JSON.parse(fs.readFileSync(path.join(temporary, 'opendesk.plugin.json'), 'utf-8'))
+                    );
+                    expect(manifest.id).toBe(id);
+                    expect(manifest.id).toBe(artifact.pluginId);
+                    expect(manifest.version).toBe(artifact.pluginVersion);
+                    expect(manifest.entry).toBeTruthy();
+                    const entryFile = path.resolve(temporary, manifest.entry as string);
+                    expect(fs.existsSync(entryFile)).toBe(true);
+                    const entry = (await import(pathToFileURL(entryFile).href)).default;
+                    expect(entry.id).toBe(manifest.id);
+                    for (const key of MANIFEST_METADATA_KEYS) {
+                        if (Object.hasOwn(entry, key)) expect(entry[key]).toEqual(manifest[key]);
+                    }
+                } finally {
+                    fs.rmSync(temporary, { recursive: true, force: true });
                 }
-            } finally {
-                fs.rmSync(temporary, { recursive: true, force: true });
             }
-        }
-    );
+        );
+    }
 
     test.each(sourceDirectories.map((directory) => [path.basename(directory), directory] as const))(
         '%s 的元数据只声明在 manifest，入口不重复声明',

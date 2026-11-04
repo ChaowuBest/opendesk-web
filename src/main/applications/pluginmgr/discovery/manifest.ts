@@ -12,6 +12,7 @@ import {
     OPENDESK_PLUGIN_CAPABILITIES,
     OPENDESK_PLUGIN_PLATFORMS,
     type OpenDeskPlugin,
+    type PluginAuthor,
     type PluginCapability,
     type PluginDisplayName,
     type PluginLocalizedText,
@@ -29,12 +30,17 @@ export interface PluginManifestResources {
 }
 
 export interface PluginManifest {
-    schemaVersion: 1;
     entry?: string;
     id?: string;
     displayName?: PluginDisplayName;
     description?: PluginLocalizedText;
     version?: string;
+    /** 插件分类标签（插件市场按分类显示用），未声明表示未分类 */
+    category?: string[];
+    /** 作者信息：仅用于界面展示 */
+    author?: PluginAuthor;
+    /** 插件自身的站点地址（作者主页是 author.homepage） */
+    homepage?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
     platforms?: PluginPlatform[];
@@ -176,6 +182,57 @@ function parseMcpServer(value: unknown): PluginMcpServerDefinition {
     };
 }
 
+/**
+ * 解析作者信息（可选）。
+ *
+ * name 必填、institution 可选的本地化文本；homepage 只能是 http(s) 地址，
+ * 免得界面上出现 `javascript:` 之类可点击的危险链接。
+ */
+function parsePluginAuthor(value: unknown): PluginAuthor | undefined {
+    if (value === undefined) return undefined;
+    if (!isRecord(value)) throw new Error('plugin.manifest_invalid_author');
+    const name = optionalLocalizedText(value.name, 'plugin.manifest_invalid_author');
+    if (!name) throw new Error('plugin.manifest_invalid_author');
+    const homepage = optionalString(value.homepage, 'plugin.manifest_invalid_author');
+    if (homepage) {
+        let url: URL;
+        try {
+            url = new URL(homepage);
+        } catch {
+            throw new Error('plugin.manifest_invalid_author');
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            throw new Error('plugin.manifest_invalid_author');
+        }
+    }
+    return {
+        name,
+        institution: optionalLocalizedText(value.institution, 'plugin.manifest_invalid_author'),
+        homepage
+    };
+}
+
+/**
+ * 解析插件自身的站点地址（可选）。
+ *
+ * 只接受 http(s)：这条信息会作为可点链接展示在插件详情里，
+ * 放行 `javascript:` 之类的协议等于给清单作者一个注入入口。
+ */
+function parseHomepage(value: unknown): string | undefined {
+    const text = optionalString(value, 'plugin.manifest_invalid_homepage');
+    if (text === undefined) return undefined;
+    let url: URL;
+    try {
+        url = new URL(text);
+    } catch {
+        throw new Error('plugin.manifest_invalid_homepage');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('plugin.manifest_invalid_homepage');
+    }
+    return text;
+}
+
 function parseResources(value: unknown): PluginManifestResources | undefined {
     if (value === undefined) return undefined;
     if (!isRecord(value)) throw new Error('plugin.manifest_invalid_resources');
@@ -195,8 +252,6 @@ function parseResources(value: unknown): PluginManifestResources | undefined {
 
 export function parsePluginManifest(value: unknown): PluginManifest {
     if (!isRecord(value)) throw new Error('plugin.manifest_invalid');
-    const schemaVersion = value.schemaVersion ?? 1;
-    if (schemaVersion !== 1) throw new Error('plugin.manifest_schema_unsupported');
     const apiVersion = value.apiVersion ?? OPENDESK_PLUGIN_API_VERSION;
     if (!Number.isInteger(apiVersion) || (apiVersion as number) <= 0) {
         throw new Error('plugin.manifest_invalid_api_version');
@@ -216,12 +271,14 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         throw new Error('plugin.manifest_resource_capability_missing:agent');
     }
     return {
-        schemaVersion: 1,
         entry: optionalString(value.entry, 'plugin.manifest_invalid_entry'),
         id,
         displayName: optionalLocalizedText(value.displayName, 'plugin.manifest_invalid_display_name'),
         description: optionalLocalizedText(value.description, 'plugin.manifest_invalid_description'),
         version: optionalVersion(value.version, 'plugin.manifest_invalid_version'),
+        category: optionalStringArray(value.category, 'plugin.manifest_invalid_category'),
+        author: parsePluginAuthor(value.author),
+        homepage: parseHomepage(value.homepage),
         apiVersion: apiVersion as number,
         capabilities,
         platforms,
@@ -304,12 +361,14 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
     if (!isRecord(packageJson) || !isRecord(packageJson.opendesk)) return undefined;
     const declaration = packageJson.opendesk;
     const manifestFields = {
-        schemaVersion: declaration.schemaVersion,
         entry: declaration.plugin,
         id: declaration.id,
         displayName: declaration.displayName,
         description: declaration.description,
         version: declaration.version ?? packageJson.version,
+        category: declaration.category,
+        author: declaration.author,
+        homepage: declaration.homepage,
         apiVersion: declaration.apiVersion,
         capabilities: declaration.capabilities,
         minOpenDeskVersion: declaration.minOpenDeskVersion,
@@ -345,6 +404,9 @@ export function applyPluginManifest(plugin: OpenDeskPlugin, manifest?: PluginMan
         displayName: plugin.displayName ?? manifest.displayName,
         description: plugin.description ?? manifest.description,
         version: plugin.version ?? manifest.version,
+        category: plugin.category ?? manifest.category,
+        author: plugin.author ?? manifest.author,
+        homepage: plugin.homepage ?? manifest.homepage,
         apiVersion: plugin.apiVersion ?? manifest.apiVersion,
         capabilities: plugin.capabilities ?? manifest.capabilities,
         platforms: plugin.platforms ?? manifest.platforms,

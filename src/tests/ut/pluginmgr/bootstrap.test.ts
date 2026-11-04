@@ -177,7 +177,6 @@ describe('OpenDesk plugin bootstrap', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'local-details',
                 displayName: 'Local details',
                 version: '2.0.0',
@@ -286,7 +285,6 @@ Extract decisions and actions.
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'builtin-example',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -324,7 +322,6 @@ Extract decisions and actions.
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'uncompiled-example',
                 entry: './index.ts',
                 apiVersion: 1,
@@ -380,7 +377,6 @@ Extract decisions and actions.
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'external-source',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -412,7 +408,10 @@ Extract decisions and actions.
                 })
             ])
         );
-        await expect(application.uninstall('external-source')).resolves.toEqual({ success: true });
+        await expect(application.uninstall('external-source')).resolves.toEqual({
+            success: true,
+            id: 'external-source'
+        });
         expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'external-source'))).toBe(false);
         expect(fs.existsSync(sourceDirectory)).toBe(true);
     });
@@ -423,7 +422,6 @@ Extract decisions and actions.
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'managed-lock-test',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -461,7 +459,10 @@ Extract decisions and actions.
 
         try {
             const application = new PluginMgrApplication();
-            await expect(application.uninstall('managed-lock-test')).resolves.toEqual({ success: true });
+            await expect(application.uninstall('managed-lock-test')).resolves.toEqual({
+                success: true,
+                id: 'managed-lock-test'
+            });
         } finally {
             renameSync.mockRestore();
             rename.mockRestore();
@@ -477,7 +478,6 @@ Extract decisions and actions.
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'runtime-example',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -530,7 +530,6 @@ Review the current changes.`
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'manifest-contributor',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -625,7 +624,6 @@ Review the current changes.`
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'unsupported-platform',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -659,7 +657,6 @@ Review the current changes.`
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'account',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -691,7 +688,6 @@ Review the current changes.`
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'team-agents',
                 entry: './index.mjs',
                 apiVersion: 1,

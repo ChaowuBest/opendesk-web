@@ -36,7 +36,6 @@ describe('pluginmgr agents', () => {
         test('resources.agents 声明要求声明 agent capability', () => {
             expect(() =>
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: ['skill'],
                     resources: { agents: ['./agents'] }
                 })
@@ -46,7 +45,6 @@ describe('pluginmgr agents', () => {
         test('agents 路径必须是字符串数组', () => {
             expect(() =>
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: ['agent'],
                     resources: { agents: ['./agents', 42] }
                 })
@@ -54,31 +52,26 @@ describe('pluginmgr agents', () => {
         });
 
         test('displayName 字符串形式保持不变并去除首尾空白', () => {
-            const manifest = parsePluginManifest({ schemaVersion: 1, displayName: ' Review Helper ' });
+            const manifest = parsePluginManifest({ displayName: ' Review Helper ' });
             expect(manifest.displayName).toBe('Review Helper');
         });
 
         test('displayName 支持对象形式并将语言键归一化为主语言标签', () => {
             const manifest = parsePluginManifest({
-                schemaVersion: 1,
                 displayName: { en: 'Hello Plugin', 'zh-CN': '你好插件' }
             });
             expect(manifest.displayName).toEqual({ en: 'Hello Plugin', zh: '你好插件' });
         });
 
         test('displayName 对象中的值必须是非空字符串', () => {
-            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: {} })).toThrow(
+            expect(() => parsePluginManifest({ displayName: {} })).toThrow('plugin.manifest_invalid_display_name');
+            expect(() => parsePluginManifest({ displayName: { en: '' } })).toThrow(
                 'plugin.manifest_invalid_display_name'
             );
-            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: { en: '' } })).toThrow(
+            expect(() => parsePluginManifest({ displayName: { en: 'ok', zh: 42 } })).toThrow(
                 'plugin.manifest_invalid_display_name'
             );
-            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: { en: 'ok', zh: 42 } })).toThrow(
-                'plugin.manifest_invalid_display_name'
-            );
-            expect(() => parsePluginManifest({ schemaVersion: 1, displayName: 42 })).toThrow(
-                'plugin.manifest_invalid_display_name'
-            );
+            expect(() => parsePluginManifest({ displayName: 42 })).toThrow('plugin.manifest_invalid_display_name');
         });
 
         test('applyPluginManifest 将 manifest 中的本地化 displayName 合并进入口对象', () => {
@@ -86,7 +79,6 @@ describe('pluginmgr agents', () => {
             const merged = applyPluginManifest(
                 plugin,
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: [],
                     displayName: { en: 'Hello Plugin', zh: '你好插件' }
                 })
@@ -95,31 +87,26 @@ describe('pluginmgr agents', () => {
         });
 
         test('description 字符串形式保持不变并去除首尾空白', () => {
-            const manifest = parsePluginManifest({ schemaVersion: 1, description: ' A review helper plugin ' });
+            const manifest = parsePluginManifest({ description: ' A review helper plugin ' });
             expect(manifest.description).toBe('A review helper plugin');
         });
 
         test('description 支持对象形式并将语言键归一化为主语言标签', () => {
             const manifest = parsePluginManifest({
-                schemaVersion: 1,
                 description: { en: 'Review code changes', 'zh-CN': '审查代码变更' }
             });
             expect(manifest.description).toEqual({ en: 'Review code changes', zh: '审查代码变更' });
         });
 
         test('description 对象中的值必须是非空字符串', () => {
-            expect(() => parsePluginManifest({ schemaVersion: 1, description: {} })).toThrow(
+            expect(() => parsePluginManifest({ description: {} })).toThrow('plugin.manifest_invalid_description');
+            expect(() => parsePluginManifest({ description: { en: '' } })).toThrow(
                 'plugin.manifest_invalid_description'
             );
-            expect(() => parsePluginManifest({ schemaVersion: 1, description: { en: '' } })).toThrow(
+            expect(() => parsePluginManifest({ description: { en: 'ok', zh: 42 } })).toThrow(
                 'plugin.manifest_invalid_description'
             );
-            expect(() => parsePluginManifest({ schemaVersion: 1, description: { en: 'ok', zh: 42 } })).toThrow(
-                'plugin.manifest_invalid_description'
-            );
-            expect(() => parsePluginManifest({ schemaVersion: 1, description: 42 })).toThrow(
-                'plugin.manifest_invalid_description'
-            );
+            expect(() => parsePluginManifest({ description: 42 })).toThrow('plugin.manifest_invalid_description');
         });
 
         test('applyPluginManifest 将 manifest 中的本地化 description 合并进入口对象', () => {
@@ -127,7 +114,6 @@ describe('pluginmgr agents', () => {
             const merged = applyPluginManifest(
                 plugin,
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: [],
                     description: { en: 'Review code changes', zh: '审查代码变更' }
                 })
@@ -145,7 +131,6 @@ describe('pluginmgr agents', () => {
 
             const resources = loadPluginResources(
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: ['agent'],
                     resources: { agents: ['./reviewer'] }
                 }),
@@ -173,7 +158,6 @@ describe('pluginmgr agents', () => {
 
             const resources = loadPluginResources(
                 parsePluginManifest({
-                    schemaVersion: 1,
                     capabilities: ['agent'],
                     resources: { agents: ['./agents'] }
                 }),
@@ -193,7 +177,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['./missing'] }
                     }),
@@ -207,7 +190,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['./nothing-here'] }
                     }),
@@ -220,7 +202,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['../outside'] }
                     }),
@@ -234,7 +215,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['./hollow'] }
                     }),
@@ -251,7 +231,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['./strict'] }
                     }),
@@ -268,7 +247,6 @@ describe('pluginmgr agents', () => {
             expect(() =>
                 loadPluginResources(
                     parsePluginManifest({
-                        schemaVersion: 1,
                         capabilities: ['agent'],
                         resources: { agents: ['./broken-meta'] }
                     }),

@@ -12,7 +12,6 @@ import { jest } from '@jest/globals';
  */
 
 const PLUGIN_MANIFEST = {
-    schemaVersion: 1,
     id: 'acme-dep-plugin',
     displayName: { en: 'Acme Dep Registry', zh: 'Acme 依赖注册表' },
     entry: './index.mjs',

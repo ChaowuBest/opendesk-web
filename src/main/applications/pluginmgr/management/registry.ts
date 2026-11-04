@@ -7,8 +7,9 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { logger } from '../../../utils/logger.js';
+import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
-import { ensurePluginDirectories, getPluginRegistryPath } from './paths.js';
+import { ensurePluginDirectories, getPluginRecordRoot, getPluginRegistryPath } from './paths.js';
 
 /**
  * 插件来源：`builtin` 为内置级（默认内置目录 + 附加插件目录），`local` 为安装到
@@ -130,4 +131,19 @@ export function removePluginRecord(id: string, configDirectory?: string): boolea
     registry.plugins = next;
     savePluginRegistry(registry, configDirectory);
     return true;
+}
+
+/**
+ * 注册表记录是否已经成了「幽灵」：记录指向的插件目录/文件已经不存在。
+ *
+ * 常见于三种情况：应用不再内置某个插件（改成只从市场分发）、用户手工删掉了插件目录、
+ * 外部插件目录被撤掉。这类记录既不能被启用也不能被卸载（连插件本体都没了），
+ * 列出来只是幽灵条目，所以展示层据此把它过滤掉。
+ */
+export function isStalePluginRecord(record: PluginRegistryRecord, configDirectory?: string): boolean {
+    const resolvedConfigDirectory = configDirectory ?? getOpendeskDirectory();
+    const target = path.isAbsolute(record.path)
+        ? record.path
+        : path.resolve(getPluginRecordRoot(record.source, resolvedConfigDirectory), record.path);
+    return !fs.existsSync(target);
 }

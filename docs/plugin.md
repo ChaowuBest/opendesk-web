@@ -556,12 +556,13 @@ review-helper/
 
 ```json
 {
-    "schemaVersion": 1,
     "id": "review-helper",
     "displayName": "Review Helper",
+    "description": "审阅代码并给出可执行的修改建议。",
     "entry": "./index.js",
     "apiVersion": 1,
     "capabilities": ["skill", "mcp"],
+    "homepage": "https://example.com/review-helper",
     "resources": {
         "skills": ["./skills/review-code"],
         "mcpServers": [
@@ -590,6 +591,9 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
 或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
+清单里**没有** `schemaVersion` 字段：它不参与任何版本协商，写与不写解析结果一样
+（旧清单里残留的这个键会按未知字段忽略）。
+
 ### 版本字段
 
 `version`、`minOpenDeskVersion`、`maxOpenDeskVersion` 都是 **SemVer 版本号**（`1.2.3`，
@@ -609,7 +613,6 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 
 ```json
 {
-    "schemaVersion": 1,
     "id": "example-builtin",
     "entry": "./index.mjs",
     "apiVersion": 1,
@@ -641,7 +644,6 @@ warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔
 
 ```json
 {
-    "schemaVersion": 1,
     "id": "locale-demo",
     "displayName": {
         "en": "Locale Demo",
@@ -661,6 +663,51 @@ warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔
 没有匹配语言的条目时回退到对象中声明的第一个翻译；对象中的每个值都必须是非空字符串。
 插件中心按当前界面语言显示插件名称与描述，并在应用切换语言后实时更新；
 未声明 `displayName` 时回退到插件 ID，未声明 `description` 时不展示描述。
+
+### category / author / homepage（市场展示）
+
+`category`、`author`、`homepage` 是纯展示用元数据，不参与加载与权限判定：
+
+```json
+{
+    "id": "review-helper",
+    "entry": "./index.js",
+    "apiVersion": 1,
+    "capabilities": [],
+    "category": ["办公文档"],
+    "author": {
+        "name": { "zh-CN": "张三", "en-US": "Zhang San" },
+        "institution": { "zh-CN": "开放原子开源基金会", "en-US": "OpenAtom Foundation" },
+        "homepage": "https://example.com/team"
+    },
+    "homepage": "https://example.com/review-helper"
+}
+```
+
+- `category`：字符串数组。取值必须与插件所在市场（registry）`categories` 里声明的分类一致才会被归入
+  该分类；未声明或没有命中任何分类时，插件仍出现在「全部插件」里。内置插件不声明它也能正常工作。
+- `author.name` 必填、`author.institution` 可选，两者都支持简单字符串或本地化对象（规则同
+  `displayName`）；`author.homepage` 只接受 http(s) 地址。
+- `homepage` 是**插件自身**的站点地址（`author.homepage` 是作者/机构的主页），同样只接受 http(s)；
+  插件详情会把两者都渲染成可点链接，点击交给系统浏览器打开。
+- 展示位置：插件市场的卡片上显示「插件名 + 版本」与「`@作者 (机构)`」，插件详情的基本信息里追加
+  作者 / 机构 / 作者主页 / 插件主页。
+- 类型不符时清单校验失败：`plugin.manifest_invalid_category` / `plugin.manifest_invalid_author` /
+  `plugin.manifest_invalid_homepage`。
+
+### 与市场条目的一致性
+
+插件市场条目（`plugins.json`）里的 `displayName` / `description` / `version` / `apiVersion` /
+`platforms` / `category` / `author` / `homepage` / `minOpenDeskVersion` / `maxOpenDeskVersion` 与插件清单
+同义。安装时主进程会拿包内清单与市场条目逐项核对，**两边都声明了**的
+`version` / `minOpenDeskVersion` / `maxOpenDeskVersion` / `homepage` / `author` 必须一致
+（版本类字段按 SemVer 比，`v1.0.0` 与 `1.0.0` 等价；URL 忽略结尾斜杠；本地化文本按主语言标签逐项
+比较，只比两边都声明的语言）。
+
+核对发生在**下载解压之后、落盘之前**：对不上就整单失败，磁盘上不会留下这一版，已安装的旧版本保持
+不动；界面用模态弹窗告诉用户「插件信息与实际数据不匹配」并列出差异字段。`id` 不一致同样报错。
+
+`displayName` / `description` 允许市场只提供部分语言，`category` 允许市场自行归类，因此不参与比较。
 
 ### Skill 路径
 
@@ -694,7 +741,6 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
     "type": "module",
     "opendesk": {
         "plugin": "./dist/plugin.js",
-        "schemaVersion": 1,
         "id": "review-helper",
         "displayName": "Review Helper",
         "apiVersion": 1,
@@ -732,6 +778,104 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 ```bash
 opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 ```
+
+## 插件市场与插件渠道
+
+插件中心按渠道拉取插件清单，每个启用的渠道都是一个独立市场，并在插件中心顶部**独占一个 Tab**
+（Tab 名用渠道展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
+搜索框、分类切换与插件卡片：
+
+- **设置 → 渠道设置 → 插件渠道**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
+  用户可以添加最多 20 个三方渠道，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
+- 渠道配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的渠道既不拉清单，
+  也不在插件中心里占 Tab。
+- 环境变量 `OPENDESK_PLUGIN_CATEGORY` 可以把官方市场指向本地文件或自建 registry，便于调试。
+
+清单格式（`plugins.json`）：
+
+```json
+{
+    "categories": ["办公文档"],
+    "plugins": [
+        {
+            "id": "opendesk-wps-slides",
+            "displayName": { "zh-CN": "OpenDesk WPS Slides", "en-US": "OpenDesk WPS Slides" },
+            "description": {
+                "zh-CN": "在 WPS 演示里用自然语言生成幻灯片。",
+                "en-US": "Generate WPS slides in natural language."
+            },
+            "version": "1.0.1",
+            "apiVersion": 1,
+            "platforms": ["win32", "openharmony"],
+            "category": ["办公文档"],
+            "author": { "name": "OpenDesk 团队", "institution": "开放原子开源基金会" },
+            "homepage": "https://example.com/plugin",
+            "downloadUrl": "https://example.com/static/plugins/opendesk-wps-slides-1.0.1.zip"
+        }
+    ]
+}
+```
+
+- `categories` 可选：声明该市场支持哪些分类（界面上的「全部插件 / 分类A / 分类B」就来自它），
+  省略表示这个市场不支持按分类显示。分类名是自由文本，需要与插件的 `category` 取值一致。
+- 展示字段与插件清单（`opendesk.plugin.json`）同一口径，不再有「市场宽松、包内严格」的落差：
+    - `version` 必须是合法 SemVer；
+    - `apiVersion` 只接受宿主支持的插件 API 版本（当前为 `1`），省略表示不声明；
+    - `minOpenDeskVersion` / `maxOpenDeskVersion` 可选，语义与插件清单同义（SemVer、**包含边界**、
+      省略表示该侧不限）；
+    - `platforms` 取自同一套枚举（`win32` / `darwin` / `linux` / `android` / `openharmony`）；
+    - `author` 必须是 `{ name, institution?, homepage? }` 对象（不再支持字符串简写），`name` 必填、
+      `homepage` 只接受 http(s)。
+- `platforms` 声明的平台不含当前平台时，这条插件在市场上**不展示、也不允许安装**（未声明表示全平台）。
+- `minOpenDeskVersion` / `maxOpenDeskVersion` 不含当前宿主时，条目**仍然展示但标成不可安装**
+  （卡片上写「需要 OpenDesk ≥ x.y.z」，按钮禁用）——平台不匹配是「跟这台机器没关系」，
+  宿主版本不匹配则是「升级 OpenDesk 就能装」，藏起来反而让人以为市场上没有这个插件。
+- 市场卡片的底部胶囊：**已安装** / **可更新**（清单版本高于已装版本时，按钮从「重新安装」变成「更新」，
+  详情里同时给出本地版本）/ **与内置插件冲突**、**需要 OpenDesk ≥ x.y.z**（这两种情况按钮禁用、文案变
+  「无法安装」）；未安装且可安装时不显示胶囊。
+- `plugins[].id` 必须等于插件包内清单的 `id`，不一致时安装会报错（卡片上的「已安装」会对不上）。
+- `downloadUrl` 必须是 `.zip` / `.tgz` / `.tar.gz` 归档包：安装流程是下载 → 解包 → 校验 → 注册；
+  https 清单只接受 https 下载地址，只有非 https 清单（内网市场、本地调试）才放行明文 http。
+- `downloadUrl` 也可以写成**相对清单的地址**（如 `plugins/demo.zip`、`./plugins/demo.tgz`、
+  `/static/plugins/demo.zip`）：清单是 http(s) 地址时按 URL 规则相对解析（换域名/换分支不用改清单），
+  清单是本地调试文件时解析成同级目录下的绝对路径。归档包与清单放在同一个仓库里时最省事。
+- 单条写坏的条目会被跳过；整份清单一条都用不了时按「清单加载失败」处理，并回退到上次成功的缓存。
+- 清单缓存 5 分钟（`apps/pluginmgr/plugin-catalog-cache/`），市场页右上角的刷新会强制重新拉取。
+- 清单顶层**不写** `schemaVersion`：它没有任何版本协商作用，客户端也不读。
+
+从市场安装时：下载走平台 `fetch`（继承代理设置），进度通过 `marketInstallProgress` 事件回传给
+卡片上的进度条；与内置插件同 ID 会在**下载前**就被拒绝（`builtin_conflict`，内置优先，既不白下载，
+也不会为此先把运行中的内置插件停掉再装回去）；覆盖安装会先释放旧实例。
+
+官方市场清单托管在 `../OpenDesk-Pages` 仓库的 `public/static/categories/plugins.json`，插件包放在
+`public/static/plugins/` 下随站点发布，改完部署即可，客户端不需要发版。
+
+### registry 扩展点
+
+每个渠道对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
+`getCatalog(query?)` / `getPluginCount` / 可选 `invalidate`）。`getCatalog` 的查询参数是
+`{ startAt?, limit?, categories? }`：`startAt` / `limit` 与 benchmark 的
+`getCatalog(startAt, limit)` 同义（`startAt` 默认 0、省略 `limit` 表示取到末尾、`0` 表示不取，
+切片由 registry 完成），分类过滤先于分页。内置实现 `PlainPluginRegistry` 只负责
+「一份 HTTP 上的 `plugins.json`」：内存 + 文件缓存、并发去重、断网回退上次成功清单、单条容错；
+界面上目前一次取全量（与 benchmark 一致），大型市场接入后可以直接按页取而不改契约。
+
+未来出现别的市场协议时（分页 RPC、需要认证的私有市场、增量索引……），**不需要改
+`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应渠道即可，
+与 mcpmgr / skillmgr 的 provider 机制同一套写法：
+
+```ts
+registerPluginRegistryProvider({
+    id: 'enterprise-rpc',
+    // 认领哪些渠道由 provider 自己判断；官方渠道同样可以被接管
+    supports: (channel) => channel.url.startsWith('https://market.corp.example/'),
+    // 返回 undefined 表示不接管，交给后面的 provider 或内置实现
+    create: (channel, { dataDirectory, fetchImpl }) => new MyRpcRegistry(channel, { dataDirectory, fetchImpl })
+});
+```
+
+未注册任何 provider 时行为与今天完全一致（全部走内置实现）；provider 的 `supports` / `create`
+抛错只会让该渠道回落到内置实现，不会把整个市场列表拖空。
 
 ## 在 setup 中动态注册 Skill 和 MCP
 

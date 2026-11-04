@@ -17,7 +17,6 @@ describe('opendesk-plugin-sdk CLI', () => {
                 version: '1.0.0',
                 opendesk: {
                     plugin: './dist/plugin.js',
-                    schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: []
                 }

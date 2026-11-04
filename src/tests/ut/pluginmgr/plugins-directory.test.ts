@@ -30,7 +30,6 @@ function writePlugin(directory: string, id: string, extra: Record<string, unknow
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
         JSON.stringify({
-            schemaVersion: 1,
             id,
             entry: './index.js',
             apiVersion: 1,
@@ -120,7 +119,7 @@ describe('附加插件目录（内置插件同等对待）', () => {
         fs.mkdirSync(path.join(additionalDirectory, 'broken'), { recursive: true });
         fs.writeFileSync(
             path.join(additionalDirectory, 'broken', 'opendesk.plugin.json'),
-            JSON.stringify({ schemaVersion: 1, id: 'broken', entry: './missing.js', apiVersion: 1 })
+            JSON.stringify({ id: 'broken', entry: './missing.js', apiVersion: 1 })
         );
         // 清单本身损坏（非法 JSON）：同样要告警，否则只会表现为「插件不见了」
         fs.mkdirSync(path.join(additionalDirectory, 'corrupt'), { recursive: true });
@@ -143,7 +142,7 @@ describe('附加插件目录（内置插件同等对待）', () => {
         fs.mkdirSync(pluginDirectory, { recursive: true });
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
-            JSON.stringify({ schemaVersion: 1, id: 'extra-review', entry: './missing.js', apiVersion: 1 })
+            JSON.stringify({ id: 'extra-review', entry: './missing.js', apiVersion: 1 })
         );
         process.env[PLUGINS_DIRECTORY_ENV] = pluginDirectory;
 
@@ -393,7 +392,7 @@ describe('附加插件目录（内置插件同等对待）', () => {
         fs.mkdirSync(pluginDirectory, { recursive: true });
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
-            JSON.stringify({ schemaVersion: 1, id: 'extra-review', entry: './index.mjs', apiVersion: 1 })
+            JSON.stringify({ id: 'extra-review', entry: './index.mjs', apiVersion: 1 })
         );
         fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), `export default { id: 'extra-review', setup() {} };`);
         process.env[PLUGINS_DIRECTORY_ENV] = additionalDirectory;

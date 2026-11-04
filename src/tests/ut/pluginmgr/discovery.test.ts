@@ -12,7 +12,6 @@ function writePlugin(directory: string, id: string): void {
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
         JSON.stringify({
-            schemaVersion: 1,
             id,
             entry: './index.js',
             apiVersion: 1,

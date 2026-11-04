@@ -408,13 +408,14 @@ describe('plugin manager application renderer', () => {
         toggle.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 10));
 
-        // 与技能中心的技能启停一致：结果走 sendNotification，页面顶部不再出现通知条
+        // 与技能中心的技能启停一致：结果走 sendNotification，页面顶部不再出现通知条；
+        // 通知里的插件名用清单声明的 displayName，而不是内部 id
         expect(callMainWorld).toHaveBeenCalledWith(
             'sendNotification',
             'info',
             '插件中心',
             '启用成功',
-            '插件已启用：installed-plugin'
+            '插件已启用：Installed Plugin'
         );
         expect(widget.shadowRoot.querySelector('.notice')).toBeNull();
     });
@@ -542,6 +543,33 @@ describe('plugin manager application renderer', () => {
         detail.dispatchEvent(new CustomEvent('skill-detail-action', { detail: { id: 'toggle' } }));
         await new Promise((resolve) => setTimeout(resolve, 10));
         expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'installed-plugin', false);
+    });
+
+    test('列表构成变化触发整树重绘时，已打开的详情弹窗原地保留、不重播入场动画', async () => {
+        // 安装 / 卸载会改变列表组成、触发整树重绘：弹窗若被销毁重建，入场动画会重播，
+        // 看起来就像"关掉又打开"。这里要求元素本身被复用，且入场动画被显式关掉。
+        let onPluginsChanged: undefined | (() => void);
+        (window.applicationAPI.subscribe as jest.Mock).mockImplementation(
+            async (name: string, callback: () => void) => {
+                if (name === 'pluginsChanged') onPluginsChanged = callback;
+                return () => undefined;
+            }
+        );
+        const widget = await createWidget();
+        widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]').dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('#plugin-detail-card') as HTMLElement;
+        expect(detail).not.toBeNull();
+
+        // 宿主侧卸载了另一个插件：列表组成变化 → applyEntries 走整树重绘
+        const entries = (await callMainWorld('list')) as any[];
+        const fresh = entries.filter((entry) => entry.id !== '<local-plugin>');
+        callMainWorld.mockImplementation(async (method: string) => (method === 'list' ? fresh : undefined));
+        onPluginsChanged?.();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(widget.shadowRoot.querySelector('#plugin-detail-card')).toBe(detail);
+        const overlay = (detail as any).shadowRoot.querySelector('.detail-overlay') as HTMLElement;
+        expect(overlay.classList.contains('od-detail-no-enter-animation')).toBe(true);
     });
 
     test('installs a selected directory as a local plugin', async () => {

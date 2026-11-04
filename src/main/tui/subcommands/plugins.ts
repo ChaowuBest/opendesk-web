@@ -112,7 +112,7 @@ export function registerPluginsCommand(prog: Command): void {
             console.log(t('plugin.install.start', { spec }));
             const result = await installPlugin(spec);
             if (result.success) {
-                console.log(`✓ ${t('plugin.install.successDetail', { id: result.id ?? spec })}`);
+                console.log(`✓ ${t('plugin.install.successDetail', { name: result.id ?? spec })}`);
             } else {
                 console.error(`✗ ${formatPluginInstallError(result)}`);
                 process.exit(1);
@@ -129,7 +129,7 @@ export function registerPluginsCommand(prog: Command): void {
             const removeData = options.removeData === true;
             const result = await uninstallPlugin(id, { removeData });
             if (result.success) {
-                console.log(`✓ ${t('plugin.uninstall.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.uninstall.successDetail', { name: id })}`);
                 console.log(
                     removeData ? t('plugin.uninstall.dataRemoved', { id }) : t('plugin.uninstall.dataKept', { id })
                 );
@@ -183,7 +183,7 @@ export function registerPluginsCommand(prog: Command): void {
                 process.exit(1);
             }
             if (setPluginEnabled(id, true)) {
-                console.log(`✓ ${t('plugin.enable.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.enable.successDetail', { name: id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
                 process.exit(1);
@@ -201,7 +201,7 @@ export function registerPluginsCommand(prog: Command): void {
                 process.exit(1);
             }
             if (setPluginEnabled(id, false)) {
-                console.log(`✓ ${t('plugin.disable.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.disable.successDetail', { name: id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
                 process.exit(1);

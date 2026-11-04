@@ -7,6 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import { extract as extractTar } from 'tar';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
     validateOpenDeskPluginDirectory,
     validateOpenDeskPluginPackage,
@@ -38,6 +40,7 @@ import {
 } from './paths.js';
 import {
     getPluginRecord,
+    isStalePluginRecord,
     listPluginRecords,
     removePluginRecord,
     upsertPluginRecord,
@@ -51,6 +54,20 @@ export interface PluginInstallOptions {
     configDirectory?: string;
     runNpm?: (args: string[], cwd: string) => Promise<void>;
     fetch?: typeof globalThis.fetch;
+    /**
+     * 远程归档包下载进度（字节）。
+     *
+     * total 来自响应的 content-length；服务端没给长度时为 null，此时只能显示「已下载多少」。
+     * 本地目录 / 本地归档包 / npm 源都不会回调。
+     */
+    onDownloadProgress?: (receivedBytes: number, totalBytes: number | null) => void;
+    /**
+     * 落盘前的最后一道校验：插件已经下载/解压到暂存目录、还没注册进 `plugins/` 之前调用。
+     *
+     * 抛错即中止安装——磁盘上不会留下这一版，已安装的旧版本保持原样。市场安装用它核对
+     * 「市场条目 vs 包内清单」：对不上时宁可整单失败，也不要装进一个与上架信息不符的包。
+     */
+    verifyStaged?: (staged: { id: string; directory: string }) => void;
 }
 
 type PluginArchiveFormat = 'tgz' | 'zip';
@@ -129,16 +146,64 @@ function copyPluginContents(sourceDirectory: string, destinationDirectory: strin
     }
 }
 
+/**
+ * 下载远程插件归档包。
+ *
+ * 边下边写到临时目录：归档包可能几十兆，先整包读进内存既费内存又没法显示进度。
+ * 进度按响应体分块回调，调用方（插件市场）据此更新界面。
+ */
 async function downloadPluginArchive(
     spec: string,
     destination: string,
     format: PluginArchiveFormat,
-    fetchArchive: (input: string) => Promise<Response>
+    fetchArchive: (input: string) => Promise<Response>,
+    onProgress?: (receivedBytes: number, totalBytes: number | null) => void
 ): Promise<string> {
     const response = await fetchArchive(spec);
-    if (!response.ok) throw new Error(`plugin.install_archive_download_failed:${response.status}`);
+    if (!response.ok) {
+        // 取消未消费的响应体，连接立刻回到连接池；重试安装不会等 GC 才释放
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`plugin.install_archive_download_failed:${response.status}`);
+    }
     const archivePath = path.join(destination, `plugin.${format}`);
-    fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
+    // content-length 是「传输编码之后」的字节数：响应被 gzip / br 压缩时它和解压后的流长度对不上，
+    // 拿它算进度会一路冲到 100% 还继续涨（并让「末块优先发」退化成每块都发）。这种响应只能报
+    // 「已下载多少」，界面退化成不定进度条
+    const contentEncoding = (response.headers.get('content-encoding') ?? 'identity').trim().toLowerCase();
+    const declaredSize = Number(response.headers.get('content-length'));
+    const totalBytes =
+        (contentEncoding === '' || contentEncoding === 'identity') && Number.isFinite(declaredSize) && declaredSize > 0
+            ? declaredSize
+            : null;
+    if (!response.body) {
+        fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
+        onProgress?.(fs.statSync(archivePath).size, totalBytes);
+        return archivePath;
+    }
+    let receivedBytes = 0;
+    onProgress?.(0, totalBytes);
+    try {
+        await pipeline(
+            Readable.fromWeb(response.body as never),
+            new Transform({
+                transform(chunk: Buffer, _encoding, callback) {
+                    receivedBytes += chunk.length;
+                    onProgress?.(receivedBytes, totalBytes);
+                    callback(null, chunk);
+                }
+            }),
+            fs.createWriteStream(archivePath)
+        );
+    } catch (error) {
+        // 半截归档包留在临时目录里没有意义，下次安装也不会复用。删不掉（Windows 上句柄
+        // 偶尔还没释放）也不能盖掉真正的失败原因，否则用户只看到一句删除失败
+        try {
+            fs.rmSync(archivePath, { force: true });
+        } catch {
+            /* 清理失败忽略：临时目录随安装流程一起回收 */
+        }
+        throw error;
+    }
     return archivePath;
 }
 
@@ -238,7 +303,8 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                           spec,
                           temporarySourceDirectory,
                           archiveFormat,
-                          options.fetch ?? ((input) => getPlatform().fetch(input))
+                          options.fetch ?? ((input) => getPlatform().fetch(input)),
+                          options.onDownloadProgress
                       );
                 extractedDirectory = await extractPluginArchive(archivePath, extractionDirectory, archiveFormat);
                 stage = 'validate';
@@ -283,16 +349,14 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
             managedPath = relativeManagedPath(validated.id, packageName);
         }
         assertSafePluginId(validated.id);
-        // 内置插件（含附加插件目录）的 ID 具有最高优先级：同 ID 的本地插件装上去也只会被盖掉。
-        // 被禁用的内置插件不在发现结果里，因此再看一眼注册表记录；但只在记录指向的插件仍在
-        // 磁盘上时才算冲突——附加目录撤掉后留下的残留记录不该永久堵住同名插件的安装。
+        if (isBuiltinPluginId(validated.id, configDirectory)) {
+            throw new Error(`plugin.install_builtin_conflict:${validated.id}`);
+        }
+        // 覆盖安装沿用旧记录的启停/选项/授权；上一版被内置插件顶掉时也保留用户的选择
         const previous = getPluginRecord(validated.id, configDirectory);
-        const builtin =
-            (previous?.source === 'builtin' && fs.existsSync(resolvePluginRecordPath(previous, configDirectory))) ||
-            discoverPlugins({ configDirectory }).candidates.some(
-                (candidate) => candidate.source === 'builtin' && candidate.id === validated.id
-            );
-        if (builtin) throw new Error(`plugin.install_builtin_conflict:${validated.id}`);
+        // 落盘前的最后一道校验（市场安装用来核对上架信息与包内清单）：抛错就整单失败，
+        // 此时 destination 还没被挪走，旧版本原样留在磁盘上
+        options.verifyStaged?.({ id: validated.id, directory: pluginDirectory });
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
         const destination = path.join(getPluginsDirectory(configDirectory), validated.id);
@@ -434,6 +498,23 @@ export interface VisiblePluginRecord extends PluginRegistryRecord {
 }
 
 /**
+ * 该 id 是否已经被内置级插件占用（默认内置目录 + 附加插件目录）。
+ *
+ * 内置插件的 ID 具有最高优先级：同 ID 的本地/市场插件装上去也只会被盖掉，因此一律拒绝安装。
+ * 被禁用的内置插件不在发现结果里，所以再看一眼注册表记录；但只在记录指向的插件仍在磁盘上时
+ * 才算冲突——附加目录撤掉后留下的残留记录不该永久堵住同名插件的安装。
+ *
+ * 安装流程与插件市场的下载前预检共用这一判定，避免「市场显示能装、装完才报冲突」。
+ */
+export function isBuiltinPluginId(id: string, configDirectory: string = getOpendeskDirectory()): boolean {
+    const record = getPluginRecord(id, configDirectory);
+    if (record?.source === 'builtin' && fs.existsSync(resolvePluginRecordPath(record, configDirectory))) return true;
+    return discoverPlugins({ configDirectory }).candidates.some(
+        (candidate) => candidate.source === 'builtin' && candidate.id === id
+    );
+}
+
+/**
  * 对外展示口径的插件列表：registry 记录与 discovery 候选合并，与 GUI 插件
  * 管理页（PluginMgrApplication.list）保持一致，内置、附加插件目录与本地散装
  * 插件均可见。平台不匹配的插件（如鸿蒙专属插件）不出现在列表中。
@@ -443,7 +524,13 @@ export function listVisiblePlugins(options: { configDirectory?: string } = {}): 
     const records = listPluginRecords(resolvedConfigDirectory);
     const discovery = discoverPlugins({ configDirectory: resolvedConfigDirectory });
     const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
-    const merged = new Map<string, VisiblePluginRecord>(records.map((record) => [record.id, record]));
+    const merged = new Map<string, VisiblePluginRecord>(
+        records
+            // 与 pluginmgr 列表同口径：记录指向的插件已经不在磁盘上（不再内置、目录被删、
+            // 外部目录被撤）时不再展示——那是一个既不能启用也不能卸载的幽灵条目。
+            .filter((record) => !isStalePluginRecord(record, resolvedConfigDirectory))
+            .map((record) => [record.id, record])
+    );
     for (const candidate of discovery.candidates) {
         if (merged.has(candidate.id)) continue;
         merged.set(candidate.id, {

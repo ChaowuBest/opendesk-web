@@ -832,6 +832,12 @@ export interface OpenDeskPlugin {
     displayName?: PluginDisplayName;
     description?: PluginLocalizedText;
     version?: string;
+    /** 插件分类标签：插件市场按它归类显示，未声明表示未分类 */
+    category?: string[];
+    /** 插件作者信息：仅用于界面展示 */
+    author?: PluginAuthor;
+    /** 插件自身的站点地址（作者主页是 author.homepage） */
+    homepage?: string;
     apiVersion?: number;
     capabilities?: PluginCapability[];
     platforms?: PluginPlatform[];
@@ -860,6 +866,19 @@ export type PluginDisplayNameMap = PluginLocalizedTextMap;
  * 对象键使用 BCP 47 语言标签（如 en、zh、zh-CN），解析时取主语言标签匹配。
  */
 export type PluginDisplayName = PluginLocalizedText;
+
+/**
+ * 插件作者信息（可选）。
+ *
+ * 只用于展示：插件中心详情与插件市场卡片会显示它，不参与加载与权限判定。
+ * `name` / `institution` 与 displayName 一样支持简单字符串或按语言声明的对象；
+ * `homepage` 是作者或机构的站点地址（插件自身地址用元数据的 `homepage`）。
+ */
+export interface PluginAuthor {
+    name: PluginDisplayName;
+    institution?: PluginLocalizedText;
+    homepage?: string;
+}
 
 /** 取语言标签的主子标签（如 zh-CN -> zh），用于本地化文本匹配 */
 export function localePrimaryTag(value: string): string {

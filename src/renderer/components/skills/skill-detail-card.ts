@@ -30,6 +30,16 @@ export function getSkillInitial(name: string): string {
     return /[A-Z0-9\u4e00-\u9fff]/.test(first) ? first : '⚡';
 }
 
+/**
+ * 元数据里的可点值只把 http(s) 渲染成链接。
+ *
+ * 详情卡是共用组件，`href` 由各个调用方给（插件主页、作者主页等），组件不该假定它们
+ * 一定校验过协议：`javascript:` 之类的值在这里退化成纯文本，避免组件本身变成注入入口。
+ */
+function isExternalHref(href: string): boolean {
+    return /^https?:\/\//i.test(href.trim());
+}
+
 export function getSkillPastel(name: string): { bg: string; text: string } {
     let hash = 0;
     for (let index = 0; index < name.length; index += 1) {
@@ -41,6 +51,13 @@ export function getSkillPastel(name: string): { bg: string; text: string } {
 export interface SkillDetailMetaItem {
     label: string;
     value: string;
+    /**
+     * 可选的链接地址：给值时 value 渲染成外链。
+     *
+     * 用 `<a target="_blank">`：主窗口的 window-open 策略会把外链交给系统浏览器打开
+     * （见 main/utils/main-window-navigation.ts），不会在应用里新开窗口。
+     */
+    href?: string;
 }
 
 export interface SkillDetailAction {
@@ -95,6 +112,9 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 .detail-body-content { max-height:480px; overflow-y:auto; padding:16px 20px; border:1px solid #f0f0f0; border-radius:10px; background:#fff; color:#1d1d1f; }.detail-body-content.markdown-body { font-size: var(--fs-base); }
 .markdown-body > :first-child { margin-top:0; }.markdown-body > :last-child { margin-bottom:0; }.markdown-body p { margin:0 0 .75em; }.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6 { margin:1em 0 .45em; line-height:1.3; }.markdown-body h1 { font-size:1.45em; }.markdown-body h2 { font-size:1.3em; }.markdown-body h3 { font-size:1.15em; }.markdown-body ul,.markdown-body ol { padding-left:1.6em; }.markdown-body blockquote { margin:.8em 0; padding:.15em .9em; border-left:3px solid #6ba3ef; color:#777; }.markdown-body code { padding:.12em .35em; border-radius:4px; background:#f5f5f5; font-family:'SF Mono','Cascadia Code',monospace; font-size:.9em; }.markdown-body pre { max-width:100%; overflow:auto; padding:12px; border:1px solid #f0f0f0; border-radius:8px; background:#f8f8f8; }.markdown-body pre code { padding:0; background:transparent; }.markdown-body table { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }.markdown-body th,.markdown-body td { padding:6px 8px; border:1px solid #e5e5e5; text-align:left; }.markdown-body a { color:#5b8def; }.markdown-body img { max-width:100%; }
 .detail-meta-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }.detail-meta-item { min-width:0; padding:8px 12px; border-radius:8px; background:#fafafa; color:#555; font-size: var(--fs-md); }.meta-label { margin-bottom:2px; color:#999; font-size: var(--fs-xs); letter-spacing:.03em; text-transform:uppercase; }.meta-value { overflow-wrap:anywhere; font-weight:500; }
+/* 可点击的元数据值（如作者主页）：交给系统浏览器打开 */
+.meta-link { color:#2f6bc4; text-decoration:none; }
+.meta-link:hover { text-decoration:underline; }
 .detail-resources { display:flex; flex-wrap:wrap; gap:6px; }.detail-resource-tag { padding:4px 10px; border-radius:6px; background:#f5f5f5; color:#555; font-size: var(--fs-sm); }
 .hook-list { display:flex; flex-wrap:wrap; gap:6px; }.hook-pill { padding:4px 10px; border-radius:6px; background:#f5f5f5; color:#555; font-family:'SF Mono','Cascadia Code',monospace; font-size: var(--fs-sm); }
 .agent-list { display:flex; flex-direction:column; gap:8px; }
@@ -128,6 +148,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 :host([data-theme='dark']) .detail-meta-item,:host-context([data-theme='dark']) .detail-meta-item { background:#333; color:#ccc; }
 :host([data-theme='dark']) .meta-label,:host-context([data-theme='dark']) .meta-label { color:#9d9d9d; }
 :host([data-theme='dark']) .meta-value,:host-context([data-theme='dark']) .meta-value { color:#e4e4e4; }
+:host([data-theme='dark']) .meta-link,:host-context([data-theme='dark']) .meta-link { color:#8bb8f0; }
 :host([data-theme='dark']) .detail-resource-tag,:host-context([data-theme='dark']) .detail-resource-tag { background:#3f3f46; color:#ccc; }
 :host([data-theme='dark']) .detail-footer,:host-context([data-theme='dark']) .detail-footer { border-top-color:rgba(255,255,255,.12); background:#252526; }
 :host([data-theme='dark']) .detail-footer-hint,:host-context([data-theme='dark']) .detail-footer-hint { color:#858990; }
@@ -148,6 +169,8 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 :host([data-theme='dark']) .agent-flag,:host-context([data-theme='dark']) .agent-flag { color:#c8cad0; background:rgba(255,255,255,.1); }
 :host([data-theme='dark']) .agent-chevron,:host-context([data-theme='dark']) .agent-chevron { color:#858990; }
 @media(max-width:620px){.detail-overlay{padding:10px}.detail-dialog{max-width:100%;max-height:92vh}.detail-header{padding:16px}.detail-body{padding:16px}.detail-footer{padding:12px 16px}.detail-meta-grid{grid-template-columns:1fr}.detail-tool-params-header,.detail-tool-param{grid-template-columns:1fr .65fr .5fr}.detail-tool-params-header span:last-child,.detail-tool-param span:last-child{display:none}}
+/* 整树重绘时被复挂的弹窗不重播入场动画（见 suppressEnterAnimation） */
+.detail-overlay.od-detail-no-enter-animation,.detail-overlay.od-detail-no-enter-animation .detail-dialog { animation:none; }
 @keyframes fade-in { from { opacity:0; } to { opacity:1; } } @keyframes dialog-in { from { opacity:0; transform:scale(.95) translateY(8px); } to { opacity:1; transform:scale(1) translateY(0); } }
 @keyframes body-switch-forward { from { opacity:0; transform:translateX(24px); } to { opacity:1; transform:none; } }
 @keyframes body-switch-back { from { opacity:0; transform:translateX(-24px); } to { opacity:1; transform:none; } }
@@ -179,6 +202,16 @@ export class SkillDetailCard extends HTMLElement {
 
     connectedCallback(): void {
         this.render();
+    }
+
+    /**
+     * 关掉入场动画。
+     *
+     * 宿主在做整树重绘时会把正在显示的弹窗摘要下来再挂回去（避免销毁重建），
+     * 元素被移出文档再插回去会让 fade-in / dialog-in 重播一次——看起来像弹窗重新打开。
+     */
+    suppressEnterAnimation(): void {
+        this.shadowRoot?.querySelector('.detail-overlay')?.classList.add('od-detail-no-enter-animation');
     }
 
     private emitAction(id: string, data?: string): void {
@@ -280,7 +313,16 @@ export class SkillDetailCard extends HTMLElement {
         if (headerExtra) headerExtra.innerHTML = model.headerExtraHtml ?? '';
 
         const metadata = model.metadata?.length
-            ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.metadataLabel ?? '')}</div><div class="detail-meta-grid">${model.metadata.map((item) => `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${escapeHtml(item.value)}</div></div>`).join('')}</div></section>`
+            ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.metadataLabel ?? '')}</div><div class="detail-meta-grid">${model.metadata
+                  .map(
+                      (item) =>
+                          `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${
+                              item.href && isExternalHref(item.href)
+                                  ? `<a class="meta-link" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.value)}</a>`
+                                  : escapeHtml(item.value)
+                          }</div></div>`
+                  )
+                  .join('')}</div></section>`
             : '';
         body.innerHTML = `${model.description ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.descriptionLabel ?? '')}</div><div class="detail-desc">${escapeHtml(model.description)}</div></section>` : ''}${model.bodyHtml ? `<section class="detail-section"><div class="detail-section-label">${escapeHtml(model.bodyLabel ?? '')}</div><div class="detail-body-content markdown-body">${model.bodyHtml}</div></section>` : ''}${metadata}${model.extraSectionsHtml ?? ''}`;
         body.scrollTop = keepScrollTop;

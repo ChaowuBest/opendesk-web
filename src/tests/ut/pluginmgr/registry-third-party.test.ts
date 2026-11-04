@@ -11,7 +11,6 @@ import { jest } from '@jest/globals';
  */
 
 const PLUGIN_MANIFEST = {
-    schemaVersion: 1,
     id: 'acme-registry-plugin',
     displayName: { en: 'Acme Registry', zh: 'Acme 注册表' },
     entry: './index.mjs',

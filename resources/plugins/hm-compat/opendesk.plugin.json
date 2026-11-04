@@ -1,5 +1,4 @@
 {
-    "schemaVersion": 1,
     "id": "hm-compat",
     "displayName": "HarmonyOS Compat",
     "entry": "./index.mjs",

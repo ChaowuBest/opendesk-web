@@ -35,7 +35,6 @@ describe('OpenDesk plugin package validator', () => {
             path.join(root, 'opendesk.plugin.json'),
             JSON.stringify({
                 entry: './dist/plugin.js',
-                schemaVersion: 1,
                 apiVersion: 1,
                 capabilities: ['skill', 'mcp'],
                 resources: {
@@ -68,7 +67,6 @@ describe('OpenDesk plugin package validator', () => {
                 version: '1.0.0',
                 opendesk: {
                     plugin: './dist/plugin.js',
-                    schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: []
                 }
@@ -86,7 +84,6 @@ describe('OpenDesk plugin package validator', () => {
             path.join(root, 'opendesk.plugin.json'),
             JSON.stringify({
                 entry: './dist/plugin.js',
-                schemaVersion: 1,
                 id: 'standalone-plugin',
                 version: '1.2.3',
                 apiVersion: 1,
@@ -145,7 +142,6 @@ describe('OpenDesk plugin package validator', () => {
                 opendesk: {
                     plugin: './dist/other.js',
                     id: 'other',
-                    schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: []
                 }
@@ -156,7 +152,6 @@ describe('OpenDesk plugin package validator', () => {
             JSON.stringify({
                 entry: './dist/plugin.js',
                 id: 'plugin',
-                schemaVersion: 1,
                 apiVersion: 1,
                 capabilities: []
             })
@@ -176,7 +171,6 @@ describe('OpenDesk plugin package validator', () => {
                 version: '1.0.0',
                 opendesk: {
                     plugin: './dist/plugin.js',
-                    schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: [],
                     resources: {
@@ -199,7 +193,6 @@ describe('OpenDesk plugin package validator', () => {
                 version: '1.0.0',
                 opendesk: {
                     plugin: './dist/plugin.js',
-                    schemaVersion: 1,
                     apiVersion: 1,
                     capabilities: ['skill'],
                     resources: {
@@ -221,7 +214,6 @@ describe('OpenDesk plugin package validator', () => {
             path.join(root, 'opendesk.plugin.json'),
             JSON.stringify({
                 entry: './dist/plugin.js',
-                schemaVersion: 1,
                 apiVersion: 1,
                 capabilities: [],
                 displayName: { en: 'Localized Plugin', zh: '本地化插件' }
@@ -236,7 +228,6 @@ describe('OpenDesk plugin package validator', () => {
             path.join(root, 'opendesk.plugin.json'),
             JSON.stringify({
                 entry: './dist/plugin.js',
-                schemaVersion: 1,
                 apiVersion: 1,
                 capabilities: [],
                 displayName: { en: '' }

@@ -12,7 +12,17 @@ const translations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
-export function t(key: string): string {
+/**
+ * 插件应用的本地化文案。
+ *
+ * @param key 文案键
+ * @param params `${name}` 形式的占位参数
+ */
+export function t(key: string, params?: Record<string, string | number>): string {
     const locale = getLocale();
-    return translations[locale]?.[key] ?? translations['zh-CN']?.[key] ?? key;
+    const template = translations[locale]?.[key] ?? translations['zh-CN']?.[key] ?? key;
+    if (!params) return template;
+    return template.replaceAll(/\$\{(\w+)\}/g, (match, name: string) =>
+        Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
+    );
 }

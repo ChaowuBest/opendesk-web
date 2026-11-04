@@ -13,7 +13,6 @@ import { jest } from '@jest/globals';
  */
 
 const PLUGIN_MANIFEST = {
-    schemaVersion: 1,
     id: 'acme-store-plugin',
     displayName: { en: 'Acme Store Registry', zh: 'Acme 商店注册表' },
     entry: './index.mjs',

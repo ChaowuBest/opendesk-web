@@ -84,7 +84,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'review-helper',
                 entry: './index.js',
                 apiVersion: 1,
@@ -142,7 +141,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'test-external-plugin',
                 version: '1.0.0',
                 entry: './index.mjs',
@@ -194,7 +192,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'local-package-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -236,7 +233,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'hello-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -276,7 +272,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'hello-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -321,7 +316,6 @@ describe('pluginmgr managed installation', () => {
             'review-helper/opendesk.plugin.json',
             Buffer.from(
                 JSON.stringify({
-                    schemaVersion: 1,
                     id: 'zip-review-helper',
                     entry: './index.mjs',
                     apiVersion: 1,
@@ -384,7 +378,6 @@ describe('pluginmgr managed installation', () => {
             'opendesk.plugin.json',
             Buffer.from(
                 JSON.stringify({
-                    schemaVersion: 1,
                     id: 'url-zip-review-helper',
                     entry: './index.mjs',
                     apiVersion: 1,
@@ -419,7 +412,6 @@ describe('pluginmgr managed installation', () => {
             'opendesk.plugin.json',
             Buffer.from(
                 JSON.stringify({
-                    schemaVersion: 1,
                     id: 'platform-fetch-plugin',
                     entry: './index.mjs',
                     apiVersion: 1,
@@ -459,7 +451,6 @@ describe('pluginmgr managed installation', () => {
             'opendesk.plugin.json',
             Buffer.from(
                 JSON.stringify({
-                    schemaVersion: 1,
                     id: 'zip-no-dependencies',
                     entry: './index.mjs',
                     apiVersion: 1,
@@ -498,7 +489,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'tgz-review-helper',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -550,7 +540,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'url-tgz-review-helper',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -680,7 +669,6 @@ describe('pluginmgr managed installation', () => {
                 fs.writeFileSync(
                     path.join(pluginDirectory, 'opendesk.plugin.json'),
                     JSON.stringify({
-                        schemaVersion: 1,
                         entry: './index.js',
                         apiVersion: 999,
                         capabilities: []
@@ -736,7 +724,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'local-review',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -772,7 +759,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'builtin-review',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -815,7 +801,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'manual-review',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -837,7 +822,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(getPluginsDirectory(configDirectory), 'single.opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'single',
                 entry: './single.mjs',
                 apiVersion: 1,
@@ -858,7 +842,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'builtin-review',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -889,7 +872,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'dev-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -921,7 +903,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(pluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'legacy-helper',
                 entry: './index.js',
                 apiVersion: 1,
@@ -963,7 +944,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'dev-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -1001,7 +981,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(builtinPluginDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'dev-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,
@@ -1014,7 +993,6 @@ describe('pluginmgr managed installation', () => {
         fs.writeFileSync(
             path.join(sourceDirectory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'dev-plugin',
                 entry: './index.mjs',
                 apiVersion: 1,

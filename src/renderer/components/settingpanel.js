@@ -30,6 +30,7 @@ import {
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 import './channelSettings.js';
 import './benchmarkChannelSettings.js';
+import './pluginChannelSettings.js';
 import { showTaskTransfer } from './taskTransferDialog.js';
 import {
     parseTokenCount,
@@ -180,22 +181,25 @@ class SettingPanel extends HTMLElement {
     /**
      * 把主进程里的渠道配置同步进 currentData。
      *
-     * 测评集渠道由「渠道设置」组件直接写进主进程的 `applications.benchmark`，面板手里的
-     * 副本会因此变旧；保存前必须先对齐，否则会把刚加/删的渠道整块写回旧值。
-     * 只覆盖 `applications.benchmark`，不整份重新载入，避免冲掉其它 Tab 里还没保存的输入。
+     * 测评集渠道 / 插件渠道由各自的渠道组件直接写进主进程的 `applications.<bundleName>`，
+     * 面板手里的副本会因此变旧；保存前必须先对齐，否则会把刚加/删的渠道整块写回旧值。
+     * 只覆盖渠道所在的那几个应用配置，不整份重新载入，避免冲掉其它 Tab 里还没保存的输入。
      */
-    async _syncBenchmarkChannels() {
+    async _syncChannelConfigs() {
         try {
             const data = await window.settingAPI.loadSettingObject();
-            const benchmarkConfig = data?.applications?.benchmark;
-            if (!this.currentData || !benchmarkConfig) return;
-            if (!this.currentData.applications) this.currentData.applications = {};
-            this.currentData.applications.benchmark = {
-                ...(this.currentData.applications.benchmark || {}),
-                ...benchmarkConfig
-            };
+            if (!this.currentData) return;
+            for (const bundleName of ['benchmark', 'pluginmgr']) {
+                const appConfig = data?.applications?.[bundleName];
+                if (!appConfig) continue;
+                if (!this.currentData.applications) this.currentData.applications = {};
+                this.currentData.applications[bundleName] = {
+                    ...(this.currentData.applications[bundleName] || {}),
+                    ...appConfig
+                };
+            }
         } catch (error) {
-            console.warn('[setting] failed to sync benchmark channels:', error);
+            console.warn('[setting] failed to sync channel configs:', error);
         }
     }
 
@@ -307,7 +311,7 @@ class SettingPanel extends HTMLElement {
                 iconSvg: svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')
             },
             {
-                // 测评集渠道：紧跟搜索设置之后（顺序见下方 render()）
+                // 渠道设置：测评集渠道与插件渠道共用这一个页签（顺序见下方 render()）
                 id: 'registries',
                 label: this._t('sp.tab.registryChannels'),
                 iconSvg: svg('<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/>')
@@ -1008,7 +1012,8 @@ class SettingPanel extends HTMLElement {
                             ${this.renderSearchSection()}
                         </div>
                         <div id="tab-registries" class="${this._activeTab === 'registries' ? '' : 'hidden'} space-y-5">
-                            <benchmark-channel-settings></benchmark-channel-settings>
+                            <benchmark-channel-settings style="display:block"></benchmark-channel-settings>
+                            <plugin-channel-settings style="display:block"></plugin-channel-settings>
                         </div>
                         <div id="tab-wizard" class="${this._activeTab === 'wizard' ? '' : 'hidden'} space-y-5">
                             ${this.renderWizardSection()}
@@ -4027,7 +4032,7 @@ class SettingPanel extends HTMLElement {
         try {
             // 渠道配置由主进程直接写盘：保存整份配置前先对齐一次，
             // 否则这次保存会把刚加/删的渠道冲掉
-            await this._syncBenchmarkChannels();
+            await this._syncChannelConfigs();
             const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
             const savedData = result.data;
             sideEffectFailures = result.sideEffectFailures;
