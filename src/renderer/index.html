@@ -595,7 +595,9 @@
 
             function showAppFrames() {
                 ensureSlots();
-                if (nonAppSlot) nonAppSlot.style.display = 'none';
+                // 隐藏原页面，保留后台 Browser Use 的 webview 渲染。
+                hideAllNonAppChildren(true);
+                currentNonAppContent = null;
                 if (appFramesContainer) appFramesContainer.style.display = 'block';
                 notifyViewChanged('application', currentOpenAppBundleName);
             }
@@ -707,10 +709,13 @@
             /**
              * 隐藏 nonAppSlot 中所有直接子元素
              */
-            function hideAllNonAppChildren() {
+            function hideAllNonAppChildren(keepBackgroundTasks = false) {
                 if (!nonAppSlot) return;
                 for (var i = 0; i < nonAppSlot.children.length; i++) {
                     var child = nonAppSlot.children[i];
+                    if (keepBackgroundTasks && child.tagName === 'TASK-VIEW' && child.hasAttribute('data-background')) {
+                        continue;
+                    }
                     child.style.display = 'none';
                     if (child.tagName === 'TASK-VIEW' && typeof child.markViewHidden === 'function') {
                         // 记录进入后台的时间，供后台超时释放扫描使用。
