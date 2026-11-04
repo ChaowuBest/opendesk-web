@@ -18,7 +18,6 @@ import { installApplicationFrameProxies } from './application-frame-proxy.js';
 import { initApplicationThemeHost, initApplicationThemeFromAPI } from '../theme/theme-iframe-bridge.js';
 import { createRendererTranslator } from '../locale.js';
 import { ApplicationTaskSession } from './application-task-session.js';
-import { normalizeFontPreset } from '../theme/font-preset.js';
 
 /** 将 iframe 内键盘/鼠标事件转发给父窗口，使父窗口的输入监听在子应用中仍能生效 */
 function installParentInputForwarding(): void {
@@ -388,33 +387,6 @@ async function bootstrapApplication(): Promise<void> {
     }
 
     installApplicationFrameProxies(applicationBundleName);
-    let receivedSettingChange = false;
-    window.settingAPI?.onSettingChanged?.((settings) => {
-        receivedSettingChange = true;
-        document.documentElement.setAttribute(
-            'data-font-preset',
-            normalizeFontPreset(settings.gui_config?.font_preset)
-        );
-        applicationHostT = createRendererTranslator(settings);
-        updateFloatingChatTranslations();
-    });
-
-    try {
-        if (window.settingAPI?.loadSettingObject) {
-            const settings = await window.settingAPI.loadSettingObject();
-            // A settings broadcast can arrive while the initial read is pending.
-            if (!receivedSettingChange) {
-                document.documentElement.setAttribute(
-                    'data-font-preset',
-                    normalizeFontPreset(settings.gui_config?.font_preset)
-                );
-                applicationHostT = createRendererTranslator(settings);
-            }
-        }
-    } catch {
-        /* optional */
-    }
-
     if (!window.applicationAPI?.setApplicationBundleName) {
         throw new Error('applicationAPI 未注入。请完全退出后执行 npm run build 再启动；开发模式需重启 electron-vite。');
     }
@@ -452,10 +424,26 @@ async function bootstrapApplication(): Promise<void> {
 void (async () => {
     installParentInputForwarding();
 
+    try {
+        if (window.settingAPI?.loadSettingObject) {
+            const settings = await window.settingAPI.loadSettingObject();
+            const fontPreset = settings.gui_config?.font_preset || 'default';
+            document.documentElement.setAttribute('data-font-preset', fontPreset);
+            applicationHostT = createRendererTranslator(settings);
+        }
+    } catch {
+        /* optional */
+    }
+
     window.addEventListener('message', (e) => {
         if (e.data?.type === 'FONT_SETTINGS') {
             document.documentElement.setAttribute('data-font-preset', e.data.fontPreset);
         }
+    });
+
+    window.settingAPI?.onSettingChanged?.((settings) => {
+        applicationHostT = createRendererTranslator(settings);
+        updateFloatingChatTranslations();
     });
 
     try {

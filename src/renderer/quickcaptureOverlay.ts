@@ -18,9 +18,6 @@
  * 按热键退出的行为。绘制坐标是 CSS 像素（等价于鸿蒙 vp）。
  */
 
-import { normalizeFontPreset } from './theme/font-preset.js';
-import './styles/fonts.css';
-
 const GLOW_FRAME_INTERVAL_MS = 33;
 const CLOSE_AFTER_SENT_MS = 700;
 const MIN_SELECTION = 8;
@@ -61,8 +58,6 @@ interface OverlayApi {
     commit(rect: OverlayRect): Promise<CommitResult>;
     copy(rect: OverlayRect): Promise<CommitResult>;
     close(): Promise<{ ok: boolean }>;
-    getFontPreset(): Promise<{ status: string; data?: string }>;
-    onFontPresetChanged(callback: (preset: string) => void): () => void;
 }
 
 const canvas = document.getElementById('overlay-canvas') as HTMLCanvasElement;
@@ -95,30 +90,6 @@ const state = {
 
 let glowTimer = -1;
 let closeTimer = -1;
-let unbindFontPreset: (() => void) | undefined;
-let fontPresetDisposed = false;
-
-async function initFontPreset(): Promise<void> {
-    let receivedChange = false;
-    const apply = (preset: unknown) => {
-        if (!fontPresetDisposed) {
-            document.documentElement.setAttribute('data-font-preset', normalizeFontPreset(preset));
-        }
-    };
-    unbindFontPreset = api?.onFontPresetChanged?.((preset) => {
-        receivedChange = true;
-        apply(preset);
-    });
-    try {
-        const result = await api?.getFontPreset?.();
-        // 设置广播可能先于启动读取返回，优先保留已经收到的新预设。
-        if (!receivedChange && result?.status === 'ok') {
-            apply(result.data);
-        }
-    } catch (error) {
-        console.warn('[QuickCaptureOverlay] load font preset failed:', error);
-    }
-}
 
 function screenWidth(): number {
     return window.innerWidth;
@@ -376,16 +347,12 @@ async function bootstrap(): Promise<void> {
 }
 
 window.addEventListener('beforeunload', () => {
-    fontPresetDisposed = true;
-    unbindFontPreset?.();
-    unbindFontPreset = undefined;
     if (glowTimer >= 0) {
         clearInterval(glowTimer);
         glowTimer = -1;
     }
 });
 
-void initFontPreset();
 void bootstrap();
 
 export {};
