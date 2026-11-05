@@ -139,6 +139,13 @@ export interface CaseRunState {
     finishedAt: number | null;
     /** 相对 run 目录的用例工作目录 */
     dir: string;
+    /**
+     * 该用例目录（workspace + logs）在收尾时实测的字节数。
+     *
+     * 记账发生在用例结束时，之后不再更新：删掉工作空间后这个数字不会跟着变，
+     * 需要手动刷新才会重扫写回。历史记录没有这个字段，按 0 求和。
+     */
+    usageBytes?: number;
 }
 
 export interface RunSummary {
@@ -196,6 +203,13 @@ export interface RunListItem {
     verifyModel: string;
     concurrency: number;
     summary: RunSummary;
+    /**
+     * 本轮已记账的磁盘占用（各用例 usageBytes 之和）。
+     *
+     * 这是各用例收尾时的快照之和，不是实时扫盘结果：删掉工作空间后不会自动变小，
+     * 需要手动刷新（rescanRunUsage）重扫写回。运行中的轮次只有已结束用例的份额。
+     */
+    usageBytes: number;
 }
 
 export interface ModelOption {

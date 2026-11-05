@@ -52,9 +52,15 @@ import {
     type RunStatus
 } from './common.js';
 import { downloadStateKey, findLocalDatasetByName } from './catalog-common.js';
+import { getDiskUsage } from '../../utils/shell-helper.js';
 
 const META_FILE = 'benchmark-meta.json';
 const RUN_FILE = 'run.json';
+
+/** 各用例记账值之和；老记录没有该字段按 0 算 */
+function sumCaseUsage(run: RunRecord): number {
+    return run.cases.reduce((sum, item) => sum + (item.usageBytes ?? 0), 0);
+}
 /** 下载体积上限：防止清单或镜像给出异常大的文件把磁盘写满 */
 const DOWNLOAD_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 /** 传输停滞上限：连续这么久没有任何字节推进就判定连接假死（0 = 不检测） */
@@ -84,6 +90,7 @@ export class BenchmarkManager {
     private readonly downloads = new Map<string, DownloadState>();
     private notifyTimer: NodeJS.Timeout | null = null;
     private downloadNotifyTimer: NodeJS.Timeout | null = null;
+    private usageRescan: Promise<number> | null = null;
 
     constructor(private readonly dataDirectory: string) {
         this.datasetsDir = path.join(dataDirectory, 'datasets');
@@ -159,6 +166,75 @@ export class BenchmarkManager {
 
     async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         return this.installArchive(archivePath, {});
+    }
+
+    /**
+     * 重扫所有已结束轮次的占用并写回 run.json（手动刷新入口）。
+     *
+     * 记账值是用例收尾时量出来的快照，删掉工作空间后不会自己变，这是唯一的修正入口，
+     * 所以必须真的重扫并落盘——而不是像以前那样只清内存缓存。
+     *
+     * 运行中的轮次一律跳过：重扫这种量级的目录要几十秒到一分多钟，
+     * 会和它自己的 git/编译抢 IO。
+     *
+     * @returns 实际写回了几轮
+     */
+    rescanRunUsage(): Promise<number> {
+        if (this.usageRescan) return this.usageRescan;
+        // 按创建时间倒序：全量重扫要遍历几百万个文件、耗时以分钟计，
+        // 而用户点刷新最关心的是最近跑的轮次，让它们先出结果。
+        this.usageRescan = this.rescanRuns(this.sortRunIdsByNewest(this.safeReadDir(this.runsDir))).finally(() => {
+            this.usageRescan = null;
+        });
+        return this.usageRescan;
+    }
+
+    /** 逐轮推进地重扫，扫一轮推一次通知，界面逐行更新 */
+    private async rescanRuns(runIds: string[]): Promise<number> {
+        let scanned = 0;
+        for (const runId of runIds) {
+            const run = this.readRun(runId);
+            if (!run || run.status === 'running') continue;
+            const snapshot = JSON.stringify(run);
+            let runDir: string;
+            try {
+                runDir = this.resolveInside(this.runsDir, runId);
+            } catch {
+                continue;
+            }
+            let changed = false;
+            for (const item of run.cases) {
+                const caseDir = path.join(runDir, 'cases', toSafeDirName(item.key));
+                let bytes: number;
+                try {
+                    ({ bytes } = await getDiskUsage(caseDir));
+                } catch (error) {
+                    logger.warn(`[benchmark] failed to measure case ${item.key}: ${toErrorMessage(error)}`);
+                    continue;
+                }
+                if (bytes !== item.usageBytes) {
+                    item.usageBytes = bytes;
+                    changed = true;
+                }
+            }
+            if (!changed) continue;
+            // 扫描期间可删除或重跑轮次；异步等待前的快照不能覆盖这些更新。
+            const current = this.readRun(runId);
+            if (!current || this.activeRuns.has(runId) || JSON.stringify(current) !== snapshot) continue;
+            run.summary = summarizeCases(run.cases);
+            this.writeRun(run);
+            scanned += 1;
+            this.notifyNow();
+        }
+        return scanned;
+    }
+
+    /** 按 run 的创建时间倒序，让最近跑的轮次先被重扫 */
+    private sortRunIdsByNewest(ids: string[]): string[] {
+        return ids
+            .map((id) => ({ id, at: this.readRun(id)?.createdAt ?? 0 }))
+            .sort((a, b) => b.at - a.at)
+            .map((item) => item.id);
     }
 
     /** 当前所有下载任务的状态快照（渲染层据此画进度条） */
@@ -384,7 +460,10 @@ export class BenchmarkManager {
                 runModel: record.runModel,
                 verifyModel: record.verifyModel,
                 concurrency: record.concurrency,
-                summary: record.summary
+                summary: record.summary,
+                // 老记录没有 usageBytes 时求和为 0，界面就不显示占用胶囊。
+                // 补全只能靠手动刷新，读列表不做隐式扫盘。
+                usageBytes: sumCaseUsage(record)
             });
         }
         return runs.sort((a, b) => b.createdAt - a.createdAt);

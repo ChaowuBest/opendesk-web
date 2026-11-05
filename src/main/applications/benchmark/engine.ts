@@ -29,6 +29,7 @@ import { t } from './locale/index.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
 import { buildChildProcessEnv } from '../../utils/shellExec.js';
 import { runScript, ScriptExecutionError } from './script-runtime.js';
+import { getDiskUsage } from '../../utils/shell-helper.js';
 import {
     buildVerifyPrompt,
     parseJudgeScore,
@@ -142,6 +143,27 @@ export class BenchmarkRunner {
                 continue;
             }
             outcomes.push(await this.runCase(context, item));
+            await this.recordCaseUsage(context, item);
+        }
+    }
+
+    /**
+     * 用例收尾时量一次它自己的目录并记账。
+     *
+     * 埋在这里而不是 runCase 内部：runCase 有六个 return 出口（done / stopped 若干 / failed），
+     * 逐个埋必然漏。worker 循环是所有正常出口的唯一汇聚点。
+     *
+     * 必须 await：跑完整轮后 execute 会立刻 finishRun 收尾，记账还没写完就收尾会丢掉最后几个用例的份额。
+     */
+    private async recordCaseUsage(context: RunnerContext, item: CasePlanItem): Promise<void> {
+        const { run, runDir, callbacks } = context;
+        const caseDir = path.join(runDir, 'cases', toSafeDirName(item.key));
+        try {
+            const { bytes } = await getDiskUsage(caseDir);
+            callbacks.updateCase(run.id, item.key, { usageBytes: bytes });
+        } catch (error) {
+            // 占用只是辅助信息，系统命令失败不能中断后续用例或覆盖测评结果。
+            logger.warn(`[benchmark] failed to measure case ${item.key}: ${toErrorMessage(error)}`);
         }
     }
 

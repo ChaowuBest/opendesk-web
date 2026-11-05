@@ -26,6 +26,7 @@ import type {
     RunRecord
 } from '../common.js';
 import { downloadStateKey, findLocalDatasetByName, resolveCatalogInstallState } from '../catalog-common.js';
+import { countTagsFitting, resolveColumnGap } from './tag-fit.js';
 import css from './style.css?inline';
 // 复用 agentinput 的模型面板样式（同一套 ctx-menu / ctx-item 视觉与暗色处理）
 import ctxCss from '../../../../renderer/styles/context-menu.css?inline';
@@ -207,7 +208,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private downloads = new Map<string, DownloadState>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
+    private modelLoadVersion = 0;
     private loading = true;
+    /** 正在重扫磁盘占用：按钮置灰并换文案，避免连点触发多轮并发扫盘 */
+    private rescanning = false;
     /** 进行中的清单请求数：清单走网络，比本地测评集慢，不能和 loading 混在一起 */
     private catalogLoading = 0;
     private importing = false;
@@ -248,7 +252,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         }
         this._applyLocaleSetting(setting);
         if (!this.isConnected) return;
-        this._subscribeLocaleChanges();
+        this._subscribeSettingChanges();
         this.applyTheme();
         this.render();
 
@@ -258,6 +262,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot!.addEventListener('input', this.handleInput);
         this.shadowRoot!.addEventListener('contextmenu', this.handleContextMenu);
         document.addEventListener('keydown', this.handleKeydown);
+        // 面板宽度变了，卡片能容下几个 track 胶囊也跟着变
+        window.addEventListener('resize', this.handleResize);
 
         this._onDataChanged = () => {
             void this.loadDatasets(false);
@@ -291,6 +297,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this.modelLoadVersion += 1;
         if (this._onDataChanged) {
             getAPI().unsubscribe('datasetsChanged');
             this._onDataChanged = null;
@@ -317,6 +324,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.shadowRoot?.removeEventListener('input', this.handleInput);
         this.shadowRoot?.removeEventListener('contextmenu', this.handleContextMenu);
         document.removeEventListener('keydown', this.handleKeydown);
+        window.removeEventListener('resize', this.handleResize);
         this.clearPoll();
     }
 
@@ -328,10 +336,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this._t = createTranslatorForBenchmark(setting);
     }
 
-    private _subscribeLocaleChanges() {
+    private _subscribeSettingChanges() {
         if (this._settingUnsubscribe) return;
         const unsubscribe = (window as any).settingAPI?.onSettingChanged?.((setting: any) => {
             if (!this.isConnected) return;
+            void this.loadModels();
             if (resolveRendererLocale(setting) === this._locale) return;
             this._applyLocaleSetting(setting);
             this.render();
@@ -501,7 +510,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.renderUnlessModalOpen();
     }
 
-    private async loadRuns(showLoading: boolean) {
+    private async loadRuns(showLoading: boolean, rescanUsage = false) {
         if (showLoading && this.runs.length === 0) {
             this.loading = true;
             this.render();
@@ -512,13 +521,52 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
         }
         this.renderUnlessModalOpen();
+        // 占用是用例收尾时记的账，和列表一起返回，读的时候不扫盘。
+        // 只有手动刷新才强制重扫写回：那一轮数字变化时会由主进程逐个 notify，列表逐行更新。
+        if (rescanUsage) {
+            try {
+                await getAPI().callMainWorld('rescanRunUsage');
+            } catch {
+                // 重扫失败也要重新拉一次列表：主进程可能已经写回了一部分轮次，
+                // 把刷新放在 try 里会让这些已落盘的结果白等。
+            }
+            try {
+                this.runs = await getAPI().callMainWorld<RunListItem[]>('listRuns');
+            } catch (error: any) {
+                this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
+            }
+            this.renderUnlessModalOpen();
+        }
+    }
+
+    /**
+     * 标题行放不下时，把占用胶囊退回短文案（「占用 1.85 GB 磁盘空间」→「占用 1.85 GB」）。
+     *
+     * 判定看标题名有没有被省略号截断：被截断说明这行挤了，先让占用让位给标题，
+     * 毕竟标题是主信息。
+     */
+    private fitRunUsageLabels(): void {
+        for (const row of Array.from(this.shadowRoot?.querySelectorAll<HTMLElement>('.run-title-row') ?? [])) {
+            const tag = row.querySelector<HTMLElement>('[data-run-usage]');
+            const name = row.querySelector<HTMLElement>('.run-name');
+            const long = tag?.dataset.runUsageLong ?? '';
+            const short = tag?.dataset.runUsageShort ?? '';
+            if (!tag || !name || tag.hidden || !long || !short) continue;
+            tag.textContent = long;
+            if (name.scrollWidth <= name.clientWidth) continue;
+            tag.textContent = short;
+        }
     }
 
     private async loadModels() {
+        const version = ++this.modelLoadVersion;
         try {
-            this.models = await getAPI().callMainWorld<ModelOption[]>('listModels');
+            const models = await getAPI().callMainWorld<ModelOption[]>('listModels');
+            if (version !== this.modelLoadVersion || JSON.stringify(models) === JSON.stringify(this.models)) return;
+            this.models = models;
+            this.refreshModelControls();
         } catch {
-            this.models = [];
+            // 临时读取失败时保留已有列表，后续设置变更或手动刷新可以重试。
         }
     }
 
@@ -789,16 +837,25 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 await this.importDataset();
                 return;
             case 'refresh': {
+                if (this.rescanning) return;
+                this.rescanning = true;
+                this.renderUnlessModalOpen();
                 // 手动刷新要拿到线上最新清单，不能命中主进程的 5 分钟缓存
                 const registryName = this.activeRegistryName();
-                await Promise.all([
-                    registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
-                    this.loadDatasets(false),
-                    this.loadRuns(false)
-                ]);
-                // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
-                // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
-                this.renderUnlessModalOpen();
+                try {
+                    await Promise.all([
+                        registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
+                        this.loadDatasets(false),
+                        // 手动刷新是唯一会强制重扫磁盘占用的入口
+                        this.loadRuns(false, true),
+                        this.loadModels()
+                    ]);
+                } finally {
+                    this.rescanning = false;
+                    // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
+                    // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
+                    this.renderUnlessModalOpen();
+                }
                 return;
             }
             case 'open-dataset':
@@ -1040,6 +1097,43 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (chip) chip.innerHTML = `${effortIconSvg(effort)}${escapeHtml(this.effortLabel(effort))}`;
     }
 
+    /** 设置刷新只更新模型控件，保留测评参数和搜索框的 DOM、输入与焦点。 */
+    private refreshModelControls() {
+        const modal = this.runModal;
+        const root = this.shadowRoot;
+        if (!modal || !root) return;
+        const defaultModel = this.models.find((item) => item.isDefault) ?? this.models[0];
+        for (const picker of ['run', 'verify'] as const) {
+            const modelKey = picker === 'run' ? 'runModel' : 'verifyModel';
+            const effortKey = picker === 'run' ? 'runModelEffort' : 'verifyModelEffort';
+            if (!modal[modelKey] && defaultModel) {
+                modal[modelKey] = defaultModel.alias;
+                modal[effortKey] = defaultModel.defaultEffort;
+            }
+            const model = this.models.find((item) => item.alias === modal[modelKey]);
+            if (model) this.updateModelTrigger(picker, model, modal[effortKey]);
+        }
+        const start = root.querySelector<HTMLButtonElement>('[data-action="run-start"]');
+        if (start) start.disabled = modal.busy || this.models.length === 0;
+        if (this.models.length > 0 && modal.error === this._t('benchmark.run.modelsEmpty')) {
+            modal.error = '';
+            this.updateModalError();
+        }
+
+        const panel = root.querySelector('.model-panel');
+        if (!panel || !this.modelPanel) return;
+        const holder = document.createElement('div');
+        holder.innerHTML = this.renderModelPanel();
+        const items = panel.querySelector('.ctx-menu-list');
+        if (items) items.innerHTML = holder.querySelector('.ctx-menu-list')?.innerHTML ?? '';
+        const search = panel.querySelector<HTMLInputElement>('.model-search');
+        if (search) this.filterModelPanel(search);
+        if (this.effortMenu && !this.models.some((model) => model.alias === this.effortMenu!.alias)) {
+            this.effortMenu = null;
+        }
+        this.refreshEffortMenu();
+    }
+
     private openModelPanel(picker: 'run' | 'verify', trigger: HTMLElement) {
         const rect = trigger.getBoundingClientRect();
         this.modelPanel = {
@@ -1107,6 +1201,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private handleInput = (event: Event) => {
         const input = event.target as HTMLInputElement | null;
         if (!input || !input.classList.contains('model-search')) return;
+        this.filterModelPanel(input);
+    };
+
+    private filterModelPanel(input: HTMLInputElement) {
         const query = input.value.trim().toLowerCase();
         const panel = input.closest('.model-panel');
         if (!panel) return;
@@ -1114,7 +1212,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             const alias = (item.dataset.alias || '').toLowerCase();
             item.style.display = !query || alias.includes(query) ? '' : 'none';
         });
-    };
+    }
 
     private async switchTab(tab: TabId) {
         if (this.activeTab === tab && !this.detailRunId) return;
@@ -1377,10 +1475,13 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
         this.detailSignature = this.detail && this.detailRunId ? this.computeDetailSignature(this.detail) : null;
         this.markFocusedRow();
+        // 卡片宽度取决于面板布局，所以 track 胶囊要在插入 DOM 之后按实际宽度裁一遍
+        this.fitCardTrackTags();
+        this.fitRunUsageLabels();
     }
 
     private renderShell(): string {
-        const refreshButton = `<button type="button" class="btn" data-action="refresh">${escapeHtml(this._t('benchmark.action.refresh'))}</button>`;
+        const refreshButton = `<button type="button" class="btn" data-action="refresh"${this.rescanning ? ' disabled' : ''}>${escapeHtml(this._t(this.rescanning ? 'benchmark.action.rescanning' : 'benchmark.action.refresh'))}</button>`;
         const actions =
             this.activeTab === 'datasets'
                 ? `<button type="button" class="btn btn-primary" data-action="import" ${this.importing ? 'disabled' : ''}>
@@ -1460,12 +1561,66 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         return `<div class="card-grid">${cards}</div>`;
     }
 
+    /**
+     * 卡片底部的 track 标签：先全量渲染出来，再由 fitCardTrackTags() 按卡片实际宽度
+     * 决定留几个、尾部折成「等 N 个 track」，保证这块永远只占一行。
+     */
+    private renderCardTrackTags(tracks: Array<{ name: string; caseCount?: number }>): string {
+        const tags = tracks
+            .map((track) => {
+                const label = typeof track.caseCount === 'number' ? `${track.name} · ${track.caseCount}` : track.name;
+                return `<span class="tag-pill tag-blue" data-track-tag>${escapeHtml(label)}</span>`;
+            })
+            .join('');
+        // 只有 1 个 track 时没有「等 N 个」可言，省掉这个占位胶囊
+        if (tracks.length < 2) return tags;
+        const restLabel = this._t('benchmark.datasets.tracksMore', { count: tracks.length });
+        return `${tags}<span class="tag-pill" data-track-more hidden>${escapeHtml(restLabel)}</span>`;
+    }
+
+    /** 按可用宽度裁剪卡片底部的 track 胶囊：放不下就从尾部收起，用「等 N 个 track」兜住 */
+    private fitCardTrackTags(): void {
+        const metas = this.shadowRoot?.querySelectorAll<HTMLElement>('.dataset-card .card-meta');
+        if (!metas) return;
+        const widthOf = (el: HTMLElement): number => el.getBoundingClientRect().width;
+        for (const meta of Array.from(metas)) {
+            const tags = Array.from(meta.querySelectorAll<HTMLElement>('[data-track-tag]'));
+            if (tags.length === 0) continue;
+            const more = meta.querySelector<HTMLElement>('[data-track-more]');
+            for (const tag of tags) tag.hidden = false;
+            if (more) more.hidden = true;
+            // 面板还没完成布局（宽度为 0）时不裁，等下一次渲染/resize 再算
+            const available = meta.clientWidth;
+            if (available <= 0) continue;
+            // 一次量出所有胶囊的实际宽度再算预算：靠 scrollWidth 反复试探会在
+            // 边界上多收一个胶囊（差的往往就是一两个 gap）
+            const gap = resolveColumnGap(meta);
+            const widths = tags.map(widthOf);
+            const totalAll = widths.reduce((sum, width) => sum + width, 0) + gap * (tags.length - 1);
+            if (totalAll <= available) continue;
+
+            let keep: number;
+            if (more) {
+                // 提示胶囊自己也占位，先把它和它的 gap 扣掉；它一旦露头就至少收掉一个 track
+                more.hidden = false;
+                keep = countTagsFitting(widths, available - widthOf(more) - gap, gap, tags.length - 1);
+            } else {
+                // 没有兜底胶囊可用时只能硬收，至少保住一行
+                keep = countTagsFitting(widths, available, gap, tags.length);
+            }
+            for (let i = keep; i < tags.length; i += 1) tags[i].hidden = true;
+        }
+    }
+
+    private handleResize = () => {
+        this.fitCardTrackTags();
+        this.fitRunUsageLabels();
+    };
+
     private renderCatalogCard(registryName: string, entry: BenchmarkSummary): string {
         const colors = colorFor(entry.name);
         const initial = entry.name.trim().charAt(0) || 'B';
-        const tags = entry.tracks
-            .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)}</span>`)
-            .join('');
+        const tags = this.renderCardTrackTags(entry.tracks);
         const description = entry.description ? `<div class="card-desc">${escapeHtml(entry.description)}</div>` : '';
         const pill = this.catalogStatusView(registryName, entry);
         return `
@@ -1538,9 +1693,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private renderDatasetCard(dataset: InstalledBenchmarkSummary): string {
         const colors = colorFor(dataset.name);
         const initial = dataset.name.trim().charAt(0) || 'B';
-        const tags = dataset.tracks
-            .map((track) => `<span class="tag-pill tag-blue">${escapeHtml(track.name)} · ${track.caseCount}</span>`)
-            .join('');
+        const tags = this.renderCardTrackTags(dataset.tracks);
         const description = dataset.description
             ? `<div class="card-desc">${escapeHtml(dataset.description)}</div>`
             : '';
@@ -1593,12 +1746,17 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const progress = summary.total > 0 ? finished / summary.total : 0;
         const statusKey = RUN_STATUS_KEYS[run.status] || 'benchmark.status.stopped';
         const scoreText = summary.maxScore > 0 ? summary.totalScore.toFixed(2) : '-';
+        // 占用来自用例记账，跟列表一起返回；0 表示这轮还没记账（老记录，或刚开始跑还没收尾过用例）
+        const usageSize = run.usageBytes > 0 ? formatBytes(run.usageBytes) : '';
+        const usageLong = usageSize ? this._t('benchmark.run.workspace', { size: usageSize }) : '';
+        const usageShort = usageSize ? this._t('benchmark.run.workspaceShort', { size: usageSize }) : '';
         return `
         <div class="run-row" data-run-id="${escapeHtml(run.id)}">
             <div>
                 <div class="run-title-row">
                     <span class="run-name">${escapeHtml(run.datasetName)}</span>
                     <span class="status-pill ${escapeHtml(run.status)}"><span class="dot"></span>${escapeHtml(this._t(statusKey))}</span>
+                    <span class="tag-pill tag-usage" data-run-usage="${escapeHtml(run.id)}" data-run-usage-long="${escapeHtml(usageLong)}" data-run-usage-short="${escapeHtml(usageShort)}" ${usageSize ? '' : 'hidden'}>${escapeHtml(usageLong)}</span>
                 </div>
                 <div class="run-sub">
                     ${escapeHtml(this._t('benchmark.detail.models', { test: run.runModel, verify: run.verifyModel }))} ·

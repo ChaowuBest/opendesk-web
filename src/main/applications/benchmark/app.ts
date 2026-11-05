@@ -129,6 +129,11 @@ export class BenchmarkApplication extends BaseApplication {
         return this.requireManager().listDatasets();
     }
 
+    /** 重扫已结束轮次的磁盘占用并写回记录（手动刷新入口），返回写回了几轮 */
+    async rescanRunUsage(): Promise<number> {
+        return this.requireManager().rescanRunUsage();
+    }
+
     async importDataset(archivePath: string): Promise<InstalledBenchmarkSummary> {
         if (!archivePath || typeof archivePath !== 'string') {
             throw new BenchmarkDataError(t('error.operationFailed'));
