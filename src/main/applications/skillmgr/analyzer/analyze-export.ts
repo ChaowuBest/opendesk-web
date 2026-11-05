@@ -10,6 +10,8 @@
  */
 
 import { CHEVRON_RIGHT_SVG } from '../../../../common/ui-icons.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
+import { Marked } from 'marked';
 
 export interface AnalyzeSkillExport {
     skill: {
@@ -37,7 +39,9 @@ export interface AnalyzeSkillExport {
     error?: string;
 }
 
-export function generateAnalyzeExportPage(): string {
+export function generateAnalyzeExportPage(exportedSkills: AnalyzeSkillExport[] = []): string {
+    const dataJs = generateAnalyzeExportDataJs(exportedSkills);
+    const markdownHtml = generateMarkdownHtml(exportedSkills);
     // 下面整段是自包含的报告 HTML：内嵌 <script> 里的 escHtml 属于浏览器端源码字符串，
     // 无法 import common/utils/escape.js，因此有意保留独立实现，不要"顺手"改成共享函数。
     return `<!DOCTYPE html>
@@ -46,7 +50,6 @@ export function generateAnalyzeExportPage(): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>技能中心 · 分析与优化</title>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 :root {
     --bg: #fff; --text: #1d1d1f; --text-secondary: #999; --text-tertiary: #bbb;
@@ -212,8 +215,10 @@ body { margin:0; padding:0; font-family:var(--font); font-size: var(--fs-base); 
         <div class="detail-body" id="detailBody"></div>
     </div>
 </div>
-<script>var RAW_REPORTS = []; var EXPORTED_SKILLS = [];</script>
-<script src="data.js"></script>
+<script>var RAW_REPORTS = []; var EXPORTED_SKILLS = [];
+${dataJs}
+var MARKDOWN_HTML = new Map(${serializeForScript([...markdownHtml])});
+</script>
 <script>
 var PASTEL_COLORS = [{bg:'#EBF3FE',text:'#5B8DEF'},{bg:'#FEF1E6',text:'#E8935A'},{bg:'#E7F6EA',text:'#4CAF6E'},{bg:'#F2E8FD',text:'#9B6DD7'},{bg:'#FDE9E9',text:'#E06060'},{bg:'#E5F7F4',text:'#3DB49E'},{bg:'#FFF7E0',text:'#D4A028'},{bg:'#FBE5EE',text:'#D45D8A'}];
 var TEST_FAILURE_REASON_CATEGORY_LABELS = {misconfigured:'未正确配置',dependency_runtime:'依赖与运行时问题',input_data:'输入数据问题',external_service:'外部服务问题',skill_implementation:'技能实现问题'};
@@ -243,9 +248,8 @@ if(Array.isArray(EXPORTED_SKILLS)&&EXPORTED_SKILLS.length){EXPORTED_SKILLS.forEa
 else{RAW_REPORTS.forEach(function(r){var id=r.skill.testedName||r.skill.requestedName||'?';addSkillRecord({id:id,name:id,description:r.skill.description||''},{},r)})}
 
 var state={page:1,pageSize:10,searchQuery:''};
-var testCaseMarked=new marked.Marked();testCaseMarked.use({renderer:{html:function(t){return escHtml(t.raw||t.text||'')}}});
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function renderMarkdown(c){return c?testCaseMarked.parse(c):''}
+function renderMarkdown(c){return c?(MARKDOWN_HTML.has(String(c))?MARKDOWN_HTML.get(String(c)):escHtml(c)):''}
 function getSkillColor(n){var h=0;for(var i=0;i<n.length;i++)h=((h<<5)-h+n.charCodeAt(i))|0;return PASTEL_COLORS[Math.abs(h)%PASTEL_COLORS.length]}
 function getSkillInitial(n){return(n||'?').substring(0,2).toUpperCase()}
 function getTestCaseStats(sr){if(!sr||!sr.testCases||!sr.testCases.length)return'';var t=sr.testCases;return' (共'+t.length+'条，'+t.filter(function(x){return x.status==='passed'}).length+'通过，'+t.filter(function(x){return x.status==='failed'}).length+'失败)'}
@@ -329,10 +333,44 @@ export function generateAnalyzeExportDataJs(exportedSkills: AnalyzeSkillExport[]
     lines.push('var EXPORTED_SKILLS = typeof EXPORTED_SKILLS === "undefined" ? [] : EXPORTED_SKILLS;');
     lines.push('');
     for (const item of exportedSkills) {
-        lines.push('EXPORTED_SKILLS.push(' + JSON.stringify(cleanAnalyzeSkillExport(item)) + ');');
+        lines.push('EXPORTED_SKILLS.push(' + serializeForScript(cleanAnalyzeSkillExport(item)) + ');');
         lines.push('');
     }
     return lines.join('\n');
+}
+
+function serializeForScript(value: unknown): string {
+    return JSON.stringify(value)
+        .replace(/</g, '\\u003c')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+}
+
+/** Pre-render report markdown once so the exported file needs no network parser or sibling assets. */
+function generateMarkdownHtml(exportedSkills: AnalyzeSkillExport[]): Map<string, string> {
+    const markdown = new Marked();
+    markdown.use({ renderer: { html: (token) => escapeHtml(token.raw || token.text || '') } });
+    const rendered = new Map<string, string>();
+    const add = (text: string) => {
+        if (!rendered.has(text)) rendered.set(text, markdown.parse(text, { async: false }));
+    };
+    const visit = (value: unknown): void => {
+        if (typeof value === 'string') {
+            add(value);
+        } else if (Array.isArray(value)) {
+            value.forEach(visit);
+        } else if (value && typeof value === 'object') {
+            Object.values(value).forEach(visit);
+            // Legacy compatibility reports synthesize these prompts in the page.
+            const checkpoints = (value as { checkpoints?: Array<{ name?: unknown }> }).checkpoints;
+            if (Array.isArray(checkpoints)) {
+                checkpoints.forEach((checkpoint) => add(`[兼容性报告] 验证检查点: ${checkpoint.name}`));
+            }
+        }
+    };
+    visit(exportedSkills.map(cleanAnalyzeSkillExport));
+    add('检查点通过 (status=pass)');
+    return rendered;
 }
 
 function cleanAnalyzeSkillExport(item: AnalyzeSkillExport): AnalyzeSkillExport {

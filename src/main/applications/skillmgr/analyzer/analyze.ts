@@ -32,10 +32,10 @@ import {
     mutateOpendeskMeta
 } from './metadata.js';
 import { appendAdditionalPrompt, readAnalysisPrompts } from './prompts.js';
-import { generateAnalyzeExportPage, generateAnalyzeExportDataJs, type AnalyzeSkillExport } from './analyze-export.js';
+import { generateAnalyzeExportPage, type AnalyzeSkillExport } from './analyze-export.js';
 import { extractPythonTopLevelImports, extractSubprocessCommands, extractShellCommands } from './dep-prescan.js';
 import { logger } from '../../../utils/logger.js';
-import { getTempDir } from '../../../utils/temp.js';
+import { getTempDir, atomicWriteFile } from '../../../utils/temp.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -1473,17 +1473,9 @@ ${retryNote}
         try {
             const exportedSkills = this._collectAnalyzeSkillExports(skillIds);
 
-            const html = generateAnalyzeExportPage();
-
-            // 去掉 .html 后缀作为文件夹名，将 HTML 和 data.js 放入其中
-            const dirPath = filePath.replace(/\.html$/, '');
-            fs.mkdirSync(dirPath, { recursive: true });
-            const htmlPath = path.join(dirPath, 'index.html');
-            const dataJsPath = path.join(dirPath, 'data.js');
-            const dataJs = generateAnalyzeExportDataJs(exportedSkills);
-
-            fs.writeFileSync(htmlPath, html, 'utf-8');
-            fs.writeFileSync(dataJsPath, dataJs, 'utf-8');
+            const html = generateAnalyzeExportPage(exportedSkills);
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            await atomicWriteFile(filePath, html);
 
             return { success: true, skillCount: exportedSkills.length };
         } catch (e) {

@@ -40,6 +40,7 @@ import {
     type StaffResourceContent,
     type StaffSkillImportCandidate,
     type StaffSkillSummary,
+    type StaffStartupInfo,
     type StaffTaskRecord,
     type StaffUpdateInput
 } from './common.js';
@@ -236,15 +237,19 @@ export class AgentOfficeRepository {
         return directory;
     }
 
-    ensurePresetStaffs(presets: PresetStaffDefinition[]): StaffDetail[] {
+    ensurePresetStaffs(presets: PresetStaffDefinition[]): StaffDetail[];
+    ensurePresetStaffs(presets: PresetStaffDefinition[], includeDetails: false): StaffStartupInfo[];
+    ensurePresetStaffs(presets: PresetStaffDefinition[], includeDetails = true): StaffStartupInfo[] {
         const statePath = path.join(this.appDataDirectory, 'preset-staffs.json');
         const state = readJson<{ version: number; installed: string[] }>(statePath, {
             version: 1,
             installed: []
         });
         const installed = new Set(Array.isArray(state.installed) ? state.installed : []);
-        const available = this.listStaffs();
-        const result: StaffDetail[] = [];
+        // Installed keys intentionally outlive deleted employees; do not recreate user-deleted presets.
+        const pending = presets.filter((preset) => !installed.has(preset.key));
+        const available = pending.length > 0 ? this.listStaffStartupInfo() : [];
+        const result: StaffStartupInfo[] = [];
         for (const preset of presets) {
             if (installed.has(preset.key)) continue;
             const existing = available.find(
@@ -253,9 +258,10 @@ export class AgentOfficeRepository {
                     staff.vendor_name === preset.definition.vendor_name &&
                     staff.title === preset.definition.title
             );
-            const staff = existing
-                ? this.getStaffDetail(existing.id)
-                : this.createStaff(preset.definition, preset.agents_md);
+            const staffId = existing?.id ?? this.createStaffFiles(preset.definition, preset.agents_md);
+            const staff = includeDetails
+                ? this.getStaffDetail(staffId)
+                : (existing ?? this.readStaffStartupInfo(staffId));
             result.push(staff);
             installed.add(preset.key);
             atomicWriteJson(statePath, { version: 1, installed: [...installed] });
@@ -267,6 +273,10 @@ export class AgentOfficeRepository {
     }
 
     createStaff(definitionInput: StaffDefinitionInput, defaultAgentsMd = DEFAULT_AGENTS_MD): StaffDetail {
+        return this.getStaffDetail(this.createStaffFiles(definitionInput, defaultAgentsMd));
+    }
+
+    private createStaffFiles(definitionInput: StaffDefinitionInput, defaultAgentsMd: string): string {
         const definition = StaffDefinitionSchema.parse(definitionInput);
         const staffId = crypto.randomUUID();
         const now = new Date().toISOString();
@@ -287,7 +297,39 @@ export class AgentOfficeRepository {
         atomicWriteJson(path.join(protectedDirectory, 'tasks.json'), []);
         atomicWriteJson(path.join(protectedDirectory, 'permission.json'), EMPTY_PERMISSION);
         fs.writeFileSync(path.join(protectedDirectory, 'messages.jsonl'), '', 'utf8');
-        return this.getStaffDetail(staffId);
+        return staffId;
+    }
+
+    listStaffStartupInfo(): StaffStartupInfo[] {
+        if (!fs.existsSync(this.staffsDirectory)) return [];
+        const result: StaffStartupInfo[] = [];
+        for (const entry of fs.readdirSync(this.staffsDirectory, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            try {
+                result.push(this.readStaffStartupInfo(entry.name));
+            } catch {
+                // Ignore malformed staff directories while keeping healthy staff available.
+            }
+        }
+        return result.sort((left, right) => right.hired_at.localeCompare(left.hired_at));
+    }
+
+    private readStaffStartupInfo(staffId: string): StaffStartupInfo {
+        const directory = this.staffDirectory(staffId);
+        const definition = StaffDefinitionSchema.parse(readJson(path.join(directory, 'staff.json'), {}));
+        const metadata = readJson<StaffMetadata>(path.join(directory, 'protected', 'metadata.json'), {
+            id: staffId,
+            hired_at: new Date(0).toISOString(),
+            enabled: false
+        });
+        return {
+            ...definition,
+            id: metadata.id,
+            hired_at: metadata.hired_at,
+            enabled: metadata.enabled,
+            model: metadata.model,
+            local_service: metadata.local_service ? normalizeStaffLocalService(metadata.local_service) : undefined
+        };
     }
 
     listStaffs(): StaffListItem[] {

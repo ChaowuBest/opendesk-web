@@ -398,7 +398,7 @@ async function exportSkillTestArtifacts(
 ): Promise<string> {
     const exportDir = resolveSkillTestExportDir(outputPath);
 
-    const analyzePageResult = await analyzer.exportAnalyzePage(exportDir, skillIds);
+    const analyzePageResult = await analyzer.exportAnalyzePage(path.join(exportDir, 'index.html'), skillIds);
     if (!analyzePageResult.success) {
         throw new Error(`导出技能测试信息页面失败: ${analyzePageResult.error}`);
     }
@@ -438,7 +438,7 @@ async function exportSkillTestCheckpointArtifacts(
 ): Promise<void> {
     fs.mkdirSync(exportDir, { recursive: true });
 
-    const analyzePageResult = await analyzer.exportAnalyzePage(exportDir, skillIds);
+    const analyzePageResult = await analyzer.exportAnalyzePage(path.join(exportDir, 'index.html'), skillIds);
     if (!analyzePageResult.success) {
         throw new Error(`导出技能测试信息页面失败: ${analyzePageResult.error}`);
     }
@@ -469,7 +469,7 @@ function writeExportReadme(exportDir: string, isRunMode: boolean, hasTestReport:
 ## 内容说明
 
 ### 📄 技能测试信息页面
-- \`index.html\` + \`data.js\` — 在浏览器中打开 \`index.html\` 即可查看各技能的测试用例详情。
+- \`index.html\` — 在浏览器中打开 \`index.html\` 即可查看各技能的测试用例详情。
   包含每条用例的标题、提示词（prompt）、预期结果和当前状态。
 
 ### 📦 技能元数据备份

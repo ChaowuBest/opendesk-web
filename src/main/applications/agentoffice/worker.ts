@@ -12,6 +12,7 @@
 import { BaseWorker } from '../base.js';
 import { t } from './locale/index.js';
 import { AgentOfficeRepository } from './repository.js';
+import { recordAgentOfficeStartup } from './startup-timing.js';
 import { isAgentFlowEnabled } from './flow/feature.js';
 import { AgentFlowRepository } from './flow/repository.js';
 import type { FlowReadingBatch } from './flow/reading-common.js';
@@ -97,10 +98,27 @@ export default class AgentOfficeWorker extends BaseWorker {
     private flowRepository?: AgentFlowRepository;
 
     async initialize(): Promise<void> {
-        this.repository = new AgentOfficeRepository(this.appDataDirectory);
-        this.repository.ensurePresetStaffs(presetStaffs());
-        if (isAgentFlowEnabled()) {
-            this.flowRepository = new AgentFlowRepository(this.appDataDirectory, this.repository);
+        const startedAt = performance.now();
+        let ready = false;
+        try {
+            this.repository = new AgentOfficeRepository(this.appDataDirectory);
+            const presetsStartedAt = performance.now();
+            let installed = 0;
+            let presetsReady = false;
+            try {
+                installed = this.repository.ensurePresetStaffs(presetStaffs(), false).length;
+                presetsReady = true;
+            } finally {
+                recordAgentOfficeStartup('worker.presets', presetsStartedAt, presetsReady ? 'ready' : 'failed', {
+                    installed
+                });
+            }
+            if (isAgentFlowEnabled()) {
+                this.flowRepository = new AgentFlowRepository(this.appDataDirectory, this.repository);
+            }
+            ready = true;
+        } finally {
+            recordAgentOfficeStartup('worker.prepare', startedAt, ready ? 'ready' : 'failed');
         }
     }
 
@@ -110,6 +128,10 @@ export default class AgentOfficeWorker extends BaseWorker {
 
     listStaffs() {
         return this.repository.listStaffs();
+    }
+
+    listStaffStartupInfo() {
+        return this.repository.listStaffStartupInfo();
     }
 
     getStaffDetail(staffId: string) {
