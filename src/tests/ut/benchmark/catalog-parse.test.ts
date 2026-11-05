@@ -70,6 +70,73 @@ describe('parseCatalogDocument 下载地址', () => {
     });
 });
 
+describe('parseCatalogDocument 相对下载地址', () => {
+    // 与官方 registry（清单与 zip 同仓托管）的形态一致：清单地址在 raw/main 下，zip 写相对路径
+    const CATALOG_URL = 'https://gitcode.com/OpenDesk-Community/official-benchmark-registry/raw/main/category.json';
+    const WITH_BASE = { ...LENIENT, baseUrl: CATALOG_URL };
+
+    test('相对路径以清单地址为基准解析成绝对地址', () => {
+        const entries = parseCatalogDocument(
+            [{ ...ENTRY, downloadUrl: 'zips/workbuddy-bench-0.1.zip' }],
+            CATALOG_URL,
+            WITH_BASE
+        );
+        expect(entries[0].downloadUrl).toBe(
+            'https://gitcode.com/OpenDesk-Community/official-benchmark-registry/raw/main/zips/workbuddy-bench-0.1.zip'
+        );
+    });
+
+    test('`./` 与 `../` 开头的相对路径同样按清单地址解析', () => {
+        const entries = parseCatalogDocument(
+            [
+                { ...ENTRY, id: 'a', downloadUrl: './zips/a.zip' },
+                { ...ENTRY, id: 'b', downloadUrl: '../shared/b.zip' }
+            ],
+            CATALOG_URL,
+            WITH_BASE
+        );
+        expect(entries[0].downloadUrl).toBe(
+            'https://gitcode.com/OpenDesk-Community/official-benchmark-registry/raw/main/zips/a.zip'
+        );
+        expect(entries[1].downloadUrl).toBe(
+            'https://gitcode.com/OpenDesk-Community/official-benchmark-registry/raw/shared/b.zip'
+        );
+    });
+
+    test('绝对地址不受 baseUrl 影响', () => {
+        const entries = parseCatalogDocument(
+            [{ ...ENTRY, downloadUrl: 'https://mirror.example.com/workbuddy-bench.zip' }],
+            CATALOG_URL,
+            WITH_BASE
+        );
+        expect(entries[0].downloadUrl).toBe('https://mirror.example.com/workbuddy-bench.zip');
+    });
+
+    test('清单不是 JSON 地址（没有 baseUrl）时相对路径按无效地址处理', () => {
+        const entry = { ...ENTRY, downloadUrl: 'zips/workbuddy-bench.zip' };
+        // 宽松模式：跳过这一条，不让它进到下载器
+        expect(parseCatalogDocument([entry, { ...ENTRY, id: 'other-bench' }], 'fixture', LENIENT)).toHaveLength(1);
+        // 严格模式：直接报错
+        expect(() => parseCatalogDocument([entry], 'fixture')).toThrow(/downloadUrl/);
+    });
+
+    test('相对路径解析后仍要过下载地址校验：http 按线上清单规则拒绝', () => {
+        const base = 'http://insecure.example.com/categories/benchmarks.json';
+        const entry = { ...ENTRY, downloadUrl: 'zips/workbuddy-bench.zip' };
+        expect(
+            parseCatalogDocument([entry, { ...ENTRY, id: 'other-bench' }], base, { ...LENIENT, baseUrl: base })
+        ).toHaveLength(1);
+        // 本地调试清单（allowInsecureDownloadUrl）才放行解析出的明文 http
+        expect(
+            parseCatalogDocument([entry], base, {
+                lenient: true,
+                allowInsecureDownloadUrl: true,
+                baseUrl: base
+            })
+        ).toHaveLength(1);
+    });
+});
+
 describe('parseCatalogDocument 单条容错', () => {
     test('一条写坏只跳过它，其余照常可用', () => {
         const entries = parseCatalogDocument(

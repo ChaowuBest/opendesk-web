@@ -29,8 +29,9 @@ import { parsePluginCatalogDocument, PluginMarketError, type PluginCatalogEntry 
 /** 系统默认（官方）渠道的稳定 id，同时用作它的 registry 名与清单缓存文件名 */
 export const OFFICIAL_PLUGIN_CHANNEL_ID = 'official';
 
-/** 官方插件市场的线上清单地址 */
-export const PLUGIN_CATALOG_URL = 'https://opendesk.matrix.openharmony.cn/static/categories/plugins.json';
+/** 官方插件市场的线上清单地址（official-plugin-registry 仓库主线的 category.json） */
+export const PLUGIN_CATALOG_URL =
+    'https://raw.gitcode.com/OpenDesk-Community/official-plugin-registry/raw/main/category.json';
 
 /** 本地调试：把官方清单换成该环境变量指向的地址（本地 JSON 文件或自建 registry） */
 export const PLUGIN_CATALOG_PATH_ENV = 'OPENDESK_PLUGIN_CATEGORY';

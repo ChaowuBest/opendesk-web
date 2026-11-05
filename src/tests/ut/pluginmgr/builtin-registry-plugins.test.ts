@@ -94,16 +94,6 @@ const BRAND_EXPECTATIONS = [
         dir: 'skillhub',
         mcp: [],
         skill: [{ id: 'skillhub', label: 'SkillHub', icon: '💎', slogan: '专为中国用户优化的Skills社区' }]
-    },
-    {
-        dir: 'skill0',
-        mcp: [],
-        skill: [{ id: 'skill0', label: 'skill0.io', icon: '📦', guiHidden: true }]
-    },
-    {
-        dir: 'skillsmp',
-        mcp: [],
-        skill: [{ id: 'skillsmp', label: 'SkillsMP', icon: '🏪', guiHidden: true }]
     }
 ] as const;
 
@@ -137,12 +127,7 @@ describe('内置注册表插件（按品牌）', () => {
         }
     );
 
-    test('guiHidden 仅存在于 skill0 与 skillsmp 的注册表上', async () => {
-        for (const dir of ['skill0', 'skillsmp']) {
-            const context = createContext();
-            await (await loadPlugin(dir)).setup(context);
-            expect(context.registeredSkillRegistries[0].guiHidden).toBe(true);
-        }
+    test('内置品牌注册表均不声明 guiHidden（guiHidden 属于市场分发的 skill0/skillsmp）', async () => {
         for (const dir of ['matrix', 'modelscope', 'clawhub', 'skillhub']) {
             const context = createContext();
             await (await loadPlugin(dir)).setup(context);
@@ -237,9 +222,10 @@ describe('内置注册表插件（按品牌）', () => {
     });
 
     test('集合不变量：全部品牌插件的注册表并集 == 迁移前内置集合', async () => {
-        // 迁移前 skillmgr/mcpmgr 内置注册表的完整集合（含 MCP 侧 modelscope 的 'modelscope-mcp' id）
+        // 迁移前 skillmgr/mcpmgr 内置注册表的完整集合（含 MCP 侧 modelscope 的 'modelscope-mcp' id）；
+        // skill0/skillsmp 已改为官方插件市场分发（resources/plugins 里不再内置），不在本集合内
         const LEGACY_MCP_IDS = ['matrix', 'modelscope-mcp'];
-        const LEGACY_SKILL_IDS = ['matrix', 'clawhub', 'modelscope', 'skillhub', 'skill0', 'skillsmp'];
+        const LEGACY_SKILL_IDS = ['matrix', 'clawhub', 'modelscope', 'skillhub'];
 
         const mcpIds = new Set<string>();
         const skillIds = new Set<string>();

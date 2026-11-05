@@ -30,8 +30,9 @@ import { toErrorMessage } from '../../../common/utils/error.js';
 /** 系统默认（官方）渠道的稳定 id，同时用作它的 registry 名与清单缓存文件名 */
 export const OFFICIAL_CHANNEL_ID = 'official';
 
-/** 官方测评集的线上清单地址 */
-export const BENCHMARK_CATALOG_URL = 'https://opendesk.matrix.openharmony.cn/static/categories/benchmarks.json';
+/** 官方测评集的线上清单地址（official-benchmark-registry 仓库主线的 category.json） */
+export const BENCHMARK_CATALOG_URL =
+    'https://raw.gitcode.com/OpenDesk-Community/official-benchmark-registry/raw/main/category.json';
 
 /** 本地调试：把官方清单换成该环境变量指向的本地 JSON 文件 */
 export const BENCHMARK_CATALOG_PATH_ENV = 'OPENDESK_BENCHMARK_CATEGORY';
@@ -221,7 +222,8 @@ export async function fetchChannelCatalog(
         throw new BenchmarkDataError(t('error.channelVerifyFailed', { url, message: toErrorMessage(error) }));
     }
 
-    const entries = parseCatalogDocument(raw, url);
+    // baseUrl：验证时同样支持清单里写相对下载地址（以渠道地址为基准解析）
+    const entries = parseCatalogDocument(raw, url, { baseUrl: url });
     if (entries.length === 0) {
         // 语法合法但一个测评集都没有：多半是地址填到了目录页而不是清单文件
         throw new BenchmarkDataError(t('error.channelEmpty', { url }));

@@ -436,7 +436,8 @@ describe('pluginmgr managed installation', () => {
             });
 
             expect(result).toEqual({ success: true, id: 'platform-fetch-plugin' });
-            expect(platformFetch).toHaveBeenCalledWith('https://example.com/platform-fetch-plugin.zip');
+            // init 参数可能为 undefined（无 LFS 解引用时的普通下载），断言只关心地址走的是平台层
+            expect(platformFetch.mock.calls[0][0]).toBe('https://example.com/platform-fetch-plugin.zip');
             expect(globalFetch).not.toHaveBeenCalled();
         } finally {
             globalFetch.mockRestore();

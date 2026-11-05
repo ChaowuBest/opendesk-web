@@ -983,6 +983,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private addMenuOpen = false;
     /** 当前展示的 tab：已安装 / 内置插件，以及每个插件市场各占一个 Tab */
     private activeTab: PluginTab = 'installed';
+    /** 首屏默认落点已应用：进入插件中心默认停在第一个市场，用户切走过之后不再抢焦点 */
+    private initialTabApplied = false;
     /** 插件市场（registry）列表：每个市场在顶部占一个 Tab，名字来自渠道展示名 */
     private marketRegistries: PluginMarketRegistryView[] = [];
     private marketRegistriesLoading = false;
@@ -1960,6 +1962,15 @@ export class PluginMgrEntryWidget extends HTMLElement {
         try {
             const registries = await getAPI().callMainWorld('listPluginRegistries');
             this.marketRegistries = Array.isArray(registries) ? registries : [];
+            // 进入插件中心默认落在第一个市场（官方市场固定排最前）而不是「已安装」；
+            // 首屏只应用一次，之后（含渠道变更触发的重拉）不再抢用户当前停留的 Tab
+            if (!this.initialTabApplied) {
+                this.initialTabApplied = true;
+                const firstMarket = this.marketRegistries[0];
+                if (firstMarket && this.activeTab === 'installed') {
+                    this.activeTab = marketTabId(firstMarket.name);
+                }
+            }
             const current = this.currentMarket;
             if (current && !this.marketRegistries.some((item) => item.name === current)) {
                 this.activeTab = 'installed';

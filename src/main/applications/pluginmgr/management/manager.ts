@@ -47,6 +47,8 @@ import {
     type PluginRegistryRecord
 } from './registry.js';
 import { classifyPluginInstallError, type PluginInstallResult, type PluginInstallStage } from './errors.js';
+import { toErrorMessage } from '../../../../common/utils/error.js';
+import { normalizeGitDownloadUrl, resolveResponseLfs } from '../../../../common/git-lfs.js';
 
 export { resolveNpmInvocation, type NpmInvocation } from './dependencies.js';
 
@@ -151,20 +153,31 @@ function copyPluginContents(sourceDirectory: string, destinationDirectory: strin
  *
  * 边下边写到临时目录：归档包可能几十兆，先整包读进内存既费内存又没法显示进度。
  * 进度按响应体分块回调，调用方（插件市场）据此更新界面。
+ *
+ * Git LFS 托管的归档包（官方插件仓库）：raw 直链对 LFS 文件返回的是 pointer 文本
+ * 而不是内容，识别后按 Git LFS 标准协议解引用成 CDN 直链重新下载。
  */
 async function downloadPluginArchive(
     spec: string,
     destination: string,
     format: PluginArchiveFormat,
-    fetchArchive: (input: string) => Promise<Response>,
+    fetchArchive: (input: string, init?: RequestInit) => Promise<Response>,
     onProgress?: (receivedBytes: number, totalBytes: number | null) => void
 ): Promise<string> {
-    const response = await fetchArchive(spec);
+    // GitCode 的 raw.gitcode.com 预览端点对 LFS 二进制直接 403、GitHub 的 blob 是网页：
+    // 先归一成能拿到内容（或 pointer）的直链形态（非 git 托管地址原样保留）
+    const target = normalizeGitDownloadUrl(spec);
+    let response = await fetchArchive(target);
     if (!response.ok) {
         // 取消未消费的响应体，连接立刻回到连接池；重试安装不会等 GC 才释放
         await response.body?.cancel().catch(() => undefined);
         throw new Error(`plugin.install_archive_download_failed:${response.status}`);
     }
+    // LFS 托管的归档包拿到的是 pointer 文本而不是内容：解引用成 CDN 直链重新下载
+    const lfs = await resolveResponseLfs(response, target, fetchArchive).catch((error: unknown) => {
+        throw new Error(`plugin.install_lfs_unresolvable:${toErrorMessage(error)}`);
+    });
+    response = lfs.response;
     const archivePath = path.join(destination, `plugin.${format}`);
     // content-length 是「传输编码之后」的字节数：响应被 gzip / br 压缩时它和解压后的流长度对不上，
     // 拿它算进度会一路冲到 100% 还继续涨（并让「末块优先发」退化成每块都发）。这种响应只能报
@@ -175,7 +188,8 @@ async function downloadPluginArchive(
         (contentEncoding === '' || contentEncoding === 'identity') && Number.isFinite(declaredSize) && declaredSize > 0
             ? declaredSize
             : null;
-    if (!response.body) {
+    const stream = lfs.stream;
+    if (!stream) {
         fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
         onProgress?.(fs.statSync(archivePath).size, totalBytes);
         return archivePath;
@@ -184,7 +198,7 @@ async function downloadPluginArchive(
     onProgress?.(0, totalBytes);
     try {
         await pipeline(
-            Readable.fromWeb(response.body as never),
+            Readable.fromWeb(stream as never),
             new Transform({
                 transform(chunk: Buffer, _encoding, callback) {
                     receivedBytes += chunk.length;
@@ -303,7 +317,7 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                           spec,
                           temporarySourceDirectory,
                           archiveFormat,
-                          options.fetch ?? ((input) => getPlatform().fetch(input)),
+                          options.fetch ?? ((input, init) => getPlatform().fetch(input, init)),
                           options.onDownloadProgress
                       );
                 extractedDirectory = await extractPluginArchive(archivePath, extractionDirectory, archiveFormat);

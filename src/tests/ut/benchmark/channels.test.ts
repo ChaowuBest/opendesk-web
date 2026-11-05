@@ -183,6 +183,15 @@ describe('fetchChannelCatalog', () => {
             })
         ).rejects.toThrow();
     });
+
+    test('resolves relative downloadUrls against the channel url', async () => {
+        const entries = await fetchChannelCatalog('https://example.com/categories/benchmarks.json', {
+            fetchImpl: (async () =>
+                jsonResponse([catalogEntry({ downloadUrl: 'zips/swe-bench.zip' })])) as unknown as typeof fetch
+        });
+
+        expect(entries[0].downloadUrl).toBe('https://example.com/categories/zips/swe-bench.zip');
+    });
 });
 
 describe('createBenchmarkRegistries with configured channels', () => {

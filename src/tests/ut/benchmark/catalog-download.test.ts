@@ -565,4 +565,68 @@ describe('BenchmarkManager 测评集下载', () => {
         ).rejects.toThrow('下载连接长时间没有响应');
         expect(manager.listDownloads()[0].status).toBe('failed');
     });
+
+    test('Git LFS 仓库的 raw 直链返回 pointer 时解引用后照常下载', async () => {
+        const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'benchmark-src-'));
+        writeDataset(path.join(fixtureDir, 'workbuddy-bench'), { name: 'WorkBuddy Bench', version: '1.0.0' });
+        const archive = zipDir(fixtureDir, 'workbuddy-bench');
+        const pointer = [
+            'version https://git-lfs.github.com/spec/v1',
+            'oid sha256:28042189c69e9905ec5daa27496170f7651d6d7d1b769b4af2a7640dab6a0012',
+            `size ${archive.length}`,
+            ''
+        ].join('\n');
+
+        // 模拟 Git LFS 托管三件套：raw 直链给 pointer、batch 端点给 CDN 直链、CDN 给真身
+        let batchRequests = 0;
+        let port = 0;
+        const server = http.createServer((request, response) => {
+            const url = request.url ?? '';
+            if (url === '/org/repo/raw/main/workbuddy-bench.zip') {
+                response.writeHead(200, { 'content-type': 'text/plain;charset=utf-8' });
+                response.end(pointer);
+                return;
+            }
+            if (url === '/org/repo.git/info/lfs/objects/batch' && request.method === 'POST') {
+                batchRequests += 1;
+                request.resume();
+                response.writeHead(200, { 'content-type': 'application/vnd.git-lfs+json' });
+                response.end(
+                    JSON.stringify({
+                        objects: [{ actions: { download: { href: `http://127.0.0.1:${port}/lfs-object` } } }]
+                    })
+                );
+                return;
+            }
+            if (url === '/lfs-object') {
+                response.writeHead(200, {
+                    'content-length': String(archive.length),
+                    'content-type': 'application/zip'
+                });
+                response.end(archive);
+                return;
+            }
+            response.writeHead(404, { 'content-type': 'text/plain' });
+            response.end('not found');
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        port = typeof address === 'object' && address ? address.port : 0;
+        const baseUrl = `http://127.0.0.1:${port}`;
+
+        const { manager, dataDir } = makeManager();
+        try {
+            const summary = await download(
+                manager,
+                makeEntry(`${baseUrl}/org/repo/raw/main`, { version: '1.0.0', fileName: 'workbuddy-bench.zip' })
+            );
+            expect(summary.name).toBe('WorkBuddy Bench');
+            expect(summary.caseCount).toBe(2);
+            expect(manager.listDatasets()).toHaveLength(1);
+            expect(batchRequests).toBe(1);
+            expect(tmpFiles(dataDir).filter((name) => name.startsWith('download-'))).toEqual([]);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
 });

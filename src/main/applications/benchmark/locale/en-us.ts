@@ -43,6 +43,7 @@ export const enUs: Record<string, string> = {
     'error.downloadHttpStatus': 'Download failed: HTTP ${status}',
     'error.downloadTooLarge': 'The archive exceeds the maximum allowed size',
     'error.downloadStalled': 'The download stopped responding, please try again later',
+    'error.lfsUnresolvable': 'Failed to resolve the Git LFS file: ${message}',
     'error.downloadNameMismatch':
         'Downloaded content does not match the catalog: expected "${expected}", got "${actual}"',
     'error.catalogFetchFailed': 'Failed to load the dataset catalog (${url}): ${message}',

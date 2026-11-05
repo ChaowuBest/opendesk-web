@@ -38,6 +38,11 @@ export interface ParseCatalogOptions {
     lenient?: boolean;
     /** 是否允许 http 下载地址；只有本地调试清单允许（线上清单必须走 https） */
     allowInsecureDownloadUrl?: boolean;
+    /**
+     * 清单自身的 http(s) 地址；清单项的 `downloadUrl` 写相对路径时以它为基准解析。
+     * 不给（清单不是通过 JSON 地址指定的，如本地调试文件）时相对路径按无效地址处理。
+     */
+    baseUrl?: string;
 }
 
 /** 解析清单文档（顶层为测评集数组） */
@@ -104,7 +109,7 @@ function parseCatalogEntry(item: unknown, index: number, options: ParseCatalogOp
     if (!id) {
         throw new BenchmarkDataError(t('error.catalogEntryFieldMissing', { index: position, field: 'id' }));
     }
-    const downloadUrl = asText(obj.downloadUrl);
+    const downloadUrl = resolveDownloadUrl(asText(obj.downloadUrl), options);
     if (!isDownloadUrlAllowed(downloadUrl, options.allowInsecureDownloadUrl === true)) {
         throw new BenchmarkDataError(t('error.catalogEntryDownloadUrlInvalid', { index: position }));
     }
@@ -127,6 +132,24 @@ function asCatalogError(error: unknown, source: string): BenchmarkDataError {
 
 function asText(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * 归一化清单项的下载地址：绝对地址原样返回，相对路径以清单地址为基准解析。
+ *
+ * 相对路径的语义是「相对于清单 JSON 所在的目录」，所以只有清单本身通过 http(s)
+ * JSON 地址给出（`options.baseUrl`）时才可能解析；解析结果仍要过 `isDownloadUrlAllowed`
+ * 的校验（线上清单只接受 https）。没有基准或解析失败时保持原样，交由地址校验拒绝。
+ */
+function resolveDownloadUrl(value: string, options: ParseCatalogOptions): string {
+    if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+    const base = asText(options.baseUrl);
+    if (!base) return value;
+    try {
+        return new URL(value, base).toString();
+    } catch {
+        return value;
+    }
 }
 
 /**

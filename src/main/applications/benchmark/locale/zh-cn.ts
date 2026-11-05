@@ -43,6 +43,7 @@ export const zhCn: Record<string, string> = {
     'error.downloadHttpStatus': '下载失败：HTTP ${status}',
     'error.downloadTooLarge': '压缩包体积超出上限',
     'error.downloadStalled': '下载连接长时间没有响应，请稍后重试',
+    'error.lfsUnresolvable': '无法解析 Git LFS 文件：${message}',
     'error.downloadNameMismatch': '下载内容与清单不一致：期望「${expected}」，实际为「${actual}」',
     'error.catalogFetchFailed': '获取测评集清单失败（${url}）：${message}',
     'error.catalogFileReadFailed': '读取本地测评集清单失败（${path}）：${message}',
