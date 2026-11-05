@@ -1,4 +1,5 @@
-import { describe, expect, jest, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals';
+import { setRuntimeLocale } from '../../../locale/index.js';
 import {
     assertChannelNameAvailable,
     assertChannelUrlAvailable,
@@ -10,6 +11,11 @@ import {
     OFFICIAL_PLUGIN_CHANNEL_ID,
     PLUGIN_CATALOG_URL
 } from '../../../main/applications/pluginmgr/channels.js';
+
+// 断言的是 zh-CN 文案：CI 机器多为英文系统，探测出的 locale 是 en-US，
+// 固定运行时语言让测试与宿主环境解耦
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 /**
  * 插件渠道（插件市场来源）的归一化与校验。

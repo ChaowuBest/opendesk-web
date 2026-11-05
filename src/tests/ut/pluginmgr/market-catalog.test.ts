@@ -1,11 +1,17 @@
-import { describe, expect, test } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import os from 'node:os';
 import path from 'node:path';
+import { setRuntimeLocale } from '../../../locale/index.js';
 import {
     filterCatalogByCategories,
     filterCatalogByQuery,
     parsePluginCatalogDocument
 } from '../../../main/applications/pluginmgr/registry/catalog.js';
+
+// 断言的是 zh-CN 文案：CI 机器多为英文系统，探测出的 locale 是 en-US，
+// 固定运行时语言让测试与宿主环境解耦
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 /**
  * 插件市场清单（plugins.json）的解析与过滤。

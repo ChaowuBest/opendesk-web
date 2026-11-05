@@ -86,8 +86,16 @@ describe('createShellOutputDecoder 无换行输出', () => {
         };
 
         run(50); // warmup
-        const small = run(200); // 13MiB
-        const large = run(800); // 50MiB
+
+        // 时序测量受 JIT/GC/宿主并行负载影响，单次采样易误报；
+        // 取多次采样的最小值（最小值最接近真实成本）再比较
+        const bestOf = (chunks: number, samples: number): number => {
+            let best = Number.POSITIVE_INFINITY;
+            for (let i = 0; i < samples; i++) best = Math.min(best, run(chunks));
+            return best;
+        };
+        const small = bestOf(200, 3); // 13MiB
+        const large = bestOf(800, 3); // 50MiB
 
         // 修复前 200→413ms、800→7406ms（约 18x）；线性实现应接近 4x
         expect(large / Math.max(small, 1)).toBeLessThan(8);
