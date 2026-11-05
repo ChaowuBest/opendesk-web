@@ -21,6 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 const LAYER_DEPS = {
     utils: [],
@@ -32,7 +33,7 @@ const LAYER_DEPS = {
 
 // aikernel/types 只承载公共契约，所有层均可依赖；其自身仍由下方规则限制为不能依赖其他实现目录。
 const SHARED_CONTRACT_LAYERS = ['aikernel/types'];
-const AIKERNEL_TYPES_ROOT = path.resolve(process.cwd(), 'src', 'main', 'aikernel', 'types');
+const AIKERNEL_TYPES_ROOT = path.join(PROJECT_ROOT, 'src', 'main', 'aikernel', 'types');
 
 // 文件级例外：允许特定文件依赖白名单之外的层。
 // 仅用于无法通过重构避免的合理跨层依赖，每条需注明理由。
@@ -135,7 +136,7 @@ function checkFile(filePath) {
     const imports = extractImports(filePath);
     const allowedDeps = [...(LAYER_DEPS[currentLayer] || []), ...SHARED_CONTRACT_LAYERS];
 
-    const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
+    const relativePath = path.relative(PROJECT_ROOT, filePath).replace(/\\/g, '/');
     const fileExceptions = FILE_EXCEPTIONS[relativePath] || [];
     const forbiddenImports = FILE_FORBIDDEN_IMPORTS[relativePath] || [];
 
@@ -207,11 +208,11 @@ function getSourceFiles(dir, fileList = []) {
 function main() {
     log(colors.blue, '🏗️  检查架构约束 (OpenDesk)...');
 
-    const mainDir = path.join(__dirname, '..', 'src', 'main');
+    const mainDir = path.join(PROJECT_ROOT, 'src', 'main');
 
     if (!fs.existsSync(mainDir)) {
         log(colors.red, '❌ src/main 目录不存在');
-        process.exit(1);
+        return 1;
     }
 
     const layersToCheck = Object.keys(LAYER_DEPS);
@@ -232,19 +233,18 @@ function main() {
         log(colors.red, `\n❌ 发现 ${allViolations.length} 个架构违规:\n`);
 
         for (const v of allViolations) {
-            console.log(`  ${colors.red}✗${colors.reset} ${path.relative(process.cwd(), v.file)}`);
+            console.log(`  ${colors.red}✗${colors.reset} ${path.relative(PROJECT_ROOT, v.file).replace(/\\/g, '/')}`);
             console.log(`    ${colors.yellow}→${colors.reset} "${v.from}" 层不允许依赖 "${v.to}" 层`);
             console.log(`    import: ${v.import}\n`);
         }
 
         log(colors.yellow, '\n💡 提示：请检查 LAYER_DEPS 中的白名单配置，不在白名单中的跨层依赖视为违规');
 
-        log(colors.yellow, `\n⚠️  发现架构违规（${allViolations.length} 处），请逐步修复`);
-        process.exit(0);
+        return 1;
     } else {
         log(colors.green, `✅ 架构检查通过（检查了 ${allFiles.length} 个文件）`);
-        process.exit(0);
+        return 0;
     }
 }
 
-main();
+process.exitCode = main();
