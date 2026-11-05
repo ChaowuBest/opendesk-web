@@ -36,10 +36,6 @@ import type { TaskState } from '../../aikernel/states/tasks.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
 import path from 'path';
 import {
-    ListPairingRequestsTool,
-    ApprovePairingTool,
-    RevokePairingTool,
-    ListApprovedUsersTool,
     ListChannelStatusTool,
     InstallChannelPluginTool,
     UninstallChannelPluginTool,
@@ -192,12 +188,8 @@ export class ChannelMgrApplication extends BaseApplication {
     async getSkills(): Promise<Skill[]> {
         const manageSkill = Skill.parseMd(MANAGE_CHANNELS_SKILL);
 
-        const pairingToolset = new BaseToolset('channel-pairing');
-        pairingToolset.addTool(new ListPairingRequestsTool());
-        pairingToolset.addTool(new ApprovePairingTool());
-        pairingToolset.addTool(new RevokePairingTool());
-        pairingToolset.addTool(new ListApprovedUsersTool());
-        pairingToolset.addTool(new ListChannelStatusTool(this));
+        const statusToolset = new BaseToolset('channel-status');
+        statusToolset.addTool(new ListChannelStatusTool(this));
 
         const pluginToolset = new BaseToolset('channel-plugin-management');
         pluginToolset.addTool(new InstallChannelPluginTool(this));
@@ -209,7 +201,7 @@ export class ChannelMgrApplication extends BaseApplication {
         pluginToolset.addTool(new CreateFeishuBotTool());
         pluginToolset.addTool(new LoginChannelTool(this));
 
-        manageSkill.toolsets = [pairingToolset, pluginToolset];
+        manageSkill.toolsets = [statusToolset, pluginToolset];
 
         return [manageSkill];
     }

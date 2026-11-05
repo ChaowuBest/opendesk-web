@@ -35,14 +35,6 @@ jest.unstable_mockModule('../../../main/applications/channelmgr/app.js', () => (
     resolveChannelDisplayName: (id: string) => id
 }));
 
-jest.unstable_mockModule('../../../main/applications/channelmgr/pairing.js', () => ({
-    getPendingRequests: jest.fn(),
-    getApprovedUsers: jest.fn(),
-    approveUser: jest.fn(),
-    revokeUser: jest.fn(),
-    removePairingRequest: jest.fn()
-}));
-
 jest.unstable_mockModule('../../../main/applications/channelmgr/feishu-auth.js', () => ({
     feishuAuthInit: jest.fn(),
     feishuAuthBegin: jest.fn(),
