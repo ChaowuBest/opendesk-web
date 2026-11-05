@@ -41,6 +41,8 @@ type WorkerRuntimeOptions = {
     disabledFeatures?: readonly string[];
     /** 启动时已被插件禁用的应用列表，随 workerData 注入（被禁用的应用要停掉自身后台资源） */
     disabledApplications?: readonly string[];
+    /** Hosts can supply a live source so a restarted worker gets the latest language snapshot. */
+    getPreferredSystemLanguages?: () => readonly string[];
 };
 
 const DATABASE_KIT_METHODS = new Set([
@@ -503,9 +505,11 @@ export async function notifyWorkerSettingUpdate(
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
+    const preferredSystemLanguages =
+        runtimeOptions.getPreferredSystemLanguages?.() ?? runtimeOptions.preferredSystemLanguages;
     const args: unknown[] = [settingData];
-    if (runtimeOptions.preferredSystemLanguages) {
-        args.push([...runtimeOptions.preferredSystemLanguages]);
+    if (preferredSystemLanguages) {
+        args.push([...preferredSystemLanguages]);
     }
     await requestSystemWorker('__updateGlobalSetting', args, 'worker settings sync timed out');
 }
@@ -648,6 +652,8 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     const spawnAttempt = {};
     let worker: Worker;
     try {
+        const preferredSystemLanguages =
+            runtimeOptions.getPreferredSystemLanguages?.() ?? runtimeOptions.preferredSystemLanguages;
         worker = new Worker(getPlatform().getWorkerPath(), {
             workerData: {
                 paths: {
@@ -655,9 +661,7 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                     mainBundleDir: path.dirname(getPlatform().getWorkerPath())
                 },
                 setting: Setting.getInstance().getData(),
-                preferredSystemLanguages: runtimeOptions.preferredSystemLanguages
-                    ? [...runtimeOptions.preferredSystemLanguages]
-                    : undefined,
+                preferredSystemLanguages: preferredSystemLanguages ? [...preferredSystemLanguages] : undefined,
                 disabledFeatures: runtimeOptions.disabledFeatures ? [...runtimeOptions.disabledFeatures] : undefined,
                 disabledApplications: runtimeOptions.disabledApplications
                     ? [...runtimeOptions.disabledApplications]
@@ -687,10 +691,16 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
             pending.reject(error);
         }
         ApplicationRegistry.pendingRequests.clear();
-        for (const callback of ApplicationRegistry.pendingStreamRequests.values()) {
-            callback(undefined);
-        }
+        const streams = Array.from(ApplicationRegistry.pendingStreamRequests.values());
         ApplicationRegistry.pendingStreamRequests.clear();
+        for (const callback of streams) {
+            try {
+                callback(undefined, error.message);
+            } catch (callbackError) {
+                // A renderer may already have closed; still terminate the other clients.
+                logger.warn('failed to notify a stream client after worker failure', callbackError);
+            }
+        }
         // 清理所有活跃的 fetch reader
         for (const [id, reader] of ApplicationRegistry.activeFetchReaders) {
             try {

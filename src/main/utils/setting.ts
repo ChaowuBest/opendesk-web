@@ -1098,6 +1098,12 @@ export class Setting {
         return getSettingSchema();
     }
 
+    static getSettingJSONSchema() {
+        // Editors submit configuration input; ACP and plugin schemas may transform
+        // that input into runtime values which JSON Schema cannot describe.
+        return z.toJSONSchema(getSettingSchema(), { io: 'input' });
+    }
+
     getDefaultVisionModelInstance(): ModelInstance | null {
         if (!this.data.default_vision_model) {
             return null;
