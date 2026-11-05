@@ -76,6 +76,30 @@ const HttpUrlSchema = z.string().refine(
     { message: 'expected an http(s) URL' }
 );
 
+/**
+ * 插件图标地址是否合法：http(s) 图片链接，或随包分发的安全相对路径（解析到插件根目录内）。
+ *
+ * 打包期（schema）与宿主加载（pluginmgr/discovery/manifest.ts）共用这一个实现，
+ * 两边口径不会漂移：绝对路径、根相对路径（含反斜杠开头）与目录穿越都拒绝。
+ */
+export function isValidPluginIconUrl(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+        return (
+            !path.isAbsolute(value) &&
+            !value.startsWith('/') &&
+            !value.startsWith('\\') &&
+            !value.split(/[\\/]+/).includes('..')
+        );
+    }
+}
+
+const PluginIconUrlSchema = z.string().refine(isValidPluginIconUrl, {
+    message: 'expected an http(s) URL or a safe relative path inside the plugin'
+});
+
 /** 本地化文本（displayName / description / 作者名与机构通用）：字符串或按语言声明的对象 */
 const LocalizedTextSchema = DisplayNameSchema;
 
@@ -132,6 +156,11 @@ export const OpenDeskPluginManifestSchema = z.object({
     author: PluginAuthorSchema.optional(),
     /** 插件自身的站点地址（作者主页是 author.homepage） */
     homepage: HttpUrlSchema.optional(),
+    /**
+     * 插件图标：http(s) 图片链接或随包分发的相对路径（相对插件根目录）。
+     * 仅用于插件中心 / 插件市场的展示；不声明时按名称渲染首字母图标。
+     */
+    iconUrl: PluginIconUrlSchema.optional(),
     apiVersion: z.literal(OPENDESK_PLUGIN_API_VERSION),
     capabilities: z.array(z.enum(OPENDESK_PLUGIN_CAPABILITIES)),
     platforms: z.array(z.enum(OPENDESK_PLUGIN_PLATFORMS)).optional(),

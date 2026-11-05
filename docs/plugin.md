@@ -695,6 +695,20 @@ warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔
 - 类型不符时清单校验失败：`plugin.manifest_invalid_category` / `plugin.manifest_invalid_author` /
   `plugin.manifest_invalid_homepage`。
 
+### iconUrl（插件图标）
+
+`iconUrl` 是插件的展示图标，出现在插件中心与插件市场的卡片上；不参与加载与权限判定，
+未声明时按插件名渲染首字母图标。接受两种写法：
+
+- **http(s) 图片链接**（`"iconUrl": "https://example.com/icon.png"`）：由界面直接加载；
+- **包内相对路径**（`"iconUrl": "icon.png"`、`"./assets/icon.png"`，相对插件根目录）：
+  指向随包分发的图片文件，宿主读取后转成 data URL 交给界面显示。
+
+支持 `png` / `jpg` / `jpeg` / `gif` / `webp` / `svg` / `bmp` 扩展名；文件超过 1MB 或读不到时
+按未声明处理（回退首字母图标），不影响插件加载。绝对路径、根相对路径与目录穿越（`..`）
+都会让清单校验失败（`plugin.manifest_invalid_icon_url`）：图标由宿主读文件，
+不能借这个字段读到插件目录之外。
+
 ### 与市场条目的一致性
 
 插件市场条目（`plugins.json`）里的 `displayName` / `description` / `version` / `apiVersion` /
@@ -826,6 +840,9 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
     - `platforms` 取自同一套枚举（`win32` / `darwin` / `linux` / `android` / `openharmony`）；
     - `author` 必须是 `{ name, institution?, homepage? }` 对象（不再支持字符串简写），`name` 必填、
       `homepage` 只接受 http(s)。
+    - `iconUrl` 可选：插件图标。http(s) 图片链接原样保留；相对链接与 `downloadUrl` 同一套基准解析
+      （相对清单地址），本地调试清单解析成本地文件路径后由宿主读出并内联成 data URL 交给界面，
+      读不到按未声明处理（卡片回退首字母图标）。
 - `platforms` 声明的平台不含当前平台时，这条插件在市场上**不展示、也不允许安装**（未声明表示全平台）。
 - `minOpenDeskVersion` / `maxOpenDeskVersion` 不含当前宿主时，条目**仍然展示但标成不可安装**
   （卡片上写「需要 OpenDesk ≥ x.y.z」，按钮禁用）——平台不匹配是「跟这台机器没关系」，

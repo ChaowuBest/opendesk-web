@@ -127,6 +127,58 @@ function toPlatformFetchInput(input: RequestInfo | URL): string | URL {
     return input.url;
 }
 
+/** 内联为本地图标的单文件大小上限：图标只是展示，超过这个大小多半是给错了文件 */
+const INLINE_ICON_MAX_BYTES = 1024 * 1024;
+
+/** 可内联为本地图标的扩展名 → data URL 的 MIME */
+const ICON_MIME_BY_EXTENSION: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.bmp': 'image/bmp'
+};
+
+/**
+ * 把本地图标文件读成渲染层可显示的 data URL。
+ *
+ * 渲染层页面（dev 模式是 http://localhost、生产是 file://）加载不了本地路径的图片，
+ * 所以清单里解析出本地路径的图标（本地调试市场清单的相对链接、已安装插件的包内相对路径）
+ * 都在这里读文件转成 data URL 后再下发。读不到、不是常见图片格式或超出大小上限时
+ * 返回 undefined——图标只是展示字段，缺失时界面回退首字母图标即可。
+ */
+async function readLocalIconAsDataUrl(iconPath: string): Promise<string | undefined> {
+    const mime = ICON_MIME_BY_EXTENSION[path.extname(iconPath).toLowerCase()];
+    if (!mime) return undefined;
+    try {
+        const stat = await fs.promises.stat(iconPath);
+        if (!stat.isFile() || stat.size > INLINE_ICON_MAX_BYTES) return undefined;
+        const data = await fs.promises.readFile(iconPath);
+        return `data:${mime};base64,${data.toString('base64')}`;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * 展示图标下发渲染层前的归一（市场条目与已安装插件同一套）。
+ *
+ * http(s) 链接渲染层自己就能加载，原样返回；本地路径渲染层加载不了
+ * （dev 模式是 http://localhost、生产是 file://），读文件转成 data URL，
+ * 读不到按未声明处理——图标只是展示字段，缺失时界面回退首字母图标即可。
+ * `toLocalPath` 把包内/清单目录内的相对路径解析到具体文件。
+ */
+async function resolveDisplayIconUrl(
+    iconUrl: string | undefined,
+    toLocalPath: (iconUrl: string) => string = (resolved) => resolved
+): Promise<string | undefined> {
+    if (!iconUrl) return undefined;
+    if (!/^https?:\/\//i.test(iconUrl)) return readLocalIconAsDataUrl(toLocalPath(iconUrl));
+    return iconUrl;
+}
+
 /**
  * 市场条目在当前平台是否可用。
  *
@@ -344,94 +396,110 @@ export class PluginMgrApplication extends BaseApplication {
             ...records.filter((record) => !isStalePluginRecord(record, configDirectory)).map((record) => record.id),
             ...candidatesById.keys()
         ]);
-        return Array.from(ids)
-            .sort()
-            .map((id) => {
-                const record = records.find((candidate) => candidate.id === id);
-                const candidate = candidatesById.get(id);
-                // 来源以 discovery 候选为准：残留的 local 记录不该让实际按内置插件加载的
-                // 插件显示成「可卸载的本地插件」（source 与 path/removable 必须同一口径）。
-                const source = candidate?.source ?? record?.source ?? 'local';
-                let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
-                let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
-                let agents = agentsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
-                let manifest: PluginManifest | undefined;
-                const spec = candidate?.spec ?? (record ? resolvePluginRecordPath(record, configDirectory) : undefined);
-                if (spec) {
-                    try {
-                        const resolved = resolvePluginEntry(spec, configDirectory);
-                        manifest = readPluginManifest(resolved.entry, resolved.rootDir);
-                        if (skills.length === 0 && mcpServers.length === 0 && agents.length === 0) {
-                            const resources = loadPluginResources(manifest, resolved.rootDir);
-                            skills = resources.skills ?? [];
-                            mcpServers = resources.mcpServers ?? [];
-                            agents = resources.agents ?? [];
+        return (
+            await Promise.all(
+                Array.from(ids)
+                    .sort()
+                    .map(async (id) => {
+                        const record = records.find((candidate) => candidate.id === id);
+                        const candidate = candidatesById.get(id);
+                        // 来源以 discovery 候选为准：残留的 local 记录不该让实际按内置插件加载的
+                        // 插件显示成「可卸载的本地插件」（source 与 path/removable 必须同一口径）。
+                        const source = candidate?.source ?? record?.source ?? 'local';
+                        let skills = skillsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
+                        let mcpServers = mcpServersByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
+                        let agents = agentsByPlugin.get(id)?.map(({ definition }) => definition) ?? [];
+                        let manifest: PluginManifest | undefined;
+                        /** 清单声明的图标内联后的地址（与 manifest 一起在 spec 可解析时赋值） */
+                        let manifestIconUrl: string | undefined;
+                        const spec =
+                            candidate?.spec ?? (record ? resolvePluginRecordPath(record, configDirectory) : undefined);
+                        if (spec) {
+                            try {
+                                const resolved = resolvePluginEntry(spec, configDirectory);
+                                manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+                                // 已安装插件的图标以 zip 解压后的清单为准；包内相对路径指向插件目录里的文件
+                                if (manifest) {
+                                    manifestIconUrl = await resolveDisplayIconUrl(manifest.iconUrl, (icon) =>
+                                        path.join(resolved.rootDir, icon)
+                                    );
+                                }
+                                if (skills.length === 0 && mcpServers.length === 0 && agents.length === 0) {
+                                    const resources = loadPluginResources(manifest, resolved.rootDir);
+                                    skills = resources.skills ?? [];
+                                    mcpServers = resources.mcpServers ?? [];
+                                    agents = resources.agents ?? [];
+                                }
+                            } catch {
+                                // Runtime diagnostics already describe malformed or unavailable plugins.
+                            }
                         }
-                    } catch {
-                        // Runtime diagnostics already describe malformed or unavailable plugins.
-                    }
-                }
-                // 平台不匹配的插件仅在加载时记录警告（见 bootstrap），不出现在已安装插件列表。
-                if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
-                    return undefined;
-                }
-                // system/enabled 以 discovery 候选为准（与 bootstrap 加载、listVisiblePlugins 同口径）。
-                // 不能按 record.source 重新解析清单判定：同名 local 记录残留时（插件后来变成内置）
-                // 会出现「GUI 显示可切换、后端 setEnabled 却以 system 拒绝」的分裂。
-                const system = candidate?.system === true;
-                return {
-                    id,
-                    source,
-                    // 与 listVisiblePlugins 同口径：只有记录时也按记录解析成绝对路径
-                    // （registry 里内置插件的相对路径只对内置插件目录成立）。
-                    path: spec,
-                    removable: source !== 'builtin',
-                    system,
-                    enabled: system ? (candidate?.enabled ?? true) : (record?.enabled ?? true),
-                    installedAt: record?.installedAt,
-                    spec: record?.spec,
-                    verification: record ? verifyInstalledPlugin(id) : undefined,
-                    runtime: runtimeById.get(id),
-                    manifest: manifest
-                        ? {
-                              displayName: manifest.displayName,
-                              description: manifest.description,
-                              version: manifest.version,
-                              apiVersion: manifest.apiVersion,
-                              author: manifest.author,
-                              homepage: manifest.homepage,
-                              capabilities: manifest.capabilities
-                          }
-                        : undefined,
-                    skills: skills.map((definition) => ({
-                        name: definition.name,
-                        description: definition.description,
-                        directory: definition.directory,
-                        userInvocable: definition.userInvocable,
-                        modelInvocable: definition.modelInvocable
-                    })),
-                    mcpServers: mcpServers.map((definition) => ({
-                        name: definition.name,
-                        transport: definition.transport,
-                        command: definition.transport === 'stdio' ? definition.command : undefined,
-                        cwd: definition.transport === 'stdio' ? definition.cwd : undefined,
-                        url: definition.transport === 'stdio' ? undefined : definition.url
-                    })),
-                    tools: (toolsByPlugin.get(id) ?? []).map(({ pluginId, definition }) => ({
-                        name: getPluginToolLocalName(pluginId, definition.name),
-                        description: definition.description
-                    })),
-                    hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name })),
-                    browserHints: (browserHintsByPlugin.get(id) ?? []).map(({ urlPrefix }) => ({ urlPrefix })),
-                    agents: agents.map((definition) => ({
-                        name: definition.name,
-                        whenToUse: definition.whenToUse,
-                        dispatchable: definition.dispatchable,
-                        body: definition.body
-                    }))
-                };
-            })
-            .filter((entry) => entry !== undefined);
+                        // 平台不匹配的插件仅在加载时记录警告（见 bootstrap），不出现在已安装插件列表。
+                        if (
+                            manifest?.platforms?.length &&
+                            !manifest.platforms.includes(process.platform as PluginPlatform)
+                        ) {
+                            return undefined;
+                        }
+                        // system/enabled 以 discovery 候选为准（与 bootstrap 加载、listVisiblePlugins 同口径）。
+                        // 不能按 record.source 重新解析清单判定：同名 local 记录残留时（插件后来变成内置）
+                        // 会出现「GUI 显示可切换、后端 setEnabled 却以 system 拒绝」的分裂。
+                        const system = candidate?.system === true;
+                        return {
+                            id,
+                            source,
+                            // 与 listVisiblePlugins 同口径：只有记录时也按记录解析成绝对路径
+                            // （registry 里内置插件的相对路径只对内置插件目录成立）。
+                            path: spec,
+                            removable: source !== 'builtin',
+                            system,
+                            enabled: system ? (candidate?.enabled ?? true) : (record?.enabled ?? true),
+                            installedAt: record?.installedAt,
+                            spec: record?.spec,
+                            verification: record ? verifyInstalledPlugin(id) : undefined,
+                            runtime: runtimeById.get(id),
+                            manifest: manifest
+                                ? {
+                                      displayName: manifest.displayName,
+                                      description: manifest.description,
+                                      version: manifest.version,
+                                      apiVersion: manifest.apiVersion,
+                                      author: manifest.author,
+                                      homepage: manifest.homepage,
+                                      iconUrl: manifestIconUrl,
+                                      capabilities: manifest.capabilities
+                                  }
+                                : undefined,
+                            skills: skills.map((definition) => ({
+                                name: definition.name,
+                                description: definition.description,
+                                directory: definition.directory,
+                                userInvocable: definition.userInvocable,
+                                modelInvocable: definition.modelInvocable
+                            })),
+                            mcpServers: mcpServers.map((definition) => ({
+                                name: definition.name,
+                                transport: definition.transport,
+                                command: definition.transport === 'stdio' ? definition.command : undefined,
+                                cwd: definition.transport === 'stdio' ? definition.cwd : undefined,
+                                url: definition.transport === 'stdio' ? undefined : definition.url
+                            })),
+                            tools: (toolsByPlugin.get(id) ?? []).map(({ pluginId, definition }) => ({
+                                name: getPluginToolLocalName(pluginId, definition.name),
+                                description: definition.description
+                            })),
+                            hooks: (hooksByPlugin.get(id) ?? []).map(({ name }) => ({ name })),
+                            browserHints: (browserHintsByPlugin.get(id) ?? []).map(({ urlPrefix }) => ({ urlPrefix })),
+                            agents: agents.map((definition) => ({
+                                name: definition.name,
+                                whenToUse: definition.whenToUse,
+                                dispatchable: definition.dispatchable,
+                                body: definition.body
+                            }))
+                        };
+                    })
+            )
+        ).filter((entry) => entry !== undefined);
     }
 
     /** 广播插件变更：订阅方（渠道、待办触发器、插件自身）按宿主注册表差量自愈 */
@@ -610,9 +678,12 @@ export class PluginMgrApplication extends BaseApplication {
         return {
             // 分类是 registry 自述的（清单拉下来才知道），界面据此决定要不要显示分类切换
             categories: registry.categories,
-            // 当前平台用不了的插件不上架：市场里看不到它，也就不会去点安装
-            entries: filterCatalogByQuery(entries, typeof query === 'string' ? query : '').filter(
-                isSupportedOnCurrentPlatform
+            // 当前平台用不了的插件不上架：市场里看不到它，也就不会去点安装。
+            // 本地路径的图标先内联成 data URL（渲染层加载不了本地文件），再交给界面
+            entries: await Promise.all(
+                filterCatalogByQuery(entries, typeof query === 'string' ? query : '')
+                    .filter(isSupportedOnCurrentPlatform)
+                    .map(async (entry) => ({ ...entry, iconUrl: await resolveDisplayIconUrl(entry.iconUrl) }))
             )
         };
     }

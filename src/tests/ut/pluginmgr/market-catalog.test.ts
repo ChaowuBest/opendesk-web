@@ -298,6 +298,52 @@ describe('filterCatalogByQuery', () => {
     });
 });
 
+describe('iconUrl 图标链接', () => {
+    function iconEntry(iconUrl: unknown, source = 'https://example.com/plugins.json') {
+        return parsePluginCatalogDocument(document([entry({ id: 'iconed-plugin', iconUrl })]), source, {
+            lenient: true
+        });
+    }
+
+    test('未声明时保持 undefined', () => {
+        const parsed = parsePluginCatalogDocument(
+            document([entry({ id: 'iconed-plugin' })]),
+            'https://example.com/plugins.json'
+        );
+        expect(parsed.entries[0].iconUrl).toBeUndefined();
+    });
+
+    test('绝对 http(s) 图片地址原样保留', () => {
+        const parsed = iconEntry('https://cdn.example.com/icon.png');
+        expect(parsed.entries[0].iconUrl).toBe('https://cdn.example.com/icon.png');
+        const httpParsed = iconEntry('http://cdn.example.com/icon.png');
+        expect(httpParsed.entries[0].iconUrl).toBe('http://cdn.example.com/icon.png');
+    });
+
+    test('相对链接按清单地址解析成绝对 URL（与 downloadUrl 同一套规则）', () => {
+        const parsed = iconEntry('plugins/icon.png', 'https://raw.gitcode.com/acme/registry/raw/main/category.json');
+        expect(parsed.entries[0].iconUrl).toBe('https://raw.gitcode.com/acme/registry/raw/main/plugins/icon.png');
+    });
+
+    test('本地清单里的相对链接解析成同级文件路径', () => {
+        const base = path.resolve(os.tmpdir(), 'opendesk-market', 'category.json');
+        const parsed = parsePluginCatalogDocument(
+            document([entry({ id: 'iconed-plugin', iconUrl: 'plugins/icon.png' })]),
+            base,
+            { lenient: true }
+        );
+        expect(parsed.entries[0].iconUrl).toBe(path.resolve(path.dirname(base), 'plugins', 'icon.png'));
+    });
+
+    test('写坏的图标链接按未声明处理，不让整条插件下架', () => {
+        // iconUrl 只是展示字段：与 homepage 同一口径地宽松处理，写坏就当没写
+        expect(iconEntry('javascript:alert(1)').entries[0].iconUrl).toBeUndefined();
+        expect(iconEntry('ftp://example.com/icon.png').entries[0].iconUrl).toBeUndefined();
+        expect(iconEntry(42).entries[0].iconUrl).toBeUndefined();
+        expect(iconEntry('   ').entries[0].iconUrl).toBeUndefined();
+    });
+});
+
 describe('作者信息', () => {
     function authorEntry(author: unknown) {
         return entry({ id: 'authored-plugin', author });

@@ -1009,6 +1009,51 @@ describe('plugin marketplace renderer', () => {
         });
     });
 
+    test('market cards use the catalog icon when the entry declares one', async () => {
+        const iconUrl = 'data:image/png;base64,AAEC';
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') return [];
+            if (method === 'listPluginRegistries') return REGISTRIES;
+            if (method === 'getPluginCatalog') {
+                return catalog({
+                    entries: [
+                        {
+                            id: 'dev-plugin',
+                            displayName: '开发插件',
+                            description: 'A developer plugin',
+                            version: '1.0.0',
+                            downloadUrl: 'https://example.com/dev-plugin-1.0.0.zip',
+                            iconUrl
+                        },
+                        {
+                            id: 'office-plugin',
+                            displayName: '办公插件',
+                            description: 'An office plugin',
+                            version: '2.0.0',
+                            downloadUrl: 'https://example.com/office-plugin-2.0.0.zip'
+                        }
+                    ]
+                });
+            }
+            return undefined;
+        });
+        const widget = await createWidget();
+        await openMarket(widget);
+
+        // 声明了 iconUrl 的卡片用图片做图标
+        const card = widget.shadowRoot.querySelector('[data-market-plugin="dev-plugin"]') as HTMLElement;
+        const img = card.querySelector('.card-icon img.card-icon-img') as HTMLImageElement | null;
+        expect(img).not.toBeNull();
+        expect(img?.getAttribute('src')).toBe(iconUrl);
+        // 首字母仍渲染在图片下面：图片加载失败被移除后自然回退到首字母图标
+        expect(card.querySelector('.card-icon .card-icon-initial')?.textContent).toBe('开');
+
+        // 未声明 iconUrl 的卡片保持首字母图标，不渲染图片
+        const plainCard = widget.shadowRoot.querySelector('[data-market-plugin="office-plugin"]') as HTMLElement;
+        expect(plainCard.querySelector('.card-icon img')).toBeNull();
+        expect(plainCard.querySelector('.card-icon')?.textContent).toContain('办');
+    });
+
     test('a failed catalog load shows the marketplace error instead of a blank page', async () => {
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];

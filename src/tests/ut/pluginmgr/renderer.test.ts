@@ -947,4 +947,49 @@ describe('plugin manager application renderer', () => {
         expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
         expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
     });
+
+    test('installed plugin cards use the manifest icon when it declares one', async () => {
+        // 已安装插件的图标以 zip 解压后的元数据（manifest.iconUrl，主进程已内联成 data URL）为准；
+        // 加载失败的图片会被移除，露出下面渲染的首字母兜底
+        const iconUrl = 'data:image/png;base64,AAEC';
+        callMainWorld.mockImplementationOnce(async (method: string) => {
+            if (method === 'list') {
+                return [
+                    {
+                        id: 'installed-plugin',
+                        source: 'local',
+                        path: '/plugins/installed',
+                        removable: true,
+                        enabled: false,
+                        system: false,
+                        manifest: {
+                            displayName: 'Installed Plugin',
+                            version: '2.0.0',
+                            apiVersion: 1,
+                            capabilities: ['command', 'skill'],
+                            iconUrl
+                        },
+                        skills: [],
+                        mcpServers: []
+                    }
+                ];
+            }
+            return undefined;
+        });
+        const widget = await createWidget();
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]') as HTMLElement;
+        const img = card.querySelector('.card-icon img.card-icon-img') as HTMLImageElement | null;
+        expect(img).not.toBeNull();
+        expect(img?.getAttribute('src')).toBe(iconUrl);
+        expect(card.querySelector('.card-icon .card-icon-initial')?.textContent).toBe('I');
+    });
+
+    test('installed plugin cards without a manifest icon keep the initial-letter icon', async () => {
+        const widget = await createWidget();
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]') as HTMLElement;
+        expect(card.querySelector('.card-icon img')).toBeNull();
+        expect(card.querySelector('.card-icon')?.textContent).toContain('I');
+    });
 });

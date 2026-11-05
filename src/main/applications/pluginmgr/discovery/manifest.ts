@@ -20,6 +20,7 @@ import {
     type PluginPlatform,
     type PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
+import { isValidPluginIconUrl } from '../../../../../packages/plugin-sdk/src/package.js';
 import { AGENT_MANIFEST_ERROR_CODES, loadAgentsFromDirectory } from './agent-resource.js';
 import { isValidVersion } from '../../../utils/version.js';
 
@@ -41,6 +42,11 @@ export interface PluginManifest {
     author?: PluginAuthor;
     /** 插件自身的站点地址（作者主页是 author.homepage） */
     homepage?: string;
+    /**
+     * 插件图标：http(s) 图片链接或包内相对路径（相对插件根目录，指向随包分发的图标文件）。
+     * 仅用于插件中心 / 插件市场的展示；不声明时按名称渲染首字母图标。
+     */
+    iconUrl?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
     platforms?: PluginPlatform[];
@@ -233,6 +239,20 @@ function parseHomepage(value: unknown): string | undefined {
     return text;
 }
 
+/**
+ * 解析插件图标地址（可选）：http(s) 图片链接，或指向插件根目录内文件的相对路径。
+ *
+ * 图标只在界面上当图片显示，但相对路径会由宿主读文件（转成渲染层可显示的 data URL），
+ * 所以绝对路径、根相对路径与目录穿越都要拦下——写坏时让清单加载失败，
+ * 而不是悄悄读到了插件目录外的文件。校验与打包期 schema 共用 SDK 的同一个实现，口径不会漂移。
+ */
+function parseIconUrl(value: unknown): string | undefined {
+    const text = optionalString(value, 'plugin.manifest_invalid_icon_url');
+    if (text === undefined) return undefined;
+    if (!isValidPluginIconUrl(text)) throw new Error('plugin.manifest_invalid_icon_url');
+    return text;
+}
+
 function parseResources(value: unknown): PluginManifestResources | undefined {
     if (value === undefined) return undefined;
     if (!isRecord(value)) throw new Error('plugin.manifest_invalid_resources');
@@ -279,6 +299,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         category: optionalStringArray(value.category, 'plugin.manifest_invalid_category'),
         author: parsePluginAuthor(value.author),
         homepage: parseHomepage(value.homepage),
+        iconUrl: parseIconUrl(value.iconUrl),
         apiVersion: apiVersion as number,
         capabilities,
         platforms,
@@ -369,6 +390,7 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
         category: declaration.category,
         author: declaration.author,
         homepage: declaration.homepage,
+        iconUrl: declaration.iconUrl,
         apiVersion: declaration.apiVersion,
         capabilities: declaration.capabilities,
         minOpenDeskVersion: declaration.minOpenDeskVersion,

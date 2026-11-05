@@ -83,6 +83,8 @@ interface PluginListEntry {
         author?: PluginAuthor;
         /** 插件自身的站点地址（作者主页是 author.homepage） */
         homepage?: string;
+        /** 插件图标（zip 解压后的清单声明，主进程已把本地图标内联成 data URL） */
+        iconUrl?: string;
         capabilities?: string[];
     };
     skills?: Array<{
@@ -137,6 +139,8 @@ interface PluginMarketEntry {
     author?: PluginAuthor;
     /** 插件自身的站点地址（作者主页是 author.homepage） */
     homepage?: string;
+    /** 插件图标地址（本地图标已被主进程内联成 data URL） */
+    iconUrl?: string;
 }
 
 /** 从市场安装的结果：失败时主进程返回 `success: false`（而不是抛错），便于界面区分提示方式 */
@@ -512,6 +516,8 @@ button:hover { background: #f4f5f7; }
 .card-head { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
 .card-icon {
     display: flex;
+    position: relative;
+    overflow: hidden;
     width: 40px;
     height: 40px;
     align-items: center;
@@ -520,6 +526,14 @@ button:hover { background: #f4f5f7; }
     border-radius: 11px;
     font-size: 17px;
     font-weight: 700;
+}
+/* 清单声明了 iconUrl 的卡片：图片覆盖在首字母上（加载失败移除图片露出首字母兜底） */
+.card-icon-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 .card-info { min-width: 0; flex: 1; }
 .name {
@@ -729,6 +743,8 @@ button:hover { background: #f4f5f7; }
 .market-card .card-header { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
 .market-card .card-icon {
     display: flex;
+    position: relative;
+    overflow: hidden;
     width: 40px;
     height: 40px;
     flex: none;
@@ -1596,6 +1612,22 @@ export class PluginMgrEntryWidget extends HTMLElement {
         return entry.runtime?.status ?? 'disabled';
     }
 
+    /**
+     * 插件卡片图标：清单声明了 iconUrl 时用图片，否则按名字取色渲染首字母。
+     *
+     * 图片绝对定位盖在首字母上并带 onerror 自移除：图标链接失效时自然回退到首字母兜底，
+     * 不需要额外的加载状态管理。
+     */
+    private renderCardIcon(name: string, iconUrl?: string): string {
+        const color = getSkillPastel(name);
+        const image = iconUrl
+            ? `<img class="card-icon-img" src="${escapeHtml(iconUrl)}" alt="" loading="lazy" onerror="this.remove()">`
+            : '';
+        return `<div class="card-icon" style="background:${color.bg};color:${color.text}">
+            <span class="card-icon-initial">${escapeHtml(getSkillInitial(name))}</span>${image}
+        </div>`;
+    }
+
     private renderCard(entry: PluginListEntry): string {
         const diagnostics = entry.runtime?.diagnostics ?? [];
         /** 该插件的启停还在等结果：开关换成转圈，等结果回来后再恢复 */
@@ -1613,7 +1645,6 @@ export class PluginMgrEntryWidget extends HTMLElement {
             locked ? `<span class="system-tag">${escapeHtml(this.t('plugin.center.systemTag'))}</span>` : ''
         ].filter(Boolean);
         const name = this.pluginName(entry);
-        const color = getSkillPastel(name);
         const contributionPills = [
             entry.skills?.length
                 ? `<span class="contribution-pill">${escapeHtml(
@@ -1648,7 +1679,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
         ].filter(Boolean);
         return `<article class="card" data-plugin-id="${escapeHtml(entry.id)}" role="button" tabindex="0">
             <div class="card-head">
-                <div class="card-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(getSkillInitial(name))}</div>
+                ${this.renderCardIcon(name, entry.manifest?.iconUrl)}
                 <div class="card-info">
                     <div class="name">${escapeHtml(name)}</div>
                     <div class="plugin-id">${escapeHtml(entry.id)}</div>
@@ -2249,7 +2280,6 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private renderMarketCard(entry: PluginMarketEntry): string {
         const name = resolvePluginDisplayName(entry.displayName, this.locale) ?? entry.id;
         const description = resolvePluginLocalizedText(entry.description, this.locale);
-        const color = getSkillPastel(name);
         const state = this.marketEntryState(entry);
         const progress = this.marketInstalls.get(entry.id);
         const installing = progress !== undefined;
@@ -2260,9 +2290,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const disabled = installing || Boolean(state.blockedReason);
         return `<div class="market-card" data-market-plugin="${escapeHtml(entry.id)}" role="button" tabindex="0">
             <div class="card-header">
-                <div class="card-icon" style="background:${color.bg};color:${color.text}">${escapeHtml(
-                    getSkillInitial(name)
-                )}</div>
+                ${this.renderCardIcon(name, entry.iconUrl)}
                 <div class="card-info">
                     <div class="card-title-row">
                         <span class="card-title">${escapeHtml(name)}</span>

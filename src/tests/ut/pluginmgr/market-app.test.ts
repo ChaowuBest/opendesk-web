@@ -8,7 +8,11 @@ import { setRuntimeLocale } from '../../../locale/index.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { disposePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
-import { OFFICIAL_PLUGIN_CHANNEL_ID, PLUGIN_CATALOG_URL } from '../../../main/applications/pluginmgr/channels.js';
+import {
+    OFFICIAL_PLUGIN_CHANNEL_ID,
+    PLUGIN_CATALOG_PATH_ENV,
+    PLUGIN_CATALOG_URL
+} from '../../../main/applications/pluginmgr/channels.js';
 
 /**
  * 插件渠道 + 插件市场的主进程接口（renderer 通过 callMainWorld 调的那一批）。
@@ -526,5 +530,109 @@ describe('plugin channels and marketplace (main process)', () => {
         await expect(app.installFromPluginRegistry(customId, 'mismatched-plugin')).rejects.toThrow(/不一致/);
         // 按包内 id 装上了，插件列表里能看到，只是这条市场条目对不上
         expect(fs.existsSync(path.join(configDirectory, 'plugins', 'dev-plugin'))).toBe(true);
+    });
+
+    test('local catalog icon urls are inlined as data urls for the renderer', async () => {
+        // 本地调试清单（OPENDESK_PLUGIN_CATEGORY）里的相对 iconUrl 解析成本地文件路径，
+        // 而渲染层页面（dev 模式是 http://localhost）加载不了本地文件：
+        // 清单接口在返回前把它读出来转成 data URL，读不到就按未声明处理
+        const iconBytes = Buffer.from('fake png bytes');
+        const catalogDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-catalog-'));
+        fs.mkdirSync(path.join(catalogDirectory, 'plugins'));
+        fs.writeFileSync(path.join(catalogDirectory, 'plugins', 'dev.png'), iconBytes);
+        const catalogPath = path.join(catalogDirectory, 'category.json');
+        fs.writeFileSync(
+            catalogPath,
+            JSON.stringify({
+                plugins: [
+                    {
+                        id: 'dev-plugin',
+                        displayName: '开发插件',
+                        version: '1.0.0',
+                        downloadUrl: 'plugins/dev-plugin-1.0.0.zip',
+                        iconUrl: 'plugins/dev.png'
+                    },
+                    {
+                        id: 'broken-icon-plugin',
+                        displayName: '坏图标插件',
+                        version: '1.0.0',
+                        downloadUrl: 'plugins/broken-icon-plugin-1.0.0.zip',
+                        iconUrl: 'plugins/missing.png'
+                    }
+                ]
+            })
+        );
+        const previousCatalogPath = process.env[PLUGIN_CATALOG_PATH_ENV];
+        process.env[PLUGIN_CATALOG_PATH_ENV] = catalogPath;
+        try {
+            // registry 惰性构造：置空后按新的清单地址重建（本地清单不走缓存，读文件即最新）
+            app.onConfigChanged();
+            const catalog = await app.getPluginCatalog(OFFICIAL_PLUGIN_CHANNEL_ID);
+            expect(catalog.entries.find((entry) => entry.id === 'dev-plugin')?.iconUrl).toBe(
+                `data:image/png;base64,${iconBytes.toString('base64')}`
+            );
+            // 图标文件读不到：安静地退回「没有图标」，不能让整条清单挂掉
+            expect(catalog.entries.find((entry) => entry.id === 'broken-icon-plugin')?.iconUrl).toBeUndefined();
+        } finally {
+            if (previousCatalogPath === undefined) delete process.env[PLUGIN_CATALOG_PATH_ENV];
+            else process.env[PLUGIN_CATALOG_PATH_ENV] = previousCatalogPath;
+            fs.rmSync(catalogDirectory, { recursive: true, force: true });
+        }
+    });
+
+    test('installed plugins resolve package-relative icon urls against the plugin directory', async () => {
+        // 已安装插件的图标以 zip 解压后的元数据为准：包内相对路径指向插件目录里的文件，
+        // 列表接口同样把它内联成 data URL 交给渲染层
+        const iconBytes = Buffer.from('fake png bytes');
+        platform.fetchMock.mockImplementation(async (input: string | URL) => {
+            const url = typeof input === 'string' ? input : input.toString();
+            if (url.endsWith('/category/plugins.json')) {
+                return new Response(
+                    JSON.stringify({
+                        plugins: [
+                            {
+                                id: 'iconed-plugin',
+                                displayName: '带图标插件',
+                                version: '1.0.0',
+                                downloadUrl: 'https://market.example.com/plugins/iconed-plugin-1.0.0.zip'
+                            }
+                        ]
+                    }),
+                    { status: 200, headers: { 'content-type': 'application/json' } }
+                );
+            }
+            if (url.endsWith('iconed-plugin-1.0.0.zip')) {
+                const zip = new AdmZip();
+                zip.addFile(
+                    'package.json',
+                    Buffer.from(JSON.stringify({ name: 'iconed-plugin', version: '1.0.0', type: 'module' }, null, 2))
+                );
+                zip.addFile(
+                    'opendesk.plugin.json',
+                    Buffer.from(
+                        JSON.stringify({ entry: 'index.js', apiVersion: 1, capabilities: [], iconUrl: 'icon.png' })
+                    )
+                );
+                zip.addFile('index.js', Buffer.from(`export default { id: 'iconed-plugin', setup: () => ({}) };\n`));
+                zip.addFile('icon.png', iconBytes);
+                const archive = zip.toBuffer();
+                return new Response(archive, {
+                    status: 200,
+                    headers: { 'content-type': 'application/zip', 'content-length': String(archive.byteLength) }
+                });
+            }
+            return new Response('not found', { status: 404 });
+        });
+        const customId = await addCustomChannel('图标市场');
+        await app.setPluginChannelEnabled(OFFICIAL_PLUGIN_CHANNEL_ID, false);
+        await app.installFromPluginRegistry(customId, 'iconed-plugin');
+
+        const installed = (
+            (await app.list()) as Array<{
+                id: string;
+                manifest?: { iconUrl?: string };
+            }>
+        ).find((entry) => entry.id === 'iconed-plugin');
+        expect(installed?.manifest?.iconUrl).toBe(`data:image/png;base64,${iconBytes.toString('base64')}`);
     });
 });

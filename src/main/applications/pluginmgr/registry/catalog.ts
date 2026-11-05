@@ -77,6 +77,12 @@ export interface PluginCatalogEntry {
     /** 作者信息：市场卡片与详情展示用，结构与插件清单的 author 一致 */
     author?: PluginAuthor;
     homepage?: string;
+    /**
+     * 插件图标地址：市场卡片用它代替首字母图标。
+     * 绝对 http(s) 图片链接原样保留；相对链接按清单来源解析（远端清单解析成绝对 URL，
+     * 本地调试清单解析成同级文件路径，由宿主在返回给渲染层前内联成 data URL）。
+     */
+    iconUrl?: string;
 }
 
 /** 一份解析后的市场清单 */
@@ -166,6 +172,24 @@ function optionalUrl(value: unknown): string | undefined {
     } catch {
         return undefined;
     }
+}
+
+/**
+ * 插件图标地址（可选，展示字段，写坏按未声明处理）。
+ *
+ * 绝对 http(s) 图片链接原样保留；相对链接与 downloadUrl 同一套基准解析：
+ * 清单是远端地址时解析成绝对 URL，本地调试清单解析成同级文件路径。
+ */
+function optionalIconUrl(value: unknown, base: string): string | undefined {
+    const text = asText(value);
+    if (!text) return undefined;
+    const resolved = resolveDownloadTarget(text, base);
+    if (resolved.url) {
+        return resolved.url.protocol === 'http:' || resolved.url.protocol === 'https:'
+            ? resolved.url.toString()
+            : undefined;
+    }
+    return resolved.filePath;
 }
 
 function optionalStringArray(value: unknown): string[] | undefined {
@@ -294,7 +318,8 @@ function parseEntry(value: unknown, options: ParsePluginCatalogOptions, base: st
         category: optionalStringArray(value.category),
         downloadUrl: normalizeDownloadUrl(value.downloadUrl, options, base),
         author: optionalAuthor(value.author),
-        homepage: optionalUrl(value.homepage)
+        homepage: optionalUrl(value.homepage),
+        iconUrl: optionalIconUrl(value.iconUrl, base)
     };
 }
 
