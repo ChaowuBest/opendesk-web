@@ -24,12 +24,14 @@ import fs from 'fs';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
 import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
-import type {
-    BaseIndexStoreProbeResult,
-    BaseQueryCondition,
-    BaseQueryOperator,
-    BaseQueryOptions,
-    IBaseIndexDB
+import {
+    compileOrGroup,
+    literalContainsPattern,
+    type BaseIndexStoreProbeResult,
+    type BaseQueryCondition,
+    type BaseQueryOperator,
+    type BaseQueryOptions,
+    type IBaseIndexDB
 } from './base-indexer.js';
 
 // createRequire keeps the resolution lazy — only triggered when this module
@@ -47,6 +49,7 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     '>=',
     '<=',
     'like',
+    'contains_literal',
     'notlike',
     'in',
     'notin',
@@ -533,6 +536,12 @@ export class BaseIndexDB implements IBaseIndexDB {
         const params: any[] = [];
 
         for (const condition of conditions) {
+            if ('or' in condition) {
+                const group = compileOrGroup(condition.or, (child) => this.buildWhereClause([child]));
+                clauses.push(group.whereClause);
+                params.push(...group.params);
+                continue;
+            }
             const { field, operator, value } = condition;
             const op = operator.toLowerCase() as BaseQueryOperator;
 
@@ -576,6 +585,9 @@ export class BaseIndexDB implements IBaseIndexDB {
             } else if (op === '!=') {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
+            } else if (op === 'contains_literal') {
+                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
+                params.push(literalContainsPattern(value));
             } else if (op === 'like') {
                 clauses.push(`${field} LIKE ?`);
                 params.push(value);

@@ -255,6 +255,8 @@ export type ScalarOperator =
     | '>='
     | '<='
     | 'like'
+    /** Literal substring; preserves LIKE case behavior while escaping %, _ and backslash. */
+    | 'contains_literal'
     | 'notlike'
     | 'in'
     | 'notin'
@@ -285,8 +287,16 @@ export interface FilterCondition {
     vectorQuery?: VectorQuery;
 }
 
+/** A flat OR group within BaseIndexer; outer conditions remain AND. */
+export interface BaseFilterOrGroup {
+    indexer: 'BaseIndexer';
+    or: Array<FilterCondition & { indexer: 'BaseIndexer'; operator: ScalarOperator }>;
+}
+
+export type SearchCondition = FilterCondition | BaseFilterOrGroup;
+
 export interface ScopedSearchRequest {
-    preconditions: FilterCondition[];
+    preconditions: SearchCondition[];
     targetCondition: FilterCondition;
 }
 
@@ -644,7 +654,7 @@ export class BaseStorage {
         if (firstRejected) throw firstRejected.reason;
     }
 
-    async countGrouped(fields: string[], conditions: FilterCondition[]): Promise<BaseCountGroup[]> {
+    async countGrouped(fields: string[], conditions: SearchCondition[]): Promise<BaseCountGroup[]> {
         this.ensureUsable();
         return this.baseIndexer.countGrouped(fields, conditions);
     }
@@ -653,10 +663,13 @@ export class BaseStorage {
      * 搜索方法 - 返回 { items, totalCount }
      */
     async search(
-        filterConditions: FilterCondition[],
+        filterConditions: SearchCondition[],
         options: Omit<IndexerSearchOptions, 'existingResults'> = {}
     ): Promise<{ items: SearchItem[]; totalCount: number }> {
         this.ensureUsable();
+        // Validate groups before any indexer can return early with no candidates.
+        if (filterConditions.some((condition) => 'or' in condition))
+            this.baseIndexer.validateOrGroups(filterConditions);
         // 检测是否包含 ChunkIndexer 条件，走专用路径
         const hasChunkCondition = filterConditions.some((c) => c.indexer === 'ChunkIndexer');
         if (hasChunkCondition) {
@@ -667,7 +680,7 @@ export class BaseStorage {
         let hasInitialData = false;
 
         // 按 indexer 分组条件
-        const conditionsByIndexer: Record<string, FilterCondition[]> = {};
+        const conditionsByIndexer: Record<string, SearchCondition[]> = {};
         for (const cond of filterConditions) {
             if (!conditionsByIndexer[cond.indexer]) {
                 conditionsByIndexer[cond.indexer] = [];
@@ -686,16 +699,28 @@ export class BaseStorage {
             }
 
             const indexer = this.getIndexerByName(indexerName);
+            if (indexerName === 'BaseIndexer') {
+                const baseResult = await this.baseIndexer.search(
+                    conditions,
+                    hasInitialData ? { existingResults: results.map((result) => result.item) } : options
+                );
+                const complete = hasInitialData
+                    ? this.mergeSearchResults(results, baseResult.items, baseResult.scores, indexerName)
+                    : this.itemsToSearchItems(baseResult.items, baseResult.scores, indexerName);
+                return { items: complete, totalCount: complete.length };
+            }
+            // Groups were validated above and can only belong to BaseIndexer.
+            const leafConditions = conditions.filter((condition): condition is FilterCondition => !('or' in condition));
 
             if (!hasInitialData) {
                 // 第一个有条件的 indexer，获取初始数据
-                const searchResult = await indexer.search(conditions, options);
+                const searchResult = await indexer.search(leafConditions, options);
                 results = this.itemsToSearchItems(searchResult.items, searchResult.scores, indexerName);
                 hasInitialData = true;
             } else {
                 // 后续 indexer，基于已有结果进行 join
                 const existingItems = results.map((r) => r.item);
-                const searchResult = await indexer.search(conditions, {
+                const searchResult = await indexer.search(leafConditions, {
                     existingResults: existingItems
                 });
                 results = this.mergeSearchResults(results, searchResult.items, searchResult.scores, indexerName);
@@ -716,6 +741,8 @@ export class BaseStorage {
     async searchScope(request: ScopedSearchRequest, options: ScopedSearchOptions = {}): Promise<ScopedSearchResult> {
         this.ensureUsable();
         validateScopedSearchRequest(request);
+        if (request.preconditions.some((condition) => 'or' in condition))
+            this.baseIndexer.validateOrGroups(request.preconditions);
 
         const startedAt = Date.now();
         const memoryBefore = options.collectDiagnostics ? process.memoryUsage().rss : 0;
@@ -1068,13 +1095,15 @@ export class BaseStorage {
      * 4. 按 chunk 命中展开结果，不去重 item_id
      */
     private async searchWithChunkIndexer(
-        filterConditions: FilterCondition[]
+        filterConditions: SearchCondition[]
     ): Promise<{ items: SearchItem[]; totalCount: number }> {
         if (!this.chunkIndexer) {
             throw new Error('ChunkIndexer not initialized for this schema');
         }
 
-        const chunkConditions = filterConditions.filter((c) => c.indexer === 'ChunkIndexer');
+        const chunkConditions = filterConditions.filter(
+            (c): c is FilterCondition => c.indexer === 'ChunkIndexer' && !('or' in c)
+        );
         const baseConditions = filterConditions.filter((c) => c.indexer === 'BaseIndexer');
         const invalidConditions = filterConditions.filter(
             (c) => c.indexer !== 'ChunkIndexer' && c.indexer !== 'BaseIndexer'

@@ -127,9 +127,18 @@ test('B203 B204 R2 readonly config notifications update sources, scopes and fina
     t.mock.method(f.worker, '_startScanner', async () => assert.fail('readonly scanner start'));
     const search = f.db.search;
     t.mock.method(f.db, 'search', async (conditions) => {
-        const like = conditions.find((condition) => condition.operator === 'like');
-        const result = await search(conditions.filter((condition) => condition !== like));
-        if (like) result.items = result.items.filter((row) => row.item.filename?.includes(like.value.slice(1, -1)));
+        const filenameCondition = conditions.find((condition) =>
+            (condition.or ?? [condition]).every(
+                (child) => child.field === 'filename' && child.operator === 'contains_literal'
+            )
+        );
+        const result = await search(conditions.filter((condition) => condition !== filenameCondition));
+        if (filenameCondition) {
+            const alternatives = filenameCondition.or ?? [filenameCondition];
+            result.items = result.items.filter((row) =>
+                alternatives.some((condition) => row.item.filename?.includes(condition.value))
+            );
+        }
         return result;
     });
     const keywordSearch = () => f.worker.searchIndexedFiles('one', { routes: ['keyword'] });

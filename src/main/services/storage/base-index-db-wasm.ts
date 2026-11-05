@@ -26,12 +26,14 @@ import { removeSqliteStoreFiles } from './drop-utils.js';
 import { toWasmDbPath } from './wasm-path.js';
 import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
-import type {
-    BaseIndexStoreProbeResult,
-    BaseQueryCondition,
-    BaseQueryOperator,
-    BaseQueryOptions,
-    IBaseIndexDB
+import {
+    compileOrGroup,
+    literalContainsPattern,
+    type BaseIndexStoreProbeResult,
+    type BaseQueryCondition,
+    type BaseQueryOperator,
+    type BaseQueryOptions,
+    type IBaseIndexDB
 } from './base-indexer.js';
 
 const require = createRequire(import.meta.url);
@@ -52,6 +54,7 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     '>=',
     '<=',
     'like',
+    'contains_literal',
     'notlike',
     'in',
     'notin',
@@ -218,6 +221,12 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         const params: any[] = [];
 
         for (const condition of conditions) {
+            if ('or' in condition) {
+                const group = compileOrGroup(condition.or, (child) => this.buildWhereClause([child]));
+                clauses.push(group.whereClause);
+                params.push(...group.params);
+                continue;
+            }
             const { field, operator, value } = condition;
             const op = operator.toLowerCase() as BaseQueryOperator;
             this.validateField(field);
@@ -263,6 +272,12 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
             if (op === '!=') {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
+                continue;
+            }
+
+            if (op === 'contains_literal') {
+                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
+                params.push(literalContainsPattern(value));
                 continue;
             }
 

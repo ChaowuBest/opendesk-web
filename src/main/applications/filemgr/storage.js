@@ -2300,17 +2300,23 @@ class FSStorage {
      * Internal keyword route for aggregated indexed search. Includes storage metadata
      * needed by worker-side final filtering; do not expose directly to renderer callers.
      */
-    async searchIndexedFilesByKeyword(keyword, { limit = 150, scope } = {}) {
+    async searchIndexedFilesByKeyword(keyword, { limit = 150, scope, terms } = {}) {
         scope = normalizeFilemgrSearchScope(scope);
+        // Explicit terms belong to aggregated search; legacy callers retain LIKE matching.
+        const filenameFilter = terms?.length
+            ? {
+                  indexer: 'BaseIndexer',
+                  or: terms.map((term) => ({
+                      indexer: 'BaseIndexer',
+                      field: 'filename',
+                      operator: 'contains_literal',
+                      value: term
+                  }))
+              }
+            : { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` };
         const conditions = scope
-            ? [
-                  { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
-                  ...buildIndexedFilePreconditions({ scope, requireEmbedded: false })
-              ]
-            : [
-                  { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
-                  { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-              ];
+            ? [...buildIndexedFilePreconditions({ scope, requireEmbedded: false }), filenameFilter]
+            : [{ indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }, filenameFilter];
         const result = await this.storage.search(conditions, {
             limit,
             orderBy: { field: 'modified', direction: 'DESC' }

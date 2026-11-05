@@ -1955,6 +1955,7 @@ class FileManagerWorker extends BaseWorker {
             const search = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
             const results = await search.call(this.storage, context.query, {
                 limit: context.topK * 3,
+                terms: context.keywordTerms,
                 scope: context.scope
             });
             return { route: 'keyword', success: true, results };

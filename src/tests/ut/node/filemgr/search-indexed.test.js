@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     createIndexedSearchContext,
+    splitIndexedSearchQuery,
     FILEMGR_SEARCH_MAX_PATHS,
     InvalidFilemgrSearchScopeError,
     filemgrSearchScopePaths,
@@ -49,6 +50,7 @@ test('createIndexedSearchContext normalizes query, routes, topK, and scope', () 
         }),
         {
             query: 'plan',
+            keywordTerms: ['plan'],
             topK: 5,
             routes: {
                 keyword: true,
@@ -476,4 +478,74 @@ test('requested union predicate excludes sibling prefixes and outside results', 
     assert.equal(isPathInFilemgrSearchScope('/outside/file.md', scope), false);
     assert.equal(isPathInFilemgrSearchScope('malformed-relative-result.md', scope), false);
     assert.deepEqual(filemgrSearchScopePaths(scope), ['/b/docs', '/a/project']);
+});
+
+test('query splitting preserves whole-query routes and applies ordered term rules', () => {
+    for (const [query, terms, normalized = query.trim()] of [
+        ['鸿蒙　操作系统', ['鸿蒙', '操作系统']],
+        ['鸿蒙,操作系统，系统、文件;内容；索引', ['鸿蒙', '操作系统', '系统', '文件', '内容', '索引']],
+        ['鸿蒙操作系统', ['鸿蒙操作系统']],
+        ['Alpha alpha ALPHA 中文', ['Alpha', '中文']],
+        ['a B 1 2 系统', ['a', 'B', '1', '2', '系统']],
+        ['a 系统', ['a', '系统']],
+        ['中 文 A 1', ['中', '文', 'A', '1']],
+        ['Alpha；alpha', ['Alpha']],
+        ['1；1', ['1']],
+        ['系统；', ['系统']],
+        ['系统 System 混合', ['系统', 'System', '混合']],
+        ['t0 t1 t2 t3 t4 t5 t6 t7 t8', ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7']],
+        [' ;，、；　 ', undefined, '']
+    ]) {
+        assert.deepEqual(splitIndexedSearchQuery(query), { query: normalized, keywordTerms: terms });
+        const context = createIndexedSearchContext(query);
+        assert.equal(context.query, normalized);
+        assert.deepEqual(context.keywordTerms, terms);
+    }
+});
+
+test('aggregated search splits only filename terms and keeps complete semantic queries', async () => {
+    const calls = [];
+    const worker = Object.assign(Object.create(FileManagerWorker.prototype), {
+        _getVisibleConfigEntries: () => [{ root: '/docs', exclude_patterns: [] }],
+        _getEffectiveUnavailableRoots: () => ({}),
+        _statFileForSearch: async () => ({ isFile: () => true }),
+        storage: {
+            mode: 'full',
+            isDeferred: () => false,
+            searchIndexedFilesByKeyword: async (query, options) => {
+                calls.push(['keyword', query, options]);
+                return [item('/docs/文件系统设计.txt'), item('/docs/内存管理.txt')];
+            },
+            searchFileByName: async (query, options) => {
+                calls.push(['name', query, options]);
+                return { results: [] };
+            },
+            searchIndexedChunks: async (query, options) => {
+                calls.push(['content', query, options]);
+                return { results: [] };
+            }
+        }
+    });
+    const scope = { type: 'path', path: '/docs/sub' };
+    for (const [input, query, terms] of [
+        ['  文件系统 内存  ', '文件系统 内存', ['文件系统', '内存']],
+        ['a 1', 'a 1', ['a', '1']],
+        ['系统；系统', '系统；系统', ['系统']],
+        ['100% 报告', '100% 报告', ['100%', '报告']]
+    ]) {
+        calls.length = 0;
+        const result = await worker.searchIndexedFiles(input, { topK: 5, scope });
+        assert.equal(result.query, query);
+        assert.equal(result.code, undefined);
+        assert.deepEqual(calls, [
+            ['keyword', query, { limit: 15, scope, terms }],
+            ['name', query, { topK: 10, scope }],
+            ['content', query, { topK: 15, scope }]
+        ]);
+    }
+    calls.length = 0;
+    const empty = await worker.searchIndexedFiles(' ;，、；　 ');
+    assert.equal(empty.query, '');
+    assert.deepEqual(empty.results, []);
+    assert.deepEqual(calls, []);
 });

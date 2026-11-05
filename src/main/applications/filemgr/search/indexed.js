@@ -260,9 +260,24 @@ export function normalizeSearchTopK(value) {
     return Math.max(1, Math.min(Math.trunc(numeric), 100));
 }
 
+export function splitIndexedSearchQuery(query) {
+    const whole = typeof query === 'string' ? query.trim() : '';
+    const parts = whole.split(/[\s,，、;；]+/u).filter(Boolean);
+    const seen = new Set();
+    const terms = parts
+        .filter((term) => {
+            const key = term.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .slice(0, 8);
+    return { query: parts.length ? whole : '', keywordTerms: terms.length ? terms : undefined };
+}
+
 export function createIndexedSearchContext(query, options = {}) {
     return {
-        query: typeof query === 'string' ? query.trim() : '',
+        ...splitIndexedSearchQuery(query),
         topK: normalizeSearchTopK(options?.topK),
         routes: normalizeIndexedSearchRoutes(options),
         scope: normalizeFilemgrSearchScope(options?.scope)
