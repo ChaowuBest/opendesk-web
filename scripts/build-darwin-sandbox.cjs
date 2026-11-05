@@ -77,13 +77,17 @@ function slicesFor(choice) {
 const slices = slicesFor(archChoice);
 fs.mkdirSync(runtimeDir, { recursive: true });
 
-const args = ['-dynamiclib', '-O2', '-Wall', '-Wextra', '-fvisibility=hidden'];
+// Resolve the compiler and SDK together: the default clang SDK may belong to
+// newer Command Line Tools than the selected Xcode linker can understand.
+const sdk = execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8' }).trim();
+const compiler = execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', '--find', 'clang'], { encoding: 'utf8' }).trim();
+const args = ['-isysroot', sdk, '-dynamiclib', '-O2', '-Wall', '-Wextra', '-fvisibility=hidden'];
 for (const arch of slices) args.push('-arch', arch);
 args.push('-I', sharedSrcDir);
 args.push('-o', output, source, ...coreSources);
 
 process.stdout.write(`[sandbox-darwin] building ${slices.join(' + ')} → ${path.relative(root, output)}\n`);
-execFileSync('/usr/bin/clang', args, { cwd: root, stdio: 'inherit' });
+execFileSync(compiler, args, { cwd: root, stdio: 'inherit' });
 
 // 校验产物包含全部目标 slice，防止后续打包错架构
 const lipo = execFileSync('/usr/bin/lipo', ['-archs', output], { encoding: 'utf8' });
