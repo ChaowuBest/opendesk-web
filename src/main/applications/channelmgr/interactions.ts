@@ -24,7 +24,8 @@
 
 import crypto from 'crypto';
 import { logger } from '../../utils/logger.js';
-import type { ChannelPlugin, Participant, PluginEntry } from '../../plugins/types.js';
+import type { Participant } from '../../aikernel/types/index.js';
+import type { ChannelPlugin } from './types.js';
 
 /** 审批请求的对外形态（与 permission 系统解耦的载荷） */
 export interface ChannelApprovalRequest {
@@ -122,7 +123,7 @@ export class ChannelInteractionService {
     private readonly pending = new Map<string, PendingInteraction>();
 
     constructor(
-        private readonly findEntry: (channelId: string) => PluginEntry | undefined,
+        private readonly findEntry: (channelId: string) => { channelPlugin: ChannelPlugin } | undefined,
         private readonly now: () => number = Date.now
     ) {}
 

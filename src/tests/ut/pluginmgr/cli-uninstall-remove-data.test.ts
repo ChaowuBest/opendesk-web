@@ -27,6 +27,7 @@ describe('pluginmgr CLI uninstall --remove-data', () => {
             uninstallPlugin: mockUninstallPlugin,
             listInstalledPlugins: () => [],
             listVisiblePlugins: () => [],
+            isPluginEnabledFixed: () => false,
             setPluginEnabled: jest.fn(),
             verifyInstalledPlugin: () => undefined,
             formatPluginInstallError: () => '',

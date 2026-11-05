@@ -32,8 +32,9 @@ import { program as prog, Option } from 'commander';
 import {
     PluginToolsetProvider,
     combineToolsetProviders,
+    findUnusablePluginDirectories,
     initializePluginHost,
-    setRuntimePluginDirectories
+    setRuntimePluginsDirectories
 } from './applications/pluginmgr/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
@@ -151,8 +152,21 @@ function parseCommandLineArgs() {
         `specify custom config directory (default: ${getDefaultOpendeskDirectory()})`,
         (v) => v
     );
-    prog.option('--plugins-directory <path>', t('cli.plugins_directory.description'), (v) => v);
+    prog.option('--plugins-directory <paths>', t('cli.plugins_directory.description'), (v) => v);
     prog.option('-v, --version', 'print the version');
+
+    // 附加插件目录要在任何 action 之前生效：子命令（plugins list 等）不会触发根命令的
+    // action，用 preAction 钩子统一处理，避免每个子命令重复读取该选项。
+    prog.hook('preAction', (thisCommand) => {
+        const { pluginsDirectory } = thisCommand.opts() as { pluginsDirectory?: string };
+        if (pluginsDirectory) {
+            // 非法路径只告警，不影响启动
+            setRuntimePluginsDirectories(pluginsDirectory);
+            for (const missing of findUnusablePluginDirectories(pluginsDirectory)) {
+                console.error(`[warn] ${t('cli.plugins_directory.invalid', { path: missing })}`);
+            }
+        }
+    });
 
     registerToolsCommand(prog);
     registerQuickpassCommand(prog);
@@ -234,15 +248,6 @@ function parseCommandLineArgs() {
         if (kwargs.configDirectory) {
             setCustomOpendeskDirectory(kwargs.configDirectory);
             reloadLoggerFileTransport();
-        }
-
-        if (kwargs.pluginsDirectory) {
-            const pluginsDirectory = path.resolve(kwargs.pluginsDirectory);
-            if (!fs.existsSync(pluginsDirectory) || !fs.statSync(pluginsDirectory).isDirectory()) {
-                console.error(`[error] ${t('cli.plugins_directory.invalid', { path: pluginsDirectory })}`);
-                process.exit(1);
-            }
-            setRuntimePluginDirectories([pluginsDirectory]);
         }
 
         // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）

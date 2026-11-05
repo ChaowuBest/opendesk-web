@@ -9,8 +9,8 @@ import path from 'path';
 
 const PLUGINS_DIRECTORY = path.resolve(process.cwd(), 'resources/plugins');
 
-/** 内置品牌注册表插件目录（按名称字母序 = 真实 bootstrap 的发现顺序） */
-const BRAND_PLUGIN_DIRECTORIES = ['clawhub', 'matrix', 'modelscope', 'skill0', 'skillhub', 'skillsmp'];
+/** 内置品牌注册表插件目录（按名称字母序 = 真实 bootstrap 的发现顺序；skill0/skillsmp 已改为市场分发） */
+const BRAND_PLUGIN_DIRECTORIES = ['clawhub', 'matrix', 'modelscope', 'skillhub'];
 
 async function loadPluginEntry(directoryName: string) {
     const module = (await import(
@@ -32,14 +32,14 @@ describe('registry capability 全链路（真实内置插件）', () => {
         const originalSkillRegistries = [...skillRegistryIndex.allRegistries];
 
         try {
-            // 首次初始化（对应 bootstrap.initialize）：激活全部 6 个品牌插件
+            // 首次初始化（对应 bootstrap.initialize）：激活全部 4 个品牌插件
             initializePluginRegistryProvider();
             for (const dir of BRAND_PLUGIN_DIRECTORIES) {
                 const plugin = await loadPluginEntry(dir);
                 const entry = await globalHost.activate(plugin as never, { origin: `builtin:${dir}` });
                 expect(entry.status).toBe('active');
             }
-            expect((await getProvidedSkillRegistryDefinitions()).map((item) => item.id)).toHaveLength(6);
+            expect((await getProvidedSkillRegistryDefinitions()).map((item) => item.id)).toHaveLength(4);
 
             // 卸载周期（对应 disposePluginHost）：provider 注销后拉取为空
             disposePluginRegistryProvider();
@@ -49,7 +49,7 @@ describe('registry capability 全链路（真实内置插件）', () => {
             // 插件仍处于激活态（disposePluginHost 中 host.dispose 在 provider 注销之后才执行，
             // 这里保持激活以单独验证 provider 层的重入性），拉取恢复
             initializePluginRegistryProvider();
-            expect((await getProvidedSkillRegistryDefinitions()).map((item) => item.id)).toHaveLength(6);
+            expect((await getProvidedSkillRegistryDefinitions()).map((item) => item.id)).toHaveLength(4);
             await skillRegistryIndex.ensureSkillRegistriesSynced();
             expect(skillRegistryIndex.getRegistry('clawhub')).toBeDefined();
         } finally {
@@ -103,18 +103,15 @@ describe('registry capability 全链路（真实内置插件）', () => {
             expect(mcpInfos.map((info) => info.id)).toEqual(['matrix', 'modelscope-mcp']);
             expect(mcpInfos[0]).toMatchObject({ label: 'Matrix MCPs', icon: '◇' });
 
-            // 技能侧：6 个注册表齐备（顺序随品牌插件目录字母序；主进程侧顺序不影响
+            // 技能侧：4 个注册表齐备（顺序随品牌插件目录字母序；主进程侧顺序不影响
             // 用户可见展示——GUI tab 顺序由渲染端 REGISTRY_TABS 决定，TUI/agent 不依赖顺序）
             expect([...skillRegistryIndex.allRegistries.map((registry) => registry.id)].sort()).toEqual([
                 'clawhub',
                 'matrix',
                 'modelscope',
-                'skill0',
-                'skillhub',
-                'skillsmp'
+                'skillhub'
             ]);
             const skillInfos = await skillRegistryIndex.getRegistriesInfo();
-            // guiHidden（skill0/skillsmp）过滤后 GUI 信息剩 4 个
             expect([...skillInfos.map((info) => info.id)].sort()).toEqual([
                 'clawhub',
                 'matrix',
@@ -156,7 +153,7 @@ describe('registry capability 全链路（真实内置插件）', () => {
             expect(mcpRegistry.getRegistry('matrix')).toBeUndefined();
             expect(mcpRegistry.getRegistry('modelscope-mcp')).toBeUndefined();
             expect(skillRegistryIndex.getRegistry('clawhub')).toBeUndefined();
-            expect(skillRegistryIndex.getRegistry('skillsmp')).toBeUndefined();
+            expect(skillRegistryIndex.getRegistry('skillhub')).toBeUndefined();
         } finally {
             disposePluginRegistryProvider();
             await globalHost.dispose().catch(() => undefined);

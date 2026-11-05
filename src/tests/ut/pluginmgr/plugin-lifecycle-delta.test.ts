@@ -25,7 +25,7 @@ function writePluginSource(directory: string, id: string): void {
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
-        JSON.stringify({ schemaVersion: 1, id, entry: './index.mjs', apiVersion: 1, capabilities: [] })
+        JSON.stringify({ id, entry: './index.mjs', apiVersion: 1, capabilities: [] })
     );
     // setup 时在自己的数据目录里累计一次启动次数，用于判断插件是否被重新激活
     fs.writeFileSync(
@@ -86,7 +86,7 @@ describe('pluginmgr 卸载差量化', () => {
         expect(setupCount('bystander-plugin')).toBe(1);
 
         const application = new PluginMgrApplication();
-        await expect(application.uninstall('target-plugin')).resolves.toEqual({ success: true });
+        await expect(application.uninstall('target-plugin')).resolves.toEqual({ success: true, id: 'target-plugin' });
 
         // 目标插件已从运行时移除，旁观插件仍是同一个实例（setup 没有被再次调用）
         expect(getPluginHost().get('target-plugin')).toBeUndefined();
@@ -122,7 +122,10 @@ describe('pluginmgr 卸载差量化', () => {
             .mockRejectedValue(new Error('agent registry boom'));
         try {
             const application = new PluginMgrApplication();
-            await expect(application.uninstall('teardown-fail')).resolves.toEqual({ success: true });
+            await expect(application.uninstall('teardown-fail')).resolves.toEqual({
+                success: true,
+                id: 'teardown-fail'
+            });
         } finally {
             agentSpy.mockRestore();
         }

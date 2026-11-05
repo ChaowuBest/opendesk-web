@@ -34,6 +34,8 @@ interface PluginView {
     source?: string;
     removable?: boolean;
     enabled?: boolean;
+    /** 启停由清单固定（内置插件的 system: true）：不允许通过 setPluginEnabled 修改 */
+    system?: boolean;
     manifest?: {
         displayName?: PluginDisplayName;
         description?: PluginLocalizedText;
@@ -105,6 +107,7 @@ function summarizePlugin(plugin: PluginView): Record<string, unknown> {
         source: plugin.source,
         removable: plugin.removable ?? false,
         enabled: plugin.enabled ?? true,
+        system: plugin.system ?? false,
         version: plugin.manifest?.version ?? plugin.runtime?.version,
         apiVersion: plugin.manifest?.apiVersion ?? plugin.runtime?.apiVersion,
         capabilities: plugin.manifest?.capabilities ?? plugin.runtime?.capabilities ?? [],
@@ -116,7 +119,7 @@ function serialize(value: unknown): string {
     return JSON.stringify(value ?? null);
 }
 
-const PluginSourceSchema = z.enum(['builtin', 'local', 'external']);
+const PluginSourceSchema = z.enum(['builtin', 'local']);
 const ListPluginsArgsSchema = z.object({
     source: PluginSourceSchema.optional().describe('Optional plugin source filter'),
     enabled: z.boolean().optional().describe('Optional enabled-state filter')
@@ -215,7 +218,7 @@ export class UninstallPluginTool extends BaseTool<typeof UninstallPluginArgsSche
     constructor(private readonly pluginApp: PluginManagementApplication) {
         super(
             'uninstallPlugin',
-            'Uninstall an OpenDesk plugin by ID. Builtin and external plugins cannot be uninstalled.',
+            'Uninstall an OpenDesk plugin by ID. Builtin plugins (including those from additional plugin directories) cannot be uninstalled.',
             UninstallPluginArgsSchema,
             undefined,
             { 'zh-CN': '卸载插件', 'en-US': 'Uninstall Plugin' }
@@ -242,7 +245,7 @@ export class SetPluginEnabledTool extends BaseTool<typeof SetPluginEnabledArgsSc
     constructor(private readonly pluginApp: PluginManagementApplication) {
         super(
             'setPluginEnabled',
-            'Enable or disable a discovered OpenDesk plugin.',
+            'Enable or disable a discovered OpenDesk plugin. Plugins whose enabled state is fixed by their manifest (system plugins) cannot be toggled.',
             SetPluginEnabledArgsSchema,
             undefined,
             {
@@ -274,7 +277,7 @@ export class ReloadPluginsTool extends BaseTool<typeof ReloadPluginsArgsSchema> 
     constructor(private readonly pluginApp: PluginManagementApplication) {
         super(
             'reloadPlugins',
-            'Rediscover and reload all OpenDesk plugins, including external and runtime plugin directories.',
+            'Rediscover and reload all OpenDesk plugins, including additional plugin directories.',
             ReloadPluginsArgsSchema,
             undefined,
             { 'zh-CN': '重载插件', 'en-US': 'Reload Plugins' }

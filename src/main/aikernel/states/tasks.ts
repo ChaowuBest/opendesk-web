@@ -76,7 +76,7 @@ import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
 import { FileReadStateCache } from './read-state.js';
 import { GlobalHooks, type Hooks } from '../hooks.js';
-import type { Participant } from '../../plugins/types.js';
+import type { Participant } from '../types/index.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import { escapeGlobLiteralPath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';

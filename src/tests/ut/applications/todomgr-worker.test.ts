@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import TodoMgrWorker from '../../../main/applications/todomgr/worker.js';
-import type { Participant } from '../../../main/plugins/types.js';
+import type { Participant } from '../../../main/aikernel/types/index.js';
 
 function createWorker(): { worker: TodoMgrWorker; tempDir: string } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-todomgr-worker-'));

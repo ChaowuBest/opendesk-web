@@ -375,3 +375,31 @@ describe('PlainBenchmarkRegistry 本地调试清单', () => {
         await expect(makeRegistry({ catalogUrl: missing }).getCatalog()).rejects.toThrow(/读取本地测评集清单失败/);
     });
 });
+
+describe('PlainBenchmarkRegistry 相对下载地址', () => {
+    test('远端清单里的相对地址按清单地址解析', async () => {
+        const entry = { ...ENTRY, downloadUrl: 'zips/workbuddy-bench-0.1.0.zip' };
+        const entries = await makeRegistry({ fetchImpl: makeFetch([entry]) }).getCatalog();
+
+        expect(entries[0].downloadUrl).toBe('https://example.com/static/categories/zips/workbuddy-bench-0.1.0.zip');
+    });
+
+    test('断网回退到缓存文件时同样解析相对地址', async () => {
+        const cacheFile = path.join(tempDir('benchmark-registry-cache-'), 'official.json');
+        const entry = { ...ENTRY, downloadUrl: 'zips/workbuddy-bench-0.1.0.zip' };
+        await makeRegistry({ fetchImpl: makeFetch([entry]), cacheFile }).getCatalog();
+
+        clockOffset += TTL_MS + 1000;
+        const offline = jest.fn(async () => {
+            throw new Error('getaddrinfo ENOTFOUND example.com');
+        }) as unknown as typeof fetch;
+        const entries = await makeRegistry({ fetchImpl: offline, cacheFile }).getCatalog();
+
+        expect(entries[0].downloadUrl).toBe('https://example.com/static/categories/zips/workbuddy-bench-0.1.0.zip');
+    });
+
+    test('本地调试清单不支持相对地址：没有可解析的 JSON 基准', async () => {
+        const file = writeLocalCatalog([{ ...ENTRY, downloadUrl: 'zips/workbuddy-bench.zip' }]);
+        await expect(makeRegistry({ catalogUrl: file }).getCatalog()).rejects.toThrow(/downloadUrl/);
+    });
+});

@@ -320,7 +320,6 @@ describe('PluginHost registry capability', () => {
     test('manifest 解析接受 registry capability，未知能力仍被拒绝', async () => {
         const { parsePluginManifest } = await import('../../../main/applications/pluginmgr/discovery/manifest.js');
         const base = {
-            schemaVersion: 1 as const,
             id: 'manifest-registry-plugin',
             apiVersion: 1
         };

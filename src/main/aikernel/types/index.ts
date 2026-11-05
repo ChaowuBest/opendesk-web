@@ -53,3 +53,4 @@ export type {
     ToolRenderers,
     ToolResultWriter
 } from './tools.js';
+export type { Participant } from './participant.js';

@@ -21,15 +21,9 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';
-import { getPluginHost, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
-import type {
-    PluginEntry,
-    ChannelPlugin,
-    ChannelAccountStatus,
-    ChannelGatewayContext,
-    InboundChannelMessage,
-    Participant
-} from '../../plugins/types.js';
+import { getPluginHost, isPluginEnabledFixed, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
+import type { Participant } from '../../aikernel/types/index.js';
+import type { ChannelPlugin, ChannelAccountStatus, ChannelGatewayContext, InboundChannelMessage } from './types.js';
 import { recordContact, getContacts } from './contacts.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
@@ -70,7 +64,7 @@ import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { ApplicationRegistry } from '../registry.js';
 import { getModeDisplayName } from '../../aikernel/agents/common.js';
 import { Setting } from '../../utils/setting.js';
-import { createNativeChannelPluginEntry, isNativeChannelEntry } from './native-channel.js';
+import { createNativeChannelPluginEntry, isNativeChannelEntry, type NativeChannelEntry } from './native-channel.js';
 import type { NativeChannelAdapter } from './native-channel.js';
 import type { ChannelAccountLoginParam } from '../../../../packages/plugin-sdk/src/index.js';
 import { ChannelInteractionService } from './interactions.js';
@@ -124,7 +118,7 @@ export interface LoginResult {
 
 export class ChannelMgrApplication extends BaseApplication {
     private workspace?: string;
-    private plugins: PluginEntry[] = [];
+    private plugins: NativeChannelEntry[] = [];
     private channelStates: Map<string, ChannelRuntimeState> = new Map();
     private router?: ChannelMessageRouter;
     private initPromise?: Promise<void>;
@@ -489,7 +483,6 @@ export class ChannelMgrApplication extends BaseApplication {
         );
         const stale = this.plugins.filter((entry) => {
             const cp = entry.channelPlugin;
-            if (!cp) return false;
             const current = registered.get(cp.id);
             if (!current) return true;
             if (!isNativeChannelEntry(entry)) return false;
@@ -506,7 +499,7 @@ export class ChannelMgrApplication extends BaseApplication {
         // 未被重建的既有渠道，用于区分「重新启用」与「首次启用」
         const kept = new Set(this.plugins.filter((entry) => !staleSet.has(entry)).map((entry) => entry.id));
         for (const entry of stale) {
-            const cp = entry.channelPlugin!;
+            const cp = entry.channelPlugin;
             await this.stopChannelPluginAccounts(cp, this.collectChannelAccountIds(cp));
         }
         if (stale.length > 0) {
@@ -517,14 +510,14 @@ export class ChannelMgrApplication extends BaseApplication {
         // （后者不能只移除，否则其他插件的渠道会因一次无关的重载而掉线）
         const toStart = new Set(owned.filter((channelId) => !kept.has(channelId)));
         for (const entry of stale) {
-            const channelId = entry.channelPlugin?.id;
-            if (channelId && registered.has(channelId)) toStart.add(channelId);
+            const channelId = entry.channelPlugin.id;
+            if (registered.has(channelId)) toStart.add(channelId);
         }
         // 只补齐需要启动的渠道，避免把其他插件的渠道提前拉进运行时却未启动
         this.loadNativeChannels(toStart);
         for (const channelId of toStart) {
-            const entry = this.plugins.find((candidate) => candidate.channelPlugin?.id === channelId);
-            if (entry?.channelPlugin) await this.startChannelPlugin(entry);
+            const entry = this.plugins.find((candidate) => candidate.channelPlugin.id === channelId);
+            if (entry) await this.startChannelPlugin(entry);
         }
         // 重新启用既有渠道：重启刷新账号缓存与连接。安装/重载等操作已由宿主重建渠道实例，
         // 走上面的 toStart 路径完成重连，无需再无条件重启（否则会多一次无谓断连）
@@ -538,7 +531,7 @@ export class ChannelMgrApplication extends BaseApplication {
 
     /**
      * 从原生插件系统（pluginmgr ctx.channels.register）加载 channel 实例，
-     * 生成伪 PluginEntry 并入 plugins 数组，复用现有 channelmgr 启动/收发流程。
+     * 生成 channelmgr 内部条目并入 plugins 数组，复用现有启动/收发流程。
      * @param onlyChannelIds 只收集指定渠道（差量同步用）；省略时收集宿主注册的全部渠道
      */
     private loadNativeChannels(onlyChannelIds?: ReadonlySet<string>): void {
@@ -548,10 +541,9 @@ export class ChannelMgrApplication extends BaseApplication {
             if (onlyChannelIds && !onlyChannelIds.has(channelId)) continue;
             // 已收集过的渠道跳过：保证方法可被差量同步重复调用而不产生重复条目
             if (this.plugins.some((entry) => entry.id === channelId)) continue;
-            const { entry: created } = createNativeChannelPluginEntry(channel, {
+            const created = createNativeChannelPluginEntry(channel, {
                 getConfig: (cid) => this.getChannelConfig(cid),
                 dispatch: async (cid, accountId, message) => {
-                    if (!created?.channelPlugin) return;
                     await this.handleInboundMessage(created.channelPlugin, accountId, message);
                 },
                 dispatchInteraction: async (cid, accountId, event) => {
@@ -576,8 +568,8 @@ export class ChannelMgrApplication extends BaseApplication {
         }
     }
 
-    private async startChannelPlugin(entry: PluginEntry): Promise<void> {
-        const cp = entry.channelPlugin!;
+    private async startChannelPlugin(entry: NativeChannelEntry): Promise<void> {
+        const cp = entry.channelPlugin;
         const channelId = cp.id;
         const config = this.getChannelConfig(channelId);
 
@@ -880,7 +872,7 @@ export class ChannelMgrApplication extends BaseApplication {
         runtime: { workspace?: string; agentId?: string; model?: string };
     }[] {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin) return [];
+        if (!entry) return [];
         const cp = entry.channelPlugin;
         const native = isNativeChannelEntry(entry)
             ? (entry.channelPlugin as unknown as NativeChannelAdapter)
@@ -939,7 +931,7 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 获取某渠道支持的登录方式。 */
     getChannelLoginModes(channelId: string): { qr: boolean; params: boolean } {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin) return { qr: false, params: false };
+        if (!entry) return { qr: false, params: false };
         const cp = entry.channelPlugin;
         const native = isNativeChannelEntry(entry)
             ? (entry.channelPlugin as unknown as NativeChannelAdapter)
@@ -954,14 +946,14 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 获取参数登录的表单字段描述（原生 channel）。 */
     getChannelLoginParams(channelId: string): ChannelAccountLoginParam[] {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin || !isNativeChannelEntry(entry)) return [];
+        if (!entry || !isNativeChannelEntry(entry)) return [];
         return (entry.channelPlugin as unknown as NativeChannelAdapter).getLoginParams();
     }
 
     /** 登出指定渠道账号：停止连接、清理凭证并移除状态。 */
     async logoutChannelAccount(channelId: string, accountId: string): Promise<{ ok: boolean; message?: string }> {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin) {
+        if (!entry) {
             return { ok: false, message: '未找到渠道: ' + channelId };
         }
         const cp = entry.channelPlugin;
@@ -987,7 +979,7 @@ export class ChannelMgrApplication extends BaseApplication {
         values: Record<string, string>
     ): Promise<LoginResult> {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin || !isNativeChannelEntry(entry)) {
+        if (!entry || !isNativeChannelEntry(entry)) {
             return { phase: 'error', error: '渠道 ' + channelId + ' 不支持参数登录' };
         }
         const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
@@ -1012,7 +1004,7 @@ export class ChannelMgrApplication extends BaseApplication {
      */
     async startQrLogin(channelId: string, accountId = 'default'): Promise<LoginResult> {
         const entry = this.findChannelPlugin(channelId);
-        if (!entry?.channelPlugin) {
+        if (!entry) {
             return { phase: 'error', error: '未找到渠道: ' + channelId };
         }
         const cp = entry.channelPlugin;
@@ -1102,13 +1094,11 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     getChannelPlugins(): { id: string; label: string; description?: string }[] {
-        return this.plugins
-            .filter((p) => p.channelPlugin)
-            .map((p) => ({
-                id: p.channelPlugin!.id,
-                label: resolveChannelDisplayName(p.channelPlugin!.id, p.channelPlugin!.meta.label),
-                description: p.channelPlugin!.meta.description
-            }));
+        return this.plugins.map((p) => ({
+            id: p.channelPlugin.id,
+            label: resolveChannelDisplayName(p.channelPlugin.id, p.channelPlugin.meta.label),
+            description: p.channelPlugin.meta.description
+        }));
     }
 
     /**
@@ -1137,8 +1127,8 @@ export class ChannelMgrApplication extends BaseApplication {
         );
 
         // Find the channel plugin
-        const entry = this.plugins.find((p) => p.channelPlugin?.id === channel);
-        if (!entry?.channelPlugin) {
+        const entry = this.plugins.find((p) => p.channelPlugin.id === channel);
+        if (!entry) {
             logger.error(`[channelmgr] 找不到 channel plugin: ${channel}`);
             return;
         }
@@ -1177,8 +1167,8 @@ export class ChannelMgrApplication extends BaseApplication {
     private async sendMediaToParticipant(participant: Participant, mediaUrl: string): Promise<void> {
         const { channel, accountId, recipientId } = participant;
 
-        const entry = this.plugins.find((p) => p.channelPlugin?.id === channel);
-        if (!entry?.channelPlugin) {
+        const entry = this.plugins.find((p) => p.channelPlugin.id === channel);
+        if (!entry) {
             logger.error(`[channelmgr] sendMediaToParticipant: 找不到 channel plugin: ${channel}`);
             return;
         }
@@ -1275,8 +1265,8 @@ export class ChannelMgrApplication extends BaseApplication {
     getParticipantInfo(
         participant: Participant
     ): { channelId: string; accountId: string; recipientId: string; label: string } | null {
-        const entry = this.plugins.find((p) => p.channelPlugin?.id === participant.channel);
-        if (!entry?.channelPlugin) {
+        const entry = this.plugins.find((p) => p.channelPlugin.id === participant.channel);
+        if (!entry) {
             return null;
         }
         return {
@@ -1294,22 +1284,16 @@ export class ChannelMgrApplication extends BaseApplication {
      * 优先使用 gateway.loginWithQrStart + loginWithQrWait（返回 QR URL，可在 UI 显示）。
      * 若无 gateway QR 方法：对 Feishu 注入设备授权流程；对其他插件调用 auth.login（QR 输出到控制台）。
      */
-    private findChannelPlugin(channelId: string): PluginEntry | undefined {
-        return (
-            this.plugins.find((p) => p.channelPlugin?.id === channelId) ||
-            this.plugins.find((p) => p.channelPlugin && (p.id === channelId || p.installRecord?.id === channelId))
-        );
+    private findChannelPlugin(channelId: string): NativeChannelEntry | undefined {
+        return this.plugins.find((p) => p.channelPlugin.id === channelId || p.id === channelId);
     }
 
     async loginChannel(channelId: string, accountId = 'default', result?: ToolResult): Promise<LoginResult> {
         // 先在已加载的原生渠道中查找
         const entry = this.findChannelPlugin(channelId);
 
-        if (!entry?.channelPlugin) {
-            const loadedIds = this.plugins
-                .filter((p) => p.channelPlugin)
-                .map((p) => `${p.id}(channel=${p.channelPlugin!.id})`)
-                .join(', ');
+        if (!entry) {
+            const loadedIds = this.plugins.map((p) => `${p.id}(channel=${p.channelPlugin.id})`).join(', ');
             return { phase: 'error', error: `未找到渠道: ${channelId}。已加载的渠道: [${loadedIds}]` };
         }
 
@@ -1623,8 +1607,8 @@ export class ChannelMgrApplication extends BaseApplication {
      * 用于 loginChannel 成功后立即建立消息收发通道。
      */
     async restartChannelPlugin(channelId: string): Promise<void> {
-        const entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
-        if (!entry?.channelPlugin) {
+        const entry = this.plugins.find((p) => p.channelPlugin.id === channelId);
+        if (!entry) {
             logger.warn(`[channelmgr] restartChannelPlugin: 未找到渠道 ${channelId}`);
             return;
         }
@@ -1856,6 +1840,10 @@ export class ChannelMgrApplication extends BaseApplication {
                     showInfo(t('plugin.usage.hint'), '/plugins enable <plugin-id>');
                     return;
                 }
+                if (isPluginEnabledFixed(rest)) {
+                    showInfo(t('plugin.enable.fail'), t('plugin.enabledFixed', { id: rest }));
+                    return;
+                }
                 if (!setPluginEnabled(rest, true)) {
                     showInfo(t('plugin.enable.fail'), `未找到插件: ${rest}`);
                     return;
@@ -1874,6 +1862,10 @@ export class ChannelMgrApplication extends BaseApplication {
             case 'disable': {
                 if (!rest) {
                     showInfo(t('plugin.usage.hint'), '/plugins disable <plugin-id>');
+                    return;
+                }
+                if (isPluginEnabledFixed(rest)) {
+                    showInfo(t('plugin.disable.fail'), t('plugin.enabledFixed', { id: rest }));
                     return;
                 }
                 if (setPluginEnabled(rest, false)) {

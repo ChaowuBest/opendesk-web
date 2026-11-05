@@ -75,9 +75,13 @@ export {
     reloadPluginHost,
     applyPluginEnabledChange
 } from './runtime/bootstrap.js';
-export { getRuntimePluginDirectories, setRuntimePluginDirectories } from './management/config.js';
+export {
+    findUnusablePluginDirectories,
+    getBuiltinPluginsDirectories,
+    setRuntimePluginsDirectories
+} from './management/paths.js';
 export { getPluginRuntimeEntry, setPluginOptions, setPluginGrantedCapabilities } from './management/policy.js';
-export { discoverPlugins, verifyPluginRecord } from './discovery/discovery.js';
+export { discoverPlugins, resolvePluginRecordPath, verifyPluginRecord } from './discovery/discovery.js';
 export {
     getBuiltinPluginsDirectory,
     getPluginsDirectory,
@@ -92,10 +96,11 @@ export {
     uninstallPlugin,
     listInstalledPlugins,
     listVisiblePlugins,
+    isPluginEnabledFixed,
     setPluginEnabled,
     verifyInstalledPlugin
 } from './management/manager.js';
-export type { UninstallPluginOptions } from './management/manager.js';
+export type { UninstallPluginOptions, VisiblePluginRecord } from './management/manager.js';
 export type {
     DiscoveredPluginCandidate,
     PluginDiscoveryConflict,

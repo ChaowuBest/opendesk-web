@@ -10,6 +10,7 @@
  */
 export const ENV_CONFIG_DIRECTORY = 'OPENDESK_CONFIG_DIRECTORY';
 export const ENV_BUILTIN_PLUGINS_DIRECTORY = 'OPENDESK_BUILTIN_PLUGINS_DIRECTORY';
+export const ENV_PLUGINS_DIRECTORY = 'OPENDESK_PLUGINS_DIRECTORY';
 export const ENV_PLATFORM = 'OPENDESK_PLATFORM';
 export const ENV_DEBUG_FETCH_BODY = 'OPENDESK_DEBUG_FETCH_BODY';
 export const ENV_DEFAULT_MODEL_NAME = 'OPENDESK_MODEL_NAME';
@@ -27,6 +28,11 @@ export interface OpendeskEnvVarDoc {
 export const OPENDESK_ENV_VAR_DOCS: OpendeskEnvVarDoc[] = [
     { name: ENV_CONFIG_DIRECTORY, description: 'custom config directory (same as --config-directory)' },
     { name: ENV_BUILTIN_PLUGINS_DIRECTORY, description: 'override built-in plugins directory' },
+    {
+        name: ENV_PLUGINS_DIRECTORY,
+        description:
+            'comma-separated plugin directories merged into the built-in plugins directory (same as --plugins-directory)'
+    },
     { name: ENV_DEFAULT_MODEL_NAME, description: 'override default chat model name' },
     { name: ENV_DEFAULT_MODEL_CONTEXT_LENGTH, description: 'override default model context length (tokens)' },
     { name: ENV_DEFAULT_PROVIDER_BASE_URL, description: 'override provider base URL' },

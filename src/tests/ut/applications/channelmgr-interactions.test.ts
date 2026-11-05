@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { ChannelInteractionService } from '../../../main/applications/channelmgr/interactions.js';
-import type { ChannelPlugin, PluginEntry } from '../../../main/plugins/types.js';
+import type { ChannelPlugin } from '../../../main/applications/channelmgr/types.js';
 
 /** 构造一个支持结构化交互（interactive + sendInteraction）的 mock 渠道插件。 */
 function makeMockChannelPlugin(sendInteraction: jest.Mock): ChannelPlugin {
@@ -17,11 +17,9 @@ function makeMockChannelPlugin(sendInteraction: jest.Mock): ChannelPlugin {
     } as ChannelPlugin;
 }
 
-function makeMockEntry(sendInteraction: jest.Mock): PluginEntry {
+function makeMockEntry(sendInteraction: jest.Mock) {
     return {
         id: 'mock-channel',
-        manifest: {} as never,
-        installRecord: {} as never,
         channelPlugin: makeMockChannelPlugin(sendInteraction)
     };
 }

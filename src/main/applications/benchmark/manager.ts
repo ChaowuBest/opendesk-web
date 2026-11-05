@@ -31,6 +31,7 @@ import { logger } from '../../utils/logger.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
 import { t } from './locale/index.js';
 import { BenchmarkRunner, type CasePlanItem, type RunnerCallbacks } from './engine.js';
+import { normalizeGitDownloadUrl, resolveResponseLfs } from '../../../common/git-lfs.js';
 import {
     BenchmarkDataError,
     parseDatasetManifest,
@@ -915,15 +916,28 @@ export class BenchmarkManager {
         };
 
         const download = async () => {
-            const response = await fetchImpl(url, {
+            // GitCode 的 raw.gitcode.com 预览端点对 LFS 二进制返回 403、GitHub 的 blob 是网页：
+            // 先归一成能拿到内容（或 pointer）的直链形态，非 git 托管地址原样保留
+            const target = normalizeGitDownloadUrl(url);
+            const fetchInit: RequestInit & { headers?: Record<string, string> } = {
                 redirect: 'follow',
                 headers: { accept: 'application/octet-stream' },
                 signal: controller.signal
-            });
+            };
+            const response = await fetchImpl(target, fetchInit);
             if (!response.ok) {
+                // 取消未消费的响应体，连接立刻回到连接池
+                await response.body?.cancel().catch(() => undefined);
                 throw new BenchmarkDataError(t('error.downloadHttpStatus', { status: response.status }));
             }
-            const declaredSize = Number(response.headers.get('content-length'));
+
+            // LFS 托管的文件拿到的是 pointer 文本而不是内容：
+            // 解引用成 CDN 直链重新下载（公开仓库匿名可用），普通文件原样放行
+            const lfs = await resolveResponseLfs(response, target, fetchImpl, fetchInit).catch((error: unknown) => {
+                throw new BenchmarkDataError(t('error.lfsUnresolvable', { message: toErrorMessage(error) }));
+            });
+
+            const declaredSize = Number(lfs.response.headers.get('content-length'));
             const totalBytes = Number.isFinite(declaredSize) && declaredSize > 0 ? declaredSize : null;
             if (totalBytes && totalBytes > DOWNLOAD_MAX_BYTES) {
                 throw new BenchmarkDataError(t('error.downloadTooLarge'));
@@ -932,8 +946,8 @@ export class BenchmarkManager {
             fs.mkdirSync(path.dirname(destination), { recursive: true });
             const handle = await fs.promises.open(destination, 'w');
             try {
-                if (!response.body) {
-                    const buffer = Buffer.from(await response.arrayBuffer());
+                if (!lfs.stream) {
+                    const buffer = Buffer.from(await lfs.response.arrayBuffer());
                     if (buffer.byteLength > DOWNLOAD_MAX_BYTES) {
                         throw new BenchmarkDataError(t('error.downloadTooLarge'));
                     }
@@ -942,7 +956,7 @@ export class BenchmarkManager {
                     return;
                 }
                 let receivedBytes = 0;
-                const body = Readable.fromWeb(response.body as never);
+                const body = Readable.fromWeb(lfs.stream as never);
                 activeBody = body;
                 try {
                     for await (const chunk of body) {

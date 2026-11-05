@@ -4,6 +4,7 @@ import path from 'path';
 import { listVisiblePlugins } from '../../../main/applications/pluginmgr/management/manager.js';
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
 import { upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
+import { disposePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
@@ -13,7 +14,6 @@ function writePlugin(directory: string, id: string, manifestExtra: Record<string
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
         JSON.stringify({
-            schemaVersion: 1,
             id,
             entry: './index.js',
             apiVersion: 1,
@@ -40,9 +40,10 @@ describe('pluginmgr listVisiblePlugins', () => {
         Setting.clearCache();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         if (previousBuiltinDirectory === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previousBuiltinDirectory;
+        await disposePluginHost();
         Setting.clearCache();
         setCustomOpendeskDirectory(undefined);
         fs.rmSync(configDirectory, { recursive: true, force: true });
@@ -183,21 +184,36 @@ describe('pluginmgr listVisiblePlugins', () => {
         expect(records).toEqual([]);
     });
 
-    test('externalPaths 中的外部路径插件出现在列表中（与 GUI 口径一致）', () => {
-        const externalDirectory = path.join(configDirectory, 'external-root');
-        writePlugin(path.join(externalDirectory, 'sidecar'), 'sidecar');
+    test('应用不再内置的插件留下的开关记录不再展示', async () => {
+        // 曾经内置、现已从内置目录移除：注册表里只剩一条开关记录，目录已经不存在。
+        // 这类记录既不能启用也不能卸载，GUI 与 CLI 都不该把它列成「内置插件」。
+        upsertPluginRecord(
+            {
+                id: 'removed-builtin',
+                source: 'builtin',
+                path: path.join(builtinDirectory, 'removed-builtin'),
+                enabled: false,
+                options: {}
+            },
+            configDirectory
+        );
 
-        const records = listVisiblePlugins({
-            configDirectory,
-            externalPaths: [path.join(externalDirectory, 'sidecar')]
-        });
-
-        expect(records.map((record) => record.id)).toEqual(['sidecar']);
-        expect(records[0]?.source).toBe('external');
-        expect(records[0]?.path).toBe(path.join(externalDirectory, 'sidecar'));
+        expect(listVisiblePlugins(configDirectory).map((record) => record.id)).not.toContain('removed-builtin');
+        expect((await new PluginMgrApplication().list()).map((entry) => entry.id)).not.toContain('removed-builtin');
     });
 
-    test('settings.json 的 externalPaths 未显式传参时同样生效', () => {
+    test('本地插件的记录在目录被删掉后同样隐藏（幽灵条目）', () => {
+        // 手工删掉 plugins/ 下的目录、或安装记录残留时，记录指向的插件已经不在了：
+        // 既不能启用也不能卸载，展示出来只会让人以为插件还在
+        upsertPluginRecord(
+            { id: 'broken-local', source: 'local', path: 'broken-local', enabled: true, options: {} },
+            configDirectory
+        );
+
+        expect(listVisiblePlugins(configDirectory).map((record) => record.id)).not.toContain('broken-local');
+    });
+
+    test('settings.json 的 externalPaths 作为附加插件目录进入列表', () => {
         const externalDirectory = path.join(configDirectory, 'external-root');
         writePlugin(path.join(externalDirectory, 'sidecar'), 'sidecar');
         // 注册 pluginmgr 配置 Schema，否则 setData 会剥离 applications.pluginmgr
@@ -209,6 +225,37 @@ describe('pluginmgr listVisiblePlugins', () => {
         const records = listVisiblePlugins({ configDirectory });
 
         expect(records.map((record) => record.id)).toEqual(['sidecar']);
-        expect(records[0]?.source).toBe('external');
+        // 附加插件目录按内置插件处理
+        expect(records[0]?.source).toBe('builtin');
+        expect(records[0]?.path).toBe(path.join(externalDirectory, 'sidecar'));
+    });
+
+    test('残留的 local 记录不覆盖实际按内置插件加载的来源与路径', async () => {
+        // 先装到 plugins 目录、后来同名插件出现在内置目录：记录仍是 local，但加载的是内置那份
+        writePlugin(path.join(builtinDirectory, 'review'), 'review');
+        upsertPluginRecord(
+            {
+                id: 'review',
+                source: 'local',
+                path: 'review',
+                enabled: true,
+                options: {}
+            },
+            configDirectory
+        );
+
+        const [record] = listVisiblePlugins({ configDirectory });
+
+        // source 必须与 path/enabled 同一口径，否则 GUI 会把不可卸载的内置插件显示成本地插件
+        expect(record).toMatchObject({ id: 'review', source: 'builtin', path: path.join(builtinDirectory, 'review') });
+
+        // GUI 管理页（PluginMgrApplication.list）必须同口径
+        const [guiEntry] = await new PluginMgrApplication().list();
+        expect(guiEntry).toMatchObject({
+            id: 'review',
+            source: 'builtin',
+            removable: false,
+            path: path.join(builtinDirectory, 'review')
+        });
     });
 });

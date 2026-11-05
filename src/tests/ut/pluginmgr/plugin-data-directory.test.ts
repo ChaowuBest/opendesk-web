@@ -18,7 +18,7 @@ function writePluginDirectory(configDirectory: string, id: string): string {
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
-        JSON.stringify({ schemaVersion: 1, id, entry: './index.js', apiVersion: 1, capabilities: [] })
+        JSON.stringify({ id, entry: './index.js', apiVersion: 1, capabilities: [] })
     );
     fs.writeFileSync(path.join(directory, 'index.js'), `export default { id: '${id}', setup() {} };`);
     return directory;
@@ -173,7 +173,6 @@ describe('插件私有数据目录', () => {
         fs.writeFileSync(
             path.join(directory, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'Case-Plugin',
                 entry: './index.js',
                 apiVersion: 1,

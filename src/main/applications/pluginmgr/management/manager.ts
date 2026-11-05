@@ -7,6 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import { extract as extractTar } from 'tar';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
     validateOpenDeskPluginDirectory,
     validateOpenDeskPluginPackage,
@@ -16,29 +18,37 @@ import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { logger } from '../../../utils/logger.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import type { PluginPlatform } from '../../../../../packages/plugin-sdk/src/index.js';
-import { discoverPlugins, verifyPluginRecord, type PluginVerification } from '../discovery/discovery.js';
+import {
+    discoverPlugins,
+    resolvePluginRecordPath,
+    verifyPluginRecord,
+    type PluginVerification
+} from '../discovery/discovery.js';
 import { resolvePluginEntry } from '../discovery/loader.js';
 import { readPluginManifest } from '../discovery/manifest.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
-import { getPluginManagerConfig, getRuntimePluginDirectories } from './config.js';
 import {
     ensurePluginDirectories,
-    getBuiltinPluginsDirectory,
     getPluginCacheDirectory,
     getPluginDataDirectory,
+    getPluginRecordRoot,
     getPluginsDirectory,
     getPluginStagingDirectory,
-    getPluginTrashDirectory
+    getPluginTrashDirectory,
+    toPluginRecordPath
 } from './paths.js';
 import {
     getPluginRecord,
+    isStalePluginRecord,
     listPluginRecords,
     removePluginRecord,
     upsertPluginRecord,
     type PluginRegistryRecord
 } from './registry.js';
 import { classifyPluginInstallError, type PluginInstallResult, type PluginInstallStage } from './errors.js';
+import { toErrorMessage } from '../../../../common/utils/error.js';
+import { normalizeGitDownloadUrl, resolveResponseLfs } from '../../../../common/git-lfs.js';
 
 export { resolveNpmInvocation, type NpmInvocation } from './dependencies.js';
 
@@ -46,6 +56,20 @@ export interface PluginInstallOptions {
     configDirectory?: string;
     runNpm?: (args: string[], cwd: string) => Promise<void>;
     fetch?: typeof globalThis.fetch;
+    /**
+     * 远程归档包下载进度（字节）。
+     *
+     * total 来自响应的 content-length；服务端没给长度时为 null，此时只能显示「已下载多少」。
+     * 本地目录 / 本地归档包 / npm 源都不会回调。
+     */
+    onDownloadProgress?: (receivedBytes: number, totalBytes: number | null) => void;
+    /**
+     * 落盘前的最后一道校验：插件已经下载/解压到暂存目录、还没注册进 `plugins/` 之前调用。
+     *
+     * 抛错即中止安装——磁盘上不会留下这一版，已安装的旧版本保持原样。市场安装用它核对
+     * 「市场条目 vs 包内清单」：对不上时宁可整单失败，也不要装进一个与上架信息不符的包。
+     */
+    verifyStaged?: (staged: { id: string; directory: string }) => void;
 }
 
 type PluginArchiveFormat = 'tgz' | 'zip';
@@ -124,24 +148,81 @@ function copyPluginContents(sourceDirectory: string, destinationDirectory: strin
     }
 }
 
+/**
+ * 下载远程插件归档包。
+ *
+ * 边下边写到临时目录：归档包可能几十兆，先整包读进内存既费内存又没法显示进度。
+ * 进度按响应体分块回调，调用方（插件市场）据此更新界面。
+ *
+ * Git LFS 托管的归档包（官方插件仓库）：raw 直链对 LFS 文件返回的是 pointer 文本
+ * 而不是内容，识别后按 Git LFS 标准协议解引用成 CDN 直链重新下载。
+ */
 async function downloadPluginArchive(
     spec: string,
     destination: string,
     format: PluginArchiveFormat,
-    fetchArchive: (input: string) => Promise<Response>
+    fetchArchive: (input: string, init?: RequestInit) => Promise<Response>,
+    onProgress?: (receivedBytes: number, totalBytes: number | null) => void
 ): Promise<string> {
-    const response = await fetchArchive(spec);
-    if (!response.ok) throw new Error(`plugin.install_archive_download_failed:${response.status}`);
+    // GitCode 的 raw.gitcode.com 预览端点对 LFS 二进制直接 403、GitHub 的 blob 是网页：
+    // 先归一成能拿到内容（或 pointer）的直链形态（非 git 托管地址原样保留）
+    const target = normalizeGitDownloadUrl(spec);
+    let response = await fetchArchive(target);
+    if (!response.ok) {
+        // 取消未消费的响应体，连接立刻回到连接池；重试安装不会等 GC 才释放
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`plugin.install_archive_download_failed:${response.status}`);
+    }
+    // LFS 托管的归档包拿到的是 pointer 文本而不是内容：解引用成 CDN 直链重新下载
+    const lfs = await resolveResponseLfs(response, target, fetchArchive).catch((error: unknown) => {
+        throw new Error(`plugin.install_lfs_unresolvable:${toErrorMessage(error)}`);
+    });
+    response = lfs.response;
     const archivePath = path.join(destination, `plugin.${format}`);
-    fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
+    // content-length 是「传输编码之后」的字节数：响应被 gzip / br 压缩时它和解压后的流长度对不上，
+    // 拿它算进度会一路冲到 100% 还继续涨（并让「末块优先发」退化成每块都发）。这种响应只能报
+    // 「已下载多少」，界面退化成不定进度条
+    const contentEncoding = (response.headers.get('content-encoding') ?? 'identity').trim().toLowerCase();
+    const declaredSize = Number(response.headers.get('content-length'));
+    const totalBytes =
+        (contentEncoding === '' || contentEncoding === 'identity') && Number.isFinite(declaredSize) && declaredSize > 0
+            ? declaredSize
+            : null;
+    const stream = lfs.stream;
+    if (!stream) {
+        fs.writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()));
+        onProgress?.(fs.statSync(archivePath).size, totalBytes);
+        return archivePath;
+    }
+    let receivedBytes = 0;
+    onProgress?.(0, totalBytes);
+    try {
+        await pipeline(
+            Readable.fromWeb(stream as never),
+            new Transform({
+                transform(chunk: Buffer, _encoding, callback) {
+                    receivedBytes += chunk.length;
+                    onProgress?.(receivedBytes, totalBytes);
+                    callback(null, chunk);
+                }
+            }),
+            fs.createWriteStream(archivePath)
+        );
+    } catch (error) {
+        // 半截归档包留在临时目录里没有意义，下次安装也不会复用。删不掉（Windows 上句柄
+        // 偶尔还没释放）也不能盖掉真正的失败原因，否则用户只看到一句删除失败
+        try {
+            fs.rmSync(archivePath, { force: true });
+        } catch {
+            /* 清理失败忽略：临时目录随安装流程一起回收 */
+        }
+        throw error;
+    }
     return archivePath;
 }
 
 export interface SetPluginEnabledOptions {
     configDirectory?: string;
-    externalPaths?: readonly string[];
-    pluginDirectories?: readonly string[];
-    builtinDirectory?: string;
 }
 
 function readJson(file: string): Record<string, unknown> {
@@ -236,7 +317,8 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                           spec,
                           temporarySourceDirectory,
                           archiveFormat,
-                          options.fetch ?? ((input) => getPlatform().fetch(input))
+                          options.fetch ?? ((input, init) => getPlatform().fetch(input, init)),
+                          options.onDownloadProgress
                       );
                 extractedDirectory = await extractPluginArchive(archivePath, extractionDirectory, archiveFormat);
                 stage = 'validate';
@@ -281,17 +363,20 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
             managedPath = relativeManagedPath(validated.id, packageName);
         }
         assertSafePluginId(validated.id);
-        const builtin = discoverPlugins({ configDirectory }).candidates.find(
-            (candidate) => candidate.source === 'builtin' && candidate.id === validated.id
-        );
-        if (builtin) throw new Error(`plugin.install_builtin_conflict:${validated.id}`);
+        if (isBuiltinPluginId(validated.id, configDirectory)) {
+            throw new Error(`plugin.install_builtin_conflict:${validated.id}`);
+        }
+        // 覆盖安装沿用旧记录的启停/选项/授权；上一版被内置插件顶掉时也保留用户的选择
+        const previous = getPluginRecord(validated.id, configDirectory);
+        // 落盘前的最后一道校验（市场安装用来核对上架信息与包内清单）：抛错就整单失败，
+        // 此时 destination 还没被挪走，旧版本原样留在磁盘上
+        options.verifyStaged?.({ id: validated.id, directory: pluginDirectory });
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
         const destination = path.join(getPluginsDirectory(configDirectory), validated.id);
         await moveToTrash(destination, configDirectory);
         fs.renameSync(stagingDirectory, destination);
 
-        const previous = getPluginRecord(validated.id, configDirectory);
         const record: PluginRegistryRecord = {
             id: validated.id,
             source: 'local',
@@ -336,8 +421,9 @@ export type UninstallTargetResolution = { ok: true; target: string } | { ok: fal
 /**
  * 解析卸载要删除的磁盘目标，或在不能卸载时给出拒绝原因。
  *
- * 单独暴露出来是为了让宿主在**释放插件运行实例之前**先做检查：内置与外部插件、以及
- * 已不存在的插件都不该被 deactivate，否则会白白拆掉一个正在运行的内置渠道插件再装回来。
+ * 单独暴露出来是为了让宿主在**释放插件运行实例之前**先做检查：内置与附加插件目录里的
+ * 插件、以及已不存在的插件都不该被 deactivate，否则会白白拆掉一个正在运行的内置渠道
+ * 插件再装回来。
  */
 export function resolveUninstallTarget(
     id: string,
@@ -345,7 +431,9 @@ export function resolveUninstallTarget(
 ): UninstallTargetResolution {
     const pluginsRoot = path.resolve(getPluginsDirectory(configDirectory));
     const record = getPluginRecord(id, configDirectory);
-    if (record && record.source !== 'builtin' && !path.isAbsolute(record.path)) {
+    // 内置记录（含附加插件目录）与运行状态无关：即使插件当前被禁用，也不该报「找不到插件」
+    if (record?.source === 'builtin') return { ok: false, error: 'plugin.uninstall_builtin' };
+    if (record && !path.isAbsolute(record.path)) {
         // Registry records for plugins inside the plugins directory always start
         // with the container entry (directory or single plugin file).
         const target = path.resolve(pluginsRoot, record.path.split(/[\\/]/)[0]);
@@ -357,10 +445,9 @@ export function resolveUninstallTarget(
     const candidate = discoverPlugins({ configDirectory }).candidates.find((entry) => entry.id === id);
     if (!candidate) return { ok: false, error: `Plugin not found: ${id}` };
     if (candidate.source === 'builtin') return { ok: false, error: 'plugin.uninstall_builtin' };
-    if (candidate.source === 'external') return { ok: false, error: 'plugin.uninstall_external' };
     const spec = path.resolve(candidate.spec);
     if (!spec.startsWith(`${pluginsRoot}${path.sep}`)) {
-        return { ok: false, error: 'plugin.uninstall_external' };
+        return { ok: false, error: 'plugin.uninstall_invalid_path' };
     }
     return { ok: true, target: spec };
 }
@@ -417,35 +504,55 @@ export function listInstalledPlugins(configDirectory?: string): PluginRegistryRe
 }
 
 /**
+ * 展示口径的插件记录：比 registry 多一个「启停由清单固定」标记。
+ * CLI/TUI 列表据此标明固定启停的原因，与 GUI 插件中心的系统标记保持一致。
+ */
+export interface VisiblePluginRecord extends PluginRegistryRecord {
+    system?: boolean;
+}
+
+/**
+ * 该 id 是否已经被内置级插件占用（默认内置目录 + 附加插件目录）。
+ *
+ * 内置插件的 ID 具有最高优先级：同 ID 的本地/市场插件装上去也只会被盖掉，因此一律拒绝安装。
+ * 被禁用的内置插件不在发现结果里，所以再看一眼注册表记录；但只在记录指向的插件仍在磁盘上时
+ * 才算冲突——附加目录撤掉后留下的残留记录不该永久堵住同名插件的安装。
+ *
+ * 安装流程与插件市场的下载前预检共用这一判定，避免「市场显示能装、装完才报冲突」。
+ */
+export function isBuiltinPluginId(id: string, configDirectory: string = getOpendeskDirectory()): boolean {
+    const record = getPluginRecord(id, configDirectory);
+    if (record?.source === 'builtin' && fs.existsSync(resolvePluginRecordPath(record, configDirectory))) return true;
+    return discoverPlugins({ configDirectory }).candidates.some(
+        (candidate) => candidate.source === 'builtin' && candidate.id === id
+    );
+}
+
+/**
  * 对外展示口径的插件列表：registry 记录与 discovery 候选合并，与 GUI 插件
- * 管理页（PluginMgrApplication.list）保持一致，内置、本地散装与外部路径
+ * 管理页（PluginMgrApplication.list）保持一致，内置、附加插件目录与本地散装
  * 插件均可见。平台不匹配的插件（如鸿蒙专属插件）不出现在列表中。
  */
-export function listVisiblePlugins(
-    options: {
-        configDirectory?: string;
-        externalPaths?: readonly string[];
-        pluginDirectories?: readonly string[];
-    } = {}
-): PluginRegistryRecord[] {
+export function listVisiblePlugins(options: { configDirectory?: string } = {}): VisiblePluginRecord[] {
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
     const records = listPluginRecords(resolvedConfigDirectory);
-    const discovery = discoverPlugins({
-        configDirectory: resolvedConfigDirectory,
-        // 未显式传入时与 GUI 口径对齐：读取 settings.json 的 externalPaths 与
-        // 运行时注册的插件目录（CLI --plugins-directory 等）。
-        externalPaths: options.externalPaths ?? getPluginManagerConfig().externalPaths,
-        pluginDirectories: options.pluginDirectories ?? getRuntimePluginDirectories()
-    });
+    const discovery = discoverPlugins({ configDirectory: resolvedConfigDirectory });
     const candidatesById = new Map(discovery.candidates.map((candidate) => [candidate.id, candidate]));
-    const merged = new Map(records.map((record) => [record.id, record]));
+    const merged = new Map<string, VisiblePluginRecord>(
+        records
+            // 与 pluginmgr 列表同口径：记录指向的插件已经不在磁盘上（不再内置、目录被删、
+            // 外部目录被撤）时不再展示——那是一个既不能启用也不能卸载的幽灵条目。
+            .filter((record) => !isStalePluginRecord(record, resolvedConfigDirectory))
+            .map((record) => [record.id, record])
+    );
     for (const candidate of discovery.candidates) {
         if (merged.has(candidate.id)) continue;
         merged.set(candidate.id, {
             id: candidate.id,
             source: candidate.source,
             path: candidate.spec,
-            enabled: true,
+            enabled: candidate.enabled,
+            system: candidate.system,
             options: candidate.options ?? {},
             grantedCapabilities: candidate.grantedCapabilities
         });
@@ -453,22 +560,21 @@ export function listVisiblePlugins(
     // 展示路径与 GUI 列表对齐（candidate?.spec ?? record?.path）：registry 记录
     // （启停/安装策略会写相对路径）优先采用 discovery 的绝对 spec，未被
     // discovery 覆盖的记录（如被禁用插件）按来源解析为绝对路径。
-    const platformFiltered: PluginRegistryRecord[] = [];
+    // 启停状态同样以 discovery 为准：清单固定启停（system）的内置插件不采信 registry。
+    const platformFiltered: VisiblePluginRecord[] = [];
     for (const [id, record] of merged) {
         const candidate = candidatesById.get(id);
+        // 有候选时整条记录都采用 discovery 口径（来源、路径、启停、system）：只取部分字段
+        // 会出现「路径指向内置目录、来源却写着 local」这类自相矛盾的展示。
         const displayRecord = candidate
-            ? { ...record, path: candidate.spec }
-            : {
+            ? {
                   ...record,
-                  path: path.isAbsolute(record.path)
-                      ? record.path
-                      : path.resolve(
-                            record.source === 'builtin'
-                                ? getBuiltinPluginsDirectory()
-                                : getPluginsDirectory(resolvedConfigDirectory),
-                            record.path
-                        )
-              };
+                  source: candidate.source,
+                  path: candidate.spec,
+                  enabled: candidate.enabled,
+                  system: candidate.system
+              }
+            : { ...record, path: resolvePluginRecordPath(record, resolvedConfigDirectory) };
         // 平台过滤与 GUI 列表对齐：对所有条目生效（含 registry 记录），
         // 清单缺失或损坏时保持展示。
         try {
@@ -486,6 +592,19 @@ export function listVisiblePlugins(
     return platformFiltered.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * 插件是否由清单固定启停（内置插件在清单里声明了 `system: true`）。
+ *
+ * 固定后 pluginmgr 不再允许切换开关，实际状态直接沿用清单里的 `enabled`：
+ * `true`（或缺省）恒启用，`false` 恒禁用。
+ */
+export function isPluginEnabledFixed(id: string, options: SetPluginEnabledOptions = {}): boolean {
+    const candidate = discoverPlugins({ configDirectory: options.configDirectory }).candidates.find(
+        (entry) => entry.id === id
+    );
+    return candidate?.system === true;
+}
+
 export function setPluginEnabled(
     id: string,
     enabled: boolean,
@@ -496,33 +615,24 @@ export function setPluginEnabled(
             ? { configDirectory: configDirectoryOrOptions }
             : (configDirectoryOrOptions ?? {});
     const resolvedConfigDirectory = options.configDirectory ?? getOpendeskDirectory();
+    // 一次发现同时给出「能否改开关」与「候选记录」：清单固定启停的插件写注册表也不会生效
+    //（发现阶段始终以清单为准），直接拒绝，避免留下「注册表说启用、运行时仍然禁用」的假状态。
+    const candidate = discoverPlugins({ configDirectory: resolvedConfigDirectory }).candidates.find(
+        (entry) => entry.id === id
+    );
+    if (candidate?.system) return false;
     let record = getPluginRecord(id, resolvedConfigDirectory);
     if (!record) {
-        const builtinDirectory = path.resolve(options.builtinDirectory ?? getBuiltinPluginsDirectory());
-        const candidate = discoverPlugins({
-            configDirectory: resolvedConfigDirectory,
-            builtinDirectory,
-            externalPaths: options.externalPaths,
-            pluginDirectories: options.pluginDirectories
-        }).candidates.find((entry) => entry.id === id);
-        if (candidate) {
-            const root =
-                candidate.source === 'builtin'
-                    ? builtinDirectory
-                    : candidate.source === 'local'
-                      ? getPluginsDirectory(resolvedConfigDirectory)
-                      : undefined;
-            record = {
-                id,
-                source: candidate.source,
-                path: root ? path.relative(root, candidate.spec) : candidate.spec,
-                enabled: true,
-                options: candidate.options ?? {},
-                grantedCapabilities: candidate.grantedCapabilities
-            };
-        }
+        if (!candidate) return false;
+        record = {
+            id,
+            source: candidate.source,
+            path: toPluginRecordPath(candidate.spec, getPluginRecordRoot(candidate.source, resolvedConfigDirectory)),
+            enabled: true,
+            options: candidate.options ?? {},
+            grantedCapabilities: candidate.grantedCapabilities
+        };
     }
-    if (!record) return false;
     upsertPluginRecord({ ...record, enabled }, resolvedConfigDirectory);
     return true;
 }

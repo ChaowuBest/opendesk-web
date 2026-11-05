@@ -130,4 +130,28 @@ describe('shared skill detail card', () => {
         card.model = { id: 'b', name: 'Agent', closeLabel: 'Close', backLabel: 'Back', actions: [] };
         expect(writes[writes.length - 1]).toBe(0);
     });
+
+    test('renders metadata href as an external link, and only for http(s)', () => {
+        const card = createCard({
+            id: 'plugin',
+            name: 'Plugin',
+            closeLabel: 'Close',
+            metadataLabel: 'Info',
+            metadata: [
+                { label: 'Homepage', value: 'https://example.com/p', href: 'https://example.com/p' },
+                // 详情卡是共用组件，调用方给的地址不一定校验过协议：非 http(s) 只能当纯文本
+                { label: 'Bad', value: 'javascript:alert(1)', href: 'javascript:alert(1)' }
+            ],
+            actions: []
+        });
+
+        const items = Array.from(card.shadowRoot.querySelectorAll('.detail-meta-item'));
+        const link = items[0].querySelector('a.meta-link');
+        expect(link.getAttribute('href')).toBe('https://example.com/p');
+        expect(link.getAttribute('target')).toBe('_blank');
+        expect(link.getAttribute('rel')).toContain('noopener');
+
+        expect(items[1].querySelector('a')).toBeNull();
+        expect(items[1].textContent).toContain('javascript:alert(1)');
+    });
 });

@@ -3,18 +3,22 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import path from 'path';
 import { Setting } from '../../../utils/setting.js';
 
 export interface PluginManagerConfig {
+    /**
+     * settings 里持久化的附加插件目录。
+     *
+     * 与 `--plugins-directory` / `OPENDESK_PLUGINS_DIRECTORY` 是同一概念的持久化形态：
+     * 这些目录按内置插件处理，但优先级低于默认内置插件目录。键名沿用旧版的
+     * `externalPaths`，避免已配置的开发插件路径失效。
+     */
     externalPaths: string[];
 }
 
 const DEFAULT_PLUGIN_MANAGER_CONFIG: PluginManagerConfig = {
     externalPaths: []
 };
-
-let runtimePluginDirectories: string[] = [];
 
 export function getPluginManagerConfig(): PluginManagerConfig {
     const data = Setting.getInstance().getData() as unknown as {
@@ -28,19 +32,4 @@ export function getPluginManagerConfig(): PluginManagerConfig {
             ? configured.externalPaths.filter((entry): entry is string => typeof entry === 'string')
             : DEFAULT_PLUGIN_MANAGER_CONFIG.externalPaths
     };
-}
-
-export function setRuntimePluginDirectories(directories: readonly string[]): void {
-    runtimePluginDirectories = Array.from(
-        new Set(
-            directories
-                .map((directory) => directory.trim())
-                .filter(Boolean)
-                .map((directory) => path.resolve(directory))
-        )
-    );
-}
-
-export function getRuntimePluginDirectories(): string[] {
-    return [...runtimePluginDirectories];
 }

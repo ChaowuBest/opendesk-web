@@ -23,7 +23,7 @@ import { describeLegacyRecurrence, describeTodoRecurrence } from './recurrence-d
 import { getRecurrenceValidationMessage } from './recurrence-validation.js';
 import chalk from 'chalk';
 import path from 'path';
-import type { Participant } from '../../plugins/types';
+import type { Participant } from '../../aikernel/types/index.js';
 import type { TodoWorkspaceConfig } from './common.js';
 import { REASONING_EFFORT_VALUES } from '../../aikernel/types/reasoning.js';
 import { formatDateTimeInTimezone, getSystemTimezone, isValidTimezone } from './timezone.js';

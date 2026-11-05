@@ -247,6 +247,16 @@ static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst);
 // 递归删除目录树（原目录完整复制进回收站后清空原位置）。
 static bool removeDirectoryTree(const std::wstring& dir);
 
+// reparse point（junction/符号链接）判定：最终路径分量的属性查询不穿透链接，
+// 目录链接（junction/目录符号链接）返回 DIRECTORY|REPARSE_POINT，文件符号链接
+// 返回 REPARSE_POINT。路径不存在时返回 false（与目录为空的保守语义一致）。
+static bool pathIsReparsePoint(const std::wstring& path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return false;
+    return (fad.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
 // 目录是否为空（不含任何子项）。枚举失败（无权限等）返回 false 保守入站，
 // 绝不因判定失败而真删可能有内容的目录。
 static bool directoryIsEmpty(const std::wstring& dir)
@@ -418,6 +428,13 @@ static bool moveToOpenDeskTrash(const std::wstring& normalizedPath)
 // 全部复制成功返回 true；中途失败返回 false（可能残留部分副本，无索引）。
 static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst)
 {
+    // 源本身是目录链接：与子项链接策略一致，只建同名空目录，不穿透复制目标树
+    if (pathIsReparsePoint(src)) {
+        if (!CreateDirectoryW(dst.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
+            return false;
+        }
+        return true;
+    }
     if (!CreateDirectoryW(dst.c_str(), nullptr)) {
         DWORD err = GetLastError();
         if (err != ERROR_ALREADY_EXISTS) {
@@ -459,9 +476,16 @@ static bool copyDirectoryTree(const std::wstring& src, const std::wstring& dst)
 }
 
 // 递归删除目录树（回收流程内使用：原目录已完整复制进回收站后清空原位置）。
-// 只读文件先清属性再删；目录链接按普通目录删除（RemoveDirectoryW 删链接本身）。
+// 只读文件先清属性再删；目录链接（junction/符号链接）只删链接本身——枚举
+// 会穿透链接删除目标树内容（曾把指向主仓库 node_modules 的 junction 连带
+// npm workspaces 符号链接，将主仓库 packages/* 真实文件清空）。失败返回
+// false（fail-closed，调用方保留残树绝不静默丢数据）。
 static bool removeDirectoryTree(const std::wstring& dir)
 {
+    // 入口即目录链接：直接摘除链接本身，绝不枚举子项（枚举会解析进目标树）
+    if (pathIsReparsePoint(dir)) {
+        return RemoveDirectoryW(dir.c_str()) != FALSE;
+    }
     std::wstring search = dir + L"\\*";
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW(search.c_str(), &fd);
@@ -470,7 +494,20 @@ static bool removeDirectoryTree(const std::wstring& dir)
             if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
             std::wstring child = dir + L"\\" + fd.cFileName;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                if (!removeDirectoryTree(child)) {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+                    // 目录链接子项：只删链接本身，不递归进目标树
+                    if (!RemoveDirectoryW(child.c_str())) {
+                        FindClose(hFind);
+                        return false;
+                    }
+                } else if (!removeDirectoryTree(child)) {
+                    FindClose(hFind);
+                    return false;
+                }
+            } else if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+                // 文件符号链接子项：DeleteFileW 只删链接本身；SetFileAttributes
+                // 会穿透到目标，跳过清属性
+                if (!DeleteFileW(child.c_str())) {
                     FindClose(hFind);
                     return false;
                 }

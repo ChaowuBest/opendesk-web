@@ -40,7 +40,6 @@ describe('OpenDesk plugin loader', () => {
         fs.writeFileSync(
             path.join(root, 'opendesk.plugin.json'),
             JSON.stringify({
-                schemaVersion: 1,
                 id: 'standalone',
                 entry: './dist/plugin.js',
                 apiVersion: 1,
@@ -88,7 +87,6 @@ describe('OpenDesk plugin loader', () => {
                 version: '1.2.3',
                 opendesk: {
                     plugin: './index.js',
-                    schemaVersion: 1,
                     id: 'secure',
                     apiVersion: 1,
                     capabilities: ['tool', 'hook'],
@@ -98,7 +96,6 @@ describe('OpenDesk plugin loader', () => {
         );
 
         expect(readPluginManifest(entry, root)).toEqual({
-            schemaVersion: 1,
             entry: './index.js',
             id: 'secure',
             displayName: undefined,

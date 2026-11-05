@@ -12,6 +12,7 @@ import {
     OPENDESK_PLUGIN_CAPABILITIES,
     OPENDESK_PLUGIN_PLATFORMS,
     type OpenDeskPlugin,
+    type PluginAuthor,
     type PluginCapability,
     type PluginDisplayName,
     type PluginLocalizedText,
@@ -19,6 +20,7 @@ import {
     type PluginPlatform,
     type PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
+import { isValidPluginIconUrl } from '../../../../../packages/plugin-sdk/src/package.js';
 import { AGENT_MANIFEST_ERROR_CODES, loadAgentsFromDirectory } from './agent-resource.js';
 import { isValidVersion } from '../../../utils/version.js';
 
@@ -29,18 +31,32 @@ export interface PluginManifestResources {
 }
 
 export interface PluginManifest {
-    schemaVersion: 1;
     entry?: string;
     id?: string;
     displayName?: PluginDisplayName;
     description?: PluginLocalizedText;
     version?: string;
+    /** 插件分类标签（插件市场按分类显示用），未声明表示未分类 */
+    category?: string[];
+    /** 作者信息：仅用于界面展示 */
+    author?: PluginAuthor;
+    /** 插件自身的站点地址（作者主页是 author.homepage） */
+    homepage?: string;
+    /**
+     * 插件图标：http(s) 图片链接或包内相对路径（相对插件根目录，指向随包分发的图标文件）。
+     * 仅用于插件中心 / 插件市场的展示；不声明时按名称渲染首字母图标。
+     */
+    iconUrl?: string;
     apiVersion: number;
     capabilities?: PluginCapability[];
     platforms?: PluginPlatform[];
     minOpenDeskVersion?: string;
     maxOpenDeskVersion?: string;
     resources?: PluginManifestResources;
+    /** 仅内置插件生效：由清单固定启停状态，pluginmgr 不再允许更改开关 */
+    system?: boolean;
+    /** 与 system 配合：固定启用（true，默认）或固定禁用（false） */
+    enabled?: boolean;
 }
 
 const capabilitySet = new Set<string>(OPENDESK_PLUGIN_CAPABILITIES);
@@ -55,6 +71,12 @@ function optionalString(value: unknown, code: string): string | undefined {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !value.trim()) throw new Error(code);
     return value.trim();
+}
+
+function optionalBoolean(value: unknown, code: string): boolean | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'boolean') throw new Error(code);
+    return value;
 }
 
 /** 版本类字段：非空且必须是合法 SemVer（允许 `v` 前缀与首尾空白） */
@@ -166,6 +188,71 @@ function parseMcpServer(value: unknown): PluginMcpServerDefinition {
     };
 }
 
+/**
+ * 解析作者信息（可选）。
+ *
+ * name 必填、institution 可选的本地化文本；homepage 只能是 http(s) 地址，
+ * 免得界面上出现 `javascript:` 之类可点击的危险链接。
+ */
+function parsePluginAuthor(value: unknown): PluginAuthor | undefined {
+    if (value === undefined) return undefined;
+    if (!isRecord(value)) throw new Error('plugin.manifest_invalid_author');
+    const name = optionalLocalizedText(value.name, 'plugin.manifest_invalid_author');
+    if (!name) throw new Error('plugin.manifest_invalid_author');
+    const homepage = optionalString(value.homepage, 'plugin.manifest_invalid_author');
+    if (homepage) {
+        let url: URL;
+        try {
+            url = new URL(homepage);
+        } catch {
+            throw new Error('plugin.manifest_invalid_author');
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            throw new Error('plugin.manifest_invalid_author');
+        }
+    }
+    return {
+        name,
+        institution: optionalLocalizedText(value.institution, 'plugin.manifest_invalid_author'),
+        homepage
+    };
+}
+
+/**
+ * 解析插件自身的站点地址（可选）。
+ *
+ * 只接受 http(s)：这条信息会作为可点链接展示在插件详情里，
+ * 放行 `javascript:` 之类的协议等于给清单作者一个注入入口。
+ */
+function parseHomepage(value: unknown): string | undefined {
+    const text = optionalString(value, 'plugin.manifest_invalid_homepage');
+    if (text === undefined) return undefined;
+    let url: URL;
+    try {
+        url = new URL(text);
+    } catch {
+        throw new Error('plugin.manifest_invalid_homepage');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('plugin.manifest_invalid_homepage');
+    }
+    return text;
+}
+
+/**
+ * 解析插件图标地址（可选）：http(s) 图片链接，或指向插件根目录内文件的相对路径。
+ *
+ * 图标只在界面上当图片显示，但相对路径会由宿主读文件（转成渲染层可显示的 data URL），
+ * 所以绝对路径、根相对路径与目录穿越都要拦下——写坏时让清单加载失败，
+ * 而不是悄悄读到了插件目录外的文件。校验与打包期 schema 共用 SDK 的同一个实现，口径不会漂移。
+ */
+function parseIconUrl(value: unknown): string | undefined {
+    const text = optionalString(value, 'plugin.manifest_invalid_icon_url');
+    if (text === undefined) return undefined;
+    if (!isValidPluginIconUrl(text)) throw new Error('plugin.manifest_invalid_icon_url');
+    return text;
+}
+
 function parseResources(value: unknown): PluginManifestResources | undefined {
     if (value === undefined) return undefined;
     if (!isRecord(value)) throw new Error('plugin.manifest_invalid_resources');
@@ -185,8 +272,6 @@ function parseResources(value: unknown): PluginManifestResources | undefined {
 
 export function parsePluginManifest(value: unknown): PluginManifest {
     if (!isRecord(value)) throw new Error('plugin.manifest_invalid');
-    const schemaVersion = value.schemaVersion ?? 1;
-    if (schemaVersion !== 1) throw new Error('plugin.manifest_schema_unsupported');
     const apiVersion = value.apiVersion ?? OPENDESK_PLUGIN_API_VERSION;
     if (!Number.isInteger(apiVersion) || (apiVersion as number) <= 0) {
         throw new Error('plugin.manifest_invalid_api_version');
@@ -206,19 +291,84 @@ export function parsePluginManifest(value: unknown): PluginManifest {
         throw new Error('plugin.manifest_resource_capability_missing:agent');
     }
     return {
-        schemaVersion: 1,
         entry: optionalString(value.entry, 'plugin.manifest_invalid_entry'),
         id,
         displayName: optionalLocalizedText(value.displayName, 'plugin.manifest_invalid_display_name'),
         description: optionalLocalizedText(value.description, 'plugin.manifest_invalid_description'),
         version: optionalVersion(value.version, 'plugin.manifest_invalid_version'),
+        category: optionalStringArray(value.category, 'plugin.manifest_invalid_category'),
+        author: parsePluginAuthor(value.author),
+        homepage: parseHomepage(value.homepage),
+        iconUrl: parseIconUrl(value.iconUrl),
         apiVersion: apiVersion as number,
         capabilities,
         platforms,
         minOpenDeskVersion: optionalVersion(value.minOpenDeskVersion, 'plugin.manifest_invalid_min_opendesk_version'),
         maxOpenDeskVersion: optionalVersion(value.maxOpenDeskVersion, 'plugin.manifest_invalid_max_opendesk_version'),
-        resources
+        resources,
+        system: optionalBoolean(value.system, 'plugin.manifest_invalid_system'),
+        enabled: optionalBoolean(value.enabled, 'plugin.manifest_invalid_enabled')
     };
+}
+
+/** 清单里声明的启停控制字段（原始 JSON 或已解析清单皆可） */
+export interface PluginManifestControlFields {
+    /** 由清单固定启停：pluginmgr 不允许修改该插件的开关 */
+    system: boolean;
+    /** system 为 true 时的固定状态：true（默认）恒启用，false 恒禁用 */
+    enabled?: boolean;
+}
+
+/**
+ * 解析清单里的启停控制字段。
+ *
+ * `system` / `enabled` 只对内置插件生效：后装插件（plugins 目录、外部路径、运行时目录）
+ * 即使声明了也不能锁住自己的开关，加载时由 loader 记 warning 后忽略。
+ */
+export function resolveManifestControlFields(
+    declaration: { system?: unknown; enabled?: unknown } | undefined,
+    options: { builtin: boolean }
+): PluginManifestControlFields | undefined {
+    if (!options.builtin || !declaration) return undefined;
+    if (declaration.system === undefined && declaration.enabled === undefined) return undefined;
+    return {
+        system: declaration.system === true,
+        enabled: typeof declaration.enabled === 'boolean' ? declaration.enabled : undefined
+    };
+}
+
+/** 清单是否声明了 system / enabled（不区分来源，用于给后装插件打 warning） */
+export function declaresManifestControlFields(manifest: PluginManifest | undefined): boolean {
+    return manifest?.system !== undefined || manifest?.enabled !== undefined;
+}
+
+/**
+ * 轻量读取插件位置上的清单声明（不解析、不校验），用于只关心个别字段的场景。
+ * 与 readPluginManifest 的查找顺序一致：根目录 opendesk.plugin.json 优先，其次入口
+ * 同名清单，最后 package.json#opendesk 声明。顺序或回落路径不一致会导致 discovery
+ * 与加载/GUI 列表对同一插件采信不同清单（如 package 声明的内置插件锁定状态分裂）。
+ * 清单不可读或不是合法 JSON 时返回 undefined：这类问题留给加载阶段报 plugin.* 诊断。
+ */
+export function readManifestDeclaration(spec: string): Record<string, unknown> | undefined {
+    try {
+        const stat = fs.statSync(spec);
+        const root = stat.isDirectory() ? spec : path.dirname(spec);
+        const basename = path.basename(spec, stat.isFile() ? path.extname(spec) : undefined);
+        const readIfExists = (file: string) => (fs.existsSync(file) ? readJson(file) : undefined);
+        const directoryManifest = readIfExists(path.join(root, 'opendesk.plugin.json'));
+        const sidecar = stat.isFile()
+            ? (readIfExists(path.join(root, `${basename}.opendesk.plugin.json`)) ??
+              readIfExists(path.join(root, `${basename}.plugin.json`)))
+            : undefined;
+        const packageManifest = () => {
+            const packageJson = readIfExists(path.join(root, 'package.json'));
+            return isRecord(packageJson) && isRecord(packageJson.opendesk) ? packageJson.opendesk : undefined;
+        };
+        const declared = directoryManifest ?? sidecar ?? packageManifest();
+        return isRecord(declared) ? declared : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function readJson(file: string): unknown {
@@ -232,17 +382,22 @@ function manifestFromPackageJson(rootDir: string): PluginManifest | undefined {
     if (!isRecord(packageJson) || !isRecord(packageJson.opendesk)) return undefined;
     const declaration = packageJson.opendesk;
     const manifestFields = {
-        schemaVersion: declaration.schemaVersion,
         entry: declaration.plugin,
         id: declaration.id,
         displayName: declaration.displayName,
         description: declaration.description,
         version: declaration.version ?? packageJson.version,
+        category: declaration.category,
+        author: declaration.author,
+        homepage: declaration.homepage,
+        iconUrl: declaration.iconUrl,
         apiVersion: declaration.apiVersion,
         capabilities: declaration.capabilities,
         minOpenDeskVersion: declaration.minOpenDeskVersion,
         maxOpenDeskVersion: declaration.maxOpenDeskVersion,
-        resources: declaration.resources
+        resources: declaration.resources,
+        system: declaration.system,
+        enabled: declaration.enabled
     };
     return parsePluginManifest(manifestFields);
 }
@@ -271,6 +426,9 @@ export function applyPluginManifest(plugin: OpenDeskPlugin, manifest?: PluginMan
         displayName: plugin.displayName ?? manifest.displayName,
         description: plugin.description ?? manifest.description,
         version: plugin.version ?? manifest.version,
+        category: plugin.category ?? manifest.category,
+        author: plugin.author ?? manifest.author,
+        homepage: plugin.homepage ?? manifest.homepage,
         apiVersion: plugin.apiVersion ?? manifest.apiVersion,
         capabilities: plugin.capabilities ?? manifest.capabilities,
         platforms: plugin.platforms ?? manifest.platforms,

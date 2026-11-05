@@ -5,13 +5,13 @@ import { discoverPlugins, verifyPluginRecord } from '../../../main/applications/
 import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
 import { upsertPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 import { computePluginIntegrity } from '../../../main/applications/pluginmgr/discovery/integrity.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 function writePlugin(directory: string, id: string): void {
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
         JSON.stringify({
-            schemaVersion: 1,
             id,
             entry: './index.js',
             apiVersion: 1,
@@ -30,11 +30,16 @@ describe('pluginmgr discovery', () => {
         // 隔离内置插件目录，避免发现到仓库里真实的内置插件
         previousBuiltinDirectory = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = path.join(configDirectory, 'builtin-empty');
+        // 附加插件目录经 Setting 读取 externalPaths，必须指向隔离目录，否则会带上开发机的真实配置
+        setCustomOpendeskDirectory(configDirectory);
+        Setting.clearCache();
     });
 
     afterEach(() => {
         if (previousBuiltinDirectory === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
         else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previousBuiltinDirectory;
+        Setting.clearCache();
+        setCustomOpendeskDirectory(undefined);
         fs.rmSync(configDirectory, { recursive: true, force: true });
     });
 
@@ -69,48 +74,21 @@ describe('pluginmgr discovery', () => {
         ]);
     });
 
-    test('读取配置的外部插件路径', () => {
-        const externalDirectory = path.join(configDirectory, 'external-review');
-        writePlugin(externalDirectory, 'external-review');
+    test('附加插件目录中的插件按内置插件被发现', () => {
+        const builtinDirectory = path.join(configDirectory, 'builtin');
+        const additionalDirectory = path.join(configDirectory, 'additional');
+        writePlugin(path.join(builtinDirectory, 'builtin-review'), 'builtin-review');
+        writePlugin(path.join(additionalDirectory, 'extra-review'), 'extra-review');
 
         const result = discoverPlugins({
             configDirectory,
-            externalPaths: [externalDirectory]
-        });
-
-        expect(result.candidates).toHaveLength(1);
-        expect(result.candidates[0]).toMatchObject({
-            id: 'external-review',
-            source: 'external',
-            spec: externalDirectory
-        });
-    });
-
-    test('扫描启动参数指定的插件集合目录', () => {
-        const pluginsDirectory = path.join(configDirectory, 'runtime-plugins');
-        writePlugin(path.join(pluginsDirectory, 'runtime-review'), 'runtime-review');
-        fs.writeFileSync(
-            path.join(pluginsDirectory, 'runtime-loose.mjs'),
-            `export default { id: 'runtime-loose', setup() {} };`
-        );
-
-        const result = discoverPlugins({
-            configDirectory,
-            pluginDirectories: [pluginsDirectory]
+            builtinDirectories: [builtinDirectory, additionalDirectory]
         });
 
         expect(result.conflicts).toEqual([]);
-        expect(result.candidates).toEqual([
-            expect.objectContaining({
-                id: 'runtime-loose',
-                source: 'external',
-                spec: path.join(pluginsDirectory, 'runtime-loose.mjs')
-            }),
-            expect.objectContaining({
-                id: 'runtime-review',
-                source: 'external',
-                spec: path.join(pluginsDirectory, 'runtime-review')
-            })
+        expect(result.candidates.map((candidate) => [candidate.id, candidate.source, candidate.origin])).toEqual([
+            ['builtin-review', 'builtin', builtinDirectory],
+            ['extra-review', 'builtin', additionalDirectory]
         ]);
     });
 
@@ -120,7 +98,7 @@ describe('pluginmgr discovery', () => {
 
         const result = discoverPlugins({
             configDirectory,
-            builtinDirectory
+            builtinDirectories: [builtinDirectory]
         });
 
         expect(result.conflicts).toEqual([]);
@@ -141,7 +119,7 @@ describe('pluginmgr discovery', () => {
 
         const result = discoverPlugins({
             configDirectory,
-            builtinDirectory
+            builtinDirectories: [builtinDirectory]
         });
 
         expect(result.conflicts).toEqual([]);

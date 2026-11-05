@@ -41,6 +41,7 @@ describe('plugin manager application renderer', () => {
                         path: '/plugins/local',
                         removable: true,
                         enabled: true,
+                        system: false,
                         runtime: {
                             id: '<local-plugin>',
                             displayName: 'Local Review',
@@ -85,6 +86,7 @@ describe('plugin manager application renderer', () => {
                         path: '/plugins/installed',
                         removable: true,
                         enabled: false,
+                        system: false,
                         manifest: {
                             displayName: 'Installed Plugin',
                             version: '2.0.0',
@@ -119,6 +121,7 @@ describe('plugin manager application renderer', () => {
                         path: '/plugins/localized',
                         removable: true,
                         enabled: true,
+                        system: false,
                         runtime: {
                             id: 'localized-plugin',
                             displayName: { en: 'Localized En Name', zh: '本地化中文名' },
@@ -139,6 +142,7 @@ describe('plugin manager application renderer', () => {
                         path: '/dist/plugins/builtin',
                         removable: false,
                         enabled: true,
+                        system: false,
                         runtime: {
                             id: 'builtin-plugin',
                             displayName: 'Builtin Helper',
@@ -155,6 +159,26 @@ describe('plugin manager application renderer', () => {
                                 description: 'A builtin skill.'
                             }
                         ],
+                        mcpServers: []
+                    },
+                    {
+                        id: 'system-plugin',
+                        source: 'builtin',
+                        path: '/dist/plugins/system',
+                        removable: false,
+                        enabled: true,
+                        system: true,
+                        runtime: {
+                            id: 'system-plugin',
+                            displayName: 'System Plugin',
+                            version: '1.0.0',
+                            status: 'active',
+                            origin: '/dist/plugins/system',
+                            apiVersion: 1,
+                            capabilities: [],
+                            diagnostics: []
+                        },
+                        skills: [],
                         mcpServers: []
                     }
                 ];
@@ -307,9 +331,10 @@ describe('plugin manager application renderer', () => {
         toggle.checked = true;
         toggle.dispatchEvent(new Event('change'));
 
-        // 转圈只出现在被点的这张卡片上，其它开关不动（整表禁用会让所有 switch 一起变灰再恢复）
+        // 转圈只出现在被点的这张卡片上，其它开关不动（整表禁用会让所有 switch 一起变灰再恢复）；
+        // system-plugin 的开关本来就因启停固定而禁用，不属于本次操作的影响
         expect(pendingToggleIds()).toEqual(['installed-plugin']);
-        expect(disabledToggleIds()).toEqual(['installed-plugin']);
+        expect(disabledToggleIds()).toEqual(['installed-plugin', 'system-plugin']);
         expect(
             widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"] .plugin-toggle-spinner')
         ).not.toBeNull();
@@ -383,13 +408,14 @@ describe('plugin manager application renderer', () => {
         toggle.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 10));
 
-        // 与技能中心的技能启停一致：结果走 sendNotification，页面顶部不再出现通知条
+        // 与技能中心的技能启停一致：结果走 sendNotification，页面顶部不再出现通知条；
+        // 通知里的插件名用清单声明的 displayName，而不是内部 id
         expect(callMainWorld).toHaveBeenCalledWith(
             'sendNotification',
             'info',
             '插件中心',
             '启用成功',
-            '插件已启用：installed-plugin'
+            '插件已启用：Installed Plugin'
         );
         expect(widget.shadowRoot.querySelector('.notice')).toBeNull();
     });
@@ -519,6 +545,33 @@ describe('plugin manager application renderer', () => {
         expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'installed-plugin', false);
     });
 
+    test('列表构成变化触发整树重绘时，已打开的详情弹窗原地保留、不重播入场动画', async () => {
+        // 安装 / 卸载会改变列表组成、触发整树重绘：弹窗若被销毁重建，入场动画会重播，
+        // 看起来就像"关掉又打开"。这里要求元素本身被复用，且入场动画被显式关掉。
+        let onPluginsChanged: undefined | (() => void);
+        (window.applicationAPI.subscribe as jest.Mock).mockImplementation(
+            async (name: string, callback: () => void) => {
+                if (name === 'pluginsChanged') onPluginsChanged = callback;
+                return () => undefined;
+            }
+        );
+        const widget = await createWidget();
+        widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]').dispatchEvent(new Event('click'));
+        const detail = widget.shadowRoot.querySelector('#plugin-detail-card') as HTMLElement;
+        expect(detail).not.toBeNull();
+
+        // 宿主侧卸载了另一个插件：列表组成变化 → applyEntries 走整树重绘
+        const entries = (await callMainWorld('list')) as any[];
+        const fresh = entries.filter((entry) => entry.id !== '<local-plugin>');
+        callMainWorld.mockImplementation(async (method: string) => (method === 'list' ? fresh : undefined));
+        onPluginsChanged?.();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(widget.shadowRoot.querySelector('#plugin-detail-card')).toBe(detail);
+        const overlay = (detail as any).shadowRoot.querySelector('.detail-overlay') as HTMLElement;
+        expect(overlay.classList.contains('od-detail-no-enter-animation')).toBe(true);
+    });
+
     test('installs a selected directory as a local plugin', async () => {
         const widget = await createWidget();
 
@@ -611,10 +664,10 @@ describe('plugin manager application renderer', () => {
     test('renders built-in and installed tabs with separated plugin groups', async () => {
         const widget = await createWidget();
 
-        // 两个 tab 同时存在，内置计数 badge 为 1
+        // 两个 tab 同时存在，内置计数 badge 为 2（builtin-plugin 与 system-plugin）
         expect(widget.shadowRoot.querySelector('[data-tab="builtin"]')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('[data-tab="installed"]')).not.toBeNull();
-        expect(widget.shadowRoot.querySelector('[data-tab="builtin"] .seg-badge')?.textContent).toBe('1');
+        expect(widget.shadowRoot.querySelector('[data-tab="builtin"] .seg-badge')?.textContent).toBe('2');
 
         // 默认展示已安装面板：仅 local 插件，不含内置插件
         expect(widget.shadowRoot.querySelector('[data-panel="builtin"]')?.hasAttribute('hidden')).toBe(true);
@@ -641,6 +694,61 @@ describe('plugin manager application renderer', () => {
         toggle.dispatchEvent(new Event('change'));
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(callMainWorld).toHaveBeenCalledWith('setEnabled', 'builtin-plugin', false);
+    });
+
+    test('系统插件的卡片在内置标记右侧展示系统标记，且开关不可操作', async () => {
+        const widget = await createWidget();
+        widget.shadowRoot.querySelector('[data-tab="builtin"]')?.dispatchEvent(new Event('click'));
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="system-plugin"]') as HTMLElement;
+        const html = card.innerHTML;
+        const builtinTagIndex = html.indexOf('class="builtin-tag"');
+        const systemTagIndex = html.indexOf('class="system-tag"');
+
+        expect(builtinTagIndex).toBeGreaterThanOrEqual(0);
+        expect(systemTagIndex).toBeGreaterThan(builtinTagIndex);
+        expect(card.querySelector('.system-tag')?.textContent).toBe('系统');
+        expect(card.querySelector('.plugin-toggle.is-locked')).not.toBeNull();
+
+        const toggle = card.querySelector('[data-action="toggle"]') as HTMLInputElement;
+        expect(toggle.disabled).toBe(true);
+        toggle.checked = false;
+        toggle.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(callMainWorld).not.toHaveBeenCalledWith('setEnabled', 'system-plugin', false);
+        // 非 system 的内置插件仍可正常启停
+        expect(
+            widget.shadowRoot.querySelector('[data-plugin-id="builtin-plugin"] .plugin-toggle.is-locked')
+        ).toBeNull();
+    });
+
+    test('系统插件的详情弹窗置灰启停按钮，并在左侧小字说明状态不可更改', async () => {
+        const widget = await createWidget();
+        widget.shadowRoot.querySelector('[data-tab="builtin"]')?.dispatchEvent(new Event('click'));
+
+        widget.shadowRoot.querySelector('[data-plugin-id="system-plugin"]').dispatchEvent(new Event('click'));
+        let detail = widget.shadowRoot.querySelector('skill-detail-card') as any;
+        let footer = detail.shadowRoot.querySelector('.detail-footer') as HTMLElement;
+        let toggle = footer.querySelector('[data-detail-action="toggle"]') as HTMLButtonElement;
+
+        expect(footer.hasAttribute('hidden')).toBe(false);
+        expect(footer.querySelector('.detail-footer-hint')?.textContent).toBe('系统插件状态无法在应用中更改');
+        // system-plugin 当前为启用态，按钮文案仍是「禁用」，只是不可点击
+        expect(toggle.textContent).toBe('禁用');
+        expect(toggle.disabled).toBe(true);
+
+        // 置灰状态下点击不会发出启停请求
+        toggle.dispatchEvent(new Event('click', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(callMainWorld).not.toHaveBeenCalledWith('setEnabled', 'system-plugin', false);
+
+        // 非 system 内置插件的详情不显示该提示，按钮可点
+        widget.shadowRoot.querySelector('[data-plugin-id="builtin-plugin"]').dispatchEvent(new Event('click'));
+        detail = widget.shadowRoot.querySelector('skill-detail-card') as any;
+        footer = detail.shadowRoot.querySelector('.detail-footer') as HTMLElement;
+        toggle = footer.querySelector('[data-detail-action="toggle"]') as HTMLButtonElement;
+        expect(footer.querySelector('.detail-footer-hint')).toBeNull();
+        expect(toggle.disabled).toBe(false);
     });
 
     test('renders tab icons as inline svg and keeps inactive tabs clean in dark theme', async () => {
@@ -838,5 +946,50 @@ describe('plugin manager application renderer', () => {
 
         expect(widget.shadowRoot.innerHTML).toContain('本地化中文名');
         expect(widget.shadowRoot.innerHTML).not.toContain('Localized En Name');
+    });
+
+    test('installed plugin cards use the manifest icon when it declares one', async () => {
+        // 已安装插件的图标以 zip 解压后的元数据（manifest.iconUrl，主进程已内联成 data URL）为准；
+        // 加载失败的图片会被移除，露出下面渲染的首字母兜底
+        const iconUrl = 'data:image/png;base64,AAEC';
+        callMainWorld.mockImplementationOnce(async (method: string) => {
+            if (method === 'list') {
+                return [
+                    {
+                        id: 'installed-plugin',
+                        source: 'local',
+                        path: '/plugins/installed',
+                        removable: true,
+                        enabled: false,
+                        system: false,
+                        manifest: {
+                            displayName: 'Installed Plugin',
+                            version: '2.0.0',
+                            apiVersion: 1,
+                            capabilities: ['command', 'skill'],
+                            iconUrl
+                        },
+                        skills: [],
+                        mcpServers: []
+                    }
+                ];
+            }
+            return undefined;
+        });
+        const widget = await createWidget();
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]') as HTMLElement;
+        const img = card.querySelector('.card-icon img.card-icon-img') as HTMLImageElement | null;
+        expect(img).not.toBeNull();
+        expect(img?.getAttribute('src')).toBe(iconUrl);
+        expect(card.querySelector('.card-icon .card-icon-initial')?.textContent).toBe('I');
+    });
+
+    test('installed plugin cards without a manifest icon keep the initial-letter icon', async () => {
+        const widget = await createWidget();
+
+        const card = widget.shadowRoot.querySelector('[data-plugin-id="installed-plugin"]') as HTMLElement;
+        expect(card.querySelector('.card-icon img')).toBeNull();
+        expect(card.querySelector('.card-icon')?.textContent).toContain('I');
     });
 });

@@ -46,5 +46,5 @@ const EFFORT_BAR_SVG: Record<string, string> = {
 
 export function getEffortIconSVG(effortValue: string): string {
     const paths = EFFORT_BAR_SVG[effortValue] || EFFORT_BAR_SVG[''];
-    return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
+    return `<svg class="effort-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
 }

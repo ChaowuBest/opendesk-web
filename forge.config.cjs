@@ -654,7 +654,8 @@ module.exports = {
             /^[/\\]out(?:[/\\]|-)/,
             /^[/\\]dist[/\\]plugins(?:[/\\]|$)/,
             /^[/\\]resources[/\\]plugins(?:[/\\]|$)/,
-            /^[/\\](docs|benchmarks|scripts|temp)(?:[/\\]|$)/,
+            // test/ 只放开发期夹具（如 test/test-plugin 这样的附加插件目录样例），不进安装包
+            /^[/\\](docs|benchmarks|scripts|temp|test)(?:[/\\]|$)/,
             /^[/\\]\.(opendesk|husky|git|github)(?:[/\\]|$)/,
             /^[/\\](AGENTS\.md|NOTICE|README.*|\.gitignore|\.prettier.*|\.nvmrc|postcss\.config\.js|eslint\.config\.mjs|jest\.config\.ts|electron\.vite\.config\.ts|esbuild\.config\.ts|tsconfig.*|package-lock\.json)$/,
             /^[/\\]node_modules[/\\]\.(vite|cache|bin)(?:[/\\]|$)/

@@ -30,6 +30,10 @@ function removeStaleIsolatedDirectories(): void {
     }
 }
 
+// 附加插件目录会合并进内置级插件目录：留着开发 shell 里的环境变量，所有插件发现类用例
+// 都会多出真实目录里的插件，断言随环境变化。用例需要时自行调用 setRuntimePluginsDirectories。
+delete process.env.OPENDESK_PLUGINS_DIRECTORY;
+
 // 测试进程若不隔离，Setting 会把数据目录解析到真实用户目录（如 %APPDATA%/opendesk），
 // 任何触达任务/设置/日志的测试都会在其中留下 task_list.json、task_*.json 等残留，
 // GUI 启动后这些残留会以“未命名任务”的形式出现在任务列表里。

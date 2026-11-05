@@ -16,7 +16,7 @@ import path from 'path';
 import fs from 'fs';
 import type { GlobalTodo, GlobalTodoStorage, TodoTrigger, TodoWorkspaceConfig } from './common';
 import type { ReasoningEffort } from '../../aikernel/types/reasoning.js';
-import type { Participant } from '../../plugins/types';
+import type { Participant } from '../../aikernel/types/index.js';
 import type { Cron as CronerJob } from 'croner';
 import { getSystemTimezone, isValidTimezone } from './timezone.js';
 import { getNextTodoRecurrenceRuns, getTodoRecurrenceError, matchesTodoRecurrence } from './todo-recurrence.js';

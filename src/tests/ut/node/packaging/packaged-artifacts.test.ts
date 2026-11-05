@@ -63,6 +63,24 @@ test('forge.config.cjs 的 ignore 列表必须包含全部剪裁模式（防止�
     assert.equal(typeof forgeConfig.preserveWixInstallDirectory, 'function');
 });
 
+test('开发期夹具目录 test/ 不进安装包，且不误伤同前缀目录', () => {
+    const isIgnored = (candidate: string): boolean =>
+        forgeConfig.packagerConfig.ignore.some((pattern: RegExp) => pattern.test(candidate));
+
+    // test/test-plugin 是附加插件目录的开发夹具，不能被复制进 app.asar
+    for (const candidate of [
+        '/test/test-plugin/index.mjs',
+        '/test/test-plugin/opendesk.plugin.json',
+        '\\test\\test-plugin\\README.md',
+        '/test'
+    ]) {
+        assert.ok(isIgnored(candidate), `should exclude ${candidate}`);
+    }
+    for (const candidate of ['/test-others/keep.js', '/tests/keep.js', '/dist/main/main.js']) {
+        assert.equal(isIgnored(candidate), false, `should keep ${candidate}`);
+    }
+});
+
 test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其他 native 资源', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-copy-'));
     try {

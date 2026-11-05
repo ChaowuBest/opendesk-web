@@ -634,6 +634,60 @@ test('directory removal honors --del-to-trash and clears the tree from the sourc
     }
 });
 
+test('junction deletion under --del-to-trash removes only the link and never the target tree', { skip: !windows }, async () => {
+    // 回归 task_mw3mf2sr_p81x 事故：TEMP 下的 junction 指向仓库真实目录（命中
+    // 内建 %TEMP% 排除清单 → removeDirectoryTree 整树真删），递归删除穿透
+    // junction 与树内子级链接，把链接目标的内容当成待删树清空。修复后：链接
+    // 只删链接本身，目标树内容原样保留（junction root 与树内 child 双路径）。
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-junction-del-'));
+    try {
+        const policy = path.join(directory, 'policy.toml');
+        writeDriveAllowPolicy(policy);
+        // 两个"仓库目录"模拟 junction 目标，内容必须完整存活
+        const makeTarget = (name: string) => {
+            const target = path.join(directory, name);
+            fs.mkdirSync(path.join(target, 'nested'), { recursive: true });
+            fs.writeFileSync(path.join(target, 'file.txt'), `precious-${name}`);
+            fs.writeFileSync(path.join(target, 'nested', 'deep.txt'), `deep-${name}`);
+            return target;
+        };
+        const targetRoot = makeTarget('target-root'); // 被 work\junction-root 指向
+        const targetChild = makeTarget('target-child'); // 被 work\tree\junction-child 指向
+        const work = path.join(directory, 'work');
+        fs.mkdirSync(path.join(work, 'tree'), { recursive: true });
+        fs.writeFileSync(path.join(work, 'tree', 'keep.txt'), 'keep');
+        fs.symlinkSync(targetRoot, path.join(work, 'junction-root'), 'junction');
+        fs.symlinkSync(targetChild, path.join(work, 'tree', 'junction-child'), 'junction');
+
+        const logFile = path.join(directory, 'sandbox.log');
+        const trash = path.join(directory, 'trash');
+        const result = await run(executable, [
+            'run',
+
+            '--del-to-trash',
+            '--trash-dir',
+            trash,
+            '--policy',
+            policy,
+            '--log-file',
+            logFile,
+            '--',
+            `cmd /c rmdir /s /q "${work}"`
+        ]);
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        // work 树删除成功（含 junction 链接本身）
+        assert.equal(fs.existsSync(path.join(work, 'junction-root')), false, 'junction root link must be removed');
+        assert.equal(fs.existsSync(path.join(work, 'tree', 'junction-child')), false, 'junction child link must be removed');
+        // junction 目标内容完整存活（修复前会被穿透清空）
+        assert.equal(fs.readFileSync(path.join(targetRoot, 'file.txt'), 'utf8'), 'precious-target-root');
+        assert.equal(fs.readFileSync(path.join(targetRoot, 'nested', 'deep.txt'), 'utf8'), 'deep-target-root');
+        assert.equal(fs.readFileSync(path.join(targetChild, 'file.txt'), 'utf8'), 'precious-target-child');
+        assert.equal(fs.readFileSync(path.join(targetChild, 'nested', 'deep.txt'), 'utf8'), 'deep-target-child');
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('--del-to-trash moves deletions to the Windows recycle bin and never silently keeps files', { skip: !windows }, async () => {
     // 与 Linux/OHOS 沙箱语义对齐：--del-to-trash 下删除一律送回收站（Detours
     // 实现不区分"实例内新建"——无虚拟卷，不跟踪卷内创建状态）。探测

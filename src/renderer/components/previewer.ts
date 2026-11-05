@@ -27,6 +27,7 @@
  * Supported preview types: html, htm, svg.
  */
 
+import { filePathToFileUrl } from '../../common/file-url.js';
 import { createRendererTranslator } from '../locale.js';
 import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
 
@@ -53,6 +54,47 @@ const PREVIEW_RENDERERS: Record<string, PreviewRenderer> = {
 /** Set of language identifiers that support live preview */
 const PREVIEWABLE_LANGS = new Set(Object.keys(PREVIEW_RENDERERS));
 
+/**
+ * 预览 iframe 的子框架来源限制：预览卡片承载的是任意生成的 HTML，其中的第三方
+ * iframe（YouTube、第三方登录等）会在打开任务的瞬间发起外部请求，并把外站内容
+ * 直接加载进应用界面。只放行同源、本地文件、data:、blob: 与 about:（srcdoc /
+ * about:blank 子框架）——http(s) 子框架一律拦截。
+ *
+ * 主窗口另有导航守卫兜底（见 main/utils/main-window-navigation.ts），但预览文档也会
+ * 出现在导出的离线 HTML、桌面卡片等没有守卫的宿主里，所以策略要跟着文档本身走。
+ */
+const PREVIEW_FRAME_CSP = "frame-src 'self' data: blob: file: about:;";
+
+/**
+ * 给预览内容补上 `<base>`（解析相对资源）与 frame-src CSP。
+ *
+ * 三种文档形态分别处理：已有 `<head>`、只有 `<html>`、以及裸片段。裸片段的包装
+ * 有意不带 DOCTYPE，保持与直接 srcdoc 一致的怪异模式渲染；文档自带的 DOCTYPE 则
+ * 必须留在最前面——模型生成 HTML 常见「只有 DOCTYPE 没有 html/head」的写法，把
+ * DOCTYPE 裹进 body 会让解析器忽略它，文档掉进怪异模式。
+ */
+export function withPreviewHeadTags(rawCode: string, baseDir?: string): string {
+    const headTags: string[] = [];
+    if (baseDir && !/<base\s/i.test(rawCode)) {
+        // 盘符、UNC、空格/`#` 都交给 file-url 统一处理：手写拼接在 UNC 上会丢掉 host，
+        // 特殊字符也不会按 URL 规则转义
+        const baseUrl = filePathToFileUrl(baseDir);
+        headTags.push(`<base href="${baseUrl.endsWith('/') ? baseUrl : baseUrl + '/'}">`);
+    }
+    headTags.push(`<meta http-equiv="Content-Security-Policy" content="${PREVIEW_FRAME_CSP}">`);
+    const headInsert = headTags.join('');
+    // 用函数式替换：headInsert 里的 `<base href>` 可能带 `$` 等替换模式字符
+    const doctype = /^\s*<!doctype[^>]*>/i.exec(rawCode)?.[0] ?? '';
+    const rest = rawCode.slice(doctype.length);
+    if (/<head[\s>]/i.test(rest)) {
+        return doctype + rest.replace(/(<head[^>]*>)/i, (tag) => tag + headInsert);
+    }
+    if (/<html[\s>]/i.test(rest)) {
+        return doctype + rest.replace(/(<html[^>]*>)/i, (tag) => `${tag}<head>${headInsert}</head>`);
+    }
+    return `${doctype}<html><head>${headInsert}</head><body>${rest}</body></html>`;
+}
+
 function renderHtmlPreview(shadowRoot: ShadowRoot, rawCode: string, baseDir?: string): void {
     // Use an iframe instead of direct shadowRoot.innerHTML so that full HTML
     // documents (with <html>, <head>, <body>, <link>, etc.) render correctly.
@@ -63,24 +105,7 @@ function renderHtmlPreview(shadowRoot: ShadowRoot, rawCode: string, baseDir?: st
     iframe.sandbox.add('allow-same-origin');
     iframe.style.cssText = 'width:100%;border:none;display:block;background:#fff;min-height:100px;';
 
-    let srcdoc = rawCode;
-    if (baseDir) {
-        const baseUrl = 'file://' + (baseDir.startsWith('/') ? '' : '/') + baseDir.replace(/\\/g, '/');
-        const baseHref = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
-        const hasBase = /<base\s/i.test(rawCode);
-        if (!hasBase) {
-            const baseTag = `<base href="${baseHref}">`;
-            if (/<head[\s>]/i.test(rawCode)) {
-                srcdoc = rawCode.replace(/(<head[^>]*>)/i, `$1${baseTag}`);
-            } else if (/<html[\s>]/i.test(rawCode)) {
-                srcdoc = rawCode.replace(/(<html[^>]*>)/i, `$1<head>${baseTag}</head>`);
-            } else {
-                srcdoc = `<!DOCTYPE html><html><head>${baseTag}</head><body>${rawCode}</body></html>`;
-            }
-        }
-    }
-
-    iframe.srcdoc = srcdoc;
+    iframe.srcdoc = withPreviewHeadTags(rawCode, baseDir);
 
     // Auto-resize iframe to fit content height
     iframe.addEventListener('load', () => {

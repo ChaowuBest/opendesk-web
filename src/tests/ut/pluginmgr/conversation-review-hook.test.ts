@@ -5,7 +5,7 @@ import { definePlugin } from '../../../../packages/plugin-sdk/src/index.js';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { disposePluginHost, initializePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
-import { setRuntimePluginDirectories } from '../../../main/applications/pluginmgr/management/config.js';
+import { setRuntimePluginsDirectories } from '../../../main/applications/pluginmgr/management/paths.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
@@ -23,7 +23,7 @@ describe('task.review plugin hook', () => {
     beforeEach(async () => {
         configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-conversation-review-'));
         setCustomOpendeskDirectory(configDirectory);
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
         await initializePluginHost();
     });
@@ -34,7 +34,7 @@ describe('task.review plugin hook', () => {
         }
         managers.length = 0;
         await disposePluginHost();
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
         setCustomOpendeskDirectory(undefined);
         fs.rmSync(configDirectory, { recursive: true, force: true });

@@ -83,23 +83,34 @@ function findUtf8SafeCut(buffer: Buffer, maxBytes: number): number {
 }
 
 /**
- * 选择「解码后不含替换符」的切点。
+ * 在不超过 maxBytes 的位置找到「解码干净」的切点，返回切点与该前缀的解码文本。
  *
  * findUtf8SafeCut 只保证不切断合法 UTF-8；Windows 的 GBK 输出无法用 UTF-8
  * 结构推断边界，切在双字节字符中间会让前后两段各损失一个字符（历史事故里
  * 表现为中文乱码）。这里用实际解码结果验证：切点处出现替换符时向前回退
- * 1~3 字节重试，取第一个「解码干净」的切点。
+ * 1~3 字节重试，取第一个「解码干净」的切点。验证用的解码文本直接返回，
+ * 调用方无需对同一段字节再做一次解码（热路径每 64KiB 只解码一次）。
  */
-function findDecodableCut(buffer: Buffer, maxBytes: number): number {
+function findDecodableCut(buffer: Buffer, maxBytes: number): { cut: number; text: string } {
     const base = findUtf8SafeCut(buffer, maxBytes);
-    if (base <= 0 || base >= buffer.length) return base;
-    if (!decodeShellOutput(buffer.subarray(0, base)).includes('\uFFFD')) return base;
-    for (let delta = 1; delta <= 3; delta++) {
-        const candidate = base - delta;
-        if (candidate <= 0) break;
-        if (!decodeShellOutput(buffer.subarray(0, candidate)).includes('\uFFFD')) return candidate;
+    if (base <= 0) return { cut: base, text: '' };
+    // text 始终对应 [0, cut) 前缀的解码结果，即使 cut 已覆盖整个 buffer，
+    // 保证调用方只依赖返回值即可，不会丢数据
+    let cut = base;
+    let text = decodeShellOutput(buffer.subarray(0, base));
+    if (text.includes('\uFFFD')) {
+        for (let delta = 1; delta <= 3; delta++) {
+            const candidate = base - delta;
+            if (candidate <= 0) break;
+            const candidateText = decodeShellOutput(buffer.subarray(0, candidate));
+            if (!candidateText.includes('\uFFFD')) {
+                cut = candidate;
+                text = candidateText;
+                break;
+            }
+        }
     }
-    return base;
+    return { cut, text };
 }
 
 /**
@@ -139,9 +150,9 @@ export function createShellOutputDecoder() {
             // 行尾残片同样要检查：单个超大分片可能整段无换行，或只在开头带一个 \n，
             // 只对「整段无换行」分支限量会让这种残片继续按 O(n²) 累积。
             while (pending.length > SHELL_OUTPUT_PENDING_MAX_BYTES) {
-                const cut = findDecodableCut(pending, SHELL_OUTPUT_PENDING_MAX_BYTES);
+                const { cut, text } = findDecodableCut(pending, SHELL_OUTPUT_PENDING_MAX_BYTES);
                 if (cut <= 0) break;
-                decoded += decode(pending.subarray(0, cut));
+                decoded += text;
                 pending = pending.subarray(cut);
             }
             return decoded;

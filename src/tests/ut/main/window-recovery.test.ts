@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import {
     createReloadBudget,
     createWindowRecoveryController,
+    freezeRecoveryProfile,
     type ChildProcessGoneDetails
 } from '../../../main/utils/window-recovery.js';
 
@@ -519,5 +520,104 @@ describe('renderer freeze watchdog with heartbeat probe', () => {
 
         expect(reload).toHaveBeenCalledTimes(7);
         expect(log.error).toHaveBeenCalledWith(expect.stringContaining('budget exhausted'));
+    });
+});
+
+/*
+ * 判死时的附加诊断：心跳与探活都无回应无法区分「renderer 真冻结」与「整机资源饱和、
+ * renderer 抢不到时间片」，需要把渲染进程指标一并写进日志。
+ */
+describe('freeze diagnostics', () => {
+    test('appends renderer diagnostics to the probe-timeout log', () => {
+        const { clock, log } = setupProbedRecovery({ describeFrozenRenderer: () => 'rendererPid=42 cpu=98.0%' });
+
+        for (let i = 0; i < 8; i++) clock.advance(5_000);
+
+        expect(log.error).toHaveBeenCalledWith(
+            expect.stringContaining('probe timed out after 10000ms | rendererPid=42 cpu=98.0%')
+        );
+    });
+
+    test('appends diagnostics on the silent-reload path without a probe', () => {
+        const clock = setupClock();
+        const log = createLogger();
+        const reload = jest.fn(() => true);
+        const controller = createWindowRecoveryController({
+            reload,
+            isWindowVisible: () => true,
+            log,
+            now: clock.now,
+            describeFrozenRenderer: () => 'workingSet=512MB'
+        });
+        controller.start();
+
+        clock.advance(15_001);
+
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('heartbeat silent'));
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('workingSet=512MB'));
+    });
+
+    test('keeps the log format untouched when diagnostics are unavailable', () => {
+        const { clock, log } = setupProbedRecovery({ describeFrozenRenderer: () => null });
+
+        for (let i = 0; i < 8; i++) clock.advance(5_000);
+
+        expect(log.error).toHaveBeenCalledWith('renderer heartbeat probe timed out after 10000ms');
+    });
+
+    test('never lets a throwing diagnostics collector break recovery', () => {
+        const { clock, log, reload } = setupProbedRecovery({
+            describeFrozenRenderer: () => {
+                throw new Error('window destroyed');
+            }
+        });
+
+        for (let i = 0; i < 8; i++) clock.advance(5_000);
+
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('diagnostics unavailable'));
+        expect(log.error).toHaveBeenCalledWith(expect.stringContaining('window destroyed'));
+    });
+
+    function setupProbedRecovery(overrides: Record<string, unknown> = {}) {
+        const clock = setupClock();
+        const log = createLogger();
+        const reload = jest.fn(() => true);
+        const probe = jest.fn();
+        const controller = createWindowRecoveryController({
+            reload,
+            isWindowVisible: () => true,
+            log,
+            now: clock.now,
+            requestHeartbeatProbe: probe,
+            ...overrides
+        });
+        controller.start();
+        return { clock, log, reload, probe, controller };
+    }
+});
+
+/*
+ * 判定档位：dev 下 vite 重编译/构建会让整机 CPU 饱和，按生产阈值判死会把「心跳被调度
+ * 饿死」当成「真冻结」，形成 reload 风暴。
+ */
+describe('freeze recovery profile', () => {
+    test('production profile keeps the documented watchdog defaults', () => {
+        const profile = freezeRecoveryProfile(false);
+
+        expect(profile.heartbeatTimeoutMs).toBe(15_000);
+        expect(profile.probeTimeoutMs).toBe(10_000);
+        expect(profile.reloadBudget).toEqual({ maxReloads: 3, windowMs: 10_000 });
+    });
+
+    test('development profile tolerates CPU-starved heartbeats and throttles reloads', () => {
+        const dev = freezeRecoveryProfile(true);
+        const prod = freezeRecoveryProfile(false);
+
+        expect(dev.heartbeatTimeoutMs).toBeGreaterThan(prod.heartbeatTimeoutMs);
+        expect(dev.probeTimeoutMs).toBeGreaterThan(prod.probeTimeoutMs);
+        expect(dev.reloadBudget.maxReloads).toBeLessThan(prod.reloadBudget.maxReloads);
+        expect(dev.reloadBudget.windowMs).toBeGreaterThan(prod.reloadBudget.windowMs);
     });
 });

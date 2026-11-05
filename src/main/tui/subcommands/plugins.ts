@@ -25,6 +25,7 @@ import {
     uninstallPlugin,
     listInstalledPlugins,
     listVisiblePlugins,
+    isPluginEnabledFixed,
     setPluginEnabled,
     verifyInstalledPlugin,
     formatPluginInstallError,
@@ -111,7 +112,7 @@ export function registerPluginsCommand(prog: Command): void {
             console.log(t('plugin.install.start', { spec }));
             const result = await installPlugin(spec);
             if (result.success) {
-                console.log(`✓ ${t('plugin.install.successDetail', { id: result.id ?? spec })}`);
+                console.log(`✓ ${t('plugin.install.successDetail', { name: result.id ?? spec })}`);
             } else {
                 console.error(`✗ ${formatPluginInstallError(result)}`);
                 process.exit(1);
@@ -128,7 +129,7 @@ export function registerPluginsCommand(prog: Command): void {
             const removeData = options.removeData === true;
             const result = await uninstallPlugin(id, { removeData });
             if (result.success) {
-                console.log(`✓ ${t('plugin.uninstall.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.uninstall.successDetail', { name: id })}`);
                 console.log(
                     removeData ? t('plugin.uninstall.dataRemoved', { id }) : t('plugin.uninstall.dataKept', { id })
                 );
@@ -154,12 +155,16 @@ export function registerPluginsCommand(prog: Command): void {
                     const status = r.enabled
                         ? `✓ ${t('plugin.list.status.enabled')}`
                         : `✗ ${t('plugin.list.status.disabled')}`;
+                    // 清单固定启停的插件在来源后标注「系统」，与 GUI/TUI 的锁定标记一致
+                    const source = r.system
+                        ? `${t(`plugin.list.source.${r.source}`)}·${t('plugin.center.systemTag')}`
+                        : t(`plugin.list.source.${r.source}`);
                     console.log(
                         `  ${t('plugin.list.item', {
                             id: r.id,
                             spec: r.spec ?? r.path,
                             status,
-                            source: t(`plugin.list.source.${r.source}`),
+                            source,
                             installedAt: r.installedAt ?? '-'
                         })}`
                     );
@@ -171,9 +176,14 @@ export function registerPluginsCommand(prog: Command): void {
     pluginsCmd
         .command('enable <id>')
         .description(t('plugin.enable.description'))
-        .action((id: string) => {
+        .action((id: string, _options: unknown, command: Command) => {
+            applyGlobalOptions(command);
+            if (isPluginEnabledFixed(id)) {
+                console.error(`✗ ${t('plugin.enabledFixed', { id })}`);
+                process.exit(1);
+            }
             if (setPluginEnabled(id, true)) {
-                console.log(`✓ ${t('plugin.enable.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.enable.successDetail', { name: id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
                 process.exit(1);
@@ -184,9 +194,14 @@ export function registerPluginsCommand(prog: Command): void {
     pluginsCmd
         .command('disable <id>')
         .description(t('plugin.disable.description'))
-        .action((id: string) => {
+        .action((id: string, _options: unknown, command: Command) => {
+            applyGlobalOptions(command);
+            if (isPluginEnabledFixed(id)) {
+                console.error(`✗ ${t('plugin.enabledFixed', { id })}`);
+                process.exit(1);
+            }
             if (setPluginEnabled(id, false)) {
-                console.log(`✓ ${t('plugin.disable.successDetail', { id })}`);
+                console.log(`✓ ${t('plugin.disable.successDetail', { name: id })}`);
             } else {
                 console.error(`✗ ${t('plugin.notFound', { id })}`);
                 process.exit(1);

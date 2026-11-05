@@ -13,15 +13,18 @@ import { jest, describe, test, expect, beforeEach } from '@jest/globals';
 
 const mockInstallPlugin = jest.fn<() => Promise<{ success: boolean; id?: string; error?: string }>>();
 const mockUninstallPlugin = jest.fn<() => Promise<{ success: boolean; error?: string }>>();
+const mockIsPluginEnabledFixed = jest.fn<() => boolean>();
 const mockSetPluginEnabled = jest.fn<() => boolean>();
 const mockReloadPluginHost = jest.fn<() => Promise<void>>();
 const mockApplyPluginEnabledChange = jest.fn<() => Promise<void>>();
+const mockListVisiblePlugins = jest.fn<() => unknown[]>();
 
 jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => ({
     installPlugin: mockInstallPlugin,
     uninstallPlugin: mockUninstallPlugin,
     listInstalledPlugins: jest.fn(),
-    listVisiblePlugins: jest.fn(),
+    listVisiblePlugins: mockListVisiblePlugins,
+    isPluginEnabledFixed: mockIsPluginEnabledFixed,
     setPluginEnabled: mockSetPluginEnabled,
     reloadPluginHost: mockReloadPluginHost,
     applyPluginEnabledChange: mockApplyPluginEnabledChange
@@ -82,7 +85,7 @@ jest.unstable_mockModule('../../../main/aikernel/messages.js', () => ({
 
 // ── 动态导入（mock 注册后执行） ─────────────────────────────────────────────
 
-const { InstallChannelPluginTool, UninstallChannelPluginTool, ToggleChannelPluginTool } =
+const { InstallChannelPluginTool, UninstallChannelPluginTool, ToggleChannelPluginTool, ListChannelPluginsTool } =
     (await import('../../../main/applications/channelmgr/tools.js')) as any;
 
 interface FakeApp {
@@ -172,6 +175,43 @@ describe('channelmgr 插件管理工具的宿主重载顺序', () => {
         expect(result.result).toContain('未找到插件');
         expect(mockApplyPluginEnabledChange).not.toHaveBeenCalled();
         expect(app.syncChannelsWithPluginHost).not.toHaveBeenCalled();
+    });
+
+    test('toggleChannelPlugin 拒绝修改清单固定启停的插件', async () => {
+        // mockReturnValueOnce：clearAllMocks 不会清除 mockReturnValue，避免污染后续用例
+        mockIsPluginEnabledFixed.mockReturnValueOnce(true);
+        const app = makeApp();
+        const tool = new ToggleChannelPluginTool(app as any);
+
+        const result = await tool.execute({ id: 'opencodego', enabled: false });
+
+        expect(result.result).toContain('无法修改');
+        expect(mockSetPluginEnabled).not.toHaveBeenCalled();
+        expect(mockApplyPluginEnabledChange).not.toHaveBeenCalled();
+        expect(app.syncChannelsWithPluginHost).not.toHaveBeenCalled();
+    });
+
+    test('listChannelPlugins 标明由清单固定启停的插件', async () => {
+        mockListVisiblePlugins.mockReturnValueOnce([
+            {
+                id: 'opencodego',
+                source: 'builtin',
+                path: '/dist/plugins/opencodego',
+                enabled: true,
+                options: {},
+                system: true
+            },
+            { id: 'feishu', source: 'builtin', path: '/dist/plugins/feishu', enabled: true, options: {}, system: false }
+        ]);
+        const tool = new ListChannelPluginsTool();
+
+        const result = await tool.execute({});
+
+        expect(result.status).toBe('success');
+        expect(result.result).toContain('[由清单固定启停]');
+        const feishuLine = result.result.split('\n').find((line) => line.includes('feishu'));
+        expect(feishuLine).toBeDefined();
+        expect(feishuLine).not.toContain('由清单固定启停');
     });
 
     test('toggleChannelPlugin 启用失败时回滚注册表且不同步渠道', async () => {

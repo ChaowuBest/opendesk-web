@@ -7,8 +7,10 @@ import { GlobalHooks } from '../../../main/aikernel/hooks.js';
 import { ChatContext } from '../../../main/aikernel/messages.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
 import { disposePluginHost, initializePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
-import { setRuntimePluginDirectories } from '../../../main/applications/pluginmgr/management/config.js';
-import { getPluginsDirectory } from '../../../main/applications/pluginmgr/management/paths.js';
+import {
+    getPluginsDirectory,
+    setRuntimePluginsDirectories
+} from '../../../main/applications/pluginmgr/management/paths.js';
 import { getPluginRecord } from '../../../main/applications/pluginmgr/management/registry.js';
 import { getPluginHost } from '../../../main/applications/pluginmgr/runtime/host.js';
 import { ModelInstance, Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
@@ -82,13 +84,13 @@ describe('插件单插件差量启停', () => {
     beforeEach(() => {
         configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-delta-'));
         setCustomOpendeskDirectory(configDirectory);
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
     });
 
     afterEach(async () => {
         await disposePluginHost();
-        setRuntimePluginDirectories([]);
+        setRuntimePluginsDirectories('');
         Setting.clearCache();
         setCustomOpendeskDirectory(undefined);
         fs.rmSync(configDirectory, { recursive: true, force: true });

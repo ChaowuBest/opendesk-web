@@ -13,6 +13,7 @@ import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { bindOverlayDismiss, showConfirmModal } from '../../../../renderer/components/confirmModal';
 import { createTranslatorForBenchmark } from '../locale/renderer.js';
 import { labelForStoredReasoningEffort, REASONING_EFFORT_UI_OPTIONS } from '../../../../common/reasoning-effort.ts';
@@ -137,35 +138,6 @@ function formatBytes(bytes: number): string {
         unit += 1;
     }
     return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
-}
-
-// 与 agentinput 保持同一套推理强度图标（四格能量条）
-const EFFORT_BAR_X = [1.125, 4.875, 8.625, 12.375];
-const EFFORT_BAR_GREEN = '#1F9D66';
-const EFFORT_BAR_GREY = '#E7E5E2';
-
-function effortBarRects(filledCount: number): string {
-    return EFFORT_BAR_X.map(
-        (x, index) =>
-            `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${index < filledCount ? EFFORT_BAR_GREEN : EFFORT_BAR_GREY}"/>`
-    ).join('');
-}
-
-const EFFORT_BAR_PATHS: Record<string, string> = {
-    '': EFFORT_BAR_X.map(
-        (x) => `<rect x="${x}" y="2.5" width="2.5" height="11" rx=".5" fill="${EFFORT_BAR_GREEN}" opacity=".35"/>`
-    ).join(''),
-    none:
-        effortBarRects(0) + '<path d="M1.5 13.5 14.5 2.5" stroke="#8A8580" stroke-width="1.4" stroke-linecap="round"/>',
-    low: effortBarRects(1),
-    medium: effortBarRects(2),
-    high: effortBarRects(3),
-    max: effortBarRects(4)
-};
-
-function effortIconSvg(effortValue: string): string {
-    const paths = EFFORT_BAR_PATHS[effortValue] ?? EFFORT_BAR_PATHS[''];
-    return `<svg class="effort-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">${paths}</svg>`;
 }
 
 function colorFor(seed: string): { bg: string; text: string } {
@@ -1092,9 +1064,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const aliasEl = trigger.querySelector('.model-trigger-alias');
         if (aliasEl) aliasEl.textContent = model.alias;
         const tile = trigger.querySelector('.agent-icon-tile');
-        if (tile) tile.outerHTML = this.modelIconTile(model.vision);
+        if (tile) tile.outerHTML = getModelIconTile(model.vision);
         const chip = trigger.querySelector('.model-effort-chip');
-        if (chip) chip.innerHTML = `${effortIconSvg(effort)}${escapeHtml(this.effortLabel(effort))}`;
+        if (chip) chip.innerHTML = `${getEffortIconSVG(effort)}${escapeHtml(this.effortLabel(effort))}`;
     }
 
     /** 设置刷新只更新模型控件，保留测评参数和搜索框的 DOM、输入与焦点。 */
@@ -2562,13 +2534,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
 
     // ── 模型选择器（复用 agentinput 的模型面板视觉与交互） ────────────────
 
-    private modelIconTile(vision = false): string {
-        const svgPath = vision
-            ? '<path d="M1.5 8S3.5 4.5 8 4.5s6.5 3.5 6.5 3.5-2 3.5-6.5 3.5S1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="2"/>'
-            : '<path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H6l-3 2.5V5Z"/>';
-        return `<span class="agent-icon-tile ${vision ? 'model-vision' : 'model-chat'}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${svgPath}</svg></span>`;
-    }
-
     private effortLabel(value: string): string {
         return labelForStoredReasoningEffort(value || '', (key) =>
             createRendererTranslator(this._settingForLocale)(key)
@@ -2586,9 +2551,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         return `
         <div class="model-picker">
             <button type="button" class="model-trigger" data-action="toggle-model-panel" data-picker="${picker}" ${busy ? 'disabled' : ''}>
-                ${this.modelIconTile(this.models.find((item) => item.alias === alias)?.vision ?? false)}
+                ${getModelIconTile(this.models.find((item) => item.alias === alias)?.vision ?? false)}
                 <span class="model-trigger-alias">${escapeHtml(label)}</span>
-                <span class="model-effort-chip">${effortIconSvg(effort)}${escapeHtml(this.effortLabel(effort))}</span>
+                <span class="model-effort-chip">${getEffortIconSVG(effort)}${escapeHtml(this.effortLabel(effort))}</span>
                 <span class="model-trigger-caret">▾</span>
             </button>
         </div>`;
@@ -2604,7 +2569,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 return `
                 <button type="button" class="ctx-item model-panel-item ${active ? 'active' : ''}"
                     data-action="pick-model" data-picker="${panel.picker}" data-alias="${escapeHtml(model.alias)}">
-                    ${this.modelIconTile(model.vision)}
+                    ${getModelIconTile(model.vision)}
                     <span class="ctx-label">${escapeHtml(model.alias)}</span>
                     ${model.vision ? `<span class="ctx-badge blue">${escapeHtml(this._t('benchmark.run.modelVision'))}</span>` : ''}
                     ${model.isDefault ? `<span class="ctx-badge">${escapeHtml(this._t('benchmark.run.modelDefault'))}</span>` : ''}
@@ -2634,7 +2599,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 return `
                 <button type="button" class="ctx-item effort-item ${active ? 'active' : ''}"
                     data-action="pick-effort" data-picker="${menu.picker}" data-alias="${escapeHtml(menu.alias)}" data-effort="${escapeHtml(value)}">
-                    ${effortIconSvg(value)}
+                    ${getEffortIconSVG(value)}
                     <span class="ctx-label">${escapeHtml(this.effortLabel(value))}</span>
                     ${active ? '<span class="ctx-item-check">✓</span>' : ''}
                 </button>`;

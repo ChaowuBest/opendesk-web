@@ -146,7 +146,8 @@ export class PlainBenchmarkRegistry implements BaseBenchmarkRegistry {
         }
         try {
             const raw = await this.fetchCatalog();
-            const entries = parseCatalogDocument(raw, this.catalogUrl, { lenient: true });
+            // baseUrl：清单项的相对下载地址以清单自身地址为基准解析
+            const entries = parseCatalogDocument(raw, this.catalogUrl, { lenient: true, baseUrl: this.catalogUrl });
             await this.writeCacheFile(raw);
             return this.remember(entries);
         } catch (error) {
@@ -194,7 +195,14 @@ export class PlainBenchmarkRegistry implements BaseBenchmarkRegistry {
         try {
             const stat = await fs.promises.stat(this.cacheFile);
             const raw = JSON.parse(await fs.promises.readFile(this.cacheFile, 'utf8'));
-            return { entries: parseCatalogDocument(raw, this.cacheFile, { lenient: true }), modifiedAt: stat.mtimeMs };
+            // 缓存存的是清单原文，相对下载地址仍以（远端）清单地址为基准解析
+            return {
+                entries: parseCatalogDocument(raw, this.cacheFile, {
+                    lenient: true,
+                    baseUrl: this.isRemoteSource ? this.catalogUrl : undefined
+                }),
+                modifiedAt: stat.mtimeMs
+            };
         } catch (error) {
             // 首次运行本来就没有缓存，不必刷一条告警
             if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {

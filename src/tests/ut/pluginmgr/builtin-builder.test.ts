@@ -21,7 +21,6 @@ function makePluginFixture(
     fs.writeFileSync(
         path.join(pluginDirectory, 'opendesk.plugin.json'),
         JSON.stringify({
-            schemaVersion: 1,
             id,
             entry: './index.mjs',
             apiVersion: 1,

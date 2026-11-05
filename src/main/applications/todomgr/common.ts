@@ -17,7 +17,7 @@ import type { TodoRecurrence } from './todo-recurrence.js';
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
-import type { Participant } from '../../plugins/types.js';
+import type { Participant } from '../../aikernel/types/index.js';
 
 export interface TodoChatModelSummary {
     alias: string;

@@ -12,7 +12,6 @@ import { jest } from '@jest/globals';
  */
 
 const PLUGIN_MANIFEST = {
-    schemaVersion: 1,
     id: 'acme-dep-plugin',
     displayName: { en: 'Acme Dep Registry', zh: 'Acme 依赖注册表' },
     entry: './index.mjs',
@@ -72,6 +71,10 @@ describe('带 npm 依赖的注册表插件安装', () => {
     test('依赖经 runNpm 安装、宿主映射包被排除、激活后注册表使用依赖工作', async () => {
         const sourceDir = await writePluginSource();
         const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acme-dep-config-'));
+        // 附加插件目录经 Setting 读取 externalPaths，必须指向隔离目录，否则会带上开发机的真实配置
+        const { Setting, setCustomOpendeskDirectory } = await import('../../../main/utils/setting.js');
+        setCustomOpendeskDirectory(configDir);
+        Setting.clearCache();
         const globalHostModule = await import('../../../main/applications/pluginmgr/runtime/host.js');
         const manager = await import('../../../main/applications/pluginmgr/management/manager.js');
         const { getPluginRecord } = await import('../../../main/applications/pluginmgr/management/registry.js');
@@ -134,6 +137,8 @@ describe('带 npm 依赖的注册表插件安装', () => {
                 ...originalSkillRegistries
             );
             fs.rmSync(sourceDir, { recursive: true, force: true });
+            Setting.clearCache();
+            setCustomOpendeskDirectory(undefined);
             fs.rmSync(configDir, { recursive: true, force: true });
         }
     });

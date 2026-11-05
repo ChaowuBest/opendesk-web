@@ -20,6 +20,7 @@ import { resolveChannelDisplayName } from './app.js';
 import {
     installPlugin,
     uninstallPlugin,
+    isPluginEnabledFixed,
     listVisiblePlugins,
     setPluginEnabled,
     reloadPluginHost,
@@ -283,7 +284,9 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
         }
         const lines = records.map((r, i) => {
             const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
-            return `${i + 1}. ${r.id} (${r.spec ?? r.path}) [${status}]\n   安装时间: ${r.installedAt ?? '-'}`;
+            // 由清单固定启停的插件提前标明，避免 agent 再尝试切换后被拒
+            const fixed = r.system ? ' [由清单固定启停]' : '';
+            return `${i + 1}. ${r.id} (${r.spec ?? r.path}) [${status}]${fixed}\n   安装时间: ${r.installedAt ?? '-'}`;
         });
         return `共 ${records.length} 个已安装的插件：\n\n${lines.join('\n\n')}`;
     }
@@ -311,6 +314,9 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
 
     private async run(args: z.infer<typeof ToggleChannelPluginSchema>): Promise<string> {
         const action = args.enabled ? '启用' : '禁用';
+        if (isPluginEnabledFixed(args.id)) {
+            return `插件 ${args.id} 的启停状态由 OpenDesk 固定，无法修改`;
+        }
         if (!setPluginEnabled(args.id, args.enabled)) {
             return `未找到插件: ${args.id}`;
         }

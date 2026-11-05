@@ -190,7 +190,7 @@ cleanup  Detours 实现无虚拟卷：兼容占位（输出无需清理）。
 --automount：hook 内枚举宿主全部盘符（/C ↔ C:\ …）。
 --del-to-trash：删除送 Windows 回收站（SHFileOperation FOF_ALLOWUNDO）；
          沙箱会话内创建的文件直接删除、不进回收站；网络路径/无回收站介质
-         拒绝删除并保留原文件。
+         拒绝删除并保留原文件；junction/符号链接只删链接本身、不穿透目标树。
 --env NAME=VALUE：透传子进程环境变量（可重复，工具链缓存重定向等）。
 --map 旧=新：兼容参数（Detours 实现为空操作，见 §2.5）。
 --token TOKEN：覆盖策略 [ask].token（Bearer 认证）。
@@ -320,6 +320,10 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 - `--del-to-trash` 下所有删除路径（DeleteFileW/RemoveDirectoryW、以及句柄级
   NtDeleteFile/NtSetInformationFile/SetFileInformationByHandle——覆盖 Node
   rmSync/.NET/python os.remove）统一送回收站；
+- 回收站整树复制/删除**不穿透 junction/符号链接**（reparse point）：递归
+  复制遇到目录链接只建同名空目录、删除只摘链接本身，均绝不枚举进目标树
+  （否则删除指向仓库 node_modules 的 junction 会连带清空主仓库文件，回归
+  测试覆盖 junction root 与树内 child 双路径）；
 - **沙箱会话内创建的文件**（创建时间 ≥ 会话开始时刻，`DYNOBOX_SESSION_START`）
   删除视为自发清理：不触发 ask、不进回收站、直接删除（跨进程可靠、零额外成本）；
   宿主预置文件删除仍走回收站；

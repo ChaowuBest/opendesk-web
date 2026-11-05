@@ -66,8 +66,20 @@ describe('setting-panel tabs', () => {
         const order = tabOrder(panel);
         expect(order[0]).toBe('general');
         expect(order[order.indexOf('search') + 1]).toBe('registries');
-        // 新 Tab 不能顶掉原有 Tab
+        // 插件渠道不单独占页签，和测评集渠道一起放在「渠道设置」里
+        expect(order).not.toContain('pluginRegistries');
         expect(order).toEqual(['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard']);
+    });
+
+    test('channel settings tab hosts both benchmark and plugin channel components', () => {
+        const panel = createPanel();
+        panel.render();
+
+        const tab = panel.querySelector('#tab-registries');
+        expect(tab).toBeTruthy();
+        expect(tab.querySelector('benchmark-channel-settings')).toBeTruthy();
+        // 插件渠道与测评集渠道同属「渠道设置」页签
+        expect(tab.querySelector('plugin-channel-settings')).toBeTruthy();
     });
 
     test('general tab is the default visible tab', () => {
@@ -87,15 +99,6 @@ describe('setting-panel tabs', () => {
         expect(panel.querySelector('#tab-models #software-update-section')).toBeNull();
         // 通用设置区块独立于软件更新区块存在
         expect(panel.querySelector('#tab-general #general-sections section')).toBeTruthy();
-    });
-
-    test('channel settings tab hosts the benchmark channel component', () => {
-        const panel = createPanel();
-        panel.render();
-
-        const tab = panel.querySelector('#tab-registries');
-        expect(tab).toBeTruthy();
-        expect(tab.querySelector('benchmark-channel-settings')).toBeTruthy();
     });
 
     test('switching to the channel settings tab unhides it only', () => {
@@ -119,7 +122,8 @@ describe('setting-panel tabs', () => {
         enPanel.currentData.resolved_locale = 'en-US';
         enPanel._t = createRendererTranslator(enPanel.currentData);
         enPanel.render();
-        expect(enPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('Benchmark Channels');
+        // 该页签同时管测评集渠道与插件渠道，因此英文名不限定在 benchmark 上
+        expect(enPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('Channels');
     });
 
     test('saving aligns benchmark channels with the main process first', async () => {
@@ -149,6 +153,31 @@ describe('setting-panel tabs', () => {
         expect(order).toEqual(['load', 'save']);
         expect(panel.currentData.applications.benchmark).toEqual({
             enabled: true,
+            channels: [{ id: 'official', isEnabled: false }]
+        });
+    });
+
+    test('saving also aligns plugin channels with the main process', async () => {
+        const panel = createPanel();
+        panel.currentData.applications = {
+            benchmark: { channels: [] },
+            pluginmgr: { externalPaths: [], channels: [{ id: 'stale', isEnabled: true }] }
+        };
+        panel.showSaveIndicator = jest.fn();
+        window.settingAPI = {
+            loadSettingObject: jest.fn(async () => ({
+                applications: {
+                    benchmark: { channels: [] },
+                    pluginmgr: { externalPaths: ['/plugins'], channels: [{ id: 'official', isEnabled: false }] }
+                }
+            })),
+            saveSettingObjectDetailed: jest.fn(async (data: any) => ({ data, sideEffectFailures: [] }))
+        };
+
+        await panel.saveCurrentData();
+
+        expect(panel.currentData.applications.pluginmgr).toEqual({
+            externalPaths: ['/plugins'],
             channels: [{ id: 'official', isEnabled: false }]
         });
     });

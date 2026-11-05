@@ -25,7 +25,7 @@ import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } fro
 import { getPlatform } from '../../../platforms/base.js';
 import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
-import type { Participant } from '../../plugins/types.js';
+import type { Participant } from '../types/index.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
 import { TaskState } from '../states/tasks.js';
 import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';

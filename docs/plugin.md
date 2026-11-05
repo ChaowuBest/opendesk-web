@@ -66,7 +66,20 @@ plugins/.pluginmgr/data/<插件ID>/
 > `node_modules`（例如鸿蒙端安装的目录插件无法执行 npm install）也能正常
 > 加载。其他第三方依赖仍必须由插件自带。
 
-还可以在 `setting.json` 中配置不复制到全局目录的外部插件路径：
+除了随应用发布的内置插件目录与 `plugins/` 目录，还可以指定若干「附加插件目录」。三个来源
+等价，按顺序合并去重：环境变量 `OPENDESK_PLUGINS_DIRECTORY`、CLI 参数 `--plugins-directory`、
+`setting.json` 里的 `applications.pluginmgr.externalPaths`：
+
+```bash
+# 逗号分隔多个目录，只对本次进程生效
+opendesk --plugins-directory ./team-plugins,./exp/plugins
+
+# --plugins-directory 是根命令的全局选项，写在子命令之后同样生效
+opendesk serve --plugins-directory ./team-plugins
+
+# 环境变量：对 CLI / TUI / GUI / serve 全部生效，语义与 CLI 参数一致
+OPENDESK_PLUGINS_DIRECTORY=./team-plugins,./exp/plugins opendesk
+```
 
 ```json
 {
@@ -78,17 +91,13 @@ plugins/.pluginmgr/data/<插件ID>/
 }
 ```
 
-相对的 `externalPaths` 以 OpenDesk 配置目录为基准。
+相对路径：CLI 与环境变量以当前工作目录为基准，`externalPaths` 以 OpenDesk 配置目录为基准。
+外部目录中的插件同样按内置插件处理（来源 `builtin`、不允许卸载），但**优先级低于默认内置
+插件目录**：与内置插件同 ID 的条目不参与发现（忽略并记一条 warning）；多个附加目录之间同 ID
+时，靠前的目录优先。
 
-启动 TUI 时也可以临时指定一个额外的插件集合目录：
-
-```bash
-opendesk --plugins-directory ./plugins
-```
-
-OpenDesk 会扫描该目录的一级子目录和 `.js`、`.mjs`、`.cjs` 单文件插件，并在 TUI
-启动前完成注册。相对路径以当前工作目录为基准；该参数只对本次进程生效，不修改全局插件目录或
-`setting.json`。
+想直接上手验证，仓库里的 `test/test-plugin` 就是一个最小样例（含 tool / command / hook 接线与
+验证步骤，见其 README）。
 
 ## 内置插件
 
@@ -132,7 +141,33 @@ CLI/TUI 从可执行文件相邻的 `dist/plugins` 读取相同产物。开发�
 
 内置插件在 pluginmgr 中的来源为 `builtin`，默认启用且不允许卸载。启停、权限和 options
 只作为用户策略写入 pluginmgr 注册表，不会修改内置插件文件。内置插件 ID 具有最高优先级；
-用户目录、安装到 plugins 目录或外部路径中的同 ID 插件不会覆盖内置插件。
+用户目录里安装到 plugins 目录的同 ID 插件不会覆盖内置插件。
+
+### 附加插件目录
+
+附加插件目录（见上文「插件目录」）与默认内置插件目录合并扫描，其中的插件同样按内置插件处理
+（来源 `builtin`、不允许卸载、清单里的 `system` 生效），但优先级低于默认内置插件目录。
+
+目录里的条目按「是否是合法插件」过滤：必须是包含 `opendesk.plugin.json`（或在 `package.json`
+中声明 `opendesk.plugin` 入口）的目录；整个目录本身就是一个插件目录时也能直接识别。文档、散装
+脚本等**不是插件**的条目直接跳过、不产生诊断，而**自称是插件却加载不了**的目录（清单入口写错、
+入口文件缺失、清单损坏等）会留一条 warning，避免插件只是从列表里悄悄消失。
+
+目录不存在或不是目录时其余目录照常加载：显式传入的 `--plugins-directory` 会在终端给出
+`[warn]`，环境变量与 `externalPaths` 则记 warning 日志（TUI 日志面板 / GUI 日志可见）。
+
+附加目录中的插件与内置插件一样只读：启停、权限与 options 写入 pluginmgr 注册表，插件文件
+不会被修改。位于默认内置目录之外的附加目录插件以绝对路径写入注册表——不同目录之间可能有
+同名容器目录，相对路径无法唯一还原到原目录。
+
+生效范围：
+
+- 附加目录只是补充，不覆盖内置插件：与内置插件同 ID 的条目不参与发现（忽略并记一条 warning）。
+  多个附加目录之间同 ID 时，靠前的目录优先（环境变量 → CLI 参数 → `externalPaths`）。
+- 「按内置插件处理」也包括清单里的 `system`：附加目录里的插件声明 `system: true` 后，启停同样
+  由清单固定，pluginmgr 不再允许切换开关。
+- 附加目录只在启动时生效。目录不再传入后，注册表里残留的启停/options 记录不会让插件继续加载；
+  该目录里的插件重新被发现时会沿用旧记录里的启停与 options。
 
 ## 最小 Tool 插件
 
@@ -498,8 +533,9 @@ export default definePlugin({
 插件之间互不可见。`network`、`auth`、`secrets` 和 `registerBackend` 的每次调用都会校验插件已声明并获授 `account`
 capability。
 
-随产品包发布的 `opendesk-account` 是当前内置实现，约定始终启用且不可卸载；现阶段这只是产品约定，插件管理层没有增加
-`required` / `system` 等额外机制。
+随产品包发布的 `opendesk-account` 是当前内置实现，约定始终启用且不可卸载；这一状态目前靠产品约定维持
+（未在其清单里用 `system` 固定），用户仍可自行禁用。内置插件可以用清单里的 `system: true` 把启停状态
+真正固定下来（见下文「system 与 enabled」），但插件管理层没有提供 `required` 这类「必备插件」机制。
 
 ## 使用 opendesk.plugin.json
 
@@ -520,12 +556,13 @@ review-helper/
 
 ```json
 {
-    "schemaVersion": 1,
     "id": "review-helper",
     "displayName": "Review Helper",
+    "description": "审阅代码并给出可执行的修改建议。",
     "entry": "./index.js",
     "apiVersion": 1,
     "capabilities": ["skill", "mcp"],
+    "homepage": "https://example.com/review-helper",
     "resources": {
         "skills": ["./skills/review-code"],
         "mcpServers": [
@@ -554,6 +591,9 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
 或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
 
+清单里**没有** `schemaVersion` 字段：它不参与任何版本协商，写与不写解析结果一样
+（旧清单里残留的这个键会按未知字段忽略）。
+
 ### 版本字段
 
 `version`、`minOpenDeskVersion`、`maxOpenDeskVersion` 都是 **SemVer 版本号**（`1.2.3`，
@@ -566,6 +606,33 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `minOpenDeskVersion` / `maxOpenDeskVersion` 分别是宿主版本的**下界与上界**（包含边界），
 不是区间表达式：写 `0.2.0` 表示"宿主 ≥ 0.2.0"。未声明时不限制。
 
+### system 与 enabled（仅内置插件）
+
+随产品一起发布的内置插件可以在清单里声明两个布尔字段，把启停状态固定下来（当前 `opencodego`
+即用该机制固定为始终启用）：
+
+```json
+{
+    "id": "example-builtin",
+    "entry": "./index.mjs",
+    "apiVersion": 1,
+    "capabilities": ["hook"],
+    "system": true,
+    "enabled": true
+}
+```
+
+- `system: true`：该插件的开关由清单固定。插件中心（GUI / TUI）与 `opendesk plugins list`
+  都会标出系统插件（GUI 开关置灰、TUI 不提供切换入口），`opendesk plugins enable/disable`
+  与 `setPluginEnabled` 工具同样会被拒绝；
+- `enabled`：`system` 固定时的实际状态。`true`（或缺省）表示始终启用；`false` 表示始终禁用，
+  固定禁用的插件不会进入运行时，但仍会出现在插件列表里并标明原因。
+
+这两个字段**只对内置插件生效**（含附加插件目录）。通过插件中心、`opendesk plugins install`
+或手工放入 `plugins/` 目录的本地插件即使写了 `system` / `enabled`，宿主也只会在加载时记录一条
+warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔值，
+否则清单校验失败（`plugin.manifest_invalid_system` / `plugin.manifest_invalid_enabled`）。
+
 ### displayName 与 description 本地化
 
 `displayName` 与 `description` 支持两种形式，`opendesk.plugin.json`、`package.json#opendesk`
@@ -577,7 +644,6 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 
 ```json
 {
-    "schemaVersion": 1,
     "id": "locale-demo",
     "displayName": {
         "en": "Locale Demo",
@@ -597,6 +663,65 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 没有匹配语言的条目时回退到对象中声明的第一个翻译；对象中的每个值都必须是非空字符串。
 插件中心按当前界面语言显示插件名称与描述，并在应用切换语言后实时更新；
 未声明 `displayName` 时回退到插件 ID，未声明 `description` 时不展示描述。
+
+### category / author / homepage（市场展示）
+
+`category`、`author`、`homepage` 是纯展示用元数据，不参与加载与权限判定：
+
+```json
+{
+    "id": "review-helper",
+    "entry": "./index.js",
+    "apiVersion": 1,
+    "capabilities": [],
+    "category": ["办公文档"],
+    "author": {
+        "name": { "zh-CN": "张三", "en-US": "Zhang San" },
+        "institution": { "zh-CN": "开放原子开源基金会", "en-US": "OpenAtom Foundation" },
+        "homepage": "https://example.com/team"
+    },
+    "homepage": "https://example.com/review-helper"
+}
+```
+
+- `category`：字符串数组。取值必须与插件所在市场（registry）`categories` 里声明的分类一致才会被归入
+  该分类；未声明或没有命中任何分类时，插件仍出现在「全部插件」里。内置插件不声明它也能正常工作。
+- `author.name` 必填、`author.institution` 可选，两者都支持简单字符串或本地化对象（规则同
+  `displayName`）；`author.homepage` 只接受 http(s) 地址。
+- `homepage` 是**插件自身**的站点地址（`author.homepage` 是作者/机构的主页），同样只接受 http(s)；
+  插件详情会把两者都渲染成可点链接，点击交给系统浏览器打开。
+- 展示位置：插件市场的卡片上显示「插件名 + 版本」与「`@作者 (机构)`」，插件详情的基本信息里追加
+  作者 / 机构 / 作者主页 / 插件主页。
+- 类型不符时清单校验失败：`plugin.manifest_invalid_category` / `plugin.manifest_invalid_author` /
+  `plugin.manifest_invalid_homepage`。
+
+### iconUrl（插件图标）
+
+`iconUrl` 是插件的展示图标，出现在插件中心与插件市场的卡片上；不参与加载与权限判定，
+未声明时按插件名渲染首字母图标。接受两种写法：
+
+- **http(s) 图片链接**（`"iconUrl": "https://example.com/icon.png"`）：由界面直接加载；
+- **包内相对路径**（`"iconUrl": "icon.png"`、`"./assets/icon.png"`，相对插件根目录）：
+  指向随包分发的图片文件，宿主读取后转成 data URL 交给界面显示。
+
+支持 `png` / `jpg` / `jpeg` / `gif` / `webp` / `svg` / `bmp` 扩展名；文件超过 1MB 或读不到时
+按未声明处理（回退首字母图标），不影响插件加载。绝对路径、根相对路径与目录穿越（`..`）
+都会让清单校验失败（`plugin.manifest_invalid_icon_url`）：图标由宿主读文件，
+不能借这个字段读到插件目录之外。
+
+### 与市场条目的一致性
+
+插件市场条目（`plugins.json`）里的 `displayName` / `description` / `version` / `apiVersion` /
+`platforms` / `category` / `author` / `homepage` / `minOpenDeskVersion` / `maxOpenDeskVersion` 与插件清单
+同义。安装时主进程会拿包内清单与市场条目逐项核对，**两边都声明了**的
+`version` / `minOpenDeskVersion` / `maxOpenDeskVersion` / `homepage` / `author` 必须一致
+（版本类字段按 SemVer 比，`v1.0.0` 与 `1.0.0` 等价；URL 忽略结尾斜杠；本地化文本按主语言标签逐项
+比较，只比两边都声明的语言）。
+
+核对发生在**下载解压之后、落盘之前**：对不上就整单失败，磁盘上不会留下这一版，已安装的旧版本保持
+不动；界面用模态弹窗告诉用户「插件信息与实际数据不匹配」并列出差异字段。`id` 不一致同样报错。
+
+`displayName` / `description` 允许市场只提供部分语言，`category` 允许市场自行归类，因此不参与比较。
 
 ### Skill 路径
 
@@ -630,7 +755,6 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
     "type": "module",
     "opendesk": {
         "plugin": "./dist/plugin.js",
-        "schemaVersion": 1,
         "id": "review-helper",
         "displayName": "Review Helper",
         "apiVersion": 1,
@@ -668,6 +792,107 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 ```bash
 opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 ```
+
+## 插件市场与插件渠道
+
+插件中心按渠道拉取插件清单，每个启用的渠道都是一个独立市场，并在插件中心顶部**独占一个 Tab**
+（Tab 名用渠道展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
+搜索框、分类切换与插件卡片：
+
+- **设置 → 渠道设置 → 插件渠道**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
+  用户可以添加最多 20 个三方渠道，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
+- 渠道配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的渠道既不拉清单，
+  也不在插件中心里占 Tab。
+- 环境变量 `OPENDESK_PLUGIN_CATEGORY` 可以把官方市场指向本地文件或自建 registry，便于调试。
+
+清单格式（`plugins.json`）：
+
+```json
+{
+    "categories": ["办公文档"],
+    "plugins": [
+        {
+            "id": "opendesk-wps-slides",
+            "displayName": { "zh-CN": "OpenDesk WPS Slides", "en-US": "OpenDesk WPS Slides" },
+            "description": {
+                "zh-CN": "在 WPS 演示里用自然语言生成幻灯片。",
+                "en-US": "Generate WPS slides in natural language."
+            },
+            "version": "1.0.1",
+            "apiVersion": 1,
+            "platforms": ["win32", "openharmony"],
+            "category": ["办公文档"],
+            "author": { "name": "OpenDesk 团队", "institution": "开放原子开源基金会" },
+            "homepage": "https://example.com/plugin",
+            "downloadUrl": "https://example.com/static/plugins/opendesk-wps-slides-1.0.1.zip"
+        }
+    ]
+}
+```
+
+- `categories` 可选：声明该市场支持哪些分类（界面上的「全部插件 / 分类A / 分类B」就来自它），
+  省略表示这个市场不支持按分类显示。分类名是自由文本，需要与插件的 `category` 取值一致。
+- 展示字段与插件清单（`opendesk.plugin.json`）同一口径，不再有「市场宽松、包内严格」的落差：
+    - `version` 必须是合法 SemVer；
+    - `apiVersion` 只接受宿主支持的插件 API 版本（当前为 `1`），省略表示不声明；
+    - `minOpenDeskVersion` / `maxOpenDeskVersion` 可选，语义与插件清单同义（SemVer、**包含边界**、
+      省略表示该侧不限）；
+    - `platforms` 取自同一套枚举（`win32` / `darwin` / `linux` / `android` / `openharmony`）；
+    - `author` 必须是 `{ name, institution?, homepage? }` 对象（不再支持字符串简写），`name` 必填、
+      `homepage` 只接受 http(s)。
+    - `iconUrl` 可选：插件图标。http(s) 图片链接原样保留；相对链接与 `downloadUrl` 同一套基准解析
+      （相对清单地址），本地调试清单解析成本地文件路径后由宿主读出并内联成 data URL 交给界面，
+      读不到按未声明处理（卡片回退首字母图标）。
+- `platforms` 声明的平台不含当前平台时，这条插件在市场上**不展示、也不允许安装**（未声明表示全平台）。
+- `minOpenDeskVersion` / `maxOpenDeskVersion` 不含当前宿主时，条目**仍然展示但标成不可安装**
+  （卡片上写「需要 OpenDesk ≥ x.y.z」，按钮禁用）——平台不匹配是「跟这台机器没关系」，
+  宿主版本不匹配则是「升级 OpenDesk 就能装」，藏起来反而让人以为市场上没有这个插件。
+- 市场卡片的底部胶囊：**已安装** / **可更新**（清单版本高于已装版本时，按钮从「重新安装」变成「更新」，
+  详情里同时给出本地版本）/ **与内置插件冲突**、**需要 OpenDesk ≥ x.y.z**（这两种情况按钮禁用、文案变
+  「无法安装」）；未安装且可安装时不显示胶囊。
+- `plugins[].id` 必须等于插件包内清单的 `id`，不一致时安装会报错（卡片上的「已安装」会对不上）。
+- `downloadUrl` 必须是 `.zip` / `.tgz` / `.tar.gz` 归档包：安装流程是下载 → 解包 → 校验 → 注册；
+  https 清单只接受 https 下载地址，只有非 https 清单（内网市场、本地调试）才放行明文 http。
+- `downloadUrl` 也可以写成**相对清单的地址**（如 `plugins/demo.zip`、`./plugins/demo.tgz`、
+  `/static/plugins/demo.zip`）：清单是 http(s) 地址时按 URL 规则相对解析（换域名/换分支不用改清单），
+  清单是本地调试文件时解析成同级目录下的绝对路径。归档包与清单放在同一个仓库里时最省事。
+- 单条写坏的条目会被跳过；整份清单一条都用不了时按「清单加载失败」处理，并回退到上次成功的缓存。
+- 清单缓存 5 分钟（`apps/pluginmgr/plugin-catalog-cache/`），市场页右上角的刷新会强制重新拉取。
+- 清单顶层**不写** `schemaVersion`：它没有任何版本协商作用，客户端也不读。
+
+从市场安装时：下载走平台 `fetch`（继承代理设置），进度通过 `marketInstallProgress` 事件回传给
+卡片上的进度条；与内置插件同 ID 会在**下载前**就被拒绝（`builtin_conflict`，内置优先，既不白下载，
+也不会为此先把运行中的内置插件停掉再装回去）；覆盖安装会先释放旧实例。
+
+官方市场清单托管在 `../OpenDesk-Pages` 仓库的 `public/static/categories/plugins.json`，插件包放在
+`public/static/plugins/` 下随站点发布，改完部署即可，客户端不需要发版。
+
+### registry 扩展点
+
+每个渠道对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
+`getCatalog(query?)` / `getPluginCount` / 可选 `invalidate`）。`getCatalog` 的查询参数是
+`{ startAt?, limit?, categories? }`：`startAt` / `limit` 与 benchmark 的
+`getCatalog(startAt, limit)` 同义（`startAt` 默认 0、省略 `limit` 表示取到末尾、`0` 表示不取，
+切片由 registry 完成），分类过滤先于分页。内置实现 `PlainPluginRegistry` 只负责
+「一份 HTTP 上的 `plugins.json`」：内存 + 文件缓存、并发去重、断网回退上次成功清单、单条容错；
+界面上目前一次取全量（与 benchmark 一致），大型市场接入后可以直接按页取而不改契约。
+
+未来出现别的市场协议时（分页 RPC、需要认证的私有市场、增量索引……），**不需要改
+`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应渠道即可，
+与 mcpmgr / skillmgr 的 provider 机制同一套写法：
+
+```ts
+registerPluginRegistryProvider({
+    id: 'enterprise-rpc',
+    // 认领哪些渠道由 provider 自己判断；官方渠道同样可以被接管
+    supports: (channel) => channel.url.startsWith('https://market.corp.example/'),
+    // 返回 undefined 表示不接管，交给后面的 provider 或内置实现
+    create: (channel, { dataDirectory, fetchImpl }) => new MyRpcRegistry(channel, { dataDirectory, fetchImpl })
+});
+```
+
+未注册任何 provider 时行为与今天完全一致（全部走内置实现）；provider 的 `supports` / `create`
+抛错只会让该渠道回落到内置实现，不会把整个市场列表拖空。
 
 ## 在 setup 中动态注册 Skill 和 MCP
 
@@ -742,7 +967,8 @@ opendesk plugins uninstall review-helper --remove-data
 
 安装源可以是 npm spec、本地路径、ZIP、tarball 或 URL。GUI 中的 npm、目录、ZIP、TGZ 和 URL
 入口都会校验后复制到全局 `plugins` 目录并写入注册记录，因此可以通过 GUI 或 CLI 卸载。
-`externalPaths` 仅用于在配置文件中显式指向不复制的开发插件。
+`externalPaths` / `--plugins-directory` 只用于显式指向不复制到 `plugins/` 的插件目录（见上文
+「插件目录」），其中的插件按内置插件处理。
 
 CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk.plugin.json` 或
 `package.json#opendesk` 声明的插件目录，不要求 `package.json`。目录内容会直接复制到
@@ -751,7 +977,8 @@ CLI 安装命令接收的本地目录同样直接校验并复制包含 `opendesk
 依赖；无运行时依赖的插件不要求 npm。ZIP 和 TGZ 位于同一归档层，统一下载、解压和校验。
 所有 npm 安装路径都传递 `--omit=dev`、`--no-optional` 和 `--ignore-scripts`，不会安装开发依赖、
 可选依赖，也不会运行插件或依赖的 npm 生命周期脚本。卸载适用于 `plugins/` 目录中的全部插件，
-包括手工放入的插件文件或目录；内置插件不能卸载，外部目录插件应从 `externalPaths` 移除。
+包括手工放入的插件文件或目录；内置插件与附加插件目录里的插件不能卸载，后者需要从
+`externalPaths` 或 `--plugins-directory` 中移除。
 卸载默认保留插件的私有数据目录（`plugins/.pluginmgr/data/<插件ID>/`），仅在 GUI 确认弹窗中
 勾选“同时删除该插件的数据目录”，或 CLI 显式传入 `--remove-data` 时才会一并清理。
 
@@ -804,7 +1031,8 @@ discover
 Hook 按插件激活顺序串行执行。默认 `failureMode: 'open'` 会记录失败并继续主流程；
 安全或认证场景可以在注册 Hook 时指定 `failureMode: 'closed'`，让异常阻止对应操作。
 带有完整性基线（安装时写入的 integrity 记录）的插件在 import 前检查安装内容完整性；
-手工放入和外部插件没有基线，标记为 unmanaged，不进行内容锁定。
+手工放入（`plugins/` 目录）的插件没有基线，标记为 unmanaged，不进行内容锁定；附加插件目录里的
+插件按内置插件处理，同样不做完整性锁定。
 
 ## Runtime Hooks
 

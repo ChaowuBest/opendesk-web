@@ -78,7 +78,6 @@ export function formatPluginInstallError(
 /** 卸载在「不能卸载」这一档上返回的错误码，对应各自的专用文案 */
 const UNINSTALL_ERROR_LOCALE_KEYS: Record<string, string> = {
     'plugin.uninstall_builtin': 'plugin.uninstall.builtin',
-    'plugin.uninstall_external': 'plugin.uninstall.external',
     'plugin.uninstall_invalid_path': 'plugin.uninstall.invalidPath'
 };
 

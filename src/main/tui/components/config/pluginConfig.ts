@@ -19,9 +19,11 @@ import { defaultSelectListTheme } from '../../theme.js';
 
 interface PluginListEntry {
     id: string;
-    source: 'builtin' | 'local' | 'external';
+    source: 'builtin' | 'local';
     removable: boolean;
     enabled: boolean;
+    /** 启停由清单固定（内置插件的 system: true）：不允许切换 */
+    system: boolean;
     runtime?: {
         status: 'active' | 'error' | 'disabled';
         apiVersion: number;
@@ -95,9 +97,10 @@ export class PluginConfigPage implements Component {
                                 : chalk.gray('●');
                       const source = t(`plugin.center.source.${entry.source}`);
                       const capabilityCount = entry.runtime?.capabilities.length ?? 0;
+                      const lock = entry.system ? ` ${t('plugin.center.systemLocked')}` : '';
                       return {
                           value: entry.id,
-                          label: `${marker} ${chalk.bold(entry.id)}  ${chalk.dim(`${t(`plugin.runtime.status.${status}`)} · ${source} · ${capabilityCount}`)}`
+                          label: `${marker} ${chalk.bold(entry.id)}  ${chalk.dim(`${t(`plugin.runtime.status.${status}`)} · ${source} · ${capabilityCount}${lock}`)}`
                       };
                   })
                 : [{ value: '_empty', label: chalk.dim(t('plugin.center.empty')) }])
@@ -121,10 +124,15 @@ export class PluginConfigPage implements Component {
         this.state = 'actions';
         this.selectedId = id;
         const items = [
-            {
-                value: 'toggle',
-                label: entry.enabled ? t('plugin.center.disable') : t('plugin.center.enable')
-            },
+            // 启停由清单固定的插件不给切换入口，只说明原因
+            ...(entry.system
+                ? [{ value: 'locked', label: chalk.dim(t('plugin.center.systemLocked')) }]
+                : [
+                      {
+                          value: 'toggle',
+                          label: entry.enabled ? t('plugin.center.disable') : t('plugin.center.enable')
+                      }
+                  ]),
             ...(entry.removable ? [{ value: 'uninstall', label: chalk.red(t('plugin.center.uninstall')) }] : []),
             { value: 'back', label: t('plugin.tui.back') }
         ];

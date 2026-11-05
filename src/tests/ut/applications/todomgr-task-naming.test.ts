@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Participant } from '../../../main/plugins/types.js';
+import type { Participant } from '../../../main/aikernel/types/index.js';
 import type { TodoTrigger } from '../../../main/applications/todomgr/common.js';
 
 const mainAgent = { name: 'main' };

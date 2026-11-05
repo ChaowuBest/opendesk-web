@@ -98,6 +98,38 @@ export function createReloadBudget(options: ReloadBudgetOptions = {}): ReloadBud
  */
 const PROBE_BACKOFF_MAX_MS = 60_000;
 
+/**
+ * 冻结判定档位：判死阈值与重载配额一起决定「多久算卡死」「卡死后允许多快重试」。
+ *
+ * 心跳缺失只能证明 renderer 主线程没在跑 JS，无法区分「真冻结」与「整机 CPU/IO 饱和、
+ * renderer 抢不到时间片」。后者在开发态是常态：vite 全量重编译 common.css、tsx/jest
+ * 构建、全仓文件扫描都会把 CPU 打满，renderer 心跳被调度饿死十几秒并不罕见。此时按
+ * 生产阈值判死会形成「reload → 重建任务视图 → 又被压住 → 再 reload」的风暴，期间界面
+ * 持续不可用，比多等十几秒更糟。生产环境则相反：判死越早，用户越早脱离冻结界面。
+ */
+export interface FreezeRecoveryProfile {
+    heartbeatTimeoutMs: number;
+    probeTimeoutMs: number;
+    reloadBudget: { maxReloads: number; windowMs: number };
+}
+
+const PRODUCTION_FREEZE_PROFILE: FreezeRecoveryProfile = {
+    heartbeatTimeoutMs: 15_000,
+    probeTimeoutMs: 10_000,
+    reloadBudget: { maxReloads: 3, windowMs: 10_000 }
+};
+
+const DEVELOPMENT_FREEZE_PROFILE: FreezeRecoveryProfile = {
+    heartbeatTimeoutMs: 30_000,
+    probeTimeoutMs: 15_000,
+    // 配额同时拉长窗口：真冻结仍会重载，但不会在 CPU 饱和的几分钟里反复清空界面状态
+    reloadBudget: { maxReloads: 2, windowMs: 600_000 }
+};
+
+export function freezeRecoveryProfile(isDev: boolean): FreezeRecoveryProfile {
+    return isDev ? DEVELOPMENT_FREEZE_PROFILE : PRODUCTION_FREEZE_PROFILE;
+}
+
 /*
  * 判定「节流已解除」所需的连续正常间隔自然心跳次数。取 2：单个短间隔心跳可能是
  * 探活补报打乱节拍后的自然节拍，不能证明定时器恢复常态；连续两个正常间隔（3s 周期
@@ -125,6 +157,14 @@ export interface WindowRecoveryOptions {
      * 「主线程卡死」。不注入时退化为仅凭心跳静默判定（静默超时即重载）。
      */
     requestHeartbeatProbe?: () => void;
+    /**
+     * 判定 renderer 冻结时收集附加诊断（进程 CPU/内存、加载状态等），随判死日志输出。
+     *
+     * 判死时最需要区分的是「renderer 真冻结」与「整机资源饱和导致心跳饿死」，两者在
+     * 心跳与探活上表现完全一致，只能靠进程侧指标事后区分。返回 null 表示没有可用信息，
+     * 日志保持原格式。
+     */
+    describeFrozenRenderer?: () => string | null;
     /** 心跳静默超过该时长（毫秒）判定为疑似冻结，默认 15000 */
     heartbeatTimeoutMs?: number;
     /** 冻结巡检间隔（毫秒），默认 5000 */
@@ -220,6 +260,22 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
         resetCadenceTracking();
     };
 
+    /*
+     * 判死日志。诊断回调可能抛错（例如窗口正在销毁），它只服务于事后定位，
+     * 绝不能因此打断恢复流程，因此单独兜底并把失败原因写进日志本身。
+     */
+    const logFreeze = (message: string) => {
+        let detail: string | null = null;
+        if (options.describeFrozenRenderer) {
+            try {
+                detail = options.describeFrozenRenderer();
+            } catch (error) {
+                detail = `diagnostics unavailable: ${String(error)}`;
+            }
+        }
+        options.log.error(detail ? `${message} | ${detail}` : message);
+    };
+
     const beginProbe = (at: number, silentFor: number) => {
         probeStartedAt = at;
         if (probeAssisted) {
@@ -254,7 +310,7 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
             // 探活都拿不到回应，renderer 主线程确实卡住了。
             // 是否真的重载由 reloadFor 内的配额决定，这里不断言结果，避免 budget 拒绝时日志误导
             probeStartedAt = null;
-            options.log.error(`renderer heartbeat probe timed out after ${probeTimeoutMs}ms`);
+            logFreeze(`renderer heartbeat probe timed out after ${probeTimeoutMs}ms`);
             reloadFor('freeze recovery');
             return;
         }
@@ -268,7 +324,7 @@ export function createWindowRecoveryController(options: WindowRecoveryOptions): 
         const requiredSilence = probeAssisted ? probeIntervalMs : heartbeatTimeoutMs;
         if (silentFor <= requiredSilence) return;
         if (!options.requestHeartbeatProbe) {
-            options.log.error(`renderer heartbeat silent for ${silentFor}ms, reloading main window`);
+            logFreeze(`renderer heartbeat silent for ${silentFor}ms, reloading main window`);
             reloadFor('freeze recovery');
             return;
         }
