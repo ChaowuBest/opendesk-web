@@ -1,4 +1,8 @@
 import { DoubaoSearchTool } from '../../../main/applications/search/tools/doubao';
+import { setRuntimeLocale } from '../../../locale/index.js';
+
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 const apiKey = process.env.DOUBAO_API_KEY;
 
