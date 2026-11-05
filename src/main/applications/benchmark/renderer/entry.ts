@@ -208,6 +208,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private downloads = new Map<string, DownloadState>();
     private runs: RunListItem[] = [];
     private models: ModelOption[] = [];
+    private modelLoadVersion = 0;
     private loading = true;
     /** 正在重扫磁盘占用：按钮置灰并换文案，避免连点触发多轮并发扫盘 */
     private rescanning = false;
@@ -251,7 +252,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         }
         this._applyLocaleSetting(setting);
         if (!this.isConnected) return;
-        this._subscribeLocaleChanges();
+        this._subscribeSettingChanges();
         this.applyTheme();
         this.render();
 
@@ -296,6 +297,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     disconnectedCallback() {
+        this.modelLoadVersion += 1;
         if (this._onDataChanged) {
             getAPI().unsubscribe('datasetsChanged');
             this._onDataChanged = null;
@@ -334,10 +336,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this._t = createTranslatorForBenchmark(setting);
     }
 
-    private _subscribeLocaleChanges() {
+    private _subscribeSettingChanges() {
         if (this._settingUnsubscribe) return;
         const unsubscribe = (window as any).settingAPI?.onSettingChanged?.((setting: any) => {
             if (!this.isConnected) return;
+            void this.loadModels();
             if (resolveRendererLocale(setting) === this._locale) return;
             this._applyLocaleSetting(setting);
             this.render();
@@ -560,10 +563,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     private async loadModels() {
+        const version = ++this.modelLoadVersion;
         try {
-            this.models = await getAPI().callMainWorld<ModelOption[]>('listModels');
+            const models = await getAPI().callMainWorld<ModelOption[]>('listModels');
+            if (version !== this.modelLoadVersion || JSON.stringify(models) === JSON.stringify(this.models)) return;
+            this.models = models;
+            this.refreshModelControls();
         } catch {
-            this.models = [];
+            // 临时读取失败时保留已有列表，后续设置变更或手动刷新可以重试。
         }
     }
 
@@ -840,7 +847,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
                     this.loadDatasets(false),
                     // 手动刷新是唯一会强制重扫磁盘占用的入口
-                    this.loadRuns(false, true)
+                    this.loadRuns(false, true),
+                    this.loadModels()
                 ]);
                 // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
                 // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
@@ -1086,6 +1094,43 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (chip) chip.innerHTML = `${effortIconSvg(effort)}${escapeHtml(this.effortLabel(effort))}`;
     }
 
+    /** 设置刷新只更新模型控件，保留测评参数和搜索框的 DOM、输入与焦点。 */
+    private refreshModelControls() {
+        const modal = this.runModal;
+        const root = this.shadowRoot;
+        if (!modal || !root) return;
+        const defaultModel = this.models.find((item) => item.isDefault) ?? this.models[0];
+        for (const picker of ['run', 'verify'] as const) {
+            const modelKey = picker === 'run' ? 'runModel' : 'verifyModel';
+            const effortKey = picker === 'run' ? 'runModelEffort' : 'verifyModelEffort';
+            if (!modal[modelKey] && defaultModel) {
+                modal[modelKey] = defaultModel.alias;
+                modal[effortKey] = defaultModel.defaultEffort;
+            }
+            const model = this.models.find((item) => item.alias === modal[modelKey]);
+            if (model) this.updateModelTrigger(picker, model, modal[effortKey]);
+        }
+        const start = root.querySelector<HTMLButtonElement>('[data-action="run-start"]');
+        if (start) start.disabled = modal.busy || this.models.length === 0;
+        if (this.models.length > 0 && modal.error === this._t('benchmark.run.modelsEmpty')) {
+            modal.error = '';
+            this.updateModalError();
+        }
+
+        const panel = root.querySelector('.model-panel');
+        if (!panel || !this.modelPanel) return;
+        const holder = document.createElement('div');
+        holder.innerHTML = this.renderModelPanel();
+        const items = panel.querySelector('.ctx-menu-list');
+        if (items) items.innerHTML = holder.querySelector('.ctx-menu-list')?.innerHTML ?? '';
+        const search = panel.querySelector<HTMLInputElement>('.model-search');
+        if (search) this.filterModelPanel(search);
+        if (this.effortMenu && !this.models.some((model) => model.alias === this.effortMenu!.alias)) {
+            this.effortMenu = null;
+        }
+        this.refreshEffortMenu();
+    }
+
     private openModelPanel(picker: 'run' | 'verify', trigger: HTMLElement) {
         const rect = trigger.getBoundingClientRect();
         this.modelPanel = {
@@ -1153,6 +1198,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private handleInput = (event: Event) => {
         const input = event.target as HTMLInputElement | null;
         if (!input || !input.classList.contains('model-search')) return;
+        this.filterModelPanel(input);
+    };
+
+    private filterModelPanel(input: HTMLInputElement) {
         const query = input.value.trim().toLowerCase();
         const panel = input.closest('.model-panel');
         if (!panel) return;
@@ -1160,7 +1209,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             const alias = (item.dataset.alias || '').toLowerCase();
             item.style.display = !query || alias.includes(query) ? '' : 'none';
         });
-    };
+    }
 
     private async switchTab(tab: TabId) {
         if (this.activeTab === tab && !this.detailRunId) return;

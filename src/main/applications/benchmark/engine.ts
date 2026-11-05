@@ -29,7 +29,7 @@ import { t } from './locale/index.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
 import { buildChildProcessEnv } from '../../utils/shellExec.js';
 import { runScript, ScriptExecutionError } from './script-runtime.js';
-import { measureDirectoryBytes, CASE_MEASURE_CONCURRENCY } from './disk-usage.js';
+import { getDiskUsage } from '../../utils/shell-helper.js';
 import {
     buildVerifyPrompt,
     parseJudgeScore,
@@ -158,8 +158,13 @@ export class BenchmarkRunner {
     private async recordCaseUsage(context: RunnerContext, item: CasePlanItem): Promise<void> {
         const { run, runDir, callbacks } = context;
         const caseDir = path.join(runDir, 'cases', toSafeDirName(item.key));
-        const bytes = await measureDirectoryBytes(caseDir, CASE_MEASURE_CONCURRENCY);
-        callbacks.updateCase(run.id, item.key, { usageBytes: bytes });
+        try {
+            const { bytes } = await getDiskUsage(caseDir);
+            callbacks.updateCase(run.id, item.key, { usageBytes: bytes });
+        } catch (error) {
+            // 占用只是辅助信息，系统命令失败不能中断后续用例或覆盖测评结果。
+            logger.warn(`[benchmark] failed to measure case ${item.key}: ${toErrorMessage(error)}`);
+        }
     }
 
     private async runCase(context: RunnerContext, item: CasePlanItem): Promise<CaseRunStatus> {

@@ -52,7 +52,7 @@ import {
     type RunStatus
 } from './common.js';
 import { downloadStateKey, findLocalDatasetByName } from './catalog-common.js';
-import { measureDirectoryBytes } from './disk-usage.js';
+import { getDiskUsage } from '../../utils/shell-helper.js';
 
 const META_FILE = 'benchmark-meta.json';
 const RUN_FILE = 'run.json';
@@ -190,6 +190,7 @@ export class BenchmarkManager {
         for (const runId of runIds) {
             const run = this.readRun(runId);
             if (!run || run.status === 'running') continue;
+            const snapshot = JSON.stringify(run);
             let runDir: string;
             try {
                 runDir = this.resolveInside(this.runsDir, runId);
@@ -199,13 +200,22 @@ export class BenchmarkManager {
             let changed = false;
             for (const item of run.cases) {
                 const caseDir = path.join(runDir, 'cases', toSafeDirName(item.key));
-                const bytes = await measureDirectoryBytes(caseDir);
+                let bytes: number;
+                try {
+                    ({ bytes } = await getDiskUsage(caseDir));
+                } catch (error) {
+                    logger.warn(`[benchmark] failed to measure case ${item.key}: ${toErrorMessage(error)}`);
+                    continue;
+                }
                 if (bytes !== item.usageBytes) {
                     item.usageBytes = bytes;
                     changed = true;
                 }
             }
             if (!changed) continue;
+            // 扫描期间可删除或重跑轮次；异步等待前的快照不能覆盖这些更新。
+            const current = this.readRun(runId);
+            if (!current || this.activeRuns.has(runId) || JSON.stringify(current) !== snapshot) continue;
             run.summary = summarizeCases(run.cases);
             this.writeRun(run);
             scanned += 1;
