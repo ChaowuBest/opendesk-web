@@ -18,6 +18,54 @@ import { getTaskArtifactDirectory, Setting } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
 
+export interface SupportedModeSnapshot {
+    modes: Array<Pick<ModeDecl, 'id' | 'name' | 'description' | 'icon' | 'color'>>;
+    defaultModeId: string;
+    currentModeId: string;
+}
+
+export type GlobalModeSelectionResult =
+    { status: 'ok'; modeId: string; changed: boolean } | { status: 'error'; message: string };
+
+/**
+ * Build the public mode snapshot shared by GUI hosts.
+ * The current value is normalized to a supported mode so a stale host value
+ * cannot be exposed as a selectable mode after the agent declaration changes.
+ */
+export function getSupportedModeSnapshot(
+    agent: Pick<AgentDecl, 'supportedModes' | 'getDefaultMode'>,
+    currentModeId?: string | null
+): SupportedModeSnapshot {
+    const modes = agent.supportedModes();
+    const defaultModeId = agent.getDefaultMode().id;
+    const currentMode = modes.find((mode) => mode.id === currentModeId);
+    return {
+        modes: modes.map(({ id, name, description, icon, color }) => ({ id, name, description, icon, color })),
+        defaultModeId,
+        currentModeId: currentMode?.id ?? defaultModeId
+    };
+}
+
+/**
+ * Validate and apply a host's process-local global mode selection.
+ * Persistence is the host's current-mode state (it is intentionally not a
+ * user setting); callers broadcast only after this result succeeds.
+ */
+export function selectGlobalMode(
+    agent: Pick<AgentDecl, 'supportedModes'>,
+    currentModeId: string | null | undefined,
+    requestedModeId: unknown
+): GlobalModeSelectionResult {
+    if (typeof requestedModeId !== 'string') {
+        return { status: 'error', message: `unknown mode: ${String(requestedModeId)}` };
+    }
+    const target = agent.supportedModes().find((mode) => mode.id === requestedModeId);
+    if (!target) {
+        return { status: 'error', message: `unknown mode: ${requestedModeId}` };
+    }
+    return { status: 'ok', modeId: target.id, changed: currentModeId !== target.id };
+}
+
 /**
  * 为任务选择运行 mode。主 Agent 跟随入口选择的 mode，其他 Agent 始终使用自身绑定的 mode。
  */
@@ -133,6 +181,35 @@ export async function replaceTaskHarnessForMode(
     }
 }
 
+export interface TaskWorkspaceHost {
+    currentModeId?: string | null;
+    permissionPromptFactory: () => PermissionPromptProvider;
+}
+
+/**
+ * Apply the complete GUI workspace operation shared by all hosts.
+ * An existing task mode wins over the host's new-task default; custom agents
+ * always retain their own mode. Hosts own task lookup, transport and delivery.
+ */
+export async function updateTaskWorkspace(
+    task: TaskState,
+    newWorkspace: string,
+    host: TaskWorkspaceHost
+): Promise<void> {
+    const mainAgent = AgentRegistry.getMainAgent();
+    const mainModeId = task.activeModeId || host.currentModeId;
+    const mainMode =
+        mainAgent.supportedModes().find((candidate) => candidate.id === mainModeId) ?? mainAgent.getDefaultMode();
+    await replaceTaskHarnessForWorkspace(
+        task,
+        newWorkspace,
+        (taskAgent) => (taskAgent.agentId === mainAgent.agentId ? mainMode : task.getAgentMode()),
+        host.permissionPromptFactory
+    );
+    task.persistLater();
+    await task.refreshToolsets();
+}
+
 /**
  * 为任务切换工作空间：按当前模式重建权限引擎，并让 provider 用新规则重评
  * 已经在等待中的权限请求（例如旧工作空间外的路径在新工作空间下变为 allow）。
@@ -143,7 +220,8 @@ export async function replaceTaskHarnessForMode(
 export async function replaceTaskHarnessForWorkspace(
     task: TaskState,
     newWorkspace: string,
-    resolveMode: (taskAgent: AgentDecl) => ModeDecl
+    resolveMode: (taskAgent: AgentDecl) => ModeDecl,
+    permissionPromptFactory?: () => PermissionPromptProvider
 ): Promise<void> {
     const taskAgent = task.getAgent();
     const mode = resolveMode(taskAgent);
@@ -151,7 +229,9 @@ export async function replaceTaskHarnessForWorkspace(
     await mode.onEnterMode?.(newWorkspace);
     const savedEnv = task.harnessContext.environ;
     const savedExecutionHost = task.harnessContext.executionHost;
-    const permissionPrompt = task.harnessContext.permissionPrompt;
+    // Resolve a lazy host provider into the new context only. A failed rebuild
+    // must not mutate the provider attached to the still-active old harness.
+    const permissionPrompt = task.harnessContext.permissionPrompt || permissionPromptFactory?.() || null;
     const ctx = await HarnessContext.createForMode(newWorkspace, mode);
     ctx.environ = savedEnv;
     ctx.executionHost = savedExecutionHost;
