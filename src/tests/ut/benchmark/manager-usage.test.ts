@@ -150,6 +150,23 @@ describe('listRuns 的磁盘占用', () => {
 });
 
 describe('rescanRunUsage', () => {
+    test('并发刷新共享同一次扫描，完成后仍可再次刷新', async () => {
+        const { manager, dataDir } = setup();
+        makeRun(dataDir, 'run-shared', 'completed', [{ key: 'a', fileBytes: 10 }]);
+        const releases: Array<(usage: { bytes: number; kind: 'allocated' }) => void> = [];
+        getDiskUsage.mockImplementation(() => new Promise((resolve) => releases.push(resolve)));
+        const first = manager.rescanRunUsage();
+        const second = manager.rescanRunUsage();
+        const scansStarted = getDiskUsage.mock.calls.length;
+        for (const release of releases) release({ bytes: 10, kind: 'allocated' });
+        await expect(Promise.all([first, second])).resolves.toEqual([1, 1]);
+        expect(scansStarted).toBe(1);
+        getDiskUsage.mockResolvedValue({ bytes: 20, kind: 'allocated' });
+        await manager.rescanRunUsage();
+        expect(getDiskUsage).toHaveBeenCalledTimes(2);
+        expect(manager.listRuns()[0].usageBytes).toBe(20);
+    });
+
     test('删掉工作空间后重扫把数字改小并写回', async () => {
         const { manager, dataDir } = setup();
         const runDir = makeRun(dataDir, 'run-rescan', 'completed', [{ key: 'a', fileBytes: 1024, usageBytes: 9999 }]);
@@ -258,4 +275,29 @@ test('用例记账失败不会中断后续用例或改写测评结果', async ()
     expect(updateCase).toHaveBeenCalledTimes(1);
     expect(updateCase).toHaveBeenCalledWith(run.id, 'b', { usageBytes: 2048 });
     expect(finishRun).toHaveBeenCalledWith(run.id, 'completed');
+});
+
+test('停止运行后，磁盘统计继续完成并记账', async () => {
+    const { dataDir } = setup();
+    const runDir = makeRun(dataDir, 'run-stop-usage', 'running', [{ key: 'a', fileBytes: 10 }]);
+    const run = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')) as RunRecord;
+    const runner = new BenchmarkRunner();
+    jest.spyOn(runner as unknown as { runCase(): Promise<string> }, 'runCase').mockResolvedValue('done');
+    let release!: (usage: { bytes: number; kind: 'allocated' }) => void;
+    getDiskUsage.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    const updateCase = jest.fn();
+    const finishRun = jest.fn();
+    const execution = runner.execute({
+        run,
+        runDir,
+        plan: [{ key: 'a' }],
+        callbacks: { updateCase, finishRun, notify: () => undefined }
+    } as RunnerContext);
+    await Promise.resolve();
+    expect(getDiskUsage).toHaveBeenCalledTimes(1);
+    runner.stop(run.id);
+    release({ bytes: 20, kind: 'allocated' });
+    await execution;
+    expect(finishRun).toHaveBeenCalledWith(run.id, 'stopped');
+    expect(updateCase).toHaveBeenCalledWith(run.id, 'a', { usageBytes: 20 });
 });

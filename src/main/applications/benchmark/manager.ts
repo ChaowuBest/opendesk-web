@@ -90,6 +90,7 @@ export class BenchmarkManager {
     private readonly downloads = new Map<string, DownloadState>();
     private notifyTimer: NodeJS.Timeout | null = null;
     private downloadNotifyTimer: NodeJS.Timeout | null = null;
+    private usageRescan: Promise<number> | null = null;
 
     constructor(private readonly dataDirectory: string) {
         this.datasetsDir = path.join(dataDirectory, 'datasets');
@@ -178,10 +179,14 @@ export class BenchmarkManager {
      *
      * @returns 实际写回了几轮
      */
-    async rescanRunUsage(): Promise<number> {
+    rescanRunUsage(): Promise<number> {
+        if (this.usageRescan) return this.usageRescan;
         // 按创建时间倒序：全量重扫要遍历几百万个文件、耗时以分钟计，
         // 而用户点刷新最关心的是最近跑的轮次，让它们先出结果。
-        return this.rescanRuns(this.sortRunIdsByNewest(this.safeReadDir(this.runsDir)));
+        this.usageRescan = this.rescanRuns(this.sortRunIdsByNewest(this.safeReadDir(this.runsDir))).finally(() => {
+            this.usageRescan = null;
+        });
+        return this.usageRescan;
     }
 
     /** 逐轮推进地重扫，扫一轮推一次通知，界面逐行更新 */

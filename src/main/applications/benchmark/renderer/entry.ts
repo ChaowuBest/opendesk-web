@@ -524,15 +524,11 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         // 占用是用例收尾时记的账，和列表一起返回，读的时候不扫盘。
         // 只有手动刷新才强制重扫写回：那一轮数字变化时会由主进程逐个 notify，列表逐行更新。
         if (rescanUsage) {
-            this.rescanning = true;
-            this.renderUnlessModalOpen();
             try {
                 await getAPI().callMainWorld('rescanRunUsage');
             } catch {
                 // 重扫失败也要重新拉一次列表：主进程可能已经写回了一部分轮次，
                 // 把刷新放在 try 里会让这些已落盘的结果白等。
-            } finally {
-                this.rescanning = false;
             }
             try {
                 this.runs = await getAPI().callMainWorld<RunListItem[]>('listRuns');
@@ -841,18 +837,25 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 await this.importDataset();
                 return;
             case 'refresh': {
+                if (this.rescanning) return;
+                this.rescanning = true;
+                this.renderUnlessModalOpen();
                 // 手动刷新要拿到线上最新清单，不能命中主进程的 5 分钟缓存
                 const registryName = this.activeRegistryName();
-                await Promise.all([
-                    registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
-                    this.loadDatasets(false),
-                    // 手动刷新是唯一会强制重扫磁盘占用的入口
-                    this.loadRuns(false, true),
-                    this.loadModels()
-                ]);
-                // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
-                // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
-                this.renderUnlessModalOpen();
+                try {
+                    await Promise.all([
+                        registryName ? this.loadCatalog(registryName, true) : Promise.resolve(),
+                        this.loadDatasets(false),
+                        // 手动刷新是唯一会强制重扫磁盘占用的入口
+                        this.loadRuns(false, true),
+                        this.loadModels()
+                    ]);
+                } finally {
+                    this.rescanning = false;
+                    // 清单和测评集是两路 IPC，谁先回来不确定；这里统一补一次渲染，
+                    // 免得先回来的那路已经渲染完、后回来的清单却停在旧数据上
+                    this.renderUnlessModalOpen();
+                }
                 return;
             }
             case 'open-dataset':
