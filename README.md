@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/平台-OpenHarmony%20%7C%20Windows%20%7C%20macOS-blue?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/版本-0.3.10-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/版本-0.4.1-green?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">

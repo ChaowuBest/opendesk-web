@@ -40,7 +40,7 @@ import { getHarmonyLocalRuntimeFeatureAvailability } from '../../../platforms/br
 import path from 'path';
 
 const AGENT_TYPE = 'opendesk';
-const AGENT_VERSION = '0.3.10';
+const AGENT_VERSION = '0.4.1';
 
 /**
  * 解析 AgentGate 服务地址。

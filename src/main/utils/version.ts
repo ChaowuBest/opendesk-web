@@ -24,7 +24,7 @@
 import semver from 'semver';
 
 /** 宿主运行时版本号；由 scripts/sync-version.mjs 随 package.json 同步 */
-export const OPENDESK_RUNTIME_VERSION = '0.3.10';
+export const OPENDESK_RUNTIME_VERSION = '0.4.1';
 
 /**
  * 严格解析 SemVer（允许 `v` 前缀与首尾空白，由 semver 自身放宽）。
