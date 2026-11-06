@@ -1704,9 +1704,14 @@ class SideBar extends HTMLElement {
 </div>`;
 
         let closed = false;
+        // 复制按钮的图标还原定时器登记表：连点去重、关闭弹窗时统一清理，
+        // 避免句柄泄漏（在测试环境会拖住 Jest worker 的退出宽限期）
+        const copyRestoreTimers = new Set();
         const close = () => {
             if (closed) return;
             closed = true;
+            copyRestoreTimers.forEach((timer) => clearTimeout(timer));
+            copyRestoreTimers.clear();
             overlay.classList.add('od-modal-leaving');
             setTimeout(() => overlay.remove(), MODAL_ANIM_DURATION_OUT);
             document.removeEventListener('keydown', escHandler);
@@ -1769,6 +1774,7 @@ class SideBar extends HTMLElement {
 
                 // 绑定复制按钮事件
                 rowsContainer.querySelectorAll('.od-taskinfo-copy-btn').forEach((btn) => {
+                    let restoreTimer = null;
                     btn.addEventListener('click', async () => {
                         const text = btn.dataset.copy;
                         try {
@@ -1776,10 +1782,20 @@ class SideBar extends HTMLElement {
                             btn.classList.add('copied');
                             const icon = btn.querySelector('i');
                             icon.className = 'fa-solid fa-check';
-                            setTimeout(() => {
+                            // 连点时先清掉上一次的还原定时器，否则最早到期的那个
+                            // 会把刚切换的 ✓ 图标又还原回去
+                            if (restoreTimer) {
+                                clearTimeout(restoreTimer);
+                                copyRestoreTimers.delete(restoreTimer);
+                            }
+                            const timer = setTimeout(() => {
+                                restoreTimer = null;
+                                copyRestoreTimers.delete(timer);
                                 btn.classList.remove('copied');
                                 icon.className = 'fa-regular fa-copy';
                             }, 1500);
+                            restoreTimer = timer;
+                            copyRestoreTimers.add(timer);
                         } catch {
                             // fallback: 选中文本让用户手动复制
                             const valueEl = btn.parentElement.querySelector('.od-taskinfo-value');
