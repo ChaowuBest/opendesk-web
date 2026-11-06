@@ -65,6 +65,16 @@ import type { NativeChannelAdapter } from './native-channel.js';
 import type { ChannelAccountLoginParam } from '../../../../packages/plugin-sdk/src/index.js';
 import { ChannelInteractionService } from './interactions.js';
 import {
+    ChannelCommandBus,
+    createNewTaskCommand,
+    createListCommand,
+    createSwitchCommand,
+    InMemoryPendingTaskListStore
+} from './commands.js';
+import { ActiveTaskRegistry, type ActiveTaskStore } from './dispatch/registry.js';
+import { ActiveTaskFileStore } from './dispatch/file-store.js';
+import { normalizeDispatchPolicy, type DispatchPolicyConfig } from './dispatch/policy.js';
+import {
     ChannelAskUserProvider,
     ChannelPermissionPromptProvider,
     createChannelDenyPermissionProvider
@@ -128,6 +138,15 @@ export class ChannelMgrApplication extends BaseApplication {
     /** 渠道结构化用户交互服务（权限审批 / askUser 透传与结算） */
     private readonly interactionService: ChannelInteractionService;
 
+    /** 渠道斜杠命令总线（/new、/list、/switch 等），命中后不进入任务路由 */
+    private readonly commandBus: ChannelCommandBus;
+
+    /** /list 文本回退路径的编号映射（/switch N 只匹配最近一次 /list 推送） */
+    private readonly pendingTaskLists = new InMemoryPendingTaskListStore();
+
+    /** 激活任务绑定存储（整应用单实例，见 createActiveTaskStore） */
+    private activeTaskStore?: ActiveTaskStore;
+
     /** 供外部（router / todomgr）标记当前 turn 的用户消息已在渠道侧可见 */
     markSkipUserEcho(task: object): void {
         this.skipUserEchoTasks.add(task);
@@ -136,6 +155,7 @@ export class ChannelMgrApplication extends BaseApplication {
     constructor() {
         super('channelmgr', false);
         this.interactionService = new ChannelInteractionService((channelId) => this.findChannelPlugin(channelId));
+        this.commandBus = new ChannelCommandBus();
     }
 
     getName(): string {
@@ -226,6 +246,18 @@ export class ChannelMgrApplication extends BaseApplication {
         this.router = router;
         // 从该 account 进入的消息按 account 绑定的 workspace/agentId/model 路由
         router.setAccountRuntimeResolver((channelId, accountId) => this.getAccountRuntimeConfig(channelId, accountId));
+        // 激活任务绑定落在 channelmgr 私有数据目录（运行态，不进 settings.json）
+        router.setActiveTaskRegistry(new ActiveTaskRegistry(this.createActiveTaskStore()));
+        // 渠道斜杠命令（/new 等）：命中后不进入任务路由
+        this.commandBus.register(createNewTaskCommand({ router }));
+        this.commandBus.register(
+            createListCommand({
+                router,
+                interactionService: this.interactionService,
+                pendingTaskLists: this.pendingTaskLists
+            })
+        );
+        this.commandBus.register(createSwitchCommand({ router, pendingTaskLists: this.pendingTaskLists }));
 
         const outboundToolset = new BaseToolset('channel-outbound');
         outboundToolset.addTool(new SendFileTool());
@@ -254,6 +286,9 @@ export class ChannelMgrApplication extends BaseApplication {
     private async doInitialize(): Promise<void> {
         if (this.started) return;
         try {
+            // 从已持久化的渠道任务恢复「会话 → 激活任务」绑定，使重启后消息仍进入原对话
+            this.router?.restoreSessionBindings();
+
             // 注册全局钩子：任何带渠道绑定的任务在 turn 结束后，
             // 自动将用户消息和 assistant 回复（文本 + 媒体）发送回渠道。
             GlobalHooks.afterFinishTurn(async ({ task }) => {
@@ -726,10 +761,24 @@ export class ChannelMgrApplication extends BaseApplication {
             displayName: contactName || replyTo,
             chatType: message.chatType
         });
+        // 渠道斜杠命令拦截（/new 等）：命中即回执并返回，不进入任务路由
+        const commandHandled = await this.commandBus.tryHandle(message, (text) =>
+            this.sendTextToParticipant({ type: 'channel', channel: cp.id, accountId, recipientId: replyTo }, text)
+        );
+        if (commandHandled) return;
         const reply = await this.router.routeInboundMessage(message);
         if (!reply) return;
 
         logger.info(`[channelmgr] routeInboundMessage returned: "${reply?.text?.substring(0, 50)}..."`);
+
+        // 会话没跑起来时不会有 turn 结束事件，错误回执必须在这里直接发；
+        // 正常回复仍由 afterFinishTurn 统一发送，避免重复投递。
+        if (reply.error) {
+            await this.sendChannelReply(
+                { type: 'channel', channel: cp.id, accountId, recipientId: replyTo, chatType: message.chatType },
+                reply
+            );
+        }
 
         // 文本和媒体回复已由 afterFinishTurn 全局钩子统一发送
     }
@@ -769,7 +818,7 @@ export class ChannelMgrApplication extends BaseApplication {
         }
     }
 
-    /** 结算渠道入站交互事件（用户在渠道侧点击了权限审批/askUser 卡片）。 */
+    /** 结算渠道入站交互事件（用户在渠道侧点击了权限审批/askUser/selection 卡片或序号回复）。 */
     async handleChannelInteractionEvent(channelId: string, accountId: string, event: unknown): Promise<void> {
         const e = event as {
             kind?: string;
@@ -778,9 +827,10 @@ export class ChannelMgrApplication extends BaseApplication {
             decision?: string;
             rememberScope?: string;
             answers?: Record<number, string[]>;
+            selected?: string;
             cancelled?: boolean;
         };
-        if (!e || (e.kind !== 'approval' && e.kind !== 'askUser') || !e.interactionId) {
+        if (!e || (e.kind !== 'approval' && e.kind !== 'askUser' && e.kind !== 'selection') || !e.interactionId) {
             logger.warn('[channelmgr] invalid channel interaction event from ' + channelId + ':' + accountId);
             return;
         }
@@ -792,6 +842,7 @@ export class ChannelMgrApplication extends BaseApplication {
             decision: e.decision === 'deny' ? 'deny' : e.decision === 'allow' ? 'allow' : undefined,
             rememberScope: e.rememberScope === 'session' ? 'session' : 'none',
             answers: e.answers,
+            selected: e.selected,
             cancelled: e.cancelled,
             raw: event
         });
@@ -806,12 +857,12 @@ export class ChannelMgrApplication extends BaseApplication {
 
     /**
      * 读取指定渠道账号的运行时设定。存储于 applications.channelmgr.<channelId>.accountRuntime.<accountId>。
-     * 从该账号进入的消息自动使用这些设定（workspace 工作目录 / agentId 模式 / model）。
+     * 从该账号进入的消息自动使用这些设定（workspace 工作目录 / agentId 模式 / model / 分发策略）。
      */
     getAccountRuntimeConfig(
         channelId: string,
         accountId: string
-    ): { workspace?: string; agentId?: string; modeId?: string; model?: string } {
+    ): { workspace?: string; agentId?: string; modeId?: string; model?: string; dispatchPolicy: DispatchPolicyConfig } {
         const config = (this.getConfig() || {}) as Record<string, any>;
         const channelCfg = config[channelId] || {};
         const runtime = (channelCfg.accountRuntime || {})[accountId] || {};
@@ -825,7 +876,8 @@ export class ChannelMgrApplication extends BaseApplication {
             workspace: typeof runtime.workspace === 'string' ? runtime.workspace : undefined,
             agentId: typeof runtime.agentId === 'string' ? runtime.agentId : undefined,
             modeId: typeof runtime.modeId === 'string' ? runtime.modeId : undefined,
-            model
+            model,
+            dispatchPolicy: normalizeDispatchPolicy(runtime.dispatchPolicy)
         };
     }
 
@@ -841,18 +893,46 @@ export class ChannelMgrApplication extends BaseApplication {
         }
     }
 
-    /** 设置指定渠道账号的运行时设定（workspace / agentId / model），空值字段保持原样。 */
+    /**
+     * 设置指定渠道账号的运行时设定（workspace / agentId / model / 分发策略）。
+     * 传入 undefined 表示清除该项（回落全局默认）；未出现在入参里的键保持原样。
+     */
     setAccountRuntimeConfig(
         channelId: string,
         accountId: string,
-        runtime: { workspace?: string; agentId?: string; modeId?: string; model?: string }
+        runtime: {
+            workspace?: string;
+            agentId?: string;
+            modeId?: string;
+            model?: string;
+            dispatchPolicy?: DispatchPolicyConfig;
+        }
     ): void {
         const currentConfig = (this.getConfig() || {}) as Record<string, any>;
         const channelCfg = { ...(currentConfig[channelId] || {}) };
         const accountRuntime = { ...((channelCfg.accountRuntime as Record<string, unknown>) || {}) };
-        accountRuntime[accountId] = { ...((accountRuntime[accountId] as object) || {}), ...runtime };
+        // 落盘前先规整分发策略：读路径会兜底，但没必要把非法 mode 之类写进用户可见的配置
+        const patch =
+            runtime.dispatchPolicy === undefined
+                ? runtime
+                : { ...runtime, dispatchPolicy: normalizeDispatchPolicy(runtime.dispatchPolicy) };
+        accountRuntime[accountId] = { ...((accountRuntime[accountId] as object) || {}), ...patch };
         channelCfg.accountRuntime = accountRuntime;
         this.setConfig({ ...currentConfig, [channelId]: channelCfg });
+    }
+
+    /**
+     * 激活任务绑定的存储：channelmgr 私有数据目录下的 active_tasks.json。
+     *
+     * 这是运行态而非用户配置，不能进 settings.json——否则导出/同步/整体替换配置都会牵连它，
+     * 且每次落盘都要序列化并广播整份配置。
+     *
+     * 实例复用：configureRouter 若被再次调用（重新配置路由），旧实例可能还有待落盘的快照，
+     * 让它和新实例同时写同一个文件会互相覆盖，因此整个应用只持有这一份 store。
+     */
+    private createActiveTaskStore(): ActiveTaskStore {
+        this.activeTaskStore ??= new ActiveTaskFileStore(path.join(this.getDataDirectory(), 'active_tasks.json'));
+        return this.activeTaskStore;
     }
 
     // ── 原生 channel 查询与登录（供 GUI 使用） ───────────────────────────────────
@@ -861,7 +941,13 @@ export class ChannelMgrApplication extends BaseApplication {
     getChannelAccounts(channelId: string): {
         accountId: string;
         accountName?: string;
-        runtime: { workspace?: string; agentId?: string; model?: string };
+        runtime: {
+            workspace?: string;
+            agentId?: string;
+            modeId?: string;
+            model?: string;
+            dispatchPolicy: DispatchPolicyConfig;
+        };
     }[] {
         const entry = this.findChannelPlugin(channelId);
         if (!entry) return [];
@@ -1554,6 +1640,9 @@ export class ChannelMgrApplication extends BaseApplication {
                 logger.error(`停止消息插件 ${cp.id}:${accountId} 失败: ${err?.message || err}`);
                 this.channelStates.delete(stateKey);
             }
+            // 账号停了，发出去的审批/提问/列表卡片再也点不动了：立刻按取消结算，
+            // 而不是让任务侧干等 5 分钟 TTL
+            this.interactionService.cancelChannelInteractions(cp.id, accountId);
         }
     }
 

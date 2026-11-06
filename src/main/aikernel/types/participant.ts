@@ -23,4 +23,9 @@ export interface Participant {
     accountId: string;
     /** Message recipient - senderId for direct messages, groupId for group chats */
     recipientId: string;
+    /**
+     * 会话形态：群聊时 recipientId 是群 ID，渠道发送需要据此选择接收方类型
+     * （如飞书 chat_id 与 open_id 是两套 ID）。缺省按私聊处理。
+     */
+    chatType?: 'direct' | 'group';
 }

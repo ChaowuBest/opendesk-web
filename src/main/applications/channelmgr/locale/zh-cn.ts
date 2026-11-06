@@ -22,5 +22,16 @@ export const zhCn: Record<string, string> = {
     'channel.permission.confirm': '允许',
     'channel.permission.deny': '拒绝',
     'channel.permission.askTitle': '向你提问',
-    'channel.permission.cancelAsk': '取消提问'
+    'channel.permission.cancelAsk': '取消提问',
+    'channel.command.newSessionStarted': '已开启新会话，下一条消息将进入新任务',
+    'channel.command.executeFailed': '命令执行失败',
+    'channel.command.listHeader': '最近的对话',
+    'channel.command.listHint':
+        '提示：发送 /list N 可查看最近 N 条对话（最多 100）；发送 /switch 编号 可切换到对应对话',
+    'channel.command.switchedTo': '成功切换到任务：',
+    'channel.command.listEmpty': '暂无可切换的历史对话',
+    'channel.command.listCurrentMark': '（当前）',
+    'channel.command.invalidSwitchIndex': '无效的编号，请先用 /list 查看可切换的对话',
+    'channel.command.invalidSwitchTarget': '该对话已不存在，请重新执行 /list',
+    'channel.task.unnamed': '未命名任务'
 };

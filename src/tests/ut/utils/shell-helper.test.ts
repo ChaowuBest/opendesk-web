@@ -55,10 +55,31 @@ test('Windows uses PowerShell literal paths and includes hidden files without co
     expect(options.env.OPENDESK_DISK_USAGE_PATH).toBe(path.win32.resolve(target));
 });
 
-test('Windows does not send PowerShell syntax to a bash fallback', async () => {
+test('Windows uses du through a bash fallback like other POSIX shells', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     getDefaultShell.mockReturnValue({ shellPath: 'C:\\Git\\bin\\bash.exe', shellArgs: ['-c'] });
-    await expect(getDiskUsage('C:\\files')).rejects.toThrow('PowerShell');
+    exec.mockResolvedValue({ stdout: '12\tC:\\files\n', stderr: '' });
+    const target = 'C:\\files [1]';
+    await expect(getDiskUsage(target)).resolves.toEqual({ bytes: 12288, kind: 'allocated' });
+    const [command, options] = exec.mock.calls[0] as [string, { env: NodeJS.ProcessEnv }];
+    expect(command).toBe('du -sk "$OPENDESK_DISK_USAGE_PATH"');
+    expect(options.env.OPENDESK_DISK_USAGE_PATH).toBe(path.win32.resolve(target));
+});
+
+test('a PowerShell default shell is honored even off Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    getDefaultShell.mockReturnValue({ shellPath: '/usr/bin/pwsh', shellArgs: ['-NoProfile', '-Command'] });
+    exec.mockResolvedValue({ stdout: '1537\r\n', stderr: '' });
+    await expect(getDiskUsage('/tmp')).resolves.toEqual({ bytes: 1537, kind: 'apparent' });
+    const [command] = exec.mock.calls[0] as [string];
+    expect(command).toContain("$ErrorActionPreference = 'Stop'");
+    expect(command).not.toContain('du ');
+});
+
+test('Windows rejects unsupported shells such as cmd', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    getDefaultShell.mockReturnValue({ shellPath: 'C:\\Windows\\System32\\cmd.exe', shellArgs: ['/c'] });
+    await expect(getDiskUsage('C:\\files')).rejects.toThrow('cmd.exe');
     expect(exec).not.toHaveBeenCalled();
 });
 

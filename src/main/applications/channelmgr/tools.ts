@@ -225,14 +225,21 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
 
     private async run(args: z.infer<typeof SetChannelConfigSchema>): Promise<string> {
         try {
-            const currentConfig = this.app.getConfig() || {};
-            const updatedConfig = {
-                ...currentConfig,
-                [args.channelId]: args.config
-            };
+            const currentConfig = (this.app.getConfig() || {}) as Record<string, any>;
+            const currentChannelConfig = (currentConfig[args.channelId] || {}) as Record<string, unknown>;
+            const nextChannelConfig = { ...(args.config as Record<string, unknown>) };
+            // activeTasks 是 channelmgr 的运行态（已迁移到应用私有目录），不属于渠道配置，
+            // 顺手剔除，避免旧知识/旧日志把它写回配置树
+            delete nextChannelConfig.activeTasks;
+            // accountRuntime（workspace/agentId/model/分发策略）是用户在账号设置里维护的，
+            // 不属于渠道连接参数：整体替换渠道配置时保留，否则一次「设置渠道配置」就把用户设置清空
+            if (nextChannelConfig.accountRuntime === undefined && currentChannelConfig.accountRuntime !== undefined) {
+                nextChannelConfig.accountRuntime = currentChannelConfig.accountRuntime;
+            }
+            const updatedConfig = { ...currentConfig, [args.channelId]: nextChannelConfig };
             this.app.setConfig(updatedConfig);
             await this.app.reloadChannels();
-            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
+            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(nextChannelConfig, null, 2)}`;
         } catch (err: any) {
             return `保存配置失败: ${err?.message || err}`;
         }

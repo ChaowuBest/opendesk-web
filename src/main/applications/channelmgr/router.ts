@@ -10,7 +10,6 @@
  */
 
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
-import { HarnessContext } from '../../aikernel/security/harness.js';
 import {
     UserMessage,
     AssistantMessage,
@@ -22,16 +21,30 @@ import { ApplicationRegistry } from '../registry.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
-import { getTaskArtifactDirectory } from '../../utils/setting.js';
+import { Setting } from '../../utils/setting.js';
 import type { Participant } from '../../aikernel/types/index.js';
 import type { InboundChannelMessage } from './types.js';
 import { switchTaskMode } from '../../aikernel/task/mode.js';
 import { createChannelDenyPermissionProvider } from './channel-task-interactions.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
+import {
+    createDispatchPolicy,
+    normalizeDispatchPolicy,
+    type DispatchPolicyConfig,
+    type TaskDispatchPolicy
+} from './dispatch/policy.js';
+import { ActiveTaskRegistry } from './dispatch/registry.js';
 
 export interface ChannelReply {
     text: string;
     mediaUrls: string[];
+    /**
+     * 会话没能跑起来时生成的错误回执（建会话失败 / 提交消息失败）。
+     *
+     * 这类回复不会有 turn 结束事件，afterFinishTurn 钩子不会回传，必须由调用方直接投递，
+     * 否则渠道用户只会看到「已读不回」。
+     */
+    error?: boolean;
 }
 
 /** 渠道账号的运行时设定：从该账号进入的消息自动使用这些配置 */
@@ -40,25 +53,34 @@ export interface AccountRuntime {
     agentId?: string;
     modeId?: string;
     model?: string;
+    /** 消息分发策略（复用当前激活任务 / 超时切换 / 智能投递），未配置时使用默认策略 */
+    dispatchPolicy?: DispatchPolicyConfig;
 }
 
-const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+/** smart 策略 LLM 关联性判定的超时保护 */
+const RELEVANCE_CHECK_TIMEOUT_MS = 8000;
 
-interface TaskEntry {
-    taskId: string;
-    lastMessageAt: number;
-}
+/** 智能投递摘要的单条消息文本截断长度 */
+const SUMMARY_TEXT_TRUNCATE = 200;
 
 /**
- * Maps task keys (channelId:accountId:senderId for DM, channelId:accountId:groupId for group) to active task entries.
+ * 任务最近一次活动的时间戳：取 updated_at / finished_at / created_at 的最大值。
+ *
+ * 任务可能被桌面端或其他会话继续对话（复用同一个 task），只看渠道绑定的活动时间
+ * 会把「刚聊过的任务」判成空闲已久的旧会话。
  */
-const taskMap = new Map<string, TaskEntry>();
+function taskActivityAt(task: TaskState): number {
+    return Math.max(task.updated_at?.getTime() ?? 0, task.finished_at?.getTime() ?? 0, task.created_at?.getTime() ?? 0);
+}
 
 export class ChannelMessageRouter {
     private taskManagerState: TaskManagerState;
     private model?: string;
     private workspace: string;
     private extraToolsets: BaseToolset[] = [];
+
+    /** 渠道会话 → 激活任务绑定；默认内存态，宿主可注入持久化实现 */
+    private registry = new ActiveTaskRegistry();
 
     /**
      * 解析指定渠道账号的运行时设定（workspace / agentId / model）。
@@ -93,6 +115,41 @@ export class ChannelMessageRouter {
         this.getAccountRuntime = resolver;
     }
 
+    /** 由宿主注入带持久化存储的激活任务注册表（未注入时为纯内存态，重启丢失）。 */
+    setActiveTaskRegistry(registry: ActiveTaskRegistry): void {
+        this.registry = registry;
+    }
+
+    /**
+     * 渠道命令 /new <消息>：解绑当前会话的激活任务，创建新任务并把消息作为首条对话投递。
+     * 解绑后走正常路由流程，任务创建、命名、回复回传等全部复用现有管道。
+     */
+    async startNewTaskWithMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
+        const recipientId = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
+        this.registry.unbind(message.channelId, message.accountId, recipientId);
+        return this.routeInboundMessage(message);
+    }
+
+    /** 渠道命令 /new：解绑当前会话的激活任务，下一条消息将创建新任务。 */
+    unbindActiveTask(channelId: string, accountId: string, recipientId: string): void {
+        this.registry.unbind(channelId, accountId, recipientId);
+    }
+
+    /** 渠道命令 /list /switch：把会话绑定切换到指定任务；回复出口在下一条消息复用时接管。 */
+    bindSessionTask(channelId: string, accountId: string, recipientId: string, taskId: string): void {
+        this.registry.bind(channelId, accountId, recipientId, taskId);
+    }
+
+    /** 渠道命令 /list：按 id 查找任务（找不到返回 undefined）。 */
+    getTaskById(taskId: string): TaskState | undefined {
+        return this.taskManagerState.getTask(taskId);
+    }
+
+    /** 渠道命令 /list：读取会话当前绑定的激活任务 id（未绑定返回 undefined）。 */
+    getActiveSessionTaskId(channelId: string, accountId: string, recipientId: string): string | undefined {
+        return this.registry.getActiveTaskId(channelId, accountId, recipientId);
+    }
+
     /**
      * Register a task in the task map so that subsequent messages from the same
      * participant will be routed to this task.
@@ -105,27 +162,22 @@ export class ChannelMessageRouter {
      */
     registerTaskForParticipant(taskId: string, participant: Participant, taskName?: string): void {
         // For channel tasks, the recipientId is the target (user ID for DM, group ID for group)
-        // Use recipientId as the third part of the key to match how routeInboundMessage computes it
-        const taskKey = `${participant.channel}:${participant.accountId}:${participant.recipientId}`;
-        taskMap.set(taskKey, { taskId, lastMessageAt: Date.now() });
-        logger.info(`[router] registered task ${taskId} for participant ${taskKey}${taskName ? ` (${taskName})` : ''}`);
+        this.registry.bind(participant.channel, participant.accountId, participant.recipientId, taskId);
+        logger.info(
+            `[router] registered task ${taskId} for participant ${participant.channel}:${participant.accountId}:${participant.recipientId}${taskName ? ` (${taskName})` : ''}`
+        );
     }
 
     /**
      * 获取指定渠道/账号下所有已知的会话接收者列表。
-     * 从 taskMap 中提取，用于 UI 选择投递目标时枚举可选联系人/群组。
+     * 从激活任务注册表中提取，用于 UI 选择投递目标时枚举可选联系人/群组。
      */
     getKnownRecipients(channelId: string, accountId: string): { recipientId: string; taskName?: string }[] {
-        const prefix = `${channelId}:${accountId}:`;
         const recipients: { recipientId: string; taskName?: string }[] = [];
-        for (const [key, entry] of taskMap) {
-            if (key.startsWith(prefix)) {
-                const recipientId = key.slice(prefix.length);
-                if (recipientId) {
-                    const task = this.taskManagerState.getTask(entry.taskId);
-                    recipients.push({ recipientId, taskName: task?.task_name || undefined });
-                }
-            }
+        for (const bound of this.registry.listChannelEntries(channelId)) {
+            if (bound.accountId !== accountId || !bound.recipientId) continue;
+            const task = this.taskManagerState.getTask(bound.entry.taskId);
+            recipients.push({ recipientId: bound.recipientId, taskName: task?.task_name || undefined });
         }
         return recipients;
     }
@@ -138,10 +190,8 @@ export class ChannelMessageRouter {
     async routeInboundMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
         // For group messages, use groupId as the conversation key so all members share the same task.
         // For direct messages, use senderId.
-        const taskKey =
-            message.chatType === 'group' && message.groupId
-                ? `${message.channelId}:${message.accountId}:${message.groupId}`
-                : `${message.channelId}:${message.accountId}:${message.senderId}`;
+        const recipientId = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
+        const taskKey = `${message.channelId}:${message.accountId}:${recipientId}`;
 
         let task: TaskState;
         try {
@@ -150,7 +200,8 @@ export class ChannelMessageRouter {
             logger.error(`创建消息会话失败: ${err?.message || err}`);
             return {
                 text: `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`,
-                mediaUrls: []
+                mediaUrls: [],
+                error: true
             };
         }
 
@@ -169,12 +220,11 @@ export class ChannelMessageRouter {
 
         try {
             const reply = await this.submitAndWaitForReply(task, userText, message.media);
-            const entry = taskMap.get(taskKey);
-            if (entry) entry.lastMessageAt = Date.now();
+            this.registry.touch(message.channelId, message.accountId, recipientId);
             return reply;
         } catch (err: any) {
             logger.error(`消息插件处理失败: ${err?.message || err}`);
-            return { text: this.buildErrorReply(err), mediaUrls: [] };
+            return { text: this.buildErrorReply(err), mediaUrls: [], error: true };
         }
     }
 
@@ -203,53 +253,117 @@ export class ChannelMessageRouter {
 
     /**
      * Resolve a session task for the given key:
-     * 1. If no existing session, create a new task.
-     * 2. If existing session, check if it should expire:
-     *    a. Ask LLM if the new message is related to the previous conversation.
-     *    b. If LLM check fails, fall back to 15-minute timeout.
-     *    c. If expired, create a new task; otherwise reuse.
+     * 1. 公共前置：无绑定或绑定任务已失效 → 一律新建任务。
+     * 2. 存在有效激活任务 → 按账号的分发策略（sticky/timeout/smart）判定复用或新建。
      */
     private async resolveSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
-        const entry = taskMap.get(taskKey);
+        const recipientId = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
+        const activeTaskId = this.registry.getActiveTaskId(message.channelId, message.accountId, recipientId);
+
+        // 绑定指向的任务已不存在（被删除等）：清除绑定后新建
+        if (activeTaskId) {
+            this.registry.evictIfInvalid(
+                message.channelId,
+                message.accountId,
+                recipientId,
+                (taskId) => !!this.taskManagerState.getTask(taskId)
+            );
+        }
+
+        const entry = this.registry.getEntry(message.channelId, message.accountId, recipientId);
         if (!entry) {
-            return this.createSessionTask(taskKey, message);
+            return this.createSessionTask(message);
         }
 
         const task = this.taskManagerState.getTask(entry.taskId);
         if (!task) {
-            taskMap.delete(taskKey);
-            return this.createSessionTask(taskKey, message);
+            // evictIfInvalid 与 getTask 之间的窄窗口兜底
+            this.registry.unbind(message.channelId, message.accountId, recipientId);
+            return this.createSessionTask(message);
+        }
+        // 重启后任务通常只是 task_list.json 里的轻量壳：策略要读对话摘要、复用要改 origin，
+        // 不先加载会拿到空历史（smart 判定退化成「无历史」），origin 改动还会被脏标记保护丢弃。
+        task.ensureLoaded();
+
+        const policy = this.getDispatchPolicy(message.channelId, message.accountId);
+        const decision = await policy.decide({
+            // 任务自身也可能在桌面端 / 其他会话被继续，活动时间取两者的较大值
+            lastActivityAt: Math.max(entry.updatedAt, taskActivityAt(task)),
+            inboundText: message.text || '',
+            recentTurnsText: this.getRecentConversationSummary(task),
+            now: Date.now()
+        });
+
+        if (decision.action === 'create') {
+            logger.info(`[router] 会话 ${taskKey} 按策略 ${policy.id} 创建新任务: ${decision.reason}`);
+            return this.createSessionTask(message);
         }
 
-        const timeSinceLastMsg = Date.now() - entry.lastMessageAt;
-        const newText = message.text || '';
-
-        // Try LLM-based relevance check (with timeout protection)
-        try {
-            const shouldContinue = await this.checkSessionRelevance(task, newText);
-            if (!shouldContinue) {
-                logger.info(`[router] 会话 ${taskKey} 被 LLM 判定为不相关，创建新任务`);
-                return this.createSessionTask(taskKey, message);
-            }
-            // LLM check passed - update lastMessageAt before returning so that
-            // if submitAndWaitForReply fails later, the timestamp is still correct.
-            entry.lastMessageAt = Date.now();
-            await this.syncTaskMode(task, message);
-            return task;
-        } catch (err: any) {
-            logger.warn(`[router] LLM 关联性检查失败，回退到超时判断: ${err?.message || err}`);
-        }
-
-        // Fallback: 15-minute timeout
-        if (timeSinceLastMsg > SESSION_TIMEOUT_MS) {
-            logger.info(`[router] 会话 ${taskKey} 超时 (${Math.floor(timeSinceLastMsg / 60000)}分钟)，创建新任务`);
-            return this.createSessionTask(taskKey, message);
-        }
-
-        // Fallback path also reuses the task - update lastMessageAt
-        entry.lastMessageAt = Date.now();
+        // 复用时先刷新绑定活动时间，即使后续 submitAndWaitForReply 失败时间基准仍正确
+        this.registry.touch(message.channelId, message.accountId, recipientId);
+        // 本次消息所属的会话成为任务的渠道出口：渠道回复由 afterFinishTurn 按 task.origin 投递，
+        // 复用到桌面端或其他会话的任务（/switch 之后）时若不接管，用户只会看到沉默。
+        await this.adoptChannelOrigin(task, {
+            channel: message.channelId,
+            accountId: message.accountId,
+            recipientId,
+            chatType: message.chatType
+        });
         await this.syncTaskMode(task, message);
         return task;
+    }
+
+    /** 按账号运行时配置解析分发策略；未配置时使用默认策略（timeout / 1 天）。 */
+    private getDispatchPolicy(channelId: string, accountId: string): TaskDispatchPolicy {
+        const runtime = this.getAccountRuntime?.(channelId, accountId);
+        const config = normalizeDispatchPolicy(runtime?.dispatchPolicy);
+        return createDispatchPolicy(config, {
+            judge: (input) => this.judgeRelevance(input),
+            onJudgeError: (err) =>
+                logger.warn(`[router] 智能投递关联性判定失败，回退到超时判断: ${(err as Error)?.message || err}`)
+        });
+    }
+
+    /**
+     * 智能投递的关联性判定：使用与对话命名一致的轻量模型（default_quick_model），
+     * 根据激活任务最近的对话判断新消息属于已有任务还是新任务。
+     * 返回 true = 已有任务（复用），false = 新任务；抛错由 SmartPolicy 兜底。
+     */
+    private async judgeRelevance(input: { recentTurnsText: string | null; inboundText: string }): Promise<boolean> {
+        if (!input.recentTurnsText) return true; // 无历史可比较，保持会话
+
+        // 与 generateTaskName 同源的模型选择：default_quick_model 优先，回退任务默认模型
+        const model = Setting.getInstance().getData().default_quick_model || this.model;
+        const prompt = [
+            '你是一个会话管理助手。请判断用户的新消息是要继续之前的对话，还是要开启一个新话题。',
+            '',
+            '之前的对话记录：',
+            input.recentTurnsText,
+            '',
+            '用户的新消息：',
+            input.inboundText,
+            '',
+            '请仅回答 "已有任务" 或 "新任务"，不要包含其他内容。'
+        ].join('\n');
+
+        // 超时保护：race 结束后清理定时器，避免无谓挂起
+        let timeoutId: NodeJS.Timeout | undefined;
+        const answer = await Promise.race([
+            LLM.ask(prompt, model, {
+                // 与对话命名一致：取模型支持的最低推理档位（glm-5.3 等不支持关闭思考）
+                reasoningEffort: LLM.getMinimalReasoningEffort(model)
+            }),
+            new Promise<string>((_, reject) => {
+                timeoutId = setTimeout(
+                    () => reject(new Error('LLM relevance check timeout')),
+                    RELEVANCE_CHECK_TIMEOUT_MS
+                );
+            })
+        ]).finally(() => clearTimeout(timeoutId));
+
+        // 模型只应回答「已有任务」或「新任务」；「新任务」是唯一的新建信号，
+        // 回答不可解析时保守复用当前会话（与判定失败时的兜底一致，避免误开新任务）
+        return !answer.includes('新任务');
     }
 
     /**
@@ -287,65 +401,93 @@ export class ChannelMessageRouter {
     }
 
     /**
-     * Use the LLM to determine whether a new message belongs to the same conversation.
-     * Returns true if the conversation should continue, false if a new session should start.
+     * 提取激活任务最近的对话文本摘要（供 smart 策略判定）：
+     * 最近 2 条用户消息 + 最近 2 条助手文本回复，按消息时间顺序交错输出。
      */
-    private async checkSessionRelevance(task: TaskState, newMessageText: string): Promise<boolean> {
-        const recentMessages = this.getRecentConversationSummary(task, 3);
-        if (!recentMessages) return true; // No history to compare, keep session
+    private getRecentConversationSummary(task: TaskState, maxUser = 2, maxAssistant = 2): string | null {
+        const userParts: { index: number; label: string; text: string }[] = [];
+        const assistantParts: { index: number; label: string; text: string }[] = [];
 
-        const prompt = [
-            '你是一个会话管理助手。请判断用户的新消息是否与之前的对话相关。',
-            '',
-            '之前的对话摘要：',
-            recentMessages,
-            '',
-            '用户的新消息：',
-            newMessageText,
-            '',
-            '请仅回答 "相关" 或 "不相关"，不要包含其他内容。'
-        ].join('\n');
-
-        const answer = await Promise.race([
-            LLM.ask(new UserMessage(prompt), this.model),
-            new Promise<string>((_, reject) => setTimeout(() => reject(new Error('LLM relevance check timeout')), 8000))
-        ]);
-
-        return !answer.includes('不相关');
-    }
-
-    /**
-     * Extract a brief summary of recent messages from a task for relevance checking.
-     */
-    private getRecentConversationSummary(task: TaskState, maxPairs: number): string | null {
-        const parts: string[] = [];
-        let pairCount = 0;
-
-        for (let i = task.chat_context.messages.length - 1; i >= 0 && pairCount < maxPairs; i--) {
+        for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+            if (userParts.length >= maxUser && assistantParts.length >= maxAssistant) break;
             const msg = task.chat_context.messages[i];
-            if (msg instanceof UserMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && p.text) {
-                        const text = p.text.length > 200 ? p.text.slice(0, 200) + '...' : p.text;
-                        parts.unshift(`[用户]: ${text}`);
-                    }
-                }
-                pairCount++;
-            } else if (msg instanceof AssistantMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && (p as any).text) {
-                        const text =
-                            (p as any).text.length > 200 ? (p as any).text.slice(0, 200) + '...' : (p as any).text;
-                        parts.unshift(`[助手]: ${text}`);
-                    }
-                }
+            if (msg instanceof UserMessage && userParts.length < maxUser) {
+                const text = this.extractTextPart(msg.content);
+                if (text) userParts.push({ index: i, label: '[用户]', text });
+            } else if (msg instanceof AssistantMessage && assistantParts.length < maxAssistant) {
+                const text = this.extractTextPart(msg.content);
+                if (text) assistantParts.push({ index: i, label: '[助手]', text });
             }
         }
 
-        return parts.length > 0 ? parts.join('\n') : null;
+        const merged = [...userParts, ...assistantParts].sort((a, b) => a.index - b.index);
+        if (merged.length === 0) return null;
+        return merged.map((part) => `${part.label}: ${part.text}`).join('\n');
     }
 
-    private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
+    /** 合并消息中的全部 text part 并截断；无文本时返回 null。 */
+    private extractTextPart(content: Array<{ type: string; text?: string }>): string | null {
+        let text = '';
+        for (const part of content) {
+            if (part.type === 'text' && part.text) {
+                text += (text ? '\n' : '') + part.text;
+            }
+        }
+        text = text.trim();
+        if (!text) return null;
+        return text.length > SUMMARY_TEXT_TRUNCATE ? text.slice(0, SUMMARY_TEXT_TRUNCATE) + '...' : text;
+    }
+
+    /**
+     * 渠道命令 /list：列出全局最近 maxCount 个主任务（与桌面端任务列表同源：
+     * 排除子任务与 internal 任务，按最近活动时间 updated_at / finished_at /
+     * created_at 取最大值降序），供用户在渠道侧切换到任意最近对话。
+     *
+     * @param filter 可选的可见性过滤，在截断前生效（调用方按会话类型收窄范围）
+     */
+    listRecentTasks(maxCount: number, filter?: (task: TaskState) => boolean): TaskState[] {
+        return this.taskManagerState.tasks
+            .filter((task) => !task.parent_id && task.internal !== true)
+            .filter((task) => (filter ? filter(task) : true))
+            .sort((a, b) => taskActivityAt(b) - taskActivityAt(a))
+            .slice(0, maxCount);
+    }
+
+    /**
+     * 从已持久化的渠道任务恢复会话绑定（应用启动时调用一次）。
+     * 同一会话命中多个任务时取最近活跃的一个；不覆盖内存中已有的绑定（运行中会话优先）。
+     */
+    restoreSessionBindings(): void {
+        const latest = new Map<
+            string,
+            { channelId: string; accountId: string; recipientId: string; taskId: string; at: number }
+        >();
+        for (const task of this.taskManagerState.tasks) {
+            const origin = task.origin;
+            if (origin?.type !== 'channel') continue;
+            const at = taskActivityAt(task);
+            const key = `${origin.channel}:${origin.accountId}:${origin.recipientId}`;
+            const existing = latest.get(key);
+            if (!existing || at > existing.at) {
+                latest.set(key, {
+                    channelId: origin.channel,
+                    accountId: origin.accountId,
+                    recipientId: origin.recipientId,
+                    taskId: task.task_id,
+                    at
+                });
+            }
+        }
+        for (const entry of latest.values()) {
+            if (this.registry.getActiveTaskId(entry.channelId, entry.accountId, entry.recipientId)) continue;
+            this.registry.bind(entry.channelId, entry.accountId, entry.recipientId, entry.taskId);
+            logger.info(
+                `[router] restored session binding ${entry.channelId}:${entry.accountId}:${entry.recipientId} -> ${entry.taskId}`
+            );
+        }
+    }
+
+    private async createSessionTask(message: InboundChannelMessage): Promise<TaskState> {
         // 账号级运行时设定：workspace / agentId / model 优先于全局值
         const runtime = this.getAccountRuntime?.(message.channelId, message.accountId);
         const model = runtime?.model || this.model;
@@ -367,15 +509,7 @@ export class ChannelMessageRouter {
         // 若沿用 createEmpty()（permission 为 null），handleToolPermissionsForTask 会
         // 在 `if (!enforcer) return false` 处直接跳过权限检查，导致工作空间外的
         // 敏感操作被直接放行。这里按任务的 agent/mode 构建 enforcer 并授予 artifacts 权限。
-        try {
-            task.harnessContext = await HarnessContext.createForMode(workspace, task.getAgentMode());
-            task.harnessContext.workspace = workspace;
-            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-        } catch (err: any) {
-            logger.warn(`[router] 初始化渠道任务权限 harness 失败: ${err?.message || err}`);
-            task.harnessContext = HarnessContext.createEmpty();
-            task.harnessContext.workspace = workspace;
-        }
+        await this.initChannelHarness(task, workspace);
 
         // Determine reply target: group ID for group chats, sender ID for direct messages
         const replyTarget = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
@@ -396,19 +530,64 @@ export class ChannelMessageRouter {
             type: 'channel',
             channel: message.channelId,
             accountId: message.accountId,
-            recipientId: replyTarget
+            recipientId: replyTarget,
+            // 群聊的 recipientId 是群 ID：后续审批 / askUser 卡片要按它选接收方类型
+            chatType: message.chatType
         };
         // 按渠道交互能力注入权限/askUser provider：支持交互则透传到用户侧，
         // 不支持交互则不挂载交互工具、权限请求自动拒绝。
+        this.applyChannelProviders(task);
+        this.registry.bind(message.channelId, message.accountId, replyTarget, task.task_id);
+
+        return task;
+    }
+
+    /**
+     * 为渠道任务初始化 harness：复用 GUI 路径的 TaskManagerState.initHarness，
+     * 一并获得权限引擎、mode 的工具白/黑名单（allowedTools/disabledTools）、
+     * 持久化的 workspace 与平台 harness 注入——这些缺一项都会让渠道任务与桌面端行为不一致。
+     *
+     * initHarness 内部已兜底异常（退化为空 harness，不阻断会话）。
+     */
+    private async initChannelHarness(task: TaskState, workspace: string): Promise<void> {
+        await this.taskManagerState.initHarness(task, workspace, task.getAgentMode());
+    }
+
+    /** 把任务的渠道出口（origin）改为指定会话；已有相同 origin 时不做任何事。 */
+    private async adoptChannelOrigin(task: TaskState, origin: Omit<Participant, 'type'>): Promise<void> {
+        const current = task.origin;
+        if (
+            current?.type === 'channel' &&
+            current.channel === origin.channel &&
+            current.accountId === origin.accountId &&
+            current.recipientId === origin.recipientId &&
+            current.chatType === origin.chatType
+        ) {
+            return;
+        }
+        // 被接管的任务可能是桌面端建好但还没跑过 turn 的空壳（permission 为空）：
+        // 那种 harness 会让权限检查整段跳过，必须在接管时补齐。
+        // workspace 以任务自身为准（它可能属于别的工作目录），没有再回落到账号/全局设定。
+        if (!task.harnessContext?.permission) {
+            const runtime = this.getAccountRuntime?.(origin.channel, origin.accountId);
+            await this.initChannelHarness(task, task.workspace || runtime?.workspace || this.workspace);
+        }
+        task.origin = { type: 'channel', ...origin };
+        task.persistLater();
+        this.applyChannelProviders(task);
+        logger.info(
+            `[router] 任务 ${task.task_id} 的渠道出口切换为 ${origin.channel}:${origin.accountId}:${origin.recipientId}`
+        );
+    }
+
+    /** 按渠道交互能力为任务注入权限审批 / askUser provider。 */
+    private applyChannelProviders(task: TaskState): void {
         try {
             const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
             channelMgr?.applyChannelTaskProviders?.(task);
         } catch (err: any) {
             logger.warn(`[router] applyChannelTaskProviders failed: ${err?.message || err}`);
         }
-        taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
-
-        return task;
     }
 
     private formatInboundMessage(message: InboundChannelMessage): string {

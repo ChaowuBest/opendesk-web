@@ -72,6 +72,10 @@ jest.unstable_mockModule('../../../main/applications/benchmark/script-runtime.js
         readonly logError = '';
     }
 }));
+// engine 每个用例收尾都会真实 spawn shell 量目录（见 recordCaseUsage），
+// 并行负载下会拖慢任务创建节奏、打穿 waitFor 的 5s 预算，必须 mock 掉
+const getDiskUsage = jest.fn<(target: string) => Promise<{ bytes: number; kind: 'allocated' }>>();
+jest.unstable_mockModule('../../../main/utils/shell-helper.js', () => ({ getDiskUsage }));
 
 const { BenchmarkManager } = await import('../../../main/applications/benchmark/manager.js');
 import fs from 'node:fs';

@@ -1243,6 +1243,25 @@ export class PluginMgrEntryWidget extends HTMLElement {
     }
 
     /**
+     * 顶栏刷新：并行重拉插件列表与当前市场的清单，不触碰插件运行时。
+     *
+     * 顶栏的 ↻ 在视觉上就是「刷新」，不能绑定运行时重载——那会把全部插件停掉
+     * 再重启，秒级起步还顺带禁用整页控件。「重新加载运行时」保留在「+」菜单里。
+     * 当前不在市场 Tab 时 loadMarketCatalog 会自己空转，这里不用分情况。
+     */
+    private async refreshFromHeader(): Promise<void> {
+        const button = this.shadowRoot?.querySelector<HTMLButtonElement>('[data-action="refresh"]');
+        if (button?.disabled) return;
+        if (button) button.disabled = true;
+        try {
+            await Promise.all([this.refreshEntries(), this.loadMarketCatalog({ forceRefresh: true })]);
+        } finally {
+            // 刷新期间可能并行跑了一个 run()（busy 已置 true）：此时按钮的禁用要交给 busy 管，别抢着恢复
+            if (button) button.disabled = this.busy;
+        }
+    }
+
+    /**
      * 拉最新列表后按需更新界面：只有插件增删才整树重绘，纯状态变化只替换受影响的卡片。
      *
      * 整树重绘会重建整个列表 DOM（滚动位置虽有 render() 兜底，但卡片上的过渡动画会从头播），
@@ -1427,7 +1446,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
         this.busy = busy;
         const root = this.shadowRoot;
         if (!root) return;
-        for (const selector of ['[data-action="reload"]', '[data-action="add"]']) {
+        for (const selector of ['[data-action="refresh"]', '[data-action="add"]']) {
             const button = root.querySelector<HTMLButtonElement>(selector);
             if (button) button.disabled = busy;
         }
@@ -2244,7 +2263,12 @@ export class PluginMgrEntryWidget extends HTMLElement {
         return { installState, installedVersion, blockedReason };
     }
 
-    /** 市场卡片的动作按钮文案：装不了 > 安装中 > 可更新 > 已安装（重新安装）> 安装 */
+    /**
+     * 市场卡片的动作按钮文案：装不了 > 安装中 > 可更新（升级）> 已是最新 > 安装。
+     *
+     * 与测评集下载中心同语义：已安装且清单版本不更高时按钮显示「已是最新」并禁用，
+     * 不再提供「重新安装」——重装应通过卸载后安装完成，避免用户误把最新版再覆盖一遍。
+     */
     private marketActionLabel(
         state: { installState: PluginMarketInstallState; blockedReason?: string },
         installing: boolean
@@ -2252,11 +2276,11 @@ export class PluginMgrEntryWidget extends HTMLElement {
         if (installing) return this.t('plugin.center.market.installing');
         if (state.blockedReason) return this.t('plugin.center.market.installBlocked');
         if (state.installState === 'update-available') return this.t('plugin.center.market.update');
-        if (state.installState === 'installed') return this.t('plugin.center.market.reinstall');
+        if (state.installState === 'installed') return this.t('plugin.center.market.installed');
         return this.t('plugin.center.market.install');
     }
 
-    /** 卡片底部的状态胶囊：可更新 / 已安装 / 装不了；未安装且可安装时为空 */
+    /** 卡片底部的状态胶囊：可更新 / 已是最新 / 装不了；未安装且可安装时为空 */
     private marketStatePill(state: { installState: PluginMarketInstallState; blockedReason?: string }): string {
         if (state.blockedReason) {
             return `<span class="tag-pill tag-blocked" title="${escapeHtml(
@@ -2287,7 +2311,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
         const categoryPills = (entry.category ?? [])
             .map((category) => `<span class="tag-pill tag-category">${escapeHtml(category)}</span>`)
             .join('');
-        const disabled = installing || Boolean(state.blockedReason);
+        // 已是最新（且未在安装中）时禁用主按钮，与详情弹窗的动作保持同一口径
+        const disabled = installing || Boolean(state.blockedReason) || state.installState === 'installed';
         return `<div class="market-card" data-market-plugin="${escapeHtml(entry.id)}" role="button" tabindex="0">
             <div class="card-header">
                 ${this.renderCardIcon(name, entry.iconUrl)}
@@ -2321,7 +2346,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
 
     /**
      * 市场条目的详情卡：与已安装插件的详情同一套组件（skill-detail-card），
-     * 展示清单里声明的元数据，并把「安装 / 重新安装」作为唯一动作。
+     * 展示清单里声明的元数据，并把「安装 / 升级」作为主动作。
      */
     private renderMarketPluginDetail(): void {
         const pluginId = this.selectedMarketPluginId;
@@ -2411,7 +2436,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
             id: 'install',
             label: this.marketActionLabel(state, installing),
             variant: 'primary',
-            disabled: installing || Boolean(state.blockedReason)
+            disabled: installing || Boolean(state.blockedReason) || state.installState === 'installed'
         });
         detail.model = {
             id: entry.id,
@@ -2486,10 +2511,13 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private async installFromMarket(pluginId: string): Promise<void> {
         const registryName = this.currentMarket;
         if (!registryName || !pluginId || this.marketInstalls.has(pluginId)) return;
-        // 与内置插件冲突 / 宿主版本不满足的条目：按钮已经是禁用的，这里再挡一次，
-        // 免得禁用态渲染出来之前的一次点击把注定失败的安装跑起来
+        // 与内置插件冲突 / 宿主版本不满足 / 已是最新的条目：按钮已经是禁用的，这里再挡一次，
+        // 免得禁用态渲染出来之前的一次点击把注定失败（或不该发生的覆盖安装）跑起来
         const entry = this.marketCatalog?.entries.find((item) => item.id === pluginId);
-        if (entry && this.marketEntryState(entry).blockedReason) return;
+        const entryState = entry ? this.marketEntryState(entry) : undefined;
+        if (entryState?.blockedReason || entryState?.installState === 'installed') return;
+        // 升级（清单版本高于本地）成功后的提示与全新安装区分开
+        const wasUpgrade = entryState?.installState === 'update-available';
         this.clearNotice();
         this.marketInstalls.set(pluginId, { received: 0, total: null });
         this.paintMarket();
@@ -2507,7 +2535,9 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 return;
             }
             this.notifyOperationResult(
-                this.t('plugin.center.market.installSuccessTitle'),
+                this.t(
+                    wasUpgrade ? 'plugin.center.market.updateSuccessTitle' : 'plugin.center.market.installSuccessTitle'
+                ),
                 this.t('plugin.install.successDetail', { name: this.pluginDisplayName(pluginId) }),
                 false
             );
@@ -2715,7 +2745,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
                             </button>
                         </div>
                         <div class="header-actions">
-                            <button type="button" class="action-btn" data-action="reload" title="${escapeHtml(this.t('plugin.settings.reload'))}" aria-label="${escapeHtml(this.t('plugin.settings.reload'))}" ${this.busy ? 'disabled' : ''}>↻</button>
+                            <button type="button" class="action-btn" data-action="refresh" title="${escapeHtml(this.t('plugin.center.refresh'))}" aria-label="${escapeHtml(this.t('plugin.center.refresh'))}" ${this.busy ? 'disabled' : ''}>↻</button>
                             <div class="add-dropdown-anchor">
                                 <button type="button" class="action-btn" data-action="add" title="${escapeHtml(this.t('plugin.center.add'))}" aria-label="${escapeHtml(this.t('plugin.center.add'))}" ${this.busy ? 'disabled' : ''}>+</button>
                                 <div class="add-dropdown ${this.addMenuOpen ? 'visible' : ''}">
@@ -2738,6 +2768,10 @@ export class PluginMgrEntryWidget extends HTMLElement {
                                         <button type="button" class="add-dropdown-item" data-install-source="url">
                                             <span class="icon url"><svg viewBox="0 0 24 24"><g class="k"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9.5h18"/><path d="M6.2 7h.01"/><path d="M9 7h.01"/><path d="M6.5 16h11"/></g><g class="r"><path d="M6.5 13h7"/></g></svg></span>
                                             <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.installFromUrl'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.installFromUrlHint'))}</span></span>
+                                        </button>
+                                        <button type="button" class="add-dropdown-item" data-action="reload-runtime" ${this.busy ? 'disabled' : ''}>
+                                            <span class="icon reload"><svg viewBox="0 0 24 24"><g class="k"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></g></svg></span>
+                                            <span class="item-info"><span class="item-name">${escapeHtml(this.t('plugin.center.reloadRuntime'))}</span><span class="item-hint">${escapeHtml(this.t('plugin.center.reloadRuntimeHint'))}</span></span>
                                         </button>
                                     </div>
                                 </div>
@@ -2888,7 +2922,12 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 this.syncAddDropdown();
             }
         });
-        this.shadowRoot?.querySelector('[data-action="reload"]')?.addEventListener('click', () => {
+        this.shadowRoot?.querySelector('[data-action="refresh"]')?.addEventListener('click', () => {
+            void this.refreshFromHeader();
+        });
+        this.shadowRoot?.querySelector('[data-action="reload-runtime"]')?.addEventListener('click', () => {
+            this.addMenuOpen = false;
+            this.syncAddDropdown();
             void this.run(() => getAPI().callMainWorld('reload'), 'plugin.runtime.reload.success');
         });
         this.shadowRoot?.querySelectorAll<HTMLElement>('[data-plugin-id]').forEach((card) => this.bindCardEvents(card));

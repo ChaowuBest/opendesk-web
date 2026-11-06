@@ -394,14 +394,36 @@ export class WechatChannel {
             throw new Error('weixin: interaction missing recipientId');
         }
 
-        // 记录 pending 交互（同会话新审批覆盖旧审批，过期项由 _handleIncoming 惰性清理）
+        // 记录 pending 交互（同会话新请求覆盖旧请求，被覆盖的一方必须按取消结算）
         const payload = request.payload || {};
         const pending = {
             interactionId: request.interactionId,
             kind: request.kind,
             expiresAt: request.expiresAt || Date.now() + 5 * 60_000,
-            allowRemember: payload.allowRemember === true
+            allowRemember: payload.allowRemember === true,
+            // selection 选项（value → label 映射供解析序号后回传）
+            selectionOptions: Array.isArray(payload.options) ? payload.options : undefined
         };
+        // 纯文本渠道一个会话只有一张「回复序号」卡片：覆盖时旧请求不能就这么丢掉，
+        // 否则核心层要等 TTL（5 分钟）才收尾——审批悬挂会把任务一直卡住
+        const superseded = this._pendingInteractions.get(recipientId);
+        if (superseded && superseded.interactionId !== pending.interactionId) {
+            this._pendingInteractions.delete(recipientId);
+            try {
+                await this._ctx?.dispatchInteraction?.({
+                    kind: superseded.kind,
+                    interactionId: superseded.interactionId,
+                    accountId: request.accountId,
+                    operator: { id: '' },
+                    cancelled: true,
+                    raw: { reason: 'superseded' }
+                });
+            } catch (err) {
+                this._ctx?.logger?.warn?.(
+                    `weixin: settle superseded interaction ${superseded.interactionId} failed: ${err?.message || err}`
+                );
+            }
+        }
         this._pendingInteractions.set(recipientId, pending);
 
         try {
@@ -416,7 +438,7 @@ export class WechatChannel {
         return {};
     }
 
-    /** 把审批/提问请求格式化为文本消息。 */
+    /** 把审批/提问/单选列表请求格式化为文本消息。 */
     _formatInteractionText(request) {
         const { kind, payload } = request;
         if (kind === 'approval') {
@@ -425,6 +447,19 @@ export class WechatChannel {
                 lines.push('请回复序号选择：', '1️⃣ 允许', '2️⃣ 拒绝', '3️⃣ 本次会话始终允许');
             } else {
                 lines.push('请回复序号选择：', '1️⃣ 允许', '2️⃣ 拒绝');
+            }
+            return lines.join('\n');
+        }
+        if (kind === 'selection') {
+            const options = Array.isArray(payload.options) ? payload.options : [];
+            const lines = [`📋 ${payload.header || '请选择'}`, ''];
+            options.forEach((opt, oi) => {
+                lines.push(`${oi + 1}. ${opt.label || opt.value}`);
+            });
+            if (payload.hint) {
+                lines.push('', payload.hint);
+            } else {
+                lines.push('', '请回复序号选择：');
             }
             return lines.join('\n');
         }
@@ -474,6 +509,15 @@ export class WechatChannel {
             if (pending.allowRemember && /^(3|始终允许|always)$/i.test(t))
                 return { decision: 'allow', rememberScope: 'session' };
             return null;
+        }
+        // selection：解析单个序号，映射回选项 value
+        if (pending.kind === 'selection') {
+            const options = Array.isArray(pending.selectionOptions) ? pending.selectionOptions : [];
+            const m = t.match(/^(\d+)$/);
+            if (!m) return null;
+            const oi = Number(m[1]) - 1;
+            if (oi < 0 || oi >= options.length) return null;
+            return { selected: options[oi].value };
         }
         // askUser：解析形如 1.2 或 1.2 3.1 的序号（题号.选项号）
         const tokens = t.split(/[,，;；\s]+/).filter(Boolean);

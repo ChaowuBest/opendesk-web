@@ -1030,8 +1030,8 @@ export interface ChannelSendResult {
 // （如飞书确认卡片），用户在渠道侧点击后经 ctx.dispatchInteraction 回传结果。
 // 渠道不支持交互时，OpenDesk 不挂载 askUser 等交互工具，权限请求自动拒绝。
 
-/** 交互类型：approval=权限审批，askUser=向用户提问 */
-export type ChannelInteractionKind = 'approval' | 'askUser';
+/** 交互类型：approval=权限审批，askUser=向用户提问，selection=单选列表（如 /list 会话切换） */
+export type ChannelInteractionKind = 'approval' | 'askUser' | 'selection';
 
 export interface ChannelInteractionOption {
     label: string;
@@ -1062,6 +1062,16 @@ export interface ChannelApprovalRequest {
     cancelLabel?: string;
 }
 
+/** selection 请求的对外形态：单选列表（渠道按能力渲染为卡片按钮或编号文本） */
+export interface ChannelSelectionRequestPayload {
+    /** 列表标题 */
+    header: string;
+    /** 选项列表；value 为回传标识（如 taskId），label 为展示文本 */
+    options: { label: string; value: string }[];
+    /** 列表末尾的提示文案（如分页语法说明），可选；渠道渲染在选项之后 */
+    hint?: string;
+}
+
 /** 出站交互请求：OpenDesk 构造，channel 渲染为用户可见的交互 UI */
 export interface ChannelInteractionRequest {
     /** 唯一交互 ID，回调通过它关联回 pending 的请求 */
@@ -1071,7 +1081,7 @@ export interface ChannelInteractionRequest {
     accountId: string;
     /** 过期时间（epoch ms）。到期未响应的交互应视为取消 */
     expiresAt?: number;
-    payload: ChannelApprovalRequest | ChannelAskUserRequestPayload;
+    payload: ChannelApprovalRequest | ChannelAskUserRequestPayload | ChannelSelectionRequestPayload;
 }
 
 /** 入站交互事件：用户在渠道侧点击了交互 UI 的按钮/选项 */
@@ -1086,6 +1096,8 @@ export interface ChannelInteractionEvent {
     decision?: 'allow' | 'deny';
     /** askUser 事件：question index → 选中的 option label 数组 */
     answers?: Record<number, string[]>;
+    /** selection 事件：用户选中的选项 value */
+    selected?: string;
     /** 用户取消（如点击取消按钮、卡片超时） */
     cancelled?: boolean;
     /** 平台原始事件对象，透传调试用 */

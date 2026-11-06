@@ -25,6 +25,7 @@ export interface DiskUsageOptions {
 }
 
 const PATH_ENV = 'OPENDESK_DISK_USAGE_PATH';
+const DU_COMMAND = 'du -sk "$OPENDESK_DISK_USAGE_PATH"';
 const POWERSHELL_DISK_USAGE = [
     "$ErrorActionPreference = 'Stop'",
     '$item = Get-Item -LiteralPath $env:OPENDESK_DISK_USAGE_PATH -Force',
@@ -35,21 +36,31 @@ const POWERSHELL_DISK_USAGE = [
     '} else { [long]$item.Length }'
 ].join('\n');
 
+// PowerShell 插值会把 "$VAR" 展开为空，du 语法 PowerShell 解析不了：命令必须跟着 shell 走。
+const POWERSHELL_SHELL_RE = /^(?:powershell|pwsh)(?:\.exe)?$/i;
+const POSIX_SHELL_RE = /^(?:sh|bash|dash|zsh|ksh)(?:\.exe)?$/i;
+
 /**
  * Measure a file or directory with the host's shell commands, without walking it in JavaScript.
  *
- * macOS/Linux/OpenHarmony: `du -sk` (allocated KiB, converted to bytes).
- * Windows: PowerShell Get-ChildItem/Measure-Object (apparent bytes, including hidden files).
+ * The command follows the detected default shell: PowerShell interpreters run a
+ * Get-ChildItem/Measure-Object snippet (apparent bytes, including hidden files);
+ * POSIX shells — including Git Bash on Windows — run `du -sk` (allocated KiB).
  * Links are not followed. Native du hard-link accounting and directory overhead apply on Unix;
  * PowerShell counts regular file lengths, excluding reparse points. Results are snapshots.
- * A missing path returns zero; permission errors, unavailable tools, timeouts and invalid output reject.
+ * A missing path returns zero; permission errors, unsupported shells, timeouts and invalid output reject.
  * Callers own caching and any user-visible error translation.
  */
 export async function getDiskUsage(target: string, options: DiskUsageOptions = {}): Promise<DiskUsage> {
     if (!target || target.includes('\0')) throw new Error('Invalid disk usage path');
     const isWindows = process.platform === 'win32';
     const absolutePath = (isWindows ? path.win32 : path).resolve(target);
-    const kind = isWindows ? 'apparent' : 'allocated';
+    const shellName = path.win32.basename(getDefaultShell().shellPath);
+    const useDu = !POWERSHELL_SHELL_RE.test(shellName);
+    if (isWindows && useDu && !POSIX_SHELL_RE.test(shellName)) {
+        throw new Error(`Disk usage requires PowerShell or a POSIX shell, got: ${shellName}`);
+    }
+    const kind: DiskUsage['kind'] = useDu ? 'allocated' : 'apparent';
     const timeout = options.timeout ?? 120_000;
     if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('Invalid disk usage timeout');
     try {
@@ -58,18 +69,15 @@ export async function getDiskUsage(target: string, options: DiskUsageOptions = {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { bytes: 0, kind };
         throw error;
     }
-    if (isWindows && !/^(?:powershell|pwsh)(?:\.exe)?$/i.test(path.win32.basename(getDefaultShell().shellPath))) {
-        throw new Error('Disk usage requires PowerShell on Windows');
-    }
 
     // Environment values stay data even when paths contain quotes, newlines or shell substitutions.
     // Resolve first so a leading '-' cannot become a du option; -sk works with BSD/GNU/toybox du.
-    const { stdout } = await asyncShellExec(isWindows ? POWERSHELL_DISK_USAGE : 'du -sk "$OPENDESK_DISK_USAGE_PATH"', {
+    const { stdout } = await asyncShellExec(useDu ? DU_COMMAND : POWERSHELL_DISK_USAGE, {
         timeout,
         env: { [PATH_ENV]: absolutePath, LC_ALL: 'C' }
     });
-    const match = isWindows ? /^\s*(\d+)\s*$/.exec(stdout) : /^\s*(\d+)[\t ]/.exec(stdout);
-    const bytes = match ? Number(match[1]) * (isWindows ? 1 : 1024) : NaN;
+    const match = useDu ? /^\s*(\d+)[\t ]/.exec(stdout) : /^\s*(\d+)\s*$/.exec(stdout);
+    const bytes = match ? Number(match[1]) * (useDu ? 1024 : 1) : NaN;
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('Invalid disk usage command output');
     return { bytes, kind };
 }

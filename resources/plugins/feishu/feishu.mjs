@@ -778,9 +778,14 @@ export class FeishuChannel {
             throw new Error('feishu: invalid interaction request');
         }
         const accountId = request.accountId;
-        const kind = request.kind === 'askUser' ? 'askUser' : 'approval';
+        const kind = request.kind === 'askUser' ? 'askUser' : request.kind === 'selection' ? 'selection' : 'approval';
         const payload = request.payload || {};
-        const card = kind === 'askUser' ? this._buildAskUserCard(payload, {}) : this._buildApprovalCard(payload);
+        const card =
+            kind === 'askUser'
+                ? this._buildAskUserCard(payload, {})
+                : kind === 'selection'
+                  ? this._buildSelectionCard(payload)
+                  : this._buildApprovalCard(payload);
         this._injectInteractionId(card, request.interactionId);
 
         // 注册 pending 交互状态（用于卡片回调关联与超时结算）
@@ -790,7 +795,11 @@ export class FeishuChannel {
             accountId,
             expiresAt: request.expiresAt,
             questions: kind === 'askUser' ? payload.questions || [] : undefined,
-            prompt: kind === 'approval' ? payload.prompt || '' : undefined
+            prompt: kind === 'approval' ? payload.prompt || '' : undefined,
+            selectionLabels:
+                kind === 'selection'
+                    ? Object.fromEntries((payload.options || []).map((opt) => [opt.value, opt.label]))
+                    : undefined
         });
 
         const messageId = await this._sendCard(accountId, request.to, card);
@@ -976,6 +985,30 @@ export class FeishuChannel {
             body: { elements }
         };
     }
+    /** 构建单选列表卡片（/list 会话切换等）：每个选项一个按钮，点击回传 value 标识。 */
+    _buildSelectionCard(payload) {
+        const options = Array.isArray(payload.options) ? payload.options : [];
+        const elements = options.map((opt) =>
+            this._buildCardButton((opt.label || opt.value || '').slice(0, 40), 'default', {
+                oc: 'opendesk-interaction-v1',
+                kind: 'selection',
+                value: opt.value
+            })
+        );
+        // 末尾提示文案（如 /list N 分页语法说明）
+        if (payload.hint) {
+            elements.push({ tag: 'markdown', content: this._escapeCardText(payload.hint) });
+        }
+        return {
+            schema: '2.0',
+            config: this._cardConfig(),
+            header: {
+                title: { tag: 'plain_text', content: payload.header || '请选择' },
+                template: 'blue'
+            },
+            body: { elements }
+        };
+    }
     _buildCardButton(label, type, value) {
         return {
             tag: 'button',
@@ -1077,7 +1110,7 @@ export class FeishuChannel {
     }
 
     /** 注册 pending 交互并设置超时结算。 */
-    _registerInteraction({ interactionId, kind, accountId, expiresAt, questions, prompt }) {
+    _registerInteraction({ interactionId, kind, accountId, expiresAt, questions, prompt, selectionLabels }) {
         const expiresAtMs = expiresAt || Date.now() + 5 * 60_000;
         const ttl = Math.max(1, expiresAtMs - Date.now());
         const pending = {
@@ -1092,6 +1125,8 @@ export class FeishuChannel {
             questions,
             // approval 的审批说明（用于点击后渲染状态卡片）
             prompt,
+            // selection 的 value → label 映射（用于点击后展示所选项）
+            selectionLabels,
             timer: null
         };
         this._interactions.delete(interactionId);
@@ -1176,6 +1211,31 @@ export class FeishuChannel {
             return await this._respondWithCardRefresh(accountId, pending, doneCard, {
                 type: decision === 'allow' ? 'success' : 'info',
                 content: decision === 'allow' ? '已确认' : '已取消'
+            });
+        }
+
+        // selection（单选列表，如 /list 会话切换）
+        if (pending.kind === 'selection') {
+            const selected = typeof value.value === 'string' ? value.value : undefined;
+            if (!selected) {
+                return { toast: { type: 'warning', content: '无效的选项' } };
+            }
+            this._interactions.delete(interactionId);
+            clearTimeout(pending.timer);
+            ctx?.logger.info(`feishu: selection ${interactionId} -> ${selected} by ${operatorId}`);
+            await ctx?.dispatchInteraction?.({
+                kind: 'selection',
+                interactionId,
+                accountId,
+                operator: { id: operatorId },
+                selected,
+                raw: event
+            });
+            const label = pending.selectionLabels?.[selected] || selected;
+            const doneCard = this._buildDoneCard('已选择', 'green', `已选择：${label}`);
+            return await this._respondWithCardRefresh(accountId, pending, doneCard, {
+                type: 'success',
+                content: '已选择'
             });
         }
 
