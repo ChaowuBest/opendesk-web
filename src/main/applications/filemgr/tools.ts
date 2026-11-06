@@ -747,14 +747,9 @@ function shouldReturnFileUnchanged(
 }
 
 function createFileUnchangedResult(filePath: string): string {
-    return JSON.stringify({
-        type: 'file_unchanged',
-        file: {
-            filePath
-        },
-        message:
-            'File unchanged since last read. The content from the earlier readFile tool result in this conversation is still current; refer to that instead of re-reading.'
-    });
+    // 可读文本格式（首行固定标记供 circuit-breaker / 渲染层识别），
+    // 避免整段 JSON 转义文本造成模型读取错乱（回显假象）
+    return `[文件未变化] ${filePath} · 内容与上次读取一致，直接复用上次 readFile 结果`;
 }
 
 function clearReadFileState(taskState: TaskState | undefined, filePath: string): void {
@@ -824,7 +819,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
     constructor() {
         super(
             'readFile',
-            '读取本地文件系统中的文件。你可以使用此工具直接访问任意文件。\n\n使用方法：\n- file_path 参数支持绝对路径或相对路径\n- 默认从文件开头读取全部内容\n- 可以通过 offset（起始行号）和 limit（行数）指定读取范围，适用于大文件分段读取\n- 返回结果为 JSON 格式，内容使用 cat -n 风格的行号标注\n- 此工具只能读取文件，不能读取目录。要读取目录内容请使用 shell 工具的 ls 命令\n- 如果读取的文件存在但内容为空，你会收到空文件提示',
+            '读取本地文件系统中的文件。你可以使用此工具直接访问任意文件。\n\n使用方法：\n- file_path 参数支持绝对路径或相对路径\n- 默认从文件开头读取全部内容\n- 可以通过 offset（起始行号）和 limit（行数）指定读取范围，适用于大文件分段读取\n- 返回结果为多行可读文本，首行是 [文件] 开头的元信息（路径 / 总行数 / 显示范围），正文使用 cat -n 风格的行号标注\n- 此工具只能读取文件，不能读取目录。要读取目录内容请使用 shell 工具的 ls 命令\n- 如果读取的文件存在但内容为空，你会收到空文件提示',
             readFileSchema,
             undefined,
             { 'zh-CN': '读取文件', 'en-US': 'Read File' }
@@ -854,16 +849,16 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             }
         }
 
-        if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                if (result.type === 'text' && result.file) {
-                    detail += ` · ${result.file.totalLines} 行`;
-                } else if (result.type === 'file_unchanged') {
-                    detail += ' · 未变化，复用上次读取内容';
+        if (toolcall.status === 'success' && typeof toolcall.result === 'string') {
+            // 结果为多行可读文本（[文件] / [文件未变化] 固定首行标记），行数信息只在首行
+            if (toolcall.result.startsWith('[文件未变化] ')) {
+                detail += ' · 未变化，复用上次读取内容';
+            } else if (toolcall.result.startsWith('[文件] ')) {
+                const firstLine = toolcall.result.split('\n')[0];
+                const m = firstLine.match(/ · 共 (\d+) 行/) ?? firstLine.match(/空文件（(\d+) 行）/);
+                if (m) {
+                    detail += ` · ${m[1]} 行`;
                 }
-            } catch {
-                /* ignore */
             }
         }
 
@@ -899,26 +894,27 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             const errStr = typeof toolcall.result === 'string' ? toolcall.result : String(toolcall.result);
             body.push(chalk.red(`  ✗ ${truncText(errStr, width - 16)}`));
         } else if (toolcall.status === 'success' && toolcall.result != null) {
-            try {
-                const result = JSON.parse(String(toolcall.result));
-                if (result.type === 'error') {
-                    body.push(chalk.red(`  ✗ ${truncText(result.error, width - 16)}`));
-                } else if (result.type === 'text' && result.file) {
-                    const f = result.file;
-                    if (f.numLines > 0) {
-                        body.push(
-                            chalk.dim(
-                                `  ${f.numLines} 行 (${f.startLine}~${f.startLine + f.numLines - 1}/${f.totalLines})`
-                            )
-                        );
-                    } else {
-                        body.push(chalk.dim(`  空内容 (文件共 ${f.totalLines} 行)`));
-                    }
-                } else if (result.type === 'file_unchanged') {
-                    body.push(chalk.dim('  未变化，复用上次读取内容'));
+            const result = String(toolcall.result);
+            if (result.startsWith('[文件未变化] ')) {
+                body.push(chalk.dim('  未变化，复用上次读取内容'));
+            } else if (result.startsWith('[文件] ')) {
+                const firstLine = result.split('\n')[0];
+                const totalMatch = firstLine.match(/ · 共 (\d+) 行/);
+                const rangeMatch = firstLine.match(/显示第 (\d+)-(\d+) 行/);
+                const emptyMatch = firstLine.match(/空文件（(\d+) 行）/);
+                if (rangeMatch) {
+                    const start = Number(rangeMatch[1]);
+                    const end = Number(rangeMatch[2]);
+                    const total = totalMatch ? totalMatch[1] : '?';
+                    body.push(chalk.dim(`  ${end - start + 1} 行 (${start}~${end}/${total})`));
+                } else if (emptyMatch) {
+                    body.push(chalk.dim(`  空内容 (文件共 ${emptyMatch[1]} 行)`));
+                } else if (totalMatch) {
+                    // offset 超界：有总行数但本次无返回内容
+                    body.push(chalk.dim(`  空内容 (文件共 ${totalMatch[1]} 行)`));
+                } else {
+                    body.push(chalk.dim('  空内容'));
                 }
-            } catch {
-                body.push(chalk.dim('  见下方结果'));
             }
         }
 
@@ -955,16 +951,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
             if (size === 0) {
                 recordReadFileState(taskState, filePath, stat, '', 1);
-                return JSON.stringify({
-                    type: 'text',
-                    file: {
-                        filePath,
-                        content: '',
-                        numLines: 0,
-                        startLine: 1,
-                        totalLines: 0
-                    }
-                });
+                return `[文件] ${filePath} · 空文件（0 行）`;
             }
 
             const rawBuf = await fs.promises.readFile(filePath);
@@ -999,16 +986,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             const startIdx = startLine - 1;
 
             if (startIdx >= totalLines) {
-                return JSON.stringify({
-                    type: 'text',
-                    file: {
-                        filePath,
-                        content: '',
-                        numLines: 0,
-                        startLine,
-                        totalLines
-                    }
-                });
+                return `[文件] ${filePath} · 共 ${totalLines} 行 · 第 ${startLine} 行超出文件末尾`;
             }
 
             const endIdx = limit != null ? Math.min(startIdx + limit, totalLines) : totalLines;
@@ -1023,16 +1001,10 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             }
 
             recordReadFileState(taskState, filePath, stat, numberedContent, startLine, limit);
-            return JSON.stringify({
-                type: 'text',
-                file: {
-                    filePath,
-                    content: numberedContent,
-                    numLines: selectedLines.length,
-                    startLine,
-                    totalLines
-                }
-            });
+            // 多行可读文本：正文保留真实换行与原文引号，不经过 JSON 转义包裹，
+            // 首行元信息（固定 [文件] 标记）供 circuit-breaker / 渲染层识别
+            const endLine = startLine + selectedLines.length - 1;
+            return `[文件] ${filePath} · 共 ${totalLines} 行 · 显示第 ${startLine}-${endLine} 行\n${numberedContent}`;
         } catch (err) {
             if (err instanceof Error) {
                 const nodeErr = err as NodeJS.ErrnoException;
@@ -1580,6 +1552,41 @@ const writeFileSchema = z.object({
 
 const WRITE_FILE_TAIL_LINES = 5;
 
+/** 尾部回读锚点行数与单行截断长度 */
+const DISK_ECHO_TAIL_LINES = 3;
+const DISK_ECHO_TAIL_LINE_MAX_CHARS = 200;
+
+/**
+ * 写类工具成功后从磁盘回读，给模型提供可直接核对的客观锚点（总行数/字节数/尾部原文）。
+ * 模型凭记忆复述自己提交的参数时容易产生错乱（回显假象），用磁盘真实内容作为比对基准可从工程上消除该误判路径。
+ */
+async function buildWriteDiskEcho(filePath: string, successPrefix: string, includeTail = true): Promise<string> {
+    try {
+        const written = await fs.promises.readFile(filePath, 'utf8');
+        // 行口径必须与 readFile 完全一致：直接按 \r?\n 分割（含尾空行、剥离 CRLF 回车符），
+        // 保证模型先 readFile 后写入时两个工具对同一磁盘内容报出相同的行数；
+        // 唯一例外是空文件报 0 行（与 readFile 空文件提示一致）。
+        // 字节数仍按磁盘原始字节（含 \r），保持客观锚点
+        const lines = written === '' ? [] : written.split(/\r?\n/);
+        const statPart = `${successPrefix}。磁盘回读校验：共 ${lines.length} 行 / ${Buffer.byteLength(written, 'utf8')} 字节`;
+        if (!includeTail) {
+            return statPart;
+        }
+        const tailLines = lines
+            .slice(-DISK_ECHO_TAIL_LINES)
+            .map((l) =>
+                l.length > DISK_ECHO_TAIL_LINE_MAX_CHARS ? l.slice(0, DISK_ECHO_TAIL_LINE_MAX_CHARS) + '…' : l
+            );
+        if (tailLines.length === 0) {
+            return statPart;
+        }
+        return statPart + `。尾部 ${tailLines.length} 行：\n` + tailLines.map((l) => `  ${l}`).join('\n');
+    } catch {
+        // 回读失败时退回基础确认文案，不影响写入本身的成功语义
+        return successPrefix;
+    }
+}
+
 interface WriteFileRenderCache {
     contentHash: string;
     contentLen: number;
@@ -1791,12 +1798,12 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
                 const cleanContent = trimTrailingWhitespace(args.content);
                 await fs.promises.appendFile(filePath, cleanContent, 'utf8');
                 clearReadFileState(taskState, filePath);
-                return '文件内容追加成功';
+                return await buildWriteDiskEcho(filePath, '文件内容追加成功');
             } else {
                 const cleanContent = trimTrailingWhitespace(args.content);
                 await fs.promises.writeFile(filePath, cleanContent, 'utf8');
                 clearReadFileState(taskState, filePath);
-                return '文件内容写入成功';
+                return await buildWriteDiskEcho(filePath, '文件内容写入成功');
             }
         } catch (err: any) {
             const tempDir = getTempDirectory();
@@ -2017,13 +2024,12 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             return `错误: 文件中只找到 ${totalOccurrences} 处匹配，但预期替换 ${expectedReplacements} 处。请检查 oldString 是否正确`;
         }
 
-        // 记录首处替换在原文件中的起始行，供冻结渲染时在 diff 卡片中显示文件真实行号
-        // （换行符归一化只替换 \r\n 为 \n，不改变行数，行号与原文件一致）
+        // 首处替换在原文件中的起始行：随工具结果返回给模型，toolCall 存在时同时供冻结渲染的
+        // diff 卡片显示文件真实行号（换行符归一化只替换 \r\n 为 \n，不改变行数，行号与原文件一致）。
+        // 必须基于匹配前的内容前缀计算；把 newString 拼进来会把 newString 末行的行号误当成首行行号
+        const firstReplaceLine = searchContent.slice(0, searchContent.indexOf(searchOld)).split('\n').length;
         if (toolCall) {
-            replacementStartLines.set(
-                toolCall,
-                searchContent.slice(0, searchContent.indexOf(searchOld)).split('\n').length
-            );
+            replacementStartLines.set(toolCall, firstReplaceLine);
         }
 
         // 只替换前 expectedReplacements 次
@@ -2051,7 +2057,11 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
         await fs.promises.writeFile(filePath, result, 'utf8');
         clearReadFileState(taskState, filePath);
-        return `成功替换 ${count} 处`;
+        return await buildWriteDiskEcho(
+            filePath,
+            `成功替换 ${count} 处（首处位于原文件第 ${firstReplaceLine} 行）`,
+            false
+        );
     }
 }
 
@@ -2212,9 +2222,12 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         }
 
         const index = searchContent.indexOf(searchOld);
-        // 记录替换在原文件中的起始行，供冻结渲染时在 diff 卡片中显示文件真实行号
+        // 替换在原文件中的起始行：随工具结果返回给模型，toolCall 存在时同时供冻结渲染的
+        // diff 卡片显示文件真实行号。必须基于匹配前的内容前缀计算；
+        // 把 newString 拼进来会把 newString 末行的行号误当成首行行号
+        const replaceLine = searchContent.slice(0, index).split('\n').length;
         if (toolCall) {
-            replacementStartLines.set(toolCall, searchContent.slice(0, index).split('\n').length);
+            replacementStartLines.set(toolCall, replaceLine);
         }
         let result = searchContent.slice(0, index) + searchNew + searchContent.slice(index + searchOld.length);
 
@@ -2226,7 +2239,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
         await fs.promises.writeFile(filePath, result, 'utf8');
         clearReadFileState(taskState, filePath);
-        return `成功替换 1 处`;
+        return await buildWriteDiskEcho(filePath, `成功替换 1 处（替换位于原文件第 ${replaceLine} 行）`, false);
     }
 }
 

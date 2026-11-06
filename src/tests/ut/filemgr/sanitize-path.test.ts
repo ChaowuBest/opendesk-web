@@ -89,41 +89,31 @@ describe('sanitizePath - 特殊字符路径处理', () => {
         test('带前导空格的绝对路径应正确处理', async () => {
             const args = { file_path: ` ${testFile}` };
             const result = await tool.executeCommand(args as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(testFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${testFile}`);
         });
 
         test('带零宽空格的绝对路径应正确处理', async () => {
             const args = { file_path: `\u200B${testFile}` };
             const result = await tool.executeCommand(args as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(testFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${testFile}`);
         });
 
         test('带 BOM 的绝对路径应正确处理', async () => {
             const args = { file_path: `\uFEFF${testFile}` };
             const result = await tool.executeCommand(args as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(testFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${testFile}`);
         });
 
         test('带尾随空格的绝对路径应正确处理', async () => {
             const args = { file_path: `${testFile} ` };
             const result = await tool.executeCommand(args as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(testFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${testFile}`);
         });
 
         test('正常的绝对路径应正确处理', async () => {
             const args = { file_path: testFile };
             const result = await tool.executeCommand(args as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(testFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${testFile}`);
         });
     });
 
@@ -158,9 +148,7 @@ describe('sanitizePath - 特殊字符路径处理', () => {
             const relativePath = path.relative(workspace, workspaceFile);
             const args = { file_path: relativePath };
             const result = await readTool.executeCommand(args as any, mockTaskState as any);
-            const parsed = JSON.parse(result);
-            expect(parsed.type).toBe('text');
-            expect(parsed.file.filePath).toBe(workspaceFile);
+            expect(result.split('\n')[0]).toContain(`[文件] ${workspaceFile}`);
         });
     });
 });

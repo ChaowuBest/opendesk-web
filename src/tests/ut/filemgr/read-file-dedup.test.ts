@@ -29,15 +29,13 @@ async function readFile(
     filePath: string,
     task?: TaskState,
     range: { offset?: number; limit?: number } = {}
-): Promise<any> {
-    return JSON.parse(
-        await tool.executeCommand(
-            {
-                file_path: filePath,
-                ...range
-            },
-            task
-        )
+): Promise<string> {
+    return await tool.executeCommand(
+        {
+            file_path: filePath,
+            ...range
+        },
+        task
     );
 }
 
@@ -56,14 +54,10 @@ describe('ReadFileTool range-aware dedup', () => {
         const firstResult = await readFile(tool, filePath, task);
         const secondResult = await readFile(tool, filePath, task);
 
-        expect(firstResult.type).toBe('text');
-        expect(secondResult).toMatchObject({
-            type: 'file_unchanged',
-            file: {
-                filePath: filePath.replace(/\\/g, '/')
-            }
-        });
-        expect(secondResult.message).toContain('earlier readFile tool result');
+        expect(firstResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.startsWith('[文件未变化] ')).toBe(true);
+        expect(secondResult).toContain(filePath.replace(/\\/g, '/'));
+        expect(secondResult).toContain('与上次读取一致');
     });
 
     test('returns text and refreshes state after the file mtime changes', async () => {
@@ -81,10 +75,10 @@ describe('ReadFileTool range-aware dedup', () => {
         const secondResult = await readFile(tool, filePath, task);
         const thirdResult = await readFile(tool, filePath, task);
 
-        expect(firstResult.type).toBe('text');
-        expect(secondResult.type).toBe('text');
-        expect(secondResult.file.content).toContain('after');
-        expect(thirdResult.type).toBe('file_unchanged');
+        expect(firstResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult).toContain('after');
+        expect(thirdResult.startsWith('[文件未变化] ')).toBe(true);
     });
 
     test('does not dedup when offset differs', async () => {
@@ -97,9 +91,9 @@ describe('ReadFileTool range-aware dedup', () => {
         const firstResult = await readFile(tool, filePath, task, { offset: 1 });
         const secondResult = await readFile(tool, filePath, task, { offset: 2 });
 
-        expect(firstResult.type).toBe('text');
-        expect(secondResult.type).toBe('text');
-        expect(secondResult.file.content).toContain('     2\ttwo');
+        expect(firstResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult).toContain('     2\ttwo');
     });
 
     test('does not dedup when limit differs', async () => {
@@ -112,9 +106,9 @@ describe('ReadFileTool range-aware dedup', () => {
         const firstResult = await readFile(tool, filePath, task, { offset: 1, limit: 2 });
         const secondResult = await readFile(tool, filePath, task, { offset: 1, limit: 3 });
 
-        expect(firstResult.type).toBe('text');
-        expect(secondResult.type).toBe('text');
-        expect(secondResult.file.numLines).toBe(3);
+        expect(firstResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.split('\n')[0]).toContain('显示第 1-3 行');
     });
 
     test('does not dedup partial read state', async () => {
@@ -134,8 +128,8 @@ describe('ReadFileTool range-aware dedup', () => {
 
         const result = await readFile(tool, filePath, task);
 
-        expect(result.type).toBe('text');
-        expect(result.file.content).toContain('one');
+        expect(result.startsWith('[文件] ')).toBe(true);
+        expect(result).toContain('one');
     });
 
     test('does not dedup without taskState', async () => {
@@ -147,8 +141,8 @@ describe('ReadFileTool range-aware dedup', () => {
         const firstResult = await readFile(tool, filePath);
         const secondResult = await readFile(tool, filePath);
 
-        expect(firstResult.type).toBe('text');
-        expect(secondResult.type).toBe('text');
+        expect(firstResult.startsWith('[文件] ')).toBe(true);
+        expect(secondResult.startsWith('[文件] ')).toBe(true);
     });
 
     test('renders file_unchanged in CLI output', () => {
@@ -159,11 +153,7 @@ describe('ReadFileTool range-aware dedup', () => {
             {
                 args_object: { file_path: filePath },
                 status: 'success',
-                result: JSON.stringify({
-                    type: 'file_unchanged',
-                    file: { filePath },
-                    message: 'reuse previous result'
-                })
+                result: `[文件未变化] ${filePath.replace(/\\/g, '/')} · 内容与上次读取一致，直接复用上次 readFile 结果`
             } as any,
             120
         );

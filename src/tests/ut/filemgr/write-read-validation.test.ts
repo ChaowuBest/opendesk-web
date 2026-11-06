@@ -136,7 +136,7 @@ describe('write read-state validation helper', () => {
         );
 
         expect(ENFORCE_FILE_READ_BEFORE_WRITE).toBe(false);
-        expect(result).toBe('文件内容写入成功');
+        expect(result).toContain('文件内容写入成功');
         expect(fs.readFileSync(filePath, 'utf8')).toBe('after');
     });
 });

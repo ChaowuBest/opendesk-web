@@ -24,21 +24,19 @@ function createTask(workspace: string): TaskState {
     return task;
 }
 
-async function readFile(tool: ReadFileTool, task: TaskState, filePath: string): Promise<any> {
-    return JSON.parse(
-        await tool.executeCommand(
-            {
-                file_path: filePath
-            },
-            task
-        )
+async function readFile(tool: ReadFileTool, task: TaskState, filePath: string): Promise<string> {
+    return await tool.executeCommand(
+        {
+            file_path: filePath
+        },
+        task
     );
 }
 
 async function readAndExpectState(task: TaskState, readTool: ReadFileTool, filePath: string): Promise<void> {
     const result = await readFile(readTool, task, filePath);
 
-    expect(result.type).toBe('text');
+    expect(result.startsWith('[文件] ')).toBe(true);
     expect(task.getFileReadState().get(filePath)).toBeDefined();
 }
 
@@ -66,9 +64,8 @@ describe('local writes clear readFile state', () => {
         expect(task.getFileReadState().get(filePath)).toBeUndefined();
         const readResult = await readFile(readTool, task, filePath);
 
-        expect(writeResult).toBe('文件内容写入成功');
-        expect(readResult.type).toBe('text');
-        expect(readResult.file.content).toContain('after');
+        expect(writeResult).toContain('文件内容写入成功');
+        expect(readResult).toContain('after');
     });
 
     test('writeFile append clears read state before the next read', async () => {
@@ -91,9 +88,8 @@ describe('local writes clear readFile state', () => {
         expect(task.getFileReadState().get(filePath)).toBeUndefined();
         const readResult = await readFile(readTool, task, filePath);
 
-        expect(appendResult).toBe('文件内容追加成功');
-        expect(readResult.type).toBe('text');
-        expect(readResult.file.content).toContain('two');
+        expect(appendResult).toContain('文件内容追加成功');
+        expect(readResult).toContain('two');
     });
 
     test('editFile clears read state before the next read', async () => {
@@ -116,9 +112,8 @@ describe('local writes clear readFile state', () => {
         expect(task.getFileReadState().get(filePath)).toBeUndefined();
         const readResult = await readFile(readTool, task, filePath);
 
-        expect(editResult).toBe('成功替换 1 处');
-        expect(readResult.type).toBe('text');
-        expect(readResult.file.content).toContain('delta');
+        expect(editResult).toContain('成功替换 1 处');
+        expect(readResult).toContain('delta');
     });
 
     test('searchReplace clears read state before the next read', async () => {
@@ -141,9 +136,8 @@ describe('local writes clear readFile state', () => {
         expect(task.getFileReadState().get(filePath)).toBeUndefined();
         const readResult = await readFile(readTool, task, filePath);
 
-        expect(replaceResult).toBe('成功替换 1 处');
-        expect(readResult.type).toBe('text');
-        expect(readResult.file.content).toContain('opendesk');
+        expect(replaceResult).toContain('成功替换 1 处');
+        expect(readResult).toContain('opendesk');
     });
 
     test('writeFile still overwrites existing files without a prior read', async () => {
@@ -161,7 +155,7 @@ describe('local writes clear readFile state', () => {
             task
         );
 
-        expect(writeResult).toBe('文件内容写入成功');
+        expect(writeResult).toContain('文件内容写入成功');
         expect(fs.readFileSync(filePath, 'utf8')).toBe('after');
     });
 });

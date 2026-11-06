@@ -114,11 +114,11 @@ describe('detectEncoding', () => {
         fs.writeFileSync(filePath, Buffer.concat([Buffer.from(asciiHead, 'utf8'), gbkBody]));
 
         const tool = new ReadFileTool();
-        const result = JSON.parse(await tool.executeCommand({ file_path: filePath }, undefined));
+        const result = await tool.executeCommand({ file_path: filePath }, undefined);
 
-        expect(result.type).toBe('text');
-        expect(result.file.content).toContain('GBK中文注释第0行');
-        expect(result.file.content).not.toContain('\ufffd');
+        expect(result.startsWith('[文件] ')).toBe(true);
+        expect(result).toContain('GBK中文注释第0行');
+        expect(result).not.toContain('\ufffd');
     });
 
     test('readFile decodes ascii-head UTF-8 source files without mojibake', async () => {
@@ -128,11 +128,11 @@ describe('detectEncoding', () => {
         fs.writeFileSync(filePath, content, 'utf8');
 
         const tool = new ReadFileTool();
-        const result = JSON.parse(await tool.executeCommand({ file_path: filePath }, undefined));
+        const result = await tool.executeCommand({ file_path: filePath }, undefined);
 
-        expect(result.type).toBe('text');
-        expect(result.file.content).toContain('// 状态行渲染：正在执行工具');
-        expect(result.file.content).not.toContain('æ');
-        expect(result.file.content).not.toContain('\ufffd');
+        expect(result.startsWith('[文件] ')).toBe(true);
+        expect(result).toContain('// 状态行渲染：正在执行工具');
+        expect(result).not.toContain('æ');
+        expect(result).not.toContain('\ufffd');
     });
 });

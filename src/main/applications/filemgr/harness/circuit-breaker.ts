@@ -123,29 +123,31 @@ GlobalHooks.afterToolCall(({ task, toolCall }: AfterToolCallExecContext) => {
         return;
     }
 
-    try {
-        const parsed = JSON.parse(toolCall.result);
-        if (parsed.type !== 'text' && parsed.type !== 'file_unchanged') {
-            getBreaker(task).noteReadFileChanged();
-            return;
-        }
-
-        // 仅在文件确实读取成功后清除编辑历史，避免失败的 readFile 绕过重复编辑检测
-        const args = toolCall.args_object as { file_path?: string } | undefined;
-        if (args?.file_path) {
-            getBreaker(task).clearEditsForFile(args.file_path);
-        }
-
-        if (parsed.type !== 'file_unchanged') {
-            getBreaker(task).noteReadFileChanged();
-            return;
-        }
-        const msg = getBreaker(task).noteReadFileUnchanged(parsed.file?.filePath ?? '');
-        if (msg) {
-            logger.warn(`[circuit-breaker] readFile unchanged loop detected for task ${task.task_id}`);
-            task.appendInternalUserMessage(msg);
-        }
-    } catch {
+    // readFile 结果为多行可读文本，固定首行标记：[文件] / [文件未变化]
+    const result = toolCall.result;
+    const isUnchanged = result.startsWith('[文件未变化] ');
+    const isText = result.startsWith('[文件] ');
+    if (!isText && !isUnchanged) {
         getBreaker(task).noteReadFileChanged();
+        return;
+    }
+
+    // 仅在文件确实读取成功后清除编辑历史，避免失败的 readFile 绕过重复编辑检测
+    const args = toolCall.args_object as { file_path?: string } | undefined;
+    if (args?.file_path) {
+        getBreaker(task).clearEditsForFile(args.file_path);
+    }
+
+    if (!isUnchanged) {
+        getBreaker(task).noteReadFileChanged();
+        return;
+    }
+    // 首行格式：[文件未变化] {filePath} · 内容与上次读取一致...
+    const firstLine = result.split('\n')[0];
+    const filePath = firstLine.slice('[文件未变化] '.length).split(' · ')[0];
+    const msg = getBreaker(task).noteReadFileUnchanged(filePath);
+    if (msg) {
+        logger.warn(`[circuit-breaker] readFile unchanged loop detected for task ${task.task_id}`);
+        task.appendInternalUserMessage(msg);
     }
 });
