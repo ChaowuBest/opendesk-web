@@ -568,11 +568,13 @@ export const CDP_READY_BUDGET_MS = 10000;
  */
 export const LOCK_OP_TIMEOUT_MS = 180000;
 
-/**
- * Per-instance browser controller that encapsulates all CDP-based automation
- * operations. Each controller is associated with a unique instance ID
- * (typically a taskId) and a main BrowserWindow for renderer communication.
- */
+/** Image format requested from a browser host's capture port. */
+export interface BrowserScreenshotOptions {
+    format: 'png' | 'jpeg';
+    /** JPEG quality from 0 to 100; ignored for PNG. */
+    quality?: number;
+}
+
 export interface BrowserRendererHost {
     isDestroyed(): boolean;
     webContents: {
@@ -582,10 +584,48 @@ export interface BrowserRendererHost {
         on(event: 'did-attach-webview', listener: () => void): unknown;
         removeListener(event: 'did-attach-webview', listener: () => void): unknown;
     };
+    /** Return a data URI in the requested format; empty results and errors never fall back to Electron. */
+    captureBrowserScreenshot?(webContentsId: number, options: BrowserScreenshotOptions): Promise<string | null>;
 }
 
 export type BrowserSessionManager = Pick<CDPSessionManager, 'getSession' | 'dispose' | 'disposeAll'>;
 
+/**
+ * Use the host capture port when present, or native capturePage without attaching a CDP debugger.
+ * A missing native WebContents returns null so each caller preserves its existing error envelope.
+ */
+async function captureBrowserScreenshot(
+    host: BrowserRendererHost | null,
+    webContentsId: number,
+    options: BrowserScreenshotOptions
+): Promise<string | null> {
+    if (host?.captureBrowserScreenshot) {
+        const captured = await host.captureBrowserScreenshot(webContentsId, options);
+        if (!captured) throw new Error('Empty capture');
+        return captured;
+    }
+
+    const { webContents } = await import('electron');
+    const wc = webContents.fromId(webContentsId);
+    if (!wc || wc.isDestroyed()) return null;
+    // 首帧尚未渲染时 capturePage 可能返回空图，保留有限次数的退避重试。
+    const image = await withRetry(
+        async () => {
+            const captured = await wc.capturePage();
+            if (captured.isEmpty()) throw new Error('Empty capture');
+            return captured;
+        },
+        { delays: [300, 600] }
+    );
+    const data = options.format === 'jpeg' ? image.toJPEG(options.quality ?? 70) : image.toPNG();
+    return `data:image/${options.format};base64,${data.toString('base64')}`;
+}
+
+/**
+ * Per-instance browser controller that encapsulates all CDP-based automation
+ * operations. Each controller is associated with a unique instance ID
+ * (typically a taskId) and a main BrowserWindow for renderer communication.
+ */
 export class BrowserController {
     public readonly id: string;
     private _mainWindow: BrowserRendererHost | null;
@@ -3102,28 +3142,16 @@ export class BrowserController {
 
     /**
      * Capture the active tab's current viewport as a PNG data URI.
-     * Uses Electron's native capturePage rather than a CDP debugger so that
+     * The host can supply capture; Electron defaults to native capturePage so
      * pages with anti-debugging checks (e.g. SSO login flows) stay unaffected.
      */
     async captureScreenshot(): Promise<string> {
         return this._withExclusiveLock(async () => {
             const wcId = await this.callRendererBrowser('browserGetWebContentsId');
             if (wcId == null) throw new Error('No active browser tab to capture');
-            const { webContents } = await import('electron');
-            const wc = webContents.fromId(wcId);
-            if (!wc || wc.isDestroyed()) throw new Error('WebContents not found or destroyed');
-            // 刚导航完或标签页尚在后台时 compositor 可能还没渲染出首帧，
-            // capturePage 会返回空图；做有限次退避重试而不是直接失败
-            const image = await withRetry(
-                async () => {
-                    const captured = await wc.capturePage();
-                    if (captured.isEmpty()) throw new Error('Empty capture');
-                    return captured;
-                },
-                { delays: [300, 600] }
-            );
-            const png = image.toPNG();
-            return `data:image/png;base64,${png.toString('base64')}`;
+            const captured = await captureBrowserScreenshot(this._mainWindow, wcId, { format: 'png' });
+            if (!captured) throw new Error('WebContents not found or destroyed');
+            return captured;
         });
     }
 
@@ -3598,24 +3626,14 @@ export class BrowserManager {
 
         ipcMain.handle(Channels.captureScreenshot, async (_event: any, webContentsId: number) => {
             try {
-                const { webContents } = await import('electron');
-                const wc = webContents.fromId(webContentsId);
-                if (!wc || wc.isDestroyed()) {
+                const data = await captureBrowserScreenshot(BrowserManager._rendererHost, webContentsId, {
+                    format: 'jpeg',
+                    quality: 70
+                });
+                if (!data) {
                     return { status: 'error', message: 'WebContents not found or destroyed' };
                 }
-                // 使用 Electron 原生 capturePage 而非 CDP debugger，
-                // 避免触发页面的反调试/安全检测机制（如 SSO 登录页）
-                // 空图通常出现在首帧尚未渲染时，做有限次退避重试
-                const image = await withRetry(
-                    async () => {
-                        const captured = await wc.capturePage();
-                        if (captured.isEmpty()) throw new Error('Empty capture');
-                        return captured;
-                    },
-                    { delays: [300, 600] }
-                );
-                const jpeg = image.toJPEG(70);
-                return { status: 'ok', data: `data:image/jpeg;base64,${jpeg.toString('base64')}` };
+                return { status: 'ok', data };
             } catch (err) {
                 return { status: 'error', message: String(err) };
             }
