@@ -177,6 +177,91 @@ describe('plugin marketplace renderer', () => {
         expect(plugins).toEqual(['dev-plugin', 'office-plugin']);
     });
 
+    test('the header refresh button refreshes data without reloading the runtime', async () => {
+        const widget = await createWidget();
+        await openMarket(widget);
+        callMainWorld.mockClear();
+
+        widget.shadowRoot.querySelector('[data-action="refresh"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        // 顶栏刷新只重新拉列表与市场清单（带 forceRefresh），绝不重载插件运行时——
+        // 那是秒级起步的全量重建，不该挂在一个看起来像「刷新」的按钮上
+        expect(callMainWorld).toHaveBeenCalledWith('list');
+        expect(callMainWorld).toHaveBeenCalledWith('getPluginCatalog', 'official', undefined, '', true);
+        expect(callMainWorld).not.toHaveBeenCalledWith('reload');
+    });
+
+    test('refresh completing while another operation is busy keeps the button disabled', async () => {
+        let listCalls = 0;
+        let initialList: unknown;
+        let releaseList: (() => void) | undefined;
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') {
+                listCalls += 1;
+                if (listCalls === 1) {
+                    initialList = [
+                        {
+                            id: 'dev-plugin',
+                            source: 'local',
+                            path: '/plugins/dev-plugin',
+                            removable: true,
+                            enabled: true,
+                            system: false,
+                            manifest: {
+                                displayName: '开发插件',
+                                version: '1.0.0',
+                                apiVersion: 1,
+                                capabilities: [],
+                                author: {
+                                    name: { 'zh-CN': '李四' },
+                                    institution: { 'zh-CN': '开放原子开源基金会' },
+                                    homepage: 'https://example.com/team'
+                                }
+                            },
+                            skills: [],
+                            mcpServers: []
+                        }
+                    ];
+                    return initialList;
+                }
+                // 刷新触发的那次挂起：列表内容不变（返回同一份数据），保证走增量路径、按钮节点不重建
+                return await new Promise((resolve) => {
+                    releaseList = () => resolve(initialList);
+                });
+            }
+            if (method === 'listPluginRegistries') return REGISTRIES;
+            if (method === 'getPluginCatalog') return catalog();
+            return undefined;
+        });
+        const widget = await createWidget();
+        await openMarket(widget);
+
+        widget.shadowRoot.querySelector('[data-action="refresh"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const button = widget.shadowRoot.querySelector('[data-action="refresh"]') as HTMLButtonElement;
+        expect(button.disabled).toBe(true);
+
+        // 刷新在途时并行跑了一个全局操作（如菜单里的「重新加载运行时」）把 busy 置位：
+        // 刷新结束不能抢着把按钮恢复成可用，否则会出现「其它控件都禁用、刷新却能点」的矛盾态
+        (widget as any).setBusy(true);
+        releaseList?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(button.disabled).toBe(true);
+
+        (widget as any).setBusy(false);
+        expect(button.disabled).toBe(false);
+    });
+
+    test('reloading the runtime lives in the add menu and calls reload', async () => {
+        const widget = await createWidget();
+
+        widget.shadowRoot.querySelector('[data-action="reload-runtime"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(callMainWorld).toHaveBeenCalledWith('reload');
+    });
+
     test('market without declared categories hides the category switch', async () => {
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];
@@ -458,7 +543,7 @@ describe('plugin marketplace renderer', () => {
         expect(card.querySelector('.tag-update')?.textContent).toContain('可更新');
         const button = card.querySelector('[data-market-install="dev-plugin"]') as HTMLButtonElement;
         expect(button.disabled).toBe(false);
-        expect(button.textContent).toContain('更新');
+        expect(button.textContent).toContain('升级');
 
         // 详情里同时给出清单版本与本地版本，用户才知道「可更新」是从哪一版算起的
         card.dispatchEvent(new Event('click'));
@@ -468,7 +553,7 @@ describe('plugin marketplace renderer', () => {
         expect(rows).toContainEqual({ label: '状态', value: '可更新' });
         expect(rows).toContainEqual({ label: '本地版本', value: 'v0.9.0' });
         expect(detail.model.actions.find((action: { id: string }) => action.id === 'install')).toMatchObject({
-            label: '更新',
+            label: '升级',
             disabled: false
         });
     });
@@ -869,15 +954,22 @@ describe('plugin marketplace renderer', () => {
         expect(rows).toContainEqual({ label: 'API 版本', value: '1' });
         expect(detail.model.actions.map((action: any) => action.id)).toEqual(['install']);
 
-        // 已安装的插件在详情里显示「已安装」+「重新安装」
+        // 已安装且无更新版本的插件在详情里显示「已是最新」，主按钮禁用（与测评集下载中心同语义）
         cards[0].dispatchEvent(new Event('click'));
         await new Promise((resolve) => setTimeout(resolve, 0));
         const installedDetail = widget.shadowRoot.querySelector('skill-detail-card#market-detail-card') as any;
         const installedRows = installedDetail.model.metadata as Array<{ label: string; value: string }>;
-        expect(installedRows).toContainEqual({ label: '状态', value: '已安装' });
-        expect(installedDetail.model.actions.find((action: { id: string }) => action.id === 'install').label).toBe(
-            '重新安装'
-        );
+        expect(installedRows).toContainEqual({ label: '状态', value: '已是最新' });
+        expect(installedDetail.model.actions.find((action: { id: string }) => action.id === 'install')).toMatchObject({
+            label: '已是最新',
+            disabled: true
+        });
+        // 禁用态渲染出来之前的一次点击（或脚本派发）也不能绕过去覆盖安装：
+        // installFromMarket 内部与按钮同口径再挡一次
+        callMainWorld.mockClear();
+        installedDetail.dispatchEvent(new CustomEvent('skill-detail-action', { detail: { id: 'install' } }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(callMainWorld).not.toHaveBeenCalledWith('installFromPluginRegistry', 'official', 'dev-plugin');
     });
 
     test('card actions do not open the detail modal', async () => {
@@ -895,14 +987,15 @@ describe('plugin marketplace renderer', () => {
     test('the detail modal can install the plugin and be closed', async () => {
         const widget = await createWidget();
         await openMarket(widget);
-        widget.shadowRoot.querySelector('.market-card').dispatchEvent(new Event('click'));
+        // 安装路径用未安装的 office-plugin 验证；已安装且同版本的 dev-plugin 会被「已是最新」拦下
+        widget.shadowRoot.querySelector('[data-market-plugin="office-plugin"]').dispatchEvent(new Event('click'));
         await new Promise((resolve) => setTimeout(resolve, 0));
         callMainWorld.mockClear();
 
         const detail = widget.shadowRoot.querySelector('#market-detail-card') as HTMLElement;
         detail.dispatchEvent(new CustomEvent('skill-detail-action', { detail: { id: 'install' } }));
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(callMainWorld).toHaveBeenCalledWith('installFromPluginRegistry', 'official', 'dev-plugin');
+        expect(callMainWorld).toHaveBeenCalledWith('installFromPluginRegistry', 'official', 'office-plugin');
 
         detail.dispatchEvent(new CustomEvent('skill-detail-action', { detail: { id: 'close' } }));
         await new Promise((resolve) => setTimeout(resolve, 0));

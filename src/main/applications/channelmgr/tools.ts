@@ -14,7 +14,6 @@ import { ToolCall } from '../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'fs';
 import pathLib from 'path';
-import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
 import { resolveChannelDisplayName } from './app.js';
 import {
@@ -31,137 +30,6 @@ import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import qrcodeTerminal from 'qrcode-terminal';
 import { escapeHtml } from '../../../common/utils/escape.js';
-
-// ── List Pairing Requests ───────────────────────────────────────────────────
-
-const ListPairingRequestsSchema = z.object({
-    channel: z.string().optional().describe('Filter by channel name, e.g. "feishu". Omit to show all channels.')
-});
-
-export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequestsSchema> {
-    constructor() {
-        super(
-            'listPairingRequests',
-            'List all pending pairing requests from external users. Shows user ID, display name, channel, and pairing code.',
-            ListPairingRequestsSchema,
-            undefined,
-            { 'zh-CN': '待审批配对请求', 'en-US': 'List Pairing Requests' }
-        );
-        this.setExecutor(this.run.bind(this));
-    }
-
-    private async run(args: z.infer<typeof ListPairingRequestsSchema>): Promise<string> {
-        const requests = getPendingRequests(args.channel);
-        if (requests.length === 0) {
-            return '当前没有待审批的配对请求。';
-        }
-        const lines = requests.map(
-            (r, i) =>
-                `${i + 1}. 用户ID: ${r.id}\n   名称: ${r.meta?.name || '未知'}\n   渠道: ${r.channel}\n   账户: ${r.accountId}\n   配对码: ${r.code}\n   请求时间: ${r.createdAt}`
-        );
-        return `共 ${requests.length} 个待审批的配对请求：\n\n${lines.join('\n\n')}`;
-    }
-}
-
-// ── Approve Pairing ─────────────────────────────────────────────────────────
-
-const ApprovePairingSchema = z.object({
-    userId: z.string().describe('The user ID to approve (shown in pairing request list)'),
-    channel: z.string().describe('The channel name, e.g. "feishu"'),
-    accountId: z.string().default('default').describe('The account ID, defaults to "default"')
-});
-
-export class ApprovePairingTool extends BaseTool<typeof ApprovePairingSchema> {
-    constructor() {
-        super(
-            'approvePairing',
-            'Approve a pending pairing request. The user will then be able to send messages that are routed to the agent.',
-            ApprovePairingSchema,
-            undefined,
-            { 'zh-CN': '批准配对', 'en-US': 'Approve Pairing' }
-        );
-        this.setExecutor(this.run.bind(this));
-    }
-
-    private async run(args: z.infer<typeof ApprovePairingSchema>): Promise<string> {
-        const pending = getPendingRequests(args.channel, args.accountId);
-        const match = pending.find((r) => r.id === args.userId);
-        if (!match) {
-            const approved = getApprovedUsers(args.channel, args.accountId);
-            if (approved.some((u) => u.id === args.userId)) {
-                return `用户 ${args.userId} 已经是已配对状态，无需重复审批。`;
-            }
-        }
-        approveUser(args.channel, args.accountId, args.userId, match?.meta);
-        const name = match?.meta?.name || args.userId;
-        return `已批准用户 ${name} (${args.userId}) 在 ${args.channel}:${args.accountId} 上的配对请求。该用户后续的消息将正常路由到 Agent。`;
-    }
-}
-
-// ── Revoke Pairing ──────────────────────────────────────────────────────────
-
-const RevokePairingSchema = z.object({
-    userId: z.string().describe('The user ID to revoke or reject'),
-    channel: z.string().describe('The channel name, e.g. "feishu"'),
-    accountId: z.string().default('default').describe('The account ID, defaults to "default"')
-});
-
-export class RevokePairingTool extends BaseTool<typeof RevokePairingSchema> {
-    constructor() {
-        super(
-            'revokePairing',
-            'Revoke an approved user or reject a pending pairing request. The user will no longer be able to send messages.',
-            RevokePairingSchema,
-            undefined,
-            { 'zh-CN': '撤销配对', 'en-US': 'Revoke Pairing' }
-        );
-        this.setExecutor(this.run.bind(this));
-    }
-
-    private async run(args: z.infer<typeof RevokePairingSchema>): Promise<string> {
-        const revokedApproved = revokeUser(args.channel, args.accountId, args.userId);
-        const removedPending = removePairingRequest(args.channel, args.accountId, args.userId);
-
-        if (revokedApproved) {
-            return `已撤销用户 ${args.userId} 在 ${args.channel}:${args.accountId} 上的配对权限。该用户后续消息将不再被路由。`;
-        }
-        if (removedPending) {
-            return `已拒绝用户 ${args.userId} 在 ${args.channel}:${args.accountId} 上的配对请求。`;
-        }
-        return `未找到用户 ${args.userId} 在 ${args.channel}:${args.accountId} 上的配对记录。`;
-    }
-}
-
-// ── List Approved Users ─────────────────────────────────────────────────────
-
-const ListApprovedUsersSchema = z.object({
-    channel: z.string().optional().describe('Filter by channel name. Omit to show all channels.')
-});
-
-export class ListApprovedUsersTool extends BaseTool<typeof ListApprovedUsersSchema> {
-    constructor() {
-        super(
-            'listApprovedUsers',
-            'List all approved/paired users across all channels.',
-            ListApprovedUsersSchema,
-            undefined,
-            { 'zh-CN': '已配对用户', 'en-US': 'Approved Users' }
-        );
-        this.setExecutor(this.run.bind(this));
-    }
-
-    private async run(args: z.infer<typeof ListApprovedUsersSchema>): Promise<string> {
-        const users = getApprovedUsers(args.channel);
-        if (users.length === 0) {
-            return '当前没有已配对的用户。';
-        }
-        const lines = users.map(
-            (u, i) =>
-                `${i + 1}. 用户ID: ${u.id}\n   名称: ${u.meta?.name || '未知'}\n   渠道: ${u.channel}\n   账户: ${u.accountId}\n   批准时间: ${u.approvedAt}`
-        );
-        return `共 ${users.length} 个已配对用户：\n\n${lines.join('\n\n')}`;
-    }
-}
 
 // ── List Channel Status ─────────────────────────────────────────────────────
 
@@ -357,14 +225,21 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
 
     private async run(args: z.infer<typeof SetChannelConfigSchema>): Promise<string> {
         try {
-            const currentConfig = this.app.getConfig() || {};
-            const updatedConfig = {
-                ...currentConfig,
-                [args.channelId]: args.config
-            };
+            const currentConfig = (this.app.getConfig() || {}) as Record<string, any>;
+            const currentChannelConfig = (currentConfig[args.channelId] || {}) as Record<string, unknown>;
+            const nextChannelConfig = { ...(args.config as Record<string, unknown>) };
+            // activeTasks 是 channelmgr 的运行态（已迁移到应用私有目录），不属于渠道配置，
+            // 顺手剔除，避免旧知识/旧日志把它写回配置树
+            delete nextChannelConfig.activeTasks;
+            // accountRuntime（workspace/agentId/model/分发策略）是用户在账号设置里维护的，
+            // 不属于渠道连接参数：整体替换渠道配置时保留，否则一次「设置渠道配置」就把用户设置清空
+            if (nextChannelConfig.accountRuntime === undefined && currentChannelConfig.accountRuntime !== undefined) {
+                nextChannelConfig.accountRuntime = currentChannelConfig.accountRuntime;
+            }
+            const updatedConfig = { ...currentConfig, [args.channelId]: nextChannelConfig };
             this.app.setConfig(updatedConfig);
             await this.app.reloadChannels();
-            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
+            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(nextChannelConfig, null, 2)}`;
         } catch (err: any) {
             return `保存配置失败: ${err?.message || err}`;
         }

@@ -57,8 +57,8 @@ export function resolveMarketInstallState(
 ): PluginMarketInstallState {
     if (!installed) return 'not-installed';
     const order = compareVersions(installedVersion, catalogVersion);
-    // 任一侧没有可比较的版本时按「已安装」处理：无从判断就不打扰用户，
-    // 想主动换一版还能用「重新安装」
+    // 任一侧没有可比较的版本时按「已是最新」处理：无从判断就不打扰用户；
+    // 想主动换一版可以卸载后再装，CLI 的 plugins install 也支持覆盖安装
     return order !== undefined && order < 0 ? 'update-available' : 'installed';
 }
 

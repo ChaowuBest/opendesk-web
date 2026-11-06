@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getDefaultShell } from '../../../../main/utils/shellExec.js';
 import { getDiskUsage } from '../../../../main/utils/shell-helper.js';
+
+// 与 getDiskUsage 同口径的预期 kind：PowerShell 解释器报 apparent bytes，
+// 其余（含 Windows 上无 PowerShell 时的 Git Bash fallback）走 du 报 allocated KiB
+const shellName = getDefaultShell().shellPath.split(/[\\/]/).pop() ?? '';
+const expectedKind = /^(?:powershell|pwsh)(?:\.exe)?$/i.test(shellName) ? 'apparent' : 'allocated';
 
 test('disk usage runs the host command with literal paths and includes nested hidden files', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-helper-'));
@@ -18,7 +24,7 @@ test('disk usage runs the host command with literal paths and includes nested hi
     const usage = await getDiskUsage(target);
     assert.ok(usage.bytes > empty.bytes);
     assert.ok(Number.isSafeInteger(usage.bytes));
-    assert.equal(usage.kind, process.platform === 'win32' ? 'apparent' : 'allocated');
+    assert.equal(usage.kind, expectedKind);
     assert.equal(fs.existsSync(marker), false);
     assert.deepEqual(await getDiskUsage(path.join(root, 'missing')), { bytes: 0, kind: usage.kind });
 

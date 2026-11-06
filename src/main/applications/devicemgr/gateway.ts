@@ -26,7 +26,6 @@ import {
     deriveDeviceId,
     buildDeviceAuthPayloadV3,
     buildDeviceAuthPayloadV2,
-    base64UrlEncode,
     generatePairingToken
 } from './device-identity.js';
 import type {

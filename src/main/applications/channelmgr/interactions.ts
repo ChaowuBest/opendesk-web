@@ -50,6 +50,16 @@ export interface ChannelAskUserRequest {
     questions: ChannelAskUserQuestion[];
 }
 
+/** selection 请求的对外形态：单选列表（渠道按能力渲染为卡片按钮或编号文本） */
+export interface ChannelSelectionRequest {
+    /** 列表标题 */
+    header: string;
+    /** 选项列表；value 为回传标识（如 taskId），label 为展示文本 */
+    options: { label: string; value: string }[];
+    /** 列表末尾的提示文案（如分页语法说明），可选 */
+    hint?: string;
+}
+
 /** 审批结果 */
 export interface ChannelApprovalOutcome {
     decision: 'allow' | 'deny';
@@ -67,9 +77,17 @@ export interface ChannelAskUserOutcome {
     cancelled?: boolean;
 }
 
+/** selection 结果；cancelled 表示用户取消或交互超时 */
+export interface ChannelSelectionOutcome {
+    selected?: string;
+    cancelled?: boolean;
+    /** 发送失败时的底层错误信息（用于诊断） */
+    error?: string;
+}
+
 /** 入站交互事件（由 NativeChannelAdapter 的 dispatchInteraction 转发而来） */
 export interface ChannelInteractionEventInput {
-    kind: 'approval' | 'askUser';
+    kind: 'approval' | 'askUser' | 'selection';
     interactionId: string;
     accountId?: string;
     operator: { id: string; name?: string };
@@ -77,13 +95,18 @@ export interface ChannelInteractionEventInput {
     /** 用户点击"始终允许"按钮时回传 'session'（仅 decision === 'allow' 时有意义） */
     rememberScope?: 'none' | 'session';
     answers?: Record<number, string[]>;
+    /** selection 事件：用户选中的选项 value */
+    selected?: string;
     cancelled?: boolean;
     raw?: unknown;
 }
 
+/** 交互类型：权限审批 / 向用户提问 / 单选列表 */
+export type PendingInteractionKind = 'approval' | 'askUser' | 'selection';
+
 interface PendingInteractionBase {
     interactionId: string;
-    kind: 'approval' | 'askUser';
+    kind: PendingInteractionKind;
     channelId: string;
     accountId: string;
     recipientId: string;
@@ -103,7 +126,12 @@ interface PendingAskUser extends PendingInteractionBase {
     resolve: (outcome: ChannelAskUserOutcome) => void;
 }
 
-type PendingInteraction = PendingApproval | PendingAskUser;
+interface PendingSelection extends PendingInteractionBase {
+    kind: 'selection';
+    resolve: (outcome: ChannelSelectionOutcome) => void;
+}
+
+type PendingInteraction = PendingApproval | PendingAskUser | PendingSelection;
 
 /** 默认交互 TTL：5 分钟（与飞书审批卡片一致） */
 const DEFAULT_INTERACTION_TTL_MS = 5 * 60_000;
@@ -176,7 +204,7 @@ export class ChannelInteractionService {
                 interactionId,
                 kind: 'approval' as const,
                 to: {
-                    chatType: (participant as { chatType?: 'direct' | 'group' }).chatType ?? 'direct',
+                    chatType: participant.chatType ?? 'direct',
                     recipientId: participant.recipientId
                 },
                 accountId: participant.accountId,
@@ -239,7 +267,7 @@ export class ChannelInteractionService {
                 interactionId,
                 kind: 'askUser' as const,
                 to: {
-                    chatType: (participant as { chatType?: 'direct' | 'group' }).chatType ?? 'direct',
+                    chatType: participant.chatType ?? 'direct',
                     recipientId: participant.recipientId
                 },
                 accountId: participant.accountId,
@@ -255,6 +283,69 @@ export class ChannelInteractionService {
                     `[channel-interaction] send askUser ${interactionId} failed: ${err instanceof Error ? err.message : String(err)}`
                 );
                 resolve({ answers: {}, cancelled: true });
+            });
+        });
+    }
+
+    /**
+     * 发起单选列表到渠道（如 /list 会话切换卡片）。返回 Promise，用户点选（或取消/超时）后结算。
+     * 渠道不支持交互时立即返回 cancelled（调用方应先用 supportsInteractive 预判并走文本回退）。
+     */
+    requestSelection(
+        participant: Participant,
+        request: ChannelSelectionRequest,
+        ttlMs: number = DEFAULT_INTERACTION_TTL_MS,
+        taskId?: string
+    ): Promise<ChannelSelectionOutcome> {
+        const entry = this.findEntry(participant.channel);
+        const cp = entry?.channelPlugin;
+        if (!isUsableChannel(cp)) {
+            logger.warn(
+                `[channel-interaction] selection requested but channel ${participant.channel} has no interaction capability, cancelling`
+            );
+            return Promise.resolve({ cancelled: true });
+        }
+
+        const interactionId = this.createInteractionId();
+        const expiresAt = this.now() + ttlMs;
+
+        return new Promise<ChannelSelectionOutcome>((resolve) => {
+            const pendingSelection: PendingSelection = {
+                interactionId,
+                kind: 'selection',
+                channelId: participant.channel,
+                accountId: participant.accountId,
+                recipientId: participant.recipientId,
+                taskId,
+                expiresAt,
+                timer: createInteractionTimer(ttlMs, () => {
+                    this.pending.delete(interactionId);
+                    logger.info(`[channel-interaction] selection ${interactionId} timed out, cancelling`);
+                    resolve({ cancelled: true });
+                }),
+                resolve
+            };
+            this.pending.set(interactionId, pendingSelection);
+
+            const requestPayload = {
+                interactionId,
+                kind: 'selection' as const,
+                to: {
+                    chatType: participant.chatType ?? 'direct',
+                    recipientId: participant.recipientId
+                },
+                accountId: participant.accountId,
+                expiresAt,
+                payload: request
+            };
+            cp.sendInteraction!(requestPayload).catch((err: unknown) => {
+                const current = this.pending.get(interactionId);
+                if (current !== pendingSelection) return;
+                this.pending.delete(interactionId);
+                clearTimeout(pendingSelection.timer);
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                logger.error(`[channel-interaction] send selection ${interactionId} failed: ${errorMessage}`);
+                resolve({ cancelled: true, error: errorMessage });
             });
         });
     }
@@ -290,6 +381,13 @@ export class ChannelInteractionService {
                 rememberScope: decision === 'allow' ? (event.rememberScope ?? 'none') : undefined,
                 denyReason: decision === 'deny' ? 'user_denied' : undefined
             });
+        } else if (pending.kind === 'selection') {
+            const cancelled = event.cancelled === true;
+            logger.info(
+                `[channel-interaction] selection ${event.interactionId} settled` +
+                    (cancelled ? ' (cancelled)' : ` by ${event.operator?.id}: ${event.selected ?? ''}`)
+            );
+            pending.resolve(cancelled ? { cancelled: true } : { selected: event.selected });
         } else {
             const cancelled = event.cancelled === true;
             logger.info(
@@ -303,12 +401,24 @@ export class ChannelInteractionService {
         return true;
     }
 
-    /** 取消某渠道（可按账号/会话过滤）的所有 pending 交互，按取消结算。 */
-    cancelChannelInteractions(channelId: string, accountId?: string, recipientId?: string): void {
+    /**
+     * 取消某渠道（可按账号/会话/交互类型过滤）的 pending 交互，按取消结算。
+     *
+     * @param kinds 只取消这些类型；缺省取消全部。任务级取消必须带上类型，
+     *              否则会把与任务无关、仍可点击的 /list 列表卡片一起废掉。
+     */
+    cancelChannelInteractions(
+        channelId: string,
+        accountId?: string,
+        recipientId?: string,
+        kinds?: PendingInteractionKind[]
+    ): void {
+        const kindSet = kinds ? new Set<PendingInteractionKind>(kinds) : undefined;
         for (const [id, pending] of [...this.pending.entries()]) {
             if (pending.channelId !== channelId) continue;
             if (accountId !== undefined && pending.accountId !== accountId) continue;
             if (recipientId !== undefined && pending.recipientId !== recipientId) continue;
+            if (kindSet && !kindSet.has(pending.kind)) continue;
             this.settleCancelled(pending, id);
         }
     }
@@ -328,6 +438,8 @@ export class ChannelInteractionService {
         clearTimeout(pending.timer);
         if (pending.kind === 'approval') {
             pending.resolve({ decision: 'deny', denyReason: 'user_denied' });
+        } else if (pending.kind === 'selection') {
+            pending.resolve({ cancelled: true });
         } else {
             pending.resolve({ answers: {}, cancelled: true });
         }

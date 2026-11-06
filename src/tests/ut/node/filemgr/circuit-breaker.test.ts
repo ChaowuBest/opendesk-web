@@ -76,7 +76,7 @@ test('a successful read resets the repeated-edit circuit breaker for that file',
             'filemgr-readFile',
             { file_path: filePath },
             'success',
-            JSON.stringify({ type: 'text', file: { filePath, content: 'after' } })
+            `[文件] ${filePath} · 共 1 行 · 显示第 1-1 行\n     1\tafter`
         )
     });
 

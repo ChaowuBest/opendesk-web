@@ -29,20 +29,19 @@ async function readFile(
     task: TaskState,
     filePath: string,
     range: { offset?: number; limit?: number } = {}
-): Promise<any> {
-    try {
-        return JSON.parse(
-            await tool.executeCommand(
-                {
-                    file_path: filePath,
-                    ...range
-                },
-                task
-            )
-        );
-    } catch (err) {
-        return { type: 'error', message: err instanceof Error ? err.message : String(err) };
-    }
+): Promise<string> {
+    return await tool.executeCommand(
+        {
+            file_path: filePath,
+            ...range
+        },
+        task
+    );
+}
+
+/** 结果正文（去掉首行 [文件] 元信息行） */
+function resultBody(result: string): string {
+    return result.slice(result.indexOf('\n') + 1);
 }
 
 describe('ReadFileTool file read state recording', () => {
@@ -61,9 +60,9 @@ describe('ReadFileTool file read state recording', () => {
         const state = task.getFileReadState().get(filePath);
         const stat = fs.statSync(filePath);
 
-        expect(result.type).toBe('text');
+        expect(result.startsWith('[文件] ')).toBe(true);
         expect(state).toMatchObject({
-            content: result.file.content,
+            content: resultBody(result),
             timestamp: Math.floor(stat.mtimeMs),
             offset: 1,
             isPartialView: false
@@ -81,10 +80,10 @@ describe('ReadFileTool file read state recording', () => {
         const result = await readFile(tool, task, filePath, { offset: 2, limit: 3 });
         const state = task.getFileReadState().get(filePath);
 
-        expect(result.type).toBe('text');
-        expect(result.file.content).toContain('     2\ttwo');
+        expect(result.startsWith('[文件] ')).toBe(true);
+        expect(resultBody(result)).toContain('     2\ttwo');
         expect(state).toMatchObject({
-            content: result.file.content,
+            content: resultBody(result),
             offset: 2,
             limit: 3,
             isPartialView: false
@@ -101,8 +100,7 @@ describe('ReadFileTool file read state recording', () => {
         const result = await readFile(tool, task, filePath);
         const state = task.getFileReadState().get(filePath);
 
-        expect(result.type).toBe('text');
-        expect(result.file.content).toBe('');
+        expect(result).toContain('空文件（0 行）');
         expect(state).toMatchObject({
             content: '',
             offset: 1,
@@ -124,15 +122,12 @@ describe('ReadFileTool file read state recording', () => {
         fs.writeFileSync(binaryPath, Buffer.from([0, 1, 2, 3]));
         fs.writeFileSync(textPath, 'only one line', 'utf8');
 
-        const directoryResult = await readFile(tool, task, directoryPath);
-        const binaryResult = await readFile(tool, task, binaryPath);
-        const missingResult = await readFile(tool, task, missingPath);
+        await expect(readFile(tool, task, directoryPath)).rejects.toThrow();
+        await expect(readFile(tool, task, binaryPath)).rejects.toThrow();
+        await expect(readFile(tool, task, missingPath)).rejects.toThrow();
         const outOfRangeResult = await readFile(tool, task, textPath, { offset: 99, limit: 5 });
 
-        expect(directoryResult.type).toBe('error');
-        expect(binaryResult.type).toBe('error');
-        expect(missingResult.type).toBe('error');
-        expect(outOfRangeResult.type).toBe('text');
+        expect(outOfRangeResult).toContain('第 99 行超出文件末尾');
         expect(task.getFileReadState().get(directoryPath)).toBeUndefined();
         expect(task.getFileReadState().get(binaryPath)).toBeUndefined();
         expect(task.getFileReadState().get(missingPath)).toBeUndefined();

@@ -35,14 +35,6 @@ jest.unstable_mockModule('../../../main/applications/channelmgr/app.js', () => (
     resolveChannelDisplayName: (id: string) => id
 }));
 
-jest.unstable_mockModule('../../../main/applications/channelmgr/pairing.js', () => ({
-    getPendingRequests: jest.fn(),
-    getApprovedUsers: jest.fn(),
-    approveUser: jest.fn(),
-    revokeUser: jest.fn(),
-    removePairingRequest: jest.fn()
-}));
-
 jest.unstable_mockModule('../../../main/applications/channelmgr/feishu-auth.js', () => ({
     feishuAuthInit: jest.fn(),
     feishuAuthBegin: jest.fn(),
@@ -226,5 +218,50 @@ describe('channelmgr 插件管理工具的宿主重载顺序', () => {
         // 注册表回滚为禁用，避免留下「已启用但未生效」的状态
         expect(mockSetPluginEnabled).toHaveBeenLastCalledWith('broken-channel', false);
         expect(app.syncChannelsWithPluginHost).not.toHaveBeenCalled();
+    });
+});
+
+describe('setChannelConfig 不覆盖账号运行时设置', () => {
+    interface FakeConfigApp {
+        saved: Record<string, any>;
+        getConfig: () => Record<string, any>;
+        setConfig: (next: Record<string, any>) => void;
+        reloadChannels: ReturnType<typeof jest.fn>;
+    }
+
+    function makeConfigApp(initial: Record<string, any>): FakeConfigApp {
+        const app: FakeConfigApp = {
+            saved: initial,
+            getConfig: () => app.saved,
+            setConfig: (next) => {
+                app.saved = next;
+            },
+            reloadChannels: jest.fn<() => Promise<void>>(async () => {})
+        };
+        return app;
+    }
+
+    test('替换渠道连接参数时保留用户维护的 accountRuntime（含分发策略）', async () => {
+        const { SetChannelConfigTool } = await import('../../../main/applications/channelmgr/tools.js');
+        const accountRuntime = {
+            'bot-1': { workspace: '/ws', dispatchPolicy: { mode: 'sticky', timeoutMinutes: 1440 } }
+        };
+        const app = makeConfigApp({ feishu: { appId: 'old', accountRuntime } });
+        const tool = new SetChannelConfigTool(app as any);
+
+        const result: any = await tool.execute({ channelId: 'feishu', config: { appId: 'new', appSecret: 's' } });
+
+        expect(result.status).toBe('success');
+        expect(app.saved.feishu).toEqual({ appId: 'new', appSecret: 's', accountRuntime });
+    });
+
+    test('调用方显式给出 accountRuntime 时以它为准', async () => {
+        const { SetChannelConfigTool } = await import('../../../main/applications/channelmgr/tools.js');
+        const app = makeConfigApp({ feishu: { accountRuntime: { 'bot-1': { workspace: '/old' } } } });
+        const tool = new SetChannelConfigTool(app as any);
+
+        await tool.execute({ channelId: 'feishu', config: { accountRuntime: { 'bot-2': { model: 'x' } } } });
+
+        expect(app.saved.feishu.accountRuntime).toEqual({ 'bot-2': { model: 'x' } });
     });
 });

@@ -19,7 +19,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
-import { showConfirmModal, MODAL_CSS, detectDarkMode } from './confirmModal.ts';
+import { showConfirmModal, showInfoModal, MODAL_CSS, detectDarkMode } from './confirmModal.ts';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import QRCode from 'qrcode';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -539,6 +539,36 @@ class ChannelSettingsPanel extends HTMLElement {
             )
             .join('');
 
+        // 消息分发策略：总是同任务 / 空闲超时切换（默认 1 天）/ 智能投递
+        const resolvedDispatchMode = runtime.dispatchPolicy?.mode || 'timeout';
+        const resolvedTimeoutMinutes = String(runtime.dispatchPolicy?.timeoutMinutes || 1440);
+        const dispatchModeOptions = [
+            ['sticky', 'sp.channel.dispatchPolicy.sticky'],
+            ['timeout', 'sp.channel.dispatchPolicy.timeout'],
+            ['smart', 'sp.channel.dispatchPolicy.smart']
+        ]
+            .map(
+                ([value, key]) =>
+                    `<option value="${value}" ${value === resolvedDispatchMode ? 'selected' : ''}>${escapeHtml(t(key))}</option>`
+            )
+            .join('');
+        const TIMEOUT_MINUTE_OPTIONS = ['15', '30', '60', '120', '300', '1440'];
+        // 配置里若是预设之外的值（手改/旧版本写入），也要原样出现在下拉里：
+        // 否则 select 会落到第一项，用户一保存就把间隔静默改成 15 分钟
+        const timeoutMinuteChoices = TIMEOUT_MINUTE_OPTIONS.includes(resolvedTimeoutMinutes)
+            ? TIMEOUT_MINUTE_OPTIONS
+            : [...TIMEOUT_MINUTE_OPTIONS, resolvedTimeoutMinutes].sort((a, b) => Number(a) - Number(b));
+        const timeoutLabel = (minutes) =>
+            TIMEOUT_MINUTE_OPTIONS.includes(minutes)
+                ? t('sp.channel.dispatchTimeout.' + minutes)
+                : t('sp.channel.dispatchTimeout.minutes', { minutes });
+        const dispatchTimeoutOptions = timeoutMinuteChoices
+            .map(
+                (minutes) =>
+                    `<option value="${minutes}" ${minutes === resolvedTimeoutMinutes ? 'selected' : ''}>${escapeHtml(timeoutLabel(minutes))}</option>`
+            )
+            .join('');
+
         const overlay = this.createModal({
             icon: 'fa-sliders',
             title: t('sp.channel.accountSettings') + ' · ' + escapeHtml(accountDisplay({ accountId })),
@@ -561,6 +591,14 @@ class ChannelSettingsPanel extends HTMLElement {
                 <div class="od-sp-fg">
                     <label class="od-sp-fl">${escapeHtml(t('sp.channel.model'))}</label>
                     <select class="od-sp-fi" data-runtime-field="model">${modelOptions}</select>
+                </div>
+                <div class="od-sp-fg">
+                    <label class="od-sp-fl">${escapeHtml(t('sp.channel.dispatchPolicy'))}</label>
+                    <select class="od-sp-fi" data-dispatch-mode>${dispatchModeOptions}</select>
+                </div>
+                <div class="od-sp-fg" data-timeout-field>
+                    <label class="od-sp-fl">${escapeHtml(t('sp.channel.dispatchTimeout'))}</label>
+                    <select class="od-sp-fi" data-dispatch-timeout>${dispatchTimeoutOptions}</select>
                 </div>`,
             footer: `
                 <button type="button" class="od-confirm-btn od-confirm-btn-cancel" data-modal-close>${escapeHtml(t('sp.channel.cancel'))}</button>
@@ -606,17 +644,39 @@ class ChannelSettingsPanel extends HTMLElement {
             }
         });
 
+        // 分发策略切换：仅 timeout 模式显示空闲切换周期下拉
+        const dispatchModeSelect = overlay.querySelector('[data-dispatch-mode]');
+        const timeoutField = overlay.querySelector('[data-timeout-field]');
+        const syncTimeoutField = () => {
+            timeoutField.style.display = dispatchModeSelect.value === 'timeout' ? '' : 'none';
+        };
+        dispatchModeSelect.addEventListener('change', syncTimeoutField);
+        syncTimeoutField();
+
         overlay.querySelector('[data-save-runtime]').addEventListener('click', async () => {
             const next = {
                 workspace: overlay.querySelector('[data-runtime-field="workspace"]')?.value || undefined,
                 agentId: overlay.querySelector('[data-runtime-field="agentId"]')?.value || 'main',
                 modeId: overlay.querySelector('[data-runtime-field="modeId"]')?.value || 'standard',
-                model: overlay.querySelector('[data-runtime-field="model"]')?.value || undefined
+                model: overlay.querySelector('[data-runtime-field="model"]')?.value || undefined,
+                dispatchPolicy: {
+                    mode: dispatchModeSelect?.value || 'timeout',
+                    timeoutMinutes: Number(overlay.querySelector('[data-dispatch-timeout]')?.value || 1440)
+                }
             };
             try {
                 await appCall('setAccountRuntimeConfig', channelId, accountId, next);
             } catch (err) {
                 console.error('[channel-settings] setAccountRuntimeConfig failed:', err);
+                // 保存失败不能静默关窗：用户会以为设置已生效，而配置其实没写进去
+                await showInfoModal({
+                    variant: 'danger',
+                    icon: 'fa-circle-exclamation',
+                    title: t('sp.channel.saveFailed'),
+                    message: escapeHtml(String(err?.message || err)),
+                    confirmText: t('sp.channel.save')
+                });
+                return;
             }
             this.closeModal(overlay);
             await this.reload();

@@ -164,4 +164,65 @@ describe('WechatChannel interactions', () => {
             ...expected
         });
     });
+
+    test('新交互覆盖旧交互时把旧的按取消结算，序号回复转给新交互', async () => {
+        const channel = new WechatChannel();
+        const dispatchInteraction = jest.fn(async () => {});
+        channel.loadAccounts = jest.fn(() => ({
+            'account-1': { token: 'token', baseUrl: 'https://example.test' }
+        }));
+        channel._sendText = jest.fn(async () => {});
+        channel.setChannelRuntimeContext({
+            dispatch: jest.fn(),
+            dispatchInteraction,
+            logger: {
+                info: jest.fn(),
+                warn: jest.fn(),
+                error: jest.fn(),
+                debug: jest.fn()
+            }
+        });
+
+        await channel.sendInteraction({
+            interactionId: 'interaction-1',
+            kind: 'approval',
+            accountId: 'account-1',
+            to: { chatType: 'direct', recipientId: 'user-1' },
+            expiresAt: Date.now() + 60_000,
+            payload: { prompt: 'test', allowRemember: false }
+        });
+        // 同会话紧接着来一个 /list 选择卡片：旧审批必须立刻按取消结算，不能挂到 TTL
+        await channel.sendInteraction({
+            interactionId: 'interaction-2',
+            kind: 'selection',
+            accountId: 'account-1',
+            to: { chatType: 'direct', recipientId: 'user-1' },
+            expiresAt: Date.now() + 60_000,
+            payload: {
+                header: '最近的对话',
+                options: [
+                    { label: '任务一', value: 't1' },
+                    { label: '任务二', value: 't2' }
+                ]
+            }
+        });
+
+        expect(dispatchInteraction).toHaveBeenCalledWith({
+            kind: 'approval',
+            interactionId: 'interaction-1',
+            accountId: 'account-1',
+            operator: { id: '' },
+            cancelled: true,
+            raw: { reason: 'superseded' }
+        });
+
+        await channel._handleIncoming('account-1', {}, makeInboundMessage('reply-2', '2'));
+        expect(dispatchInteraction).toHaveBeenLastCalledWith({
+            kind: 'selection',
+            interactionId: 'interaction-2',
+            accountId: 'account-1',
+            operator: { id: 'user-1' },
+            selected: 't2'
+        });
+    });
 });

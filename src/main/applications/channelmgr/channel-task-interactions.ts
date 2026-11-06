@@ -127,7 +127,10 @@ export class ChannelAskUserProvider implements AskUserProvider {
     }
 
     cancelCurrent(): void {
-        this.service.cancelChannelInteractions(this.origin.channel, this.origin.accountId, this.origin.recipientId);
+        // 只取消本任务的提问：/list 的列表卡片不绑定任务，不该被任务停止连带废掉
+        this.service.cancelChannelInteractions(this.origin.channel, this.origin.accountId, this.origin.recipientId, [
+            'askUser'
+        ]);
     }
 }
 
