@@ -207,6 +207,8 @@ describe('shared GUI task usage projection', () => {
         const child = spawnSync(
             process.execPath,
             [
+                // Some tsx loader paths use module.register(); retain every other child warning/error.
+                '--disable-warning=DEP0205',
                 '--import',
                 'tsx',
                 '--input-type=module',
@@ -217,7 +219,8 @@ describe('shared GUI task usage projection', () => {
                  for (const [year, month, day] of cases) {
                      const tasks = [new Date(year, month, day, 12), new Date(year, month, day, 23, 30), new Date(year, month, day + 1, 0, 30)].map(created_at => ({ created_at }));
                      const service = createTaskUsageViewService({ listTasks: () => tasks, getTask: () => null, isDeveloperMode: () => false, isTaskVisible: () => true, now: () => new Date(year, month, day, 12), readDashboard: async () => ({ today: {}, week: {}, month_top_tasks: [] }) });
-                     results.push((await service.getDashboardSummary()).today.task_count);
+                     const dayHours = (new Date(year, month, day + 1) - new Date(year, month, day)) / 3600000;
+                     results.push({ taskCount: (await service.getDashboardSummary()).today.task_count, dayHours });
                  }
                  console.log(JSON.stringify(results));`
             ],
@@ -225,6 +228,9 @@ describe('shared GUI task usage projection', () => {
         );
         expect(child.status).toBe(0);
         expect(child.stderr).toBe('');
-        expect(JSON.parse(child.stdout.trim())).toEqual([2, 2]);
+        expect(JSON.parse(child.stdout.trim())).toEqual([
+            { taskCount: 2, dayHours: 23 },
+            { taskCount: 2, dayHours: 25 }
+        ]);
     });
 });
