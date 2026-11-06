@@ -23,7 +23,7 @@ import { BaseWorker } from '../../base.js';
 import { NotificationManager } from '../../../utils/notificationmgr.js';
 import { skillRegistry } from '../utils/skill-registry.js';
 import { skillInstallManager } from '../utils/skill-installer.js';
-import { isSkillEntryFilename, findSkillEntryFile } from '../skill-entry.js';
+import { isSkillEntryFilename, findSkillEntryFile, isDirectoryEntry } from '../skill-entry.js';
 import {
     getSkillStatus,
     setSkillStatus,
@@ -239,7 +239,19 @@ class SkillsWorker extends BaseWorker {
      */
     async *scanDirectoryForSkills(dirPath) {
         const normalized = path.resolve(String(dirPath));
-        if (!fs.existsSync(normalized) || !fs.statSync(normalized).isDirectory()) {
+        const visited = new Set();
+        // 不同链接可指向同一目录；按真实路径去重，扫描链接时不会陷入循环。
+        const markVisited = (dir) => {
+            try {
+                const realPath = fs.realpathSync(dir);
+                if (visited.has(realPath)) return false;
+                visited.add(realPath);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        if (!fs.existsSync(normalized) || !fs.statSync(normalized).isDirectory() || !markVisited(normalized)) {
             yield { type: 'error', message: '目录不存在或无效' };
             return;
         }
@@ -251,7 +263,8 @@ class SkillsWorker extends BaseWorker {
                 const entries = fs.readdirSync(p, { withFileTypes: true });
                 for (const e of entries) {
                     totalEntries++;
-                    if (e.isDirectory()) countEntries(path.join(p, e.name));
+                    const fullPath = path.join(p, e.name);
+                    if (isDirectoryEntry(e, fullPath) && markVisited(fullPath)) countEntries(fullPath);
                 }
             } catch {
                 /* skip */
@@ -264,6 +277,9 @@ class SkillsWorker extends BaseWorker {
         // 第二阶段：扫描技能
         let scanned = 0;
         const foundSkills = [];
+        // 统计和实际扫描各走一遍目录，重新记录本轮访问的真实路径。
+        visited.clear();
+        markVisited(normalized);
 
         const scanDir = async function* (currentPath) {
             let entries;
@@ -276,8 +292,9 @@ class SkillsWorker extends BaseWorker {
             for (const entry of entries) {
                 const fullPath = path.join(currentPath, entry.name);
 
-                if (entry.isDirectory()) {
+                if (isDirectoryEntry(entry, fullPath)) {
                     scanned++;
+                    if (!markVisited(fullPath)) continue;
                     try {
                         if (findSkillEntryFile(fullPath)) {
                             foundSkills.push({

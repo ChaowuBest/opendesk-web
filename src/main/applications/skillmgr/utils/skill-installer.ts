@@ -119,9 +119,18 @@ function copyDirRecursive(src: string, dest: string): void {
     }
 }
 
+/** existsSync 会把悬空链接当作不存在；lstat 让它仍占用技能名称。 */
+function pathEntryExists(p: string): boolean {
+    try {
+        fs.lstatSync(p);
+        return true;
+    } catch (e) {
+        return (e as NodeJS.ErrnoException).code !== 'ENOENT';
+    }
+}
+
 /** 递归删除目录或文件；优先使用 fs.rmSync 以兼容鸿蒙 HarmonyOS */
 function rmRecursive(p: string): void {
-    if (!fs.existsSync(p)) return;
     try {
         if (typeof fs.rmSync === 'function') {
             fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -131,7 +140,11 @@ function rmRecursive(p: string): void {
         // fall back to manual recursive cleanup
     }
     try {
-        if (fs.statSync(p).isDirectory()) {
+        const stat = fs.lstatSync(p);
+        // 降级清理时 stat 会跟随目录链接；lstat 保证只删除链接，不递归删除目标。
+        if (stat.isSymbolicLink()) {
+            fs.unlinkSync(p);
+        } else if (stat.isDirectory()) {
             for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
             fs.rmdirSync(p);
         } else {
@@ -326,10 +339,13 @@ export abstract class SkillSourceInstaller {
             return { success: false, error: '无效的技能名称' };
         }
 
-        if (fs.existsSync(destDir)) {
+        if (pathEntryExists(destDir)) {
             if (this.conflictPolicy.action === 'overwrite') {
                 try {
-                    if (typeof fs.rmSync === 'function') {
+                    // 覆盖链接时只移除链接，外部技能目录保持原样。
+                    if (fs.lstatSync(destDir).isSymbolicLink()) {
+                        fs.unlinkSync(destDir);
+                    } else if (typeof fs.rmSync === 'function') {
                         fs.rmSync(destDir, { recursive: true, force: true });
                     } else {
                         rmRecursive(destDir);
@@ -342,7 +358,7 @@ export abstract class SkillSourceInstaller {
                 do {
                     targetName = `${originalName}-${counter}`;
                     counter++;
-                } while (fs.existsSync(path.join(skillsDir, targetName)));
+                } while (pathEntryExists(path.join(skillsDir, targetName)));
                 destDir = path.join(skillsDir, targetName);
                 logger.info(`SkillInstaller: 技能名冲突，自动重命名为 ${targetName}`);
             } else {
@@ -350,7 +366,11 @@ export abstract class SkillSourceInstaller {
             }
         }
         result.name = targetName;
+        let createdDestination = false;
         try {
+            // 仅在本次安装创建目录后清理复制失败的残留，避免删除已有路径。
+            fs.mkdirSync(destDir);
+            createdDestination = true;
             copyDirRecursive(resolved, destDir);
             // 从 metadata.json 合成的技能需要落盘 SKILL.md
             if (result._synthesized && result._synthesizedMd) {
@@ -378,7 +398,7 @@ export abstract class SkillSourceInstaller {
             }
             return { success: true, name: result.name };
         } catch (e) {
-            rmRecursive(destDir);
+            if (createdDestination) rmRecursive(destDir);
             return { success: false, error: `复制失败: ${toErrorMessage(e)}` };
         }
     }
@@ -992,11 +1012,14 @@ export class SkillInstallManager {
         if (relative.startsWith('..') || path.isAbsolute(relative)) {
             return { success: false, error: '无效的技能路径' };
         }
-        if (!fs.existsSync(targetDir)) {
+        if (!pathEntryExists(targetDir)) {
             return { success: false, error: `技能 "${safeName}" 不存在` };
         }
         try {
-            if (typeof fs.rmSync === 'function') {
+            // 某些平台的 rmSync 会留下悬空链接；直接 unlink 也不会删除链接目标。
+            if (fs.lstatSync(targetDir).isSymbolicLink()) {
+                fs.unlinkSync(targetDir);
+            } else if (typeof fs.rmSync === 'function') {
                 fs.rmSync(targetDir, { recursive: true, force: true });
             } else {
                 rmRecursive(targetDir);

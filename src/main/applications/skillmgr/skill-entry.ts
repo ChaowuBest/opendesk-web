@@ -30,6 +30,28 @@ export const CANONICAL_SKILL_FILENAME = 'SKILL.md';
 /** 市场已知的非规范入口文件名变体（均为小写，用于 case-insensitive 匹配） */
 const ENTRY_FILENAME_ALIASES: ReadonlySet<string> = new Set(['skill.md', 'skills.md']);
 
+/** Dirent 不把符号链接视为文件；跟随有效链接后才能识别链接的 SKILL.md。 */
+export function isFileEntry(entry: fs.Dirent, fullPath: string): boolean {
+    if (entry.isFile()) return true;
+    if (!entry.isSymbolicLink()) return false;
+    try {
+        return fs.statSync(fullPath).isFile();
+    } catch {
+        return false;
+    }
+}
+
+/** 目录链接的 Dirent.isDirectory() 为 false；跟随链接以扫描其目标目录。 */
+export function isDirectoryEntry(entry: fs.Dirent, fullPath: string): boolean {
+    if (entry.isDirectory()) return true;
+    if (!entry.isSymbolicLink()) return false;
+    try {
+        return fs.statSync(fullPath).isDirectory();
+    } catch {
+        return false;
+    }
+}
+
 /**
  * 判断文件名是否属于技能入口文件（case-insensitive）。
  */
@@ -44,10 +66,14 @@ export function isSkillEntryFilename(name: string): boolean {
 export function findSkillEntryFile(dirPath: string): string | null {
     try {
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-        const canonical = entries.find((e) => e.isFile() && e.name === CANONICAL_SKILL_FILENAME);
+        const canonical = entries.find(
+            (e) => e.name === CANONICAL_SKILL_FILENAME && isFileEntry(e, path.join(dirPath, e.name))
+        );
         if (canonical) return path.join(dirPath, canonical.name);
 
-        const alias = entries.find((e) => e.isFile() && ENTRY_FILENAME_ALIASES.has(e.name.toLowerCase()));
+        const alias = entries.find(
+            (e) => ENTRY_FILENAME_ALIASES.has(e.name.toLowerCase()) && isFileEntry(e, path.join(dirPath, e.name))
+        );
         if (alias) return path.join(dirPath, alias.name);
     } catch {
         // permission errors or non-existent dir
