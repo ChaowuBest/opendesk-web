@@ -49,6 +49,8 @@ import {
 import { classifyPluginInstallError, type PluginInstallResult, type PluginInstallStage } from './errors.js';
 import { toErrorMessage } from '../../../../common/utils/error.js';
 import { normalizeGitDownloadUrl, resolveResponseLfs } from '../../../../common/git-lfs.js';
+import { describeHostVersionIssue, PluginHostVersionError } from '../catalog-common.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../utils/version.js';
 
 export { resolveNpmInvocation, type NpmInvocation } from './dependencies.js';
 
@@ -263,6 +265,23 @@ function assertSafePluginId(id: string): void {
 
 const MOVE_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
+/**
+ * 安装期的宿主版本闸门：包内清单声明的 minOpenDeskVersion / maxOpenDeskVersion
+ * 不满足当前宿主时，在落盘之前直接拒绝。三种来源（本地目录 / 压缩包 / npm）都只在
+ * 暂存目录里落过内容，失败后由上层统一清理，用户插件目录里不留任何残留。
+ *
+ * 调用点在上架信息核对之后：市场条目与包内清单声明对不上时先报「信息不一致」，
+ * 两者一致时才按包内真身给出版本引导。
+ *
+ * 与市场条目的下载前预检（app.ts installFromPluginRegistry）同一判定口径
+ * （describeHostVersionIssue），只是数据源不同：条目校验的是市场上架信息，
+ * 这里校验的是包内清单真身——条目没声明而包内声明的场景由这道闸兜住。
+ */
+function assertHostVersionCompatible(validated: ValidatedOpenDeskPluginPackage): void {
+    const issue = describeHostVersionIssue(validated);
+    if (issue) throw new PluginHostVersionError(issue.direction, issue.range, OPENDESK_RUNTIME_VERSION);
+}
+
 function waitForMoveRetry(delay: number): Promise<void> {
     return new Promise((resolve) => {
         const timer = setTimeout(resolve, delay);
@@ -324,6 +343,7 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
                 stage = 'validate';
             }
             if (!extractedDirectory) throw new Error('plugin.install_archive_root_not_found');
+            // 先做结构校验：连插件都不是的包不必白拷贝一份到暂存目录
             validateOpenDeskPluginDirectory(extractedDirectory);
             stage = 'commit';
             pluginDirectory = stagingDirectory;
@@ -371,6 +391,9 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
         // 落盘前的最后一道校验（市场安装用来核对上架信息与包内清单）：抛错就整单失败，
         // 此时 destination 还没被挪走，旧版本原样留在磁盘上
         options.verifyStaged?.({ id: validated.id, directory: pluginDirectory });
+        // 宿主版本闸门放在上架信息核对之后：条目与包内清单的声明对不上时先报「信息不一致」
+        // （那才是根因），两者一致时才按包内真身给出版本引导
+        assertHostVersionCompatible(validated);
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
         const destination = path.join(getPluginsDirectory(configDirectory), validated.id);

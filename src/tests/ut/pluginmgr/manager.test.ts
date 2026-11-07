@@ -1021,3 +1021,148 @@ describe('pluginmgr managed installation', () => {
         }
     });
 });
+
+describe('pluginmgr host version gate on installation', () => {
+    let configDirectory: string;
+    let previousBuiltinDirectory: string | undefined;
+
+    beforeEach(() => {
+        configDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-plugin-host-version-'));
+        // 隔离内置插件目录，避免发现到仓库里真实的内置插件
+        previousBuiltinDirectory = process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = path.join(configDirectory, 'builtin-empty');
+        setCustomOpendeskDirectory(configDirectory);
+        Setting.clearCache();
+    });
+
+    afterEach(() => {
+        if (previousBuiltinDirectory === undefined) delete process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY;
+        else process.env.OPENDESK_BUILTIN_PLUGINS_DIRECTORY = previousBuiltinDirectory;
+        Setting.clearCache();
+        setCustomOpendeskDirectory(undefined);
+        fs.rmSync(configDirectory, { recursive: true, force: true });
+    });
+
+    function writeLocalZip(zipPath: string, manifestExtras: Record<string, unknown> = {}): void {
+        const archive = new AdmZip();
+        archive.addFile('package.json', Buffer.from(JSON.stringify({ name: 'host-gated-plugin', version: '1.0.0' })));
+        archive.addFile(
+            'opendesk.plugin.json',
+            Buffer.from(
+                JSON.stringify({
+                    id: 'host-gated-plugin',
+                    entry: './index.mjs',
+                    apiVersion: 1,
+                    capabilities: [],
+                    ...manifestExtras
+                })
+            )
+        );
+        archive.addFile('index.mjs', Buffer.from("export default { id: 'host-gated-plugin', setup() {} };\n"));
+        archive.writeZip(zipPath);
+    }
+
+    test('本地 ZIP 要求更高的 OpenDesk 版本时拒绝安装且不落盘', async () => {
+        const zipPath = path.join(configDirectory, 'future-plugin.zip');
+        writeLocalZip(zipPath, { minOpenDeskVersion: '99.0.0' });
+
+        const result = await installPlugin(zipPath, {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm should not run when the host version gate rejects the package');
+            }
+        });
+
+        // 修复前：安装期不校验宿主版本，包会被装上、直到加载期才报 too_old 诊断
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('host_version_too_old');
+        expect(result.error).toContain('plugin.install_host_version:too_old');
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'host-gated-plugin'))).toBe(false);
+        // 暂存目录也不留残留：解压用的临时目录与 install-* 都已被清掉
+        expect(fs.readdirSync(getPluginStagingDirectory(configDirectory))).toEqual([]);
+    });
+
+    test('本地 ZIP 声明的上界低于当前宿主时同样拒绝', async () => {
+        const zipPath = path.join(configDirectory, 'legacy-plugin.zip');
+        writeLocalZip(zipPath, { maxOpenDeskVersion: '0.0.1' });
+
+        const result = await installPlugin(zipPath, { configDirectory, runNpm: async () => undefined });
+
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('host_version_too_new');
+    });
+
+    test('直接安装声明了不兼容宿主版本的本地目录时拒绝', async () => {
+        const sourceDirectory = path.join(configDirectory, 'local-gated-plugin');
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.writeFileSync(path.join(sourceDirectory, 'index.mjs'), 'export default {};');
+        fs.writeFileSync(
+            path.join(sourceDirectory, 'opendesk.plugin.json'),
+            JSON.stringify({
+                id: 'local-gated-plugin',
+                entry: './index.mjs',
+                apiVersion: 1,
+                capabilities: [],
+                minOpenDeskVersion: '99.0.0'
+            })
+        );
+
+        const result = await installPlugin(sourceDirectory, {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm should not run for a plugin directory');
+            }
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('host_version_too_old');
+    });
+
+    test('npm 源插件要求更高的 OpenDesk 版本时在落盘前拒绝', async () => {
+        const result = await installPlugin('future-npm-plugin', {
+            configDirectory,
+            runNpm: async (_args, stagingDirectory) => {
+                const pluginDirectory = path.join(stagingDirectory, 'node_modules', 'future-npm-plugin');
+                fs.mkdirSync(pluginDirectory, { recursive: true });
+                fs.writeFileSync(
+                    path.join(stagingDirectory, 'package.json'),
+                    JSON.stringify({
+                        name: 'opendesk-plugin-staging',
+                        private: true,
+                        version: '1.0.0',
+                        dependencies: { 'future-npm-plugin': '1.0.0' }
+                    })
+                );
+                fs.writeFileSync(
+                    path.join(pluginDirectory, 'package.json'),
+                    JSON.stringify({ name: 'future-npm-plugin', version: '1.0.0' })
+                );
+                fs.writeFileSync(
+                    path.join(pluginDirectory, 'opendesk.plugin.json'),
+                    JSON.stringify({
+                        id: 'future-npm-plugin',
+                        entry: './index.js',
+                        apiVersion: 1,
+                        capabilities: [],
+                        minOpenDeskVersion: '99.0.0'
+                    })
+                );
+                fs.writeFileSync(path.join(pluginDirectory, 'index.js'), 'export default {};');
+            }
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('host_version_too_old');
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'future-npm-plugin'))).toBe(false);
+    });
+
+    test('声明了兼容宿主版本的插件正常安装', async () => {
+        const zipPath = path.join(configDirectory, 'compatible-plugin.zip');
+        writeLocalZip(zipPath, { minOpenDeskVersion: '0.0.1', maxOpenDeskVersion: '99.0.0' });
+
+        const result = await installPlugin(zipPath, { configDirectory, runNpm: async () => undefined });
+
+        expect(result).toEqual({ success: true, id: 'host-gated-plugin' });
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'host-gated-plugin'))).toBe(true);
+    });
+});

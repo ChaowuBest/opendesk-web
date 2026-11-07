@@ -1,7 +1,11 @@
 import { setRuntimeLocale } from '../../../locale/index.js';
+import { PluginHostVersionError } from '../../../main/applications/pluginmgr/catalog-common.js';
 import {
+    classifyPluginInstallError,
     formatPluginInstallError,
-    formatPluginUninstallError
+    formatPluginInstallException,
+    formatPluginUninstallError,
+    isHostVersionInstallError
 } from '../../../main/applications/pluginmgr/management/errors.js';
 
 describe('plugin installation error messages', () => {
@@ -47,6 +51,58 @@ describe('plugin installation error messages', () => {
                 errorCode: 'unknown'
             })
         ).toBe('插件安装失败，请查看应用日志了解详细信息。');
+    });
+
+    test('宿主版本过低时提示升级 OpenDesk', () => {
+        setRuntimeLocale('zh-CN');
+
+        expect(
+            formatPluginInstallError({
+                errorCode: 'host_version_too_old'
+            })
+        ).toBe('该插件要求的 OpenDesk 版本高于当前版本，无法安装。请将 OpenDesk 升级到最新版本后重试。');
+    });
+
+    test('宿主版本过高时提示寻找支持当前版本的插件', () => {
+        setRuntimeLocale('zh-CN');
+
+        expect(
+            formatPluginInstallError({
+                errorCode: 'host_version_too_new'
+            })
+        ).toBe('该插件要求的 OpenDesk 版本低于当前版本，无法安装。请检查插件是否有支持当前版本的新版本。');
+    });
+
+    test('英文环境下宿主版本错误同样本地化', () => {
+        setRuntimeLocale('en-US');
+
+        expect(
+            formatPluginInstallError({
+                errorCode: 'host_version_too_old'
+            })
+        ).toBe(
+            'This plugin requires a newer version of OpenDesk and cannot be installed. Upgrade OpenDesk to the latest version and try again.'
+        );
+    });
+
+    test('宿主版本错误即使发生在安装阶段也归类为版本问题', () => {
+        // 分类顺序：先认版本错误再走 stage 兜底，否则界面拿不到升级引导的方向
+        const error = new PluginHostVersionError('too_new', '≤ 0.3.0', '0.4.1');
+        expect(classifyPluginInstallError(error, 'install')).toBe('host_version_too_new');
+        expect(classifyPluginInstallError(error, 'validate')).toBe('host_version_too_new');
+        expect(isHostVersionInstallError('host_version_too_new')).toBe(true);
+        expect(isHostVersionInstallError('invalid_package')).toBe(false);
+    });
+
+    test('把宿主版本闸门的结构化异常翻译成本地化引导，其它错误交回调用方', () => {
+        setRuntimeLocale('zh-CN');
+
+        // 文案与市场安装弹窗一致：带上插件要求的范围与当前宿主版本
+        expect(formatPluginInstallException(new PluginHostVersionError('too_old', '≥ 99.0.0', '0.4.1'))).toBe(
+            '该插件需要 OpenDesk ≥ 99.0.0，当前版本 0.4.1 不满足要求。请将 OpenDesk 升级到最新版本后重试。'
+        );
+        // 非宿主版本错误返回 undefined：调用方原样展示（保留原始原因与堆栈）
+        expect(formatPluginInstallException(new Error('disk full'))).toBeUndefined();
     });
 });
 

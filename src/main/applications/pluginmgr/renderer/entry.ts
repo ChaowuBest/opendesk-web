@@ -36,8 +36,11 @@ import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-ove
 import type { ThemeAppearance } from '../../../../renderer/theme/theme-manager.js';
 import {
     describeHostVersionRange,
+    formatPluginDiagnostic,
     isHostVersionCompatible,
+    parsePluginHostVersionMessage,
     resolveMarketInstallState,
+    type PluginMarketInstallOutcome,
     type PluginMarketInstallState
 } from '../catalog-common.js';
 
@@ -142,10 +145,6 @@ interface PluginMarketEntry {
     /** 插件图标地址（本地图标已被主进程内联成 data URL） */
     iconUrl?: string;
 }
-
-/** 从市场安装的结果：失败时主进程返回 `success: false`（而不是抛错），便于界面区分提示方式 */
-type MarketInstallOutcome =
-    { success: true; id?: string } | { success: false; code: 'manifest_mismatch'; message: string };
 
 /** 一个市场的清单：categories 缺省表示该市场不支持按分类显示 */
 interface PluginMarketCatalog {
@@ -1357,8 +1356,16 @@ export class PluginMgrEntryWidget extends HTMLElement {
      *
      * 结果一律走系统通知，不写页面顶部的提示条：安装 / 卸载可能耗时几十秒，用户常常已经切走；
      * 而提示条在详情模态弹窗打开时还会被盖住，等于没反馈。
+     *
+     * `onError` 返回 true 表示该失败已由调用方自行反馈（如宿主版本不满足的模态弹窗），
+     * 不再发默认的系统通知。
      */
-    private async run(operation: () => Promise<unknown>, successKey: string, onSuccess?: () => void): Promise<void> {
+    private async run(
+        operation: () => Promise<unknown>,
+        successKey: string,
+        onSuccess?: () => void,
+        onError?: (message: string) => boolean
+    ): Promise<void> {
         if (this.busy) return;
         this.clearNotice();
         this.setBusy(true);
@@ -1378,6 +1385,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
             );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            if (onError?.(message)) return;
             this.notifyOperationResult(this.t(successKey.replace(/\.success$/, '.fail')), message, true);
         } finally {
             this.setBusy(false);
@@ -1574,6 +1582,17 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 this.installDialogMode = undefined;
                 this.installSpec = '';
                 this.syncInstallDialog();
+            },
+            // 宿主版本不满足的失败弹模态引导升级，不再发默认的系统通知
+            (message) => {
+                const issue = parsePluginHostVersionMessage(message);
+                if (!issue) return false;
+                void this.showInstallBlockedModal({
+                    direction: issue.direction,
+                    range: issue.range,
+                    current: issue.hostVersion
+                });
+                return true;
             }
         );
         if (source) {
@@ -1706,10 +1725,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
             </div>
             ${contributionPills.length ? `<div class="contributions">${contributionPills.join('')}</div>` : ''}
             ${diagnostics
-                .map(
-                    (item) =>
-                        `<div class="diagnostic">${escapeHtml(`${item.stage}/${item.code}${item.detail ? `: ${item.detail}` : ''}`)}</div>`
-                )
+                .map((item) => `<div class="diagnostic">${escapeHtml(formatPluginDiagnostic(item, this.t))}</div>`)
                 .join('')}
             <div class="card-footer">
                 ${tags.length ? `<div class="plugin-tags">${tags.join('')}</div>` : ''}
@@ -2525,13 +2541,17 @@ export class PluginMgrEntryWidget extends HTMLElement {
         this.renderMarketPluginDetail();
         try {
             const outcome = (await getAPI().callMainWorld('installFromPluginRegistry', registryName, pluginId)) as
-                MarketInstallOutcome | undefined;
-            // 落盘前的核对没过（包内清单与市场条目不一致）：这次安装已经在主进程里中止，
-            // 磁盘上什么都没变。这类问题用户需要看清「装的到底是什么」，只弹模态弹窗——
-            // 提示条会和弹窗重复一遍同样的长文案，反而把页面顶部的市场信息挤下去
+                PluginMarketInstallOutcome | undefined;
+            // 落盘前的核对没过（包内清单与市场条目不一致），或插件要求的宿主版本不满足：
+            // 两种失败都已经在主进程里中止、磁盘上什么都没变。这类问题用户需要看清原因，
+            // 只弹模态弹窗——提示条会和弹窗重复一遍同样的长文案，反而把页面顶部的市场信息挤下去
             if (outcome && outcome.success === false) {
-                // 弹窗不 await：先让 finally 把进度条收掉、刷新列表，别让卡片一直停在「安装中」
-                void this.showMarketInstallMismatch(outcome.message);
+                if (outcome.code === 'host_version') {
+                    // 弹窗不 await：先让 finally 把进度条收掉、刷新列表，别让卡片一直停在「安装中」
+                    void this.showInstallBlockedModal(outcome);
+                } else {
+                    void this.showMarketInstallMismatch(outcome.message);
+                }
                 return;
             }
             this.notifyOperationResult(
@@ -2568,6 +2588,39 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 message: escapeHtml(message),
                 confirmText: this.t('common.close'),
                 cancelText: null
+            });
+        } catch {
+            this.setNotice(message, true);
+        }
+    }
+
+    /**
+     * 「宿主版本不满足，无法安装」的模态提醒。
+     *
+     * 本地安装（目录 / zip / npm）与市场安装共用：安装已经在主进程侧被宿主版本闸门拒绝，
+     * 磁盘上什么都没变。弹窗按不满足的方向给出可操作建议——宿主过低时引导升级 OpenDesk，
+     * 宿主过高时引导寻找支持当前版本的插件。弹窗失败时退回提示条，保证用户至少能看到原因。
+     */
+    private async showInstallBlockedModal(issue: {
+        direction: 'too_old' | 'too_new';
+        range: string;
+        current: string;
+    }): Promise<void> {
+        const message = this.t(
+            issue.direction === 'too_old'
+                ? 'plugin.center.market.installBlockedTooOld'
+                : 'plugin.center.market.installBlockedTooNew',
+            { range: issue.range, current: issue.current }
+        );
+        try {
+            await showConfirmModal({
+                variant: 'warn',
+                icon: 'fa-triangle-exclamation',
+                title: this.t('plugin.center.market.installBlockedTitle'),
+                message: escapeHtml(message),
+                confirmText: this.t('common.close'),
+                cancelText: null,
+                mountTarget: this.shadowRoot!
             });
         } catch {
             this.setNotice(message, true);

@@ -49,8 +49,8 @@ import {
     OPENDESK_PLUGIN_PLATFORMS,
     resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
-import { compareVersion } from '../../../utils/version.js';
 import { ensurePluginDataDirectory } from '../management/paths.js';
+import { describeHostVersionIssue } from '../catalog-common.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import { resolveAppearanceLogoValues } from './appearance.js';
@@ -785,26 +785,19 @@ export class PluginHost {
             });
             return this.replaceEntry(entry);
         }
-        if (plugin.minOpenDeskVersion && options.hostVersion) {
-            const comparison = compareVersion(options.hostVersion, plugin.minOpenDeskVersion);
-            if (comparison === undefined || comparison < 0) {
+        // 与安装期闸门、市场卡片共用同一份版本区间判定（catalog-common），
+        // 宿主升级/降级后这里给出与「装不上」一致的原因，不再各写一套比较逻辑
+        if (options.hostVersion) {
+            const hostVersionIssue = describeHostVersionIssue(plugin, options.hostVersion);
+            if (hostVersionIssue) {
+                const tooOld = hostVersionIssue.direction === 'too_old';
+                // detail 保持语言无关的「当前版本 < 声明边界」，本地化文案负责解释方向
+                const declared = tooOld ? plugin.minOpenDeskVersion : plugin.maxOpenDeskVersion;
                 entry.status = 'error';
                 entry.diagnostics.push({
-                    code: 'plugin.opendesk_version_too_old',
+                    code: tooOld ? 'plugin.opendesk_version_too_old' : 'plugin.opendesk_version_too_new',
                     stage: 'validate',
-                    detail: `${options.hostVersion} < ${plugin.minOpenDeskVersion}`
-                });
-                return this.replaceEntry(entry);
-            }
-        }
-        if (plugin.maxOpenDeskVersion && options.hostVersion) {
-            const comparison = compareVersion(options.hostVersion, plugin.maxOpenDeskVersion);
-            if (comparison === undefined || comparison > 0) {
-                entry.status = 'error';
-                entry.diagnostics.push({
-                    code: 'plugin.opendesk_version_too_new',
-                    stage: 'validate',
-                    detail: `${options.hostVersion} > ${plugin.maxOpenDeskVersion}`
+                    detail: `${options.hostVersion} ${tooOld ? '<' : '>'} ${declared ?? hostVersionIssue.range}`
                 });
                 return this.replaceEntry(entry);
             }

@@ -1,7 +1,11 @@
 import { describe, expect, test } from '@jest/globals';
 import {
+    describeHostVersionIssue,
     describeHostVersionRange,
+    formatPluginDiagnostic,
     isHostVersionCompatible,
+    parsePluginHostVersionMessage,
+    PluginHostVersionError,
     resolveMarketInstallState
 } from '../../../main/applications/pluginmgr/catalog-common.js';
 import { OPENDESK_RUNTIME_VERSION } from '../../../main/utils/version.js';
@@ -80,5 +84,122 @@ describe('describeHostVersionRange', () => {
             '1.2.0 – 2.0.0'
         );
         expect(describeHostVersionRange({})).toBeUndefined();
+    });
+});
+
+describe('describeHostVersionIssue', () => {
+    test('兼容时没有 issue', () => {
+        expect(describeHostVersionIssue({})).toBeUndefined();
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '0.0.1', maxOpenDeskVersion: '99.0.0' })).toBeUndefined();
+    });
+
+    test('宿主低于下界时报告 too_old 并给出范围描述', () => {
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '99.0.0' })).toEqual({
+            direction: 'too_old',
+            range: '≥ 99.0.0'
+        });
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '2.0.0' }, '1.9.9')).toEqual({
+            direction: 'too_old',
+            range: '≥ 2.0.0'
+        });
+    });
+
+    test('宿主高于上界时报告 too_new 并给出范围描述', () => {
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '0.0.1' })).toEqual({
+            direction: 'too_new',
+            range: '≤ 0.0.1'
+        });
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '2.0.0' }, '2.1.0')).toEqual({
+            direction: 'too_new',
+            range: '≤ 2.0.0'
+        });
+    });
+
+    test('声明了却解析不了的上下界也给出 issue（按不满足处理）', () => {
+        expect(describeHostVersionIssue({ minOpenDeskVersion: 'next' })).toMatchObject({ direction: 'too_old' });
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '2024-09' })).toMatchObject({ direction: 'too_new' });
+    });
+
+    test('两段式宿主版本按补齐 PATCH 后的版本比较，方向不因解析差异而反了', () => {
+        // 修复前：宿主 '0.4' 不满足 min 2.0.0 时被误判成 too_new
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '2.0.0' }, '0.4')).toEqual({
+            direction: 'too_old',
+            range: '≥ 2.0.0'
+        });
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '0.3.0' }, '0.4')).toEqual({
+            direction: 'too_new',
+            range: '≤ 0.3.0'
+        });
+    });
+
+    test('两段式宿主版本实际兼容时不产生 issue', () => {
+        // 修复前的 host 侧比较解析不了两段式宿主版本，兼容范围也会被误判成越界
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '0.1.0' }, '0.4')).toBeUndefined();
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '0.9.0' }, '0.4')).toBeUndefined();
+    });
+
+    test('空白声明的上下界按未声明处理', () => {
+        expect(describeHostVersionIssue({ minOpenDeskVersion: '  ' })).toBeUndefined();
+        expect(describeHostVersionIssue({ maxOpenDeskVersion: '' })).toBeUndefined();
+    });
+});
+
+describe('PluginHostVersionError', () => {
+    test('message 是渲染层可解析的结构化串', () => {
+        const error = new PluginHostVersionError('too_old', '≥ 99.0.0', '0.4.1');
+        expect(error.direction).toBe('too_old');
+        expect(parsePluginHostVersionMessage(error.message)).toEqual({
+            direction: 'too_old',
+            range: '≥ 99.0.0',
+            hostVersion: '0.4.1'
+        });
+    });
+
+    test('parse 对非宿主版本错误返回 undefined', () => {
+        expect(parsePluginHostVersionMessage('plugin.install_builtin_conflict:demo')).toBeUndefined();
+        expect(parsePluginHostVersionMessage('plugin.install_host_version:too_old')).toBeUndefined();
+    });
+
+    test('空范围与含冒号的范围都能原样解析回来', () => {
+        // 宿主版本取最后一个冒号之后：范围描述里即使带冒号也不会把宿主版本切坏
+        expect(parsePluginHostVersionMessage('plugin.install_host_version:too_new::0.4.1')).toEqual({
+            direction: 'too_new',
+            range: '',
+            hostVersion: '0.4.1'
+        });
+        expect(parsePluginHostVersionMessage('plugin.install_host_version:too_old:1.0.0 – 2.0.0:0.4.1')).toEqual({
+            direction: 'too_old',
+            range: '1.0.0 – 2.0.0',
+            hostVersion: '0.4.1'
+        });
+    });
+});
+
+describe('formatPluginDiagnostic', () => {
+    test('opendesk_version_too_old/_too_new 渲染成本地化文案而不是裸诊断码', () => {
+        const translate = (key: string, params?: Record<string, string | number>) =>
+            `[${key}]${params ? JSON.stringify(params) : ''}`;
+        expect(
+            formatPluginDiagnostic(
+                { stage: 'validate', code: 'plugin.opendesk_version_too_old', detail: '0.4.1 < 99.0.0' },
+                translate
+            )
+        ).toBe(`[plugin.diagnostic.opendeskVersionTooOld]{"detail":"0.4.1 < 99.0.0"}`);
+        expect(
+            formatPluginDiagnostic(
+                { stage: 'validate', code: 'plugin.opendesk_version_too_new', detail: '9.9.9 > 1.0.0' },
+                translate
+            )
+        ).toBe(`[plugin.diagnostic.opendeskVersionTooNew]{"detail":"9.9.9 > 1.0.0"}`);
+    });
+
+    test('没有映射的诊断码保持 stage/code/detail 原样输出', () => {
+        const translate = (key: string) => key;
+        expect(formatPluginDiagnostic({ stage: 'setup', code: 'plugin.setup_failed', detail: 'boom' }, translate)).toBe(
+            'setup/plugin.setup_failed: boom'
+        );
+        expect(formatPluginDiagnostic({ stage: 'load', code: 'plugin.invalid_id' }, translate)).toBe(
+            'load/plugin.invalid_id'
+        );
     });
 });

@@ -124,4 +124,9 @@ export {
     combineToolsetProviders
 } from './runtime/tool-provider.js';
 export { syncPluginTuiCommands } from './runtime/commands.js';
-export { formatPluginInstallError, formatPluginUninstallError } from './management/errors.js';
+export {
+    formatPluginInstallError,
+    formatPluginInstallException,
+    formatPluginUninstallError
+} from './management/errors.js';
+export { formatPluginDiagnostic } from './catalog-common.js';

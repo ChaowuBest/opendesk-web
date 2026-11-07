@@ -11,13 +11,26 @@ import { jest, describe, test, expect, beforeEach } from '@jest/globals';
 
 // ── mock 模块（unstable_mockModule 不提升，变量需先初始化） ─────────────────
 
-const mockInstallPlugin = jest.fn<() => Promise<{ success: boolean; id?: string; error?: string }>>();
+const mockInstallPlugin =
+    jest.fn<() => Promise<{ success: boolean; id?: string; error?: string; errorCode?: string }>>();
 const mockUninstallPlugin = jest.fn<() => Promise<{ success: boolean; error?: string }>>();
 const mockIsPluginEnabledFixed = jest.fn<() => boolean>();
 const mockSetPluginEnabled = jest.fn<() => boolean>();
 const mockReloadPluginHost = jest.fn<() => Promise<void>>();
 const mockApplyPluginEnabledChange = jest.fn<() => Promise<void>>();
 const mockListVisiblePlugins = jest.fn<() => unknown[]>();
+// 与真实实现同口径：宿主版本不满足时给出带版本范围的升级引导，其余错误走通用文案
+const mockFormatPluginInstallError = jest.fn<(result: { errorCode?: string }) => string>((result) =>
+    result?.errorCode === 'host_version_too_old'
+        ? '该插件要求的 OpenDesk 版本高于当前版本，无法安装。请将 OpenDesk 升级到最新版本后重试。'
+        : '插件安装失败，请查看应用日志了解详细信息。'
+);
+const mockFormatPluginInstallException = jest.fn<(error: unknown) => string | undefined>((error) => {
+    const message = typeof error === 'string' ? error : error instanceof Error ? error.message : String(error);
+    return message.startsWith('plugin.install_host_version:')
+        ? '该插件需要 OpenDesk ≥ 99.0.0，当前版本 0.4.1 不满足要求。请将 OpenDesk 升级到最新版本后重试。'
+        : undefined;
+});
 
 jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => ({
     installPlugin: mockInstallPlugin,
@@ -27,7 +40,9 @@ jest.unstable_mockModule('../../../main/applications/pluginmgr/index.js', () => 
     isPluginEnabledFixed: mockIsPluginEnabledFixed,
     setPluginEnabled: mockSetPluginEnabled,
     reloadPluginHost: mockReloadPluginHost,
-    applyPluginEnabledChange: mockApplyPluginEnabledChange
+    applyPluginEnabledChange: mockApplyPluginEnabledChange,
+    formatPluginInstallError: mockFormatPluginInstallError,
+    formatPluginInstallException: mockFormatPluginInstallException
 }));
 
 jest.unstable_mockModule('../../../main/applications/channelmgr/app.js', () => ({
@@ -121,8 +136,28 @@ describe('channelmgr 插件管理工具的宿主重载顺序', () => {
         const result = await tool.execute({ spec: 'bad-plugin' });
 
         expect(result.result).toContain('插件安装失败');
+        // 非宿主版本失败保留底层原因，而不是被通用文案吞掉
+        expect(result.result).toContain('install error');
         expect(mockReloadPluginHost).not.toHaveBeenCalled();
         expect(app.reloadChannels).not.toHaveBeenCalled();
+    });
+
+    test('installChannelPlugin 宿主版本不满足时给出带版本范围的升级引导', async () => {
+        mockInstallPlugin.mockResolvedValue({
+            success: false,
+            error: 'plugin.install_host_version:too_old:≥ 99.0.0:0.4.1',
+            errorCode: 'host_version_too_old'
+        });
+        const app = makeApp();
+        const tool = new InstallChannelPluginTool(app);
+
+        const result = await tool.execute({ spec: 'future-plugin' });
+
+        // 与 CLI / 插件工具同一段文案：带插件要求的范围与当前宿主版本
+        expect(result.result).toContain('需要 OpenDesk ≥ 99.0.0');
+        expect(result.result).toContain('当前版本 0.4.1');
+        expect(result.result).not.toContain('plugin.install_host_version');
+        expect(mockReloadPluginHost).not.toHaveBeenCalled();
     });
 
     test('uninstallChannelPlugin 成功后先 reloadPluginHost 再 reloadChannels', async () => {

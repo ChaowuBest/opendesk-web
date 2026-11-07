@@ -5,6 +5,7 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
+import { OPENDESK_RUNTIME_VERSION } from '../../../main/utils/version.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { disposePluginHost } from '../../../main/applications/pluginmgr/runtime/bootstrap.js';
 import { PluginMgrApplication } from '../../../main/applications/pluginmgr/app.js';
@@ -318,10 +319,17 @@ describe('plugin channels and marketplace (main process)', () => {
         });
         const customId = await addCustomChannel();
 
-        // 仍然列出来（用户得知道「有个插件要更新 OpenDesk」），但安装被拒
+        // 仍然列出来（用户得知道「有个插件要更新 OpenDesk」），但安装被拒：
+        // 失败以 outcome 返回（而不是抛错），界面据此弹「无法安装，请升级 OpenDesk」的模态
         const catalog = await app.getPluginCatalog(customId);
         expect(catalog.entries.map((entry) => entry.id)).toEqual(['future-plugin']);
-        await expect(app.installFromPluginRegistry(customId, 'future-plugin')).rejects.toThrow(/需要 OpenDesk/);
+        const blocked = (await app.installFromPluginRegistry(customId, 'future-plugin')) as {
+            success: boolean;
+            code?: string;
+            message?: string;
+        };
+        expect(blocked).toMatchObject({ success: false, code: 'host_version' });
+        expect(blocked.message).toContain('需要 OpenDesk');
         expect(platform.fetchMock.mock.calls.some(([input]) => String(input).endsWith('.zip'))).toBe(false);
 
         // 上界同样生效：只支持到很老的宿主时也不该装进来
@@ -345,7 +353,59 @@ describe('plugin channels and marketplace (main process)', () => {
             return new Response('should not be downloaded', { status: 500 });
         });
         await app.getPluginCatalog(customId, undefined, undefined, true);
-        await expect(app.installFromPluginRegistry(customId, 'legacy-plugin')).rejects.toThrow(/需要 OpenDesk/);
+        await expect(app.installFromPluginRegistry(customId, 'legacy-plugin')).resolves.toMatchObject({
+            success: false,
+            code: 'host_version'
+        });
+    });
+
+    test('a market package whose own manifest requires another host version is rejected before landing', async () => {
+        // 市场条目没声明宿主版本上下界、包内清单却声明了：不能因为「条目能过」就把一个
+        // 加载必然失败的包装进用户机器——落盘前按包内清单再校验一次宿主版本
+        platform.fetchMock.mockImplementation(async (input: string | URL) => {
+            const url = typeof input === 'string' ? input : input.toString();
+            if (url.endsWith('/category/plugins.json')) {
+                return new Response(
+                    JSON.stringify({
+                        plugins: [
+                            {
+                                id: 'secret-future-plugin',
+                                version: '1.0.0',
+                                downloadUrl: 'https://market.example.com/plugins/secret-future-plugin-1.0.0.zip'
+                            }
+                        ]
+                    }),
+                    { status: 200, headers: { 'content-type': 'application/json' } }
+                );
+            }
+            const archive = buildArchive('secret-future-plugin', { minOpenDeskVersion: '99.0.0' });
+            return new Response(archive, {
+                status: 200,
+                headers: { 'content-type': 'application/zip', 'content-length': String(archive.byteLength) }
+            });
+        });
+        const customId = await addCustomChannel();
+
+        const outcome = (await app.installFromPluginRegistry(customId, 'secret-future-plugin')) as {
+            success: boolean;
+            code?: string;
+            direction?: string;
+        };
+        expect(outcome).toMatchObject({ success: false, code: 'host_version', direction: 'too_old' });
+        // 磁盘上什么都不留
+        expect(fs.existsSync(path.join(configDirectory, 'plugins', 'secret-future-plugin'))).toBe(false);
+    });
+
+    test('a local package rejected by the host version gate throws the structured message for the renderer', async () => {
+        // 本地安装走 app.install：宿主版本不满足时抛结构化串，渲染层据此弹升级引导模态
+        // （市场安装返回 outcome，两条路径的形状必须能对上同一份解析逻辑）
+        const zipPath = path.join(configDirectory, 'future-local-plugin.zip');
+        fs.writeFileSync(zipPath, buildArchive('future-local-plugin', { minOpenDeskVersion: '99.0.0' }));
+
+        await expect(app.install(zipPath)).rejects.toThrow(
+            `plugin.install_host_version:too_old:≥ 99.0.0:${OPENDESK_RUNTIME_VERSION}`
+        );
+        expect(fs.existsSync(path.join(configDirectory, 'plugins', 'future-local-plugin'))).toBe(false);
     });
 
     test('a package whose manifest contradicts the marketplace entry is never installed', async () => {
@@ -423,6 +483,9 @@ describe('plugin channels and marketplace (main process)', () => {
         await expectMismatch({ ...catalogEntry, author: { name: { 'zh-CN': '李四' } } });
         // 宿主版本上下界同样参与核对（两边都声明了才比）
         await expectMismatch({ ...catalogEntry, minOpenDeskVersion: '0.0.2' }, { minOpenDeskVersion: '0.0.1' });
+        // 包内清单声明了当前宿主根本不满足的版本、市场条目却说兼容：根因是「市场信息撒谎」，
+        // 应当先报不一致（而不是只提示升级 OpenDesk）
+        await expectMismatch({ ...catalogEntry, minOpenDeskVersion: '0.0.1' }, { minOpenDeskVersion: '99.0.0' });
 
         // 市场只维护 name 时（author 只写 name、没有 institution/homepage），包内声明的
         // institution / homepage 不该被判为「不一致」拦下安装——与其它字段「市场未声明就不比」同口径

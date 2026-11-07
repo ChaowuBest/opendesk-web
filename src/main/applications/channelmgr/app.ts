@@ -21,7 +21,13 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';
-import { getPluginHost, isPluginEnabledFixed, setPluginEnabled, applyPluginEnabledChange } from '../pluginmgr/index.js';
+import {
+    getPluginHost,
+    isPluginEnabledFixed,
+    setPluginEnabled,
+    applyPluginEnabledChange,
+    formatPluginInstallException
+} from '../pluginmgr/index.js';
 import type { Participant } from '../../aikernel/types/index.js';
 import type { ChannelPlugin, ChannelAccountStatus, ChannelGatewayContext, InboundChannelMessage } from './types.js';
 import { recordContact, getContacts } from './contacts.js';
@@ -1879,8 +1885,11 @@ export class ChannelMgrApplication extends BaseApplication {
                     showInfo(t('plugin.install.success'), t('channel.install.success', { id }));
                 } catch (err: any) {
                     progress.hide();
-                    // 错误文案由 pluginmgr 应用层本地化，这里不再拼中缀
-                    showInfo(t('plugin.install.fail'), err instanceof Error ? err.message : String(err));
+                    // pluginmgr 对宿主版本不满足的失败抛结构化串（渲染层解析它弹模态），
+                    // 这里翻译成本地化引导；其余错误原样展示
+                    const reason =
+                        formatPluginInstallException(err) ?? (err instanceof Error ? err.message : String(err));
+                    showInfo(t('plugin.install.fail'), reason);
                 }
                 break;
             }

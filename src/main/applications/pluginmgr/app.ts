@@ -51,7 +51,12 @@ import type {
     PluginPlatform
 } from '../../../../packages/plugin-sdk/src/index.js';
 import { localePrimaryTag } from '../../../../packages/plugin-sdk/src/index.js';
-import { formatPluginInstallError, formatPluginUninstallError, type PluginInstallResult } from './management/errors.js';
+import {
+    formatPluginInstallError,
+    formatPluginUninstallError,
+    isHostVersionInstallError,
+    type PluginInstallResult
+} from './management/errors.js';
 import { validateOpenDeskPluginDirectory } from '../../../../packages/plugin-sdk/src/package.js';
 import { t } from './locale/index.js';
 import { t as translate, getLocale } from '../../../locale/index.js';
@@ -86,7 +91,12 @@ import {
     type PluginChannel,
     type PluginChannelView
 } from './channels.js';
-import { describeHostVersionRange, isHostVersionCompatible } from './catalog-common.js';
+import {
+    describeHostVersionIssue,
+    parsePluginHostVersionMessage,
+    type PluginHostVersionIssueData,
+    type PluginMarketInstallOutcome
+} from './catalog-common.js';
 
 /** 单个插件渠道的配置形状；系统默认渠道只有 isEnabled 会被采用 */
 const PluginChannelSchema = z.object({
@@ -104,22 +114,8 @@ const PluginMgrConfigSchema = z.object({
 /** 下载进度事件的最小间隔：一个几十兆的包按块回调会有上千次，界面按这个节奏更新足够顺滑 */
 const DOWNLOAD_PROGRESS_THROTTLE_MS = 120;
 
-/**
- * 从市场安装的结果。
- *
- * 失败时**不抛错**而是返回（`success: false`），因为界面要对「上架信息与包内清单不一致」
- * 单独弹模态弹窗强调；其余失败（下载不了、内置冲突、id 对不上……）仍然抛错，
- * 走的是统一的错误提示路径。
- */
-export type PluginMarketInstallOutcome =
-    | { success: true; id?: string }
-    | {
-          success: false;
-          /** 失败类别：`manifest_mismatch` 表示包内清单与市场条目对不上，安装已在落盘前中止 */
-          code: 'manifest_mismatch';
-          /** 给用户看的原因（已本地化） */
-          message: string;
-      };
+/** 从市场安装的结果：形状定义在 catalog-common，渲染层用同一份类型解析返回值 */
+export type { PluginMarketInstallOutcome } from './catalog-common.js';
 
 /** 平台 fetch 只接受字符串/URL，把 Request 对象也归一化掉，免得被当成 "[object Request]" */
 function toPlatformFetchInput(input: RequestInfo | URL): string | URL {
@@ -521,7 +517,14 @@ export class PluginMgrApplication extends BaseApplication {
         await initializePluginHost();
         try {
             const result = await applyPluginInstall(targetId, () => installPlugin(spec));
-            if (!result.success) throw new Error(this.describeInstallFailure(result));
+            if (!result.success) {
+                if (isHostVersionInstallError(result.errorCode)) {
+                    // 结构化串原样抛给渲染层：界面据此识别「宿主版本不满足」并弹升级引导模态，
+                    // CLI / AI 工具不经过这条路径，仍用 result + formatPluginInstallError 组装文案
+                    throw new Error(result.error ?? this.describeInstallFailure(result));
+                }
+                throw new Error(this.describeInstallFailure(result));
+            }
             this.notifyPluginsChanged('install', result.id);
             return result;
         } catch (error) {
@@ -709,13 +712,15 @@ export class PluginMgrApplication extends BaseApplication {
                 })
             );
         }
-        // 宿主版本不满足的条目同样拦在这里：界面会把它标成「装不了」，直接调 API 也不该装进一个
-        // 注定加载失败的包
-        if (!isHostVersionCompatible(entry)) {
-            throw new PluginMarketError(
+        // 宿主版本不满足的条目同样拦在这里：界面会把它标成「装不了」，直接调 API 也返回
+        // 结构化 outcome（而不是抛错），让界面弹出「无法安装，请升级 OpenDesk」的模态
+        const entryHostVersionIssue = describeHostVersionIssue(entry);
+        if (entryHostVersionIssue) {
+            return this.hostVersionOutcome(
+                { ...entryHostVersionIssue, hostVersion: OPENDESK_RUNTIME_VERSION },
                 t('market.hostVersionUnsupported', {
                     id: entry.id,
-                    range: describeHostVersionRange(entry) ?? '',
+                    range: entryHostVersionIssue.range,
                     current: OPENDESK_RUNTIME_VERSION
                 })
             );
@@ -772,6 +777,14 @@ export class PluginMgrApplication extends BaseApplication {
                 if (mismatchMessage) {
                     return { success: false as const, code: 'manifest_mismatch' as const, message: mismatchMessage };
                 }
+                if (isHostVersionInstallError(result.errorCode)) {
+                    // 包内清单声明的宿主版本范围不满足（市场条目未声明时由 manager 的闸门兜住）：
+                    // 与条目级拦截一样返回结构化 outcome，界面弹「请升级 OpenDesk」的模态
+                    const stagedIssue = parsePluginHostVersionMessage(result.error ?? '');
+                    if (stagedIssue) {
+                        return this.hostVersionOutcome(stagedIssue, formatPluginInstallError(result));
+                    }
+                }
                 throw new Error(this.describeInstallFailure(result));
             }
             // 走到这里插件已经落盘了：先按包内真实 id 广播，界面上的「已安装」才会更新
@@ -808,6 +821,23 @@ export class PluginMgrApplication extends BaseApplication {
         const reason = formatPluginInstallError(result);
         const detail = typeof result.error === 'string' ? result.error.trim() : '';
         return detail ? t('error.installFailedDetail', { reason, detail }) : t('error.installFailed', { reason });
+    }
+
+    /**
+     * 组装「宿主版本不满足，安装已被拒绝」的结构化结果。
+     *
+     * 市场条目预检（上架信息）与包内清单校验（运行时真身）都走这里，
+     * 界面据此按方向弹升级 / 换版本的模态，不需要各自拼字段。
+     */
+    private hostVersionOutcome(issue: PluginHostVersionIssueData, message: string): PluginMarketInstallOutcome {
+        return {
+            success: false,
+            code: 'host_version',
+            direction: issue.direction,
+            range: issue.range,
+            current: issue.hostVersion,
+            message
+        };
     }
 
     /**
