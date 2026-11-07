@@ -107,7 +107,6 @@ export const enUs: Record<string, string> = {
 
     'benchmark.runs.emptyTitle': 'No benchmark runs yet',
     'benchmark.runs.emptyHint': 'Run a dataset from the Datasets tab and progress shows up here live',
-    'benchmark.action.close': 'Close',
     'benchmark.dataset.tracks': 'Tracks',
     'benchmark.detail.tabOverview': 'Overview',
     'benchmark.detail.matrix': 'Case matrix',

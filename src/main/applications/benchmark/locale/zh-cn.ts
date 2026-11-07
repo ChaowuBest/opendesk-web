@@ -105,7 +105,6 @@ export const zhCn: Record<string, string> = {
 
     'benchmark.runs.emptyTitle': '还没有测评记录',
     'benchmark.runs.emptyHint': '在「测评集管理」中运行一个测评集，进度会实时显示在这里',
-    'benchmark.action.close': '关闭',
     'benchmark.dataset.tracks': '测评 Track',
     'benchmark.detail.tabOverview': '概览',
     'benchmark.detail.matrix': '用例矩阵',

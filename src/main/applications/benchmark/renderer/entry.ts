@@ -202,7 +202,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     private caseMenu: { key: string; left: number; top: number } | null = null;
     private modelPanel: { picker: 'run' | 'verify'; left: number; top: number } | null = null;
     private effortMenu: { picker: 'run' | 'verify'; alias: string; left: number; top: number } | null = null;
-    private skipModalAnimation = false;
+    /** 弹窗内的操作错误：弹窗盖住了页面顶部的 banner，错误只有画在弹窗里才看得见 */
+    private modalActionError: string | null = null;
     private pollTimer: number | null = null;
     private scrollPositions = new Map<string, number>();
 
@@ -453,8 +454,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             }
             // 装完了要重新读一次本地测评集，否则弹窗还按旧的安装状态显示「下载」
             if (state?.status === 'done') await this.loadDatasets(false);
-            // 同一个弹窗只是换了状态，别把入场动画再播一遍
-            this.skipModalAnimation = true;
             this.render();
             return;
         }
@@ -834,6 +833,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 this.datasetModalId = actionEl.dataset.datasetId || null;
                 this.catalogModal = null;
                 this.runModal = null;
+                this.modalActionError = null;
                 this.render();
                 return;
             case 'open-catalog': {
@@ -843,6 +843,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                 this.catalogModal = { registryName, catalogId };
                 this.datasetModalId = null;
                 this.runModal = null;
+                this.modalActionError = null;
                 this.render();
                 return;
             }
@@ -857,12 +858,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             case 'modal-close':
                 this.closeModals();
                 return;
-            case 'run-dataset': {
+            case 'run-dataset':
+            case 'run-catalog': {
+                // 清单弹窗的按钮带本地 datasetId，测评集弹窗用它自己的状态兜底；两个弹窗互斥，
+                // 所以兜底不会把清单的点击错认成别处的测评集
                 const datasetId = actionEl.dataset.datasetId || this.datasetModalId;
                 if (datasetId) {
-                    // 测评集弹窗 → 运行弹窗属于同一次切换：禁用入场动画，避免中间帧闪一下
-                    this.skipModalAnimation = true;
                     this.datasetModalId = null;
+                    this.catalogModal = null;
                     this.openRunModal(datasetId);
                 }
                 return;
@@ -1039,6 +1042,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         this.runModal = null;
         this.modelPanel = null;
         this.effortMenu = null;
+        this.modalActionError = null;
         this.render();
     }
 
@@ -1290,6 +1294,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         const entry = this.catalogOf(registryName).find((item) => item.id === catalogId);
         if (!entry) return;
         this.banner = null;
+        this.modalActionError = null;
         try {
             await getAPI().callMainWorld('downloadDataset', registryName, catalogId);
         } catch (error: any) {
@@ -1301,8 +1306,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             };
         }
         await this.refreshDownloads();
-        // 弹窗还开着，这里只是把按钮切成进度条形态，不要重播入场动画
-        this.skipModalAnimation = true;
+        // 弹窗还开着，这里只是把按钮切成进度条形态
         this.render();
     }
 
@@ -1318,10 +1322,19 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (!confirmed) return;
         try {
             await getAPI().callMainWorld('deleteDataset', datasetId);
+            this.modalActionError = null;
             this.datasetModalId = null;
             await this.loadDatasets(false);
+            // 清单弹窗里删的：弹窗还开着，上面那次渲染被 renderUnlessModalOpen 挡掉了，
+            // 得重画一次才能把按钮切回「下载」、状态标签回到「未下载」
+            if (this.catalogModal) {
+                this.render();
+            }
         } catch (error: any) {
-            this.banner = { text: error?.message || this._t('error.operationFailed'), isError: true };
+            const message = error?.message || this._t('error.operationFailed');
+            // 弹窗盖住了页面顶部的 banner（比如「测评集正在运行」），错误要画进弹窗才看得见
+            if (this.datasetModalId || this.catalogModal) this.modalActionError = message;
+            else this.banner = { text: message, isError: true };
             this.render();
         }
     }
@@ -1398,8 +1411,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             failWith(this._t('error.timeoutInvalid'));
             return;
         }
-
-        this.skipModalAnimation = true;
         this.runModal = { ...modal, busy: true, error: '' };
         this.render();
         try {
@@ -1419,7 +1430,6 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             await this.loadRuns(false);
             await this.openDetail(runId);
         } catch (error: any) {
-            this.skipModalAnimation = true;
             this.runModal = { ...modal, busy: false, error: error?.message || this._t('error.operationFailed') };
             this.render();
         }
@@ -1430,6 +1440,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     render() {
         const shadow = this.shadowRoot;
         if (!shadow) return;
+        // 上一帧屏幕上已经有弹窗：这次重绘要么是同一个弹窗的状态刷新，要么是从一个弹窗切到另一个，
+        // 再播一遍入场动画只会闪一下。判定放在这里，调用方不必各自维护「别重播动画」的开关。
+        const hadModal = shadow.querySelector('.modal-overlay') !== null;
         // 模型面板/右键菜单都是定点维护的（不进模板），整窗重建后它们已不存在，状态一并复位
         this.modelPanel = null;
         this.effortMenu = null;
@@ -1439,7 +1452,9 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (previous) this.scrollPositions.set(scrollKey, previous.scrollTop);
 
         shadow.innerHTML = `<style>${SHADOW_CSS}</style>${this.renderShell()}`;
-        this.skipModalAnimation = false;
+        if (hadModal) {
+            shadow.querySelectorAll('.modal-overlay').forEach((overlay) => overlay.classList.add('no-anim'));
+        }
         this.bindModalDismiss();
 
         const next = shadow.querySelector('.content') as HTMLElement | null;
@@ -2241,7 +2256,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             .join('');
 
         return `
-        <div class="modal-overlay${this.skipModalAnimation ? ' no-anim' : ''}" data-light-dismiss="true">
+        <div class="modal-overlay" data-light-dismiss="true">
             <div class="modal-dialog">
                 <div class="modal-banner info">
                     <div class="modal-banner-icon" style="background:${colors.text}">${escapeHtml(initial)}</div>
@@ -2257,17 +2272,17 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     <button type="button" class="modal-close" data-action="close-dataset">✕</button>
                 </div>
                 <div class="modal-body">
+                    ${this.modalActionError ? `<div class="modal-error">${escapeHtml(this.modalActionError)}</div>` : ''}
                     ${dataset.description ? `<div style="margin-bottom:16px">${escapeHtml(dataset.description)}</div>` : ''}
                     ${homepageSection}
                     <div class="section-label">${escapeHtml(this._t('benchmark.dataset.tracks'))}</div>
                     <div class="track-list">${tracks}</div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-sm btn-danger" data-action="delete-dataset" data-dataset-id="${escapeHtml(dataset.id)}" data-dataset-name="${escapeHtml(dataset.name)}">
+                    <button type="button" class="btn btn-danger" data-action="delete-dataset" data-dataset-id="${escapeHtml(dataset.id)}" data-dataset-name="${escapeHtml(dataset.name)}">
                         ${escapeHtml(this._t('benchmark.action.delete'))}
                     </button>
                     <span class="spacer"></span>
-                    <button type="button" class="btn" data-action="close-dataset">${escapeHtml(this._t('benchmark.action.close'))}</button>
                     <button type="button" class="btn btn-primary" data-action="run-dataset" data-dataset-id="${escapeHtml(dataset.id)}">
                         ${escapeHtml(this._t('benchmark.action.run'))}
                     </button>
@@ -2323,6 +2338,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             })
             .join('');
 
+        // 已安装（不论版本）都能删；本地版本落后才给「更新」；装的是最新版才给「运行」，
+        // 与「测评集管理」里的运行按钮同一个入口（运行弹窗按本地 meta 的 track 构建）。
+        const deleteButton =
+            local && !busy
+                ? `<button type="button" class="btn btn-danger" data-action="delete-dataset" data-dataset-id="${escapeHtml(local.id)}" data-dataset-name="${escapeHtml(local.name)}">
+                        ${escapeHtml(this._t('benchmark.action.delete'))}
+                    </button>`
+                : '';
         let primaryButton: string;
         if (busy) {
             const label =
@@ -2330,8 +2353,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     ? this._t('benchmark.catalog.installing')
                     : this._t('benchmark.catalog.downloadingNoTotal');
             primaryButton = `<button type="button" class="btn btn-primary" disabled>${escapeHtml(label)}</button>`;
-        } else if (installState === 'installed') {
-            primaryButton = `<button type="button" class="btn" disabled>${escapeHtml(this._t('benchmark.catalog.installed'))}</button>`;
+        } else if (installState === 'installed' && local) {
+            primaryButton = `<button type="button" class="btn btn-primary" data-action="run-catalog" data-dataset-id="${escapeHtml(local.id)}">${escapeHtml(this._t('benchmark.action.run'))}</button>`;
         } else {
             const label =
                 installState === 'update-available'
@@ -2341,7 +2364,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         }
 
         return `
-        <div class="modal-overlay${this.skipModalAnimation ? ' no-anim' : ''}" data-light-dismiss="true">
+        <div class="modal-overlay" data-light-dismiss="true">
             <div class="modal-dialog">
                 <div class="modal-banner info">
                     <div class="modal-banner-icon" style="background:${colors.text}">${escapeHtml(initial)}</div>
@@ -2356,6 +2379,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     <button type="button" class="modal-close" data-action="close-catalog">✕</button>
                 </div>
                 <div class="modal-body">
+                    ${this.modalActionError ? `<div class="modal-error">${escapeHtml(this.modalActionError)}</div>` : ''}
                     ${entry.description ? `<div style="margin-bottom:16px">${escapeHtml(entry.description)}</div>` : ''}
                     ${homepageSection}
                     ${this.renderDownloadProgress(state)}
@@ -2363,8 +2387,8 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
                     <div class="track-list">${tracks}</div>
                 </div>
                 <div class="modal-footer">
+                    ${deleteButton}
                     <span class="spacer"></span>
-                    <button type="button" class="btn" data-action="close-catalog">${escapeHtml(this._t('benchmark.action.close'))}</button>
                     ${primaryButton}
                 </div>
             </div>
@@ -2466,7 +2490,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         if (!modal) return '';
         const disabled = modal.busy || this.models.length === 0;
         return `
-        <div class="modal-overlay${this.skipModalAnimation ? ' no-anim' : ''}" data-light-dismiss="false">
+        <div class="modal-overlay" data-light-dismiss="false">
             <div class="modal-dialog">
                 <div class="modal-banner info">
                     <div class="modal-banner-icon">▶</div>
