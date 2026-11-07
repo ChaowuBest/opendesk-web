@@ -16,8 +16,9 @@ import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
 
 /**
  * 任务状态。
- * 注意 'failed' 不会在运行期直接赋值：仅由反序列化产生——应用退出/崩溃时
- * 落盘的 running 任务，下次启动加载时被改写为 failed（见 serializer.applyTaskJson）。
+ * 'failed' 有两种产生路径：运行期 turn 以不可恢复的模型错误自然终止（见
+ * TaskState 的 turn 收尾逻辑）；以及应用退出/崩溃时落盘的 running 任务，
+ * 下次启动加载时被改写为 failed（见 serializer.applyTaskJson）。
  */
 export type TaskStatus = 'waiting' | 'running' | 'stopped' | 'failed';
 export type TaskCompletionStatus = 'success' | 'fail' | 'ask';

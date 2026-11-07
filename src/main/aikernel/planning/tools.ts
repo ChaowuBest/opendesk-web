@@ -427,10 +427,12 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
         };
     }
 
-    // 检查子任务是否已完成，如果已完成则重新启动
-    const wasFinished = subTask.task_status === 'stopped';
+    // 检查子任务是否已结束，如果已结束则重新启动。stopped 为正常停止；
+    // failed 为 turn 以模型错误等不可恢复错误终止（或崩溃恢复改写），
+    // 两者都没有活跃 turn，直接追加消息将无人处理，必须走重启路径
+    const wasFinished = subTask.task_status === 'stopped' || subTask.task_status === 'failed';
 
-    // 如果子任务已完成，需要重新启动它
+    // 如果子任务已结束，需要重新启动它
     if (wasFinished) {
         // submitUserMessage 会重置任务状态并重新启动任务
         await subTask.submitUserMessage(message);

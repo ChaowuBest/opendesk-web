@@ -2265,6 +2265,7 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.completedCount': '${completed}/${total} complete',
     'renderer.sidebar.running': 'Running',
     'renderer.sidebar.justCompleted': 'Just completed',
+    'renderer.sidebar.justFailed': 'Just failed',
     'renderer.sidebar.waiting': 'Waiting',
     'renderer.sidebar.loadMore': 'Load more',
     'renderer.sidebar.viewMoreTasks': 'View more tasks',
