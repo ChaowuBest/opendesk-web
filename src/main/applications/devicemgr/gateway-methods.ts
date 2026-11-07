@@ -20,7 +20,6 @@ import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber, isTaskVisibleForDeveloperMode } from '../../aikernel/states/tasks.js';
-import { HarnessContext } from '../../aikernel/security/harness.js';
 import type { BaseToolset } from '../../aikernel/tool.js';
 import { isDeveloperModeEnabled } from '../../utils/setting.js';
 
@@ -313,8 +312,11 @@ async function resolveOrCreateTask(ctx: GatewayMethodContext, connId: string, se
     }
 
     const task = ctx.taskManagerState.createTask(ctx.model);
-    task.harnessContext = HarnessContext.createEmpty();
-    task.harnessContext.workspace = ctx.workspace;
+    // 与 channel 路由一致：网关会话必须自行建好带权限引擎的 harness。若沿用
+    // createEmpty()，已设置的 workspace 会让懒加载 harness 初始化器直接 return，
+    // permission 恒为 null，工具调用的权限检查会在 handleToolPermissionsForTask
+    // 的 `if (!enforcer) return false` 处整体放行（远端会话等于免检执行）。
+    await ctx.taskManagerState.initHarness(task, ctx.workspace, task.getAgentMode());
     await task.rebuildSystemPrompt();
     task.task_name = `Gateway: ${sessionKey}`;
 

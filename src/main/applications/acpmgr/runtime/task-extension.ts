@@ -276,7 +276,7 @@ export class AcpTaskExtension implements TaskExtension {
         const rejectOption = request.options.find(
             (option) => option.kind === 'reject_once' || option.kind === 'reject_always'
         );
-        const provider = this.task.harnessContext.permissionPrompt;
+        const provider = this.task.getActivePermissionPrompt();
         if (!provider) {
             return rejectOption
                 ? { outcome: { outcome: 'selected', optionId: rejectOption.optionId } }

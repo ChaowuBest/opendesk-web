@@ -143,9 +143,9 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
             subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
             await subTask.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(subTask.task_id, false));
-            // custom agent 继承父任务的 permissionPrompt，使 ask 权限能正常交互确认
+            // custom agent 继承父任务本 turn 生效的 permissionPrompt，使 ask 权限能正常交互确认
             if (agentDecl.agentType === 'custom') {
-                subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
+                subTask.harnessContext.permissionPrompt = parentTask.getActivePermissionPrompt();
             }
         } else {
             subTask.harnessContext = parentTask.harnessContext;
@@ -164,7 +164,8 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         // 默认子任务：继承父任务的 harnessContext（复制 workspace、environ、权限引擎）
         subTask.harnessContext.environ = { ...parentTask.harnessContext.environ };
         subTask.harnessContext.permission = parentTask.harnessContext.permission;
-        subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
+        // 继承父任务本 turn 生效的 provider：渠道 turn 里起的子任务，审批仍回到渠道用户
+        subTask.harnessContext.permissionPrompt = parentTask.getActivePermissionPrompt();
         subTask.harnessContext.workspace = parentTask.harnessContext.workspace;
         subTask.activeModeId = parentTask.activeModeId;
         subTask.allowedTools = parentTask.allowedTools;

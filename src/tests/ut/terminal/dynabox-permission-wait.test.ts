@@ -46,24 +46,28 @@ const waitFor = async (condition: () => boolean, message: string): Promise<void>
     let waitEvents: boolean[];
     let cleanups: Array<() => Promise<void>>;
 
-    const makeTaskState = () => ({
-        task_id: 'task-permission-wait',
-        task_name: 'permission-wait-test',
-        getWorkspace: () => 'D:/workspace',
-        harnessContext: {
-            permission: {
-                check: async () => undefined,
-                getRules: () => []
-            },
-            permissionPrompt: {
-                prompt: async () =>
-                    new Promise<PermissionUserResponse>((resolve) => {
-                        promptCalls += 1;
-                        deferreds.push({ resolve });
-                    })
+    const makeTaskState = () => {
+        const state: any = {
+            task_id: 'task-permission-wait',
+            task_name: 'permission-wait-test',
+            getWorkspace: () => 'D:/workspace',
+            harnessContext: {
+                permission: {
+                    check: async () => undefined,
+                    getRules: () => []
+                },
+                permissionPrompt: {
+                    prompt: async () =>
+                        new Promise<PermissionUserResponse>((resolve) => {
+                            promptCalls += 1;
+                            deferreds.push({ resolve });
+                        })
+                }
             }
-        }
-    });
+        };
+        state.getActivePermissionPrompt = () => state.harnessContext.permissionPrompt;
+        return state;
+    };
 
     beforeEach(() => {
         existsSpy = jest

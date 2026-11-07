@@ -172,6 +172,26 @@ class HarnessContext {
 - **任务创建时注入**：由 TUI / Electron 的入口代码调用 `HarnessContext.createWithDefaults(workspace)` 创建并挂载到 TaskState
 - **子任务继承**：fork 子任务时共享父任务的 `harnessContext` 引用
 
+### 4.1 turn 级交互归属
+
+`harnessContext.permissionPrompt` 与 `TaskState.interactionToolset` 是**任务默认**的交互 provider，由创建任务的宿主入口注入。具体某一轮 turn 的审批发给谁，由该轮 turn 的发起入口现场声明：
+
+```typescript
+interface TurnInteractionBinding {
+    interactive: boolean; // 本 turn 是否由用户交互发起（决定是否挂载 askUser / exitPlanMode）
+    permissionPrompt?: PermissionPromptProvider | null; // 省略沿用任务默认；null 表示本轮直接拒绝
+    interactionToolset?: InteractiveToolset | null; // 省略沿用任务默认；null 表示本轮无入口侧工具集
+}
+
+task.setTurnInteractionBinding({ interactive: true, permissionPrompt: channelProvider, interactionToolset });
+```
+
+- **现场绑定、不持久化**：绑定是 turn 级的运行时状态，不落盘也不跨 turn 复用。每个 turn 起点（`submitUserMessage` / `startInternalTurn`）重置绑定，turn 被 `stop()` / `interruptForNewMessage()` 收尾时清空。所以渠道入站 turn 结束后用户回到桌面继续对话，审批会重新走桌面 provider
+- **读取统一走访问器**：业务代码取 provider 用 `task.getActivePermissionPrompt()`，取交互工具集用 `task.getActiveInteractionToolset()`，turn 绑定优先、任务默认兜底；直接读 `harnessContext.permissionPrompt` 会绕过本轮绑定
+- **不污染任务默认**：任何入口都不要为了单轮 turn 改写 `harnessContext.permissionPrompt` / `task.interactionToolset`（模式切换、工作空间切换重建 harness 时的默认值维护除外）
+- **不残留**：turn 起点同步受控工具集（interaction / entry），本轮不挂载的会从 `chat_context.toolsets` 移除，避免上一个交互 turn 的 askUser / exitPlanMode 继续可用
+- **内部 turn 用任务默认**：定时任务、goal 继续、工作流投递等 `startInternalTurn` 不属于任何用户入口，一律使用任务默认 provider
+
 ## 5. 工具权限声明
 
 每个工具通过重写 `BaseTool.getDeclaredPermissions(args, taskState)` 声明运行时所需权限：
@@ -286,6 +306,16 @@ Agent 调用 `deleteSkills({ skillIds: ['a', 'b', 'c'] })`：
 
 无交互能力，自动拒绝所有 `ask` 请求并输出日志。适用于 CI/CD 或非交互式脚本场景。
 
+### 7.4 渠道实现
+
+消息渠道（微信 / 飞书等）把审批转成渠道侧的确认卡片：
+
+- 渠道声明 `capabilities.interactive` 并实现 `sendInteraction` 时，权限审批与 askUser 透传到渠道用户侧，用户点击后经 `ChannelInteractionService` 回投结果
+- 渠道不支持交互时，使用自动拒绝 provider，且该轮 turn 不挂载交互工具集
+- 渠道 provider 不会写进任务默认：只在渠道入站消息发起的那一轮 turn 生效，该轮派生的子任务 / 工作流按创建时继承（见 `agent_spec.md` 的父任务权限继承）；用户回到桌面或其他入口发起的 turn 一律走任务默认 provider（见 4.1）
+
+参考实现：`src/main/applications/channelmgr/channel-task-interactions.ts`。
+
 ## 8. 文件结构
 
 ```
@@ -322,4 +352,6 @@ tui/
 
 ### 添加新的确认 UI
 
-实现 `PermissionPromptProvider` 接口的 `prompt(requests, toolName)` 方法，在宿主入口中注入到 `harnessContext.permissionPrompt`。
+实现 `PermissionPromptProvider` 接口的 `prompt(requests, toolName)` 方法，在宿主入口中注入到 `harnessContext.permissionPrompt`，作为任务默认 provider。
+
+若某个入口需要按 turn 切换审批归属（例如渠道入站消息），在 turn 起点调用 `task.setTurnInteractionBinding()` 声明本轮绑定，不要直接改写 `harnessContext.permissionPrompt`。

@@ -1212,7 +1212,8 @@ ToolCall {
 - `disabledTools`: 禁用工具列表
 - `message_queue`: 运行时消息队列
 - `profiler`: 性能分析器
-- `interactionToolset`: 交互工具集
+- `interactionToolset`: 任务默认的交互工具集（askUser / exitPlanMode），仅交互发起的 turn 挂载
+- `_turnInteractionBinding`: 私有运行时状态，当前 turn 的交互 provider 归属绑定，不落盘、不跨 turn 复用（语义见 `permission_spec.md` 的「turn 级交互归属」）
 - `subscribers`: UI 订阅者
 - `hooks`: 任务钩子
 

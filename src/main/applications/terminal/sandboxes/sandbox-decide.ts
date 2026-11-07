@@ -137,7 +137,8 @@ export async function createSandboxDecideEndpoint(
         const key = `${action}:${options.caseInsensitivePathKey ? resourcePath.toLowerCase() : resourcePath}`;
         // 本次会话内已批准过同路径同操作：直接放行（引擎显式 ask/deny 已在上方短路）
         if (sessionAllows.get(current)?.get(key) === 'allow') return { decision: 'allow' };
-        const provider = current.permissionPrompt;
+        // 与工具权限弹窗一致：取本 turn 生效的 provider（渠道 turn 的审批发到渠道侧）
+        const provider = task.getActivePermissionPrompt();
         if (!provider) return deny;
         // 弹窗前二次检查：请求可能在任务停止前已通过入口检查，但在 await
         // permission.check 期间任务被停止（此时 cancelTaskPrompts 已执行、队列

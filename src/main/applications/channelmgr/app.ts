@@ -32,7 +32,7 @@ import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset, ToolResult } from '../../aikernel/tool.js';
 import { GlobalHooks } from '../../aikernel/hooks.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
-import type { TaskState } from '../../aikernel/states/tasks.js';
+import type { TaskState, TurnInteractionBinding } from '../../aikernel/states/tasks.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
 import path from 'path';
 import {
@@ -784,38 +784,45 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     /**
-     * 为渠道来源的任务注入交互 provider（在 task.origin 设置后调用）。
+     * 解析渠道任务本轮的交互归属（在 turn 起点调用，不改写任务默认 provider）。
      * - 渠道支持结构化交互：权限审批与 askUser 透传到渠道用户侧；
      * - 渠道不支持交互：权限请求自动拒绝，且不挂载交互工具集（askUser / exitPlanMode）。
+     * 非渠道来源的任务返回 null，由调用方沿用任务默认绑定。
      */
-    applyChannelTaskProviders(task: TaskState): void {
+    resolveTurnInteractionBinding(task: TaskState): TurnInteractionBinding | null {
         const origin = task.origin;
-        if (!origin || origin.type !== 'channel') return;
+        if (!origin || origin.type !== 'channel') return null;
         const entry = this.findChannelPlugin(origin.channel);
         const cp = entry?.channelPlugin;
-        const interactive = Boolean(cp?.capabilities?.interactive === true && cp.sendInteraction);
-        logger.info(
-            `[channelmgr] applyChannelTaskProviders ${origin.channel}: found=${Boolean(cp)} native=${entry ? isNativeChannelEntry(entry) : false} interactive=${cp?.capabilities?.interactive} hasSendInteraction=${typeof cp?.sendInteraction} => ${interactive}`
+        const interactive = this.interactionService.supportsInteractive(origin.channel);
+        // 每轮 turn 都会走到这里，诊断细节放 debug，避免每条入站消息刷 info 日志
+        logger.debug(
+            `[channelmgr] resolveTurnInteractionBinding ${origin.channel}: found=${Boolean(cp)} native=${entry ? isNativeChannelEntry(entry) : false} interactive=${cp?.capabilities?.interactive} hasSendInteraction=${typeof cp?.sendInteraction} => ${interactive}`
         );
         if (interactive) {
-            task.harnessContext.permissionPrompt = new ChannelPermissionPromptProvider(this.interactionService, origin);
-            task.interactionToolset = createInteractionToolset(
-                new ChannelAskUserProvider(this.interactionService, origin)
-            );
             logger.info(
                 '[channelmgr] channel task ' + task.task_id + ' uses channel interactions (' + origin.channel + ')'
             );
-        } else {
-            task.harnessContext.permissionPrompt = createChannelDenyPermissionProvider('no_prompt_provider');
-            task.interactionToolset = null;
-            logger.info(
-                '[channelmgr] channel task ' +
-                    task.task_id +
-                    ' has no interaction capability (' +
-                    origin.channel +
-                    '), interaction tools not mounted'
-            );
+            return {
+                interactive: true,
+                permissionPrompt: new ChannelPermissionPromptProvider(this.interactionService, origin),
+                interactionToolset: createInteractionToolset(
+                    new ChannelAskUserProvider(this.interactionService, origin)
+                )
+            };
         }
+        logger.info(
+            '[channelmgr] channel task ' +
+                task.task_id +
+                ' has no interaction capability (' +
+                origin.channel +
+                '), interaction tools not mounted'
+        );
+        return {
+            interactive: false,
+            permissionPrompt: createChannelDenyPermissionProvider('no_prompt_provider'),
+            interactionToolset: null
+        };
     }
 
     /** 结算渠道入站交互事件（用户在渠道侧点击了权限审批/askUser/selection 卡片或序号回复）。 */

@@ -149,7 +149,7 @@ describe('交互工具集挂载语义（interactive 决定）', () => {
         task.model = 'test-model';
         task.parent_id = null;
         task.interactionToolset = null;
-        (task as any)._currentTurnInteractive = true;
+        task.setTurnInteractionBinding({ interactive: true });
 
         sharedCreateInteractionToolset.mockClear();
 
@@ -176,6 +176,84 @@ describe('cancelInteractionPrompts', () => {
 
         expect(() => task.cancelInteractionPrompts()).not.toThrow();
         expect(provider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('turn 级交互绑定（审批 / askUser 归属随 turn 切换）', () => {
+    test('绑定优先于任务默认，重置绑定后回到任务默认', async () => {
+        const task = await makeTask(null);
+        const defaultPrompt = { prompt: jest.fn(), cancelTaskPrompts: jest.fn() };
+        const channelPrompt = { prompt: jest.fn(), cancelTaskPrompts: jest.fn() };
+        const defaultToolset = await makeRealInteractionToolset();
+        task.harnessContext.permissionPrompt = defaultPrompt as any;
+        task.interactionToolset = defaultToolset;
+
+        // 渠道入站 turn：现场声明渠道 provider
+        task.setTurnInteractionBinding({
+            interactive: true,
+            permissionPrompt: channelPrompt as any,
+            interactionToolset: await makeRealInteractionToolset()
+        });
+
+        expect(task.isTurnInteractive()).toBe(true);
+        expect(task.getActivePermissionPrompt()).toBe(channelPrompt);
+        expect(task.getActiveInteractionToolset()).not.toBe(defaultToolset);
+        // 任务默认不被污染
+        expect(task.harnessContext.permissionPrompt).toBe(defaultPrompt);
+        expect(task.interactionToolset).toBe(defaultToolset);
+
+        // 桌面 turn：未声明 provider，回到任务默认
+        task.setTurnInteractionBinding({ interactive: true });
+        expect(task.getActivePermissionPrompt()).toBe(defaultPrompt);
+        expect(task.getActiveInteractionToolset()).toBe(defaultToolset);
+    });
+
+    test('非交互渠道 turn 不挂载交互工具，且不污染桌面 turn 的工具集', async () => {
+        const task = await makeTaskWithMode('standard');
+        const defaultToolset = await makeRealInteractionToolset();
+        task.interactionToolset = defaultToolset;
+
+        task.setTurnInteractionBinding({ interactive: false, interactionToolset: null });
+        const channelToolsets = await task.buildToolsets();
+        expect(toolNames(channelToolsets)).not.toContain('askUser');
+        expect(task.interactionToolset).toBe(defaultToolset);
+
+        task.setTurnInteractionBinding({ interactive: true });
+        const desktopToolsets = await task.buildToolsets();
+        expect(toolNames(desktopToolsets)).toContain('askUser');
+    });
+
+    test('非交互 turn 会移除上一个交互 turn 挂在 chat_context 的交互工具集', async () => {
+        const task = await makeTaskWithMode('standard');
+        task.interactionToolset = await makeRealInteractionToolset();
+
+        // 上一个交互 turn：挂载了 askUser
+        task.setTurnInteractionBinding({ interactive: true });
+        task.syncManagedToolsets(await task.buildToolsets());
+        expect(task.chat_context.getTool('askUser')).toBeDefined();
+
+        // 本轮不挂载交互工具集：残留的那一份也必须从 chat_context 移除
+        task.setTurnInteractionBinding({ interactive: false, interactionToolset: null });
+        task.syncManagedToolsets(await task.buildToolsets());
+        expect(task.chat_context.getTool('askUser')).toBeUndefined();
+    });
+
+    test('cancelInteractionPrompts 只取消本 turn 绑定的工具集', async () => {
+        const task = await makeTask(null);
+        const defaultAsk = { cancelCurrent: jest.fn() };
+        const channelAsk = { cancelCurrent: jest.fn() };
+        const channelExit = { cancelCurrent: jest.fn() };
+        task.interactionToolset = await makeRealInteractionToolset(defaultAsk, { cancelCurrent: jest.fn() });
+        task.setTurnInteractionBinding({
+            interactive: true,
+            interactionToolset: await makeRealInteractionToolset(channelAsk, channelExit)
+        });
+
+        task.cancelInteractionPrompts();
+
+        expect(channelAsk.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(channelExit.cancelCurrent).toHaveBeenCalledTimes(1);
+        expect(defaultAsk.cancelCurrent).not.toHaveBeenCalled();
     });
 });
 
@@ -249,7 +327,7 @@ describe('交互工具挂载场景（standard / solo / unlimited / plan）', () 
     test('非 interactive turn（agentoffice / channel 入口）：不挂载交互工具', async () => {
         const task = await makeTaskWithMode('standard');
         task.interactionToolset = await makeRealInteractionToolset();
-        (task as any)._currentTurnInteractive = false;
+        task.setTurnInteractionBinding(null);
 
         const toolsets = await task.buildToolsets();
 
@@ -264,7 +342,7 @@ describe('交互工具挂载场景（standard / solo / unlimited / plan）', () 
         task.agentId = undefined;
         task.activeModeId = undefined as any;
         task.interactionToolset = null;
-        (task as any)._currentTurnInteractive = true;
+        task.setTurnInteractionBinding({ interactive: true });
 
         const toolsets = await task.buildToolsets();
 
@@ -277,7 +355,7 @@ describe('交互工具挂载场景（standard / solo / unlimited / plan）', () 
         const exitProvider = { cancelCurrent: jest.fn() };
         const task = await makeTaskWithMode('standard');
         task.interactionToolset = await makeRealInteractionToolset(askProvider, exitProvider);
-        (task as any)._currentTurnInteractive = true;
+        task.setTurnInteractionBinding({ interactive: true });
 
         // standard 模式挂载交互工具
         await task.refreshBaseToolsets();

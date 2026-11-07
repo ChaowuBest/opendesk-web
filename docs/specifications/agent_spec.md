@@ -474,15 +474,15 @@ CustomAgent 使用单一 `default` mode，`permissionFactory` 返回 `createDefa
 
 ### 8.2 父任务权限继承
 
-在 `startSubTask` 中，当 `agentDecl.agentType === 'custom'` 时，从父任务继承 `permissionPrompt`：
+在 `startSubTask` 中，当 `agentDecl.agentType === 'custom'` 时，从父任务继承本 turn 生效的 `permissionPrompt`：
 
 ```typescript
 if (agentDecl.agentType === 'custom') {
-    subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
+    subTask.harnessContext.permissionPrompt = parentTask.getActivePermissionPrompt();
 }
 ```
 
-这确保 ask 权限能正常交互确认（如弹出 UI 确认对话框），而非自动拒绝。Builtin agent（explore/plan）不继承 permissionPrompt，ask 请求自动拒绝。
+这确保 ask 权限能正常交互确认（如弹出 UI 确认对话框），而非自动拒绝。用 `getActivePermissionPrompt()` 而不是直接读字段，是为了让渠道 turn 里起的子任务把审批继续发给渠道用户。Builtin agent（explore/plan）不继承 permissionPrompt，ask 请求自动拒绝。
 
 ### 8.3 工具过滤
 

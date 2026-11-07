@@ -251,6 +251,8 @@ Client                              Server
 
 > \* `message` 字段在有 `attachments` 时可为空字符串 `""`，但必须至少存在一个非空附件。
 
+> 每一次 `chat.send` 都会落到一条真实任务，并沿用与桌面端相同的权限策略：工作空间内的读写直接放行，越界操作会在 OpenDesk 桌面端弹出确认框，确认前该轮请求一直等待。无人值守场景请提前把需要的目录加入可读目录，或用「始终允许」规则放行。
+
 ### 附件格式 (attachments)
 
 `attachments` 数组中的每个元素为 `ChatAttachment` 对象：
