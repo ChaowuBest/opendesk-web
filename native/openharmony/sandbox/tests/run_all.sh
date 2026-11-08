@@ -355,6 +355,22 @@ RT odir_open_ok "$SRC/public"                       >/dev/null; check "dir open 
 RT otmpfile_fail "$SRC/public"                      >/dev/null; check "O_TMPFILE still write-checked (EACCES)" $?
 RT odir_open_fail "$SRC/vault"                      >/dev/null; check "dir open honors read-deny rules" $?
 RT ls "$SRC/public"                                 >/dev/null; check "opendir unaffected" $?
+# 回归（hdcthis connect 卡死根因）：mkdir -p 式逐级创建会对 /storage、$HOME 这些
+# 早已存在的层级反复 mkdir。目标已存在时本次调用只会得到 EEXIST，没有副作用，
+# 沙箱不该为它 ask 上游（上游不响应时整条命令卡满 ask 超时）。
+RT mkdir_eexist "$SRC/public"                       >/dev/null; check "mkdir on existing dir -> EEXIST, never write-asked" $?
+# 同一捷径不得绕过 deny：已存在目录若在写-deny 区，仍必须被拒（Windows 侧
+# CreateDirectoryW 用的是 deny-only 判定，这里保持同一语义）
+MKDENY="$WORK/mkdir-deny.toml"
+{
+    printf 'version = 1\ndefault = "deny"\n\n'
+    printf '[[rules]]\npath = "@SRC@/vault"\naccess = "write"\nperm = "deny"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n'
+} | sed -e "s|@SRC@|$SRC|g" > "$MKDENY"
+"$B" run --policy "$MKDENY" -- "$PROBE" mkdir_eexist "$SRC/vault" >/dev/null 2>&1
+rc=$?; [ "$rc" != "0" ] && rc=0 || rc=1
+check "mkdir on existing dir in write-deny area still denied" $rc
 AUDR0=$(grep -c "decide" "$AUDIT" 2>/dev/null); AUDR0=${AUDR0:-0}
 "$B" run --policy "$RPOL" --log "$LOG" -- /usr/bin/find "$SRC" -maxdepth 3 >/dev/null 2>&1
 check "find traversal rc=0 (no EACCES)" $?

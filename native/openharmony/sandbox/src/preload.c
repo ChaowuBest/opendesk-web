@@ -653,6 +653,22 @@ static int path_not_exist(const char *p)
     return 0;
 }
 
+/* mkdir 目标已存在：这次调用注定返回 EEXIST，没有副作用，因此不必问上游。
+ * 典型噪声源是 mkdir -p 式逐级创建（hdcthis 的 mkdir_p、npm 的 cache 准备）：
+ * 它们会对 /storage、$HOME 这类早已存在的层级反复 mkdir，若这些层级不在 allow
+ * 列表里，每次都要 ask；上游不响应时整条命令会卡满 ask 超时（hdcthis connect
+ * 就是卡在这里）。调用方拿到 true 后只做 deny 判定、不 ask，再把调用透传给内核
+ * （与 Windows CreateDirectoryW / macOS wrap_mkdir 的既有做法对齐）。
+ * --tmp 映射下 /tmp 是虚拟路径，不能直接 stat，跳过该捷径。 */
+static int mkdir_target_exists(const char *p)
+{
+    if (!p || !p[0]) return 0;
+    if (g_tmp_dir[0] && (strcmp(p, "/tmp") == 0 || strncmp(p, "/tmp/", 5) == 0))
+        return 0;
+    struct stat st;
+    return syscall(SYS_newfstatat, AT_FDCWD_C, p, &st, 0) == 0;
+}
+
 /* 写类操作的父目录链缺失判定：目标路径的直接父目录不存在 → 该写注定失败
  * （open/mkdir/link/rename 目标等返回 ENOENT），直接透传真实 API 让宿主产生
  * 权威错误码，不触发 ask。与 path_not_exist 同一哲学（Windows
@@ -2387,6 +2403,13 @@ int renameat2(int oldfd, const char *old, int newfd, const char *newp,
 
 int mkdir(const char *path, mode_t mode)
 {
+    /* 目标已存在：本次调用只会得到 EEXIST，因此不必 ask；但 deny 规则仍然
+     * 生效（与 Windows CreateDirectoryW 的 deny-only 判定一致，见
+     * mkdir_target_exists）。 */
+    if (dbox_path_has_content(path) && mkdir_target_exists(path)) {
+        if (!gate_meta(path, 0, ACC_WRITE, "mkdir", NULL)) return -1;
+        return real_mkdir(path, mode);   /* 内核给出 EEXIST */
+    }
     char *real = NULL;
     /* 父目录链缺失的建目录（mkdir -p 的父级不存在时，单级 mkdir 注定 ENOENT）：
      * 透传不 ask；deny 仍拦。mkdir -p 的多级创建逐级走此处，探测父链是常态。 */
@@ -2411,6 +2434,13 @@ int mkdirat(int dirfd, const char *path, mode_t mode)
         return real_mkdirat(dirfd, path, mode);
     char *abs = at_abs(dirfd, path);
     if (!abs) { errno = EBADF; return -1; }
+    /* 目标已存在：只会得到 EEXIST，不必 ask；deny 规则仍生效（同 mkdir 语义） */
+    if (mkdir_target_exists(abs)) {
+        int ok = gate_meta(abs, 0, ACC_WRITE, "mkdirat", NULL);
+        dbox_free(abs);
+        if (!ok) return -1;
+        return real_mkdirat(dirfd, path, mode);
+    }
     /* 父链缺失的建目录注定 ENOENT：透传不 ask（同 mkdir 语义） */
     if (write_parent_missing(abs)) {
         if (!gate_meta(abs, 0, ACC_WRITE, "mkdirat", NULL)) { dbox_free(abs); return -1; }

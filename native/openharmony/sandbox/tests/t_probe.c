@@ -126,6 +126,14 @@ int main(int argc, char **argv)
     if (!strcmp(op, "mv_fail"))       return rename(argv[2], argv[3]) == 0 ? (printf("PROBE-FAIL mv succeeded\n"), 1) : 0;
     if (!strcmp(op, "mkdir"))         return mkdir(argv[2], 0755) ? fail("mkdir", argv[2]) : 0;
     if (!strcmp(op, "mkdir_fail"))    return mkdir(argv[2], 0755) == 0 ? (printf("PROBE-FAIL mkdir succeeded\n"), 1) : 0;
+    /* 目标已存在的 mkdir：本次调用只会得到 EEXIST，没有副作用，因此沙箱不应
+     * 为它发起 ask（否则 mkdir -p 式逐级创建会对每个已存在层级问一遍上游，
+     * 上游不响应时整条命令卡死 —— hdcthis connect 就卡在 mkdir("/storage")）。 */
+    if (!strcmp(op, "mkdir_eexist")) {
+        if (mkdir(argv[2], 0755) == 0) { printf("PROBE-FAIL mkdir_eexist succeeded\n"); return 1; }
+        if (errno != EEXIST) return fail("mkdir_eexist wrong errno", strerror(errno));
+        return 0;
+    }
     if (!strcmp(op, "rmdir"))         return rmdir(argv[2]) ? fail("rmdir", argv[2]) : 0;
     if (!strcmp(op, "rmdir_fail"))    return rmdir(argv[2]) == 0 ? (printf("PROBE-FAIL rmdir succeeded\n"), 1) : 0;
     /* Node fs.rmdir/fs.rm 走 unlinkat(AT_REMOVEDIR)：回收站分流必须同样覆盖 */

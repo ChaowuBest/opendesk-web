@@ -53,6 +53,18 @@ class H(BaseHTTPRequestHandler):
             # 客户端超时前不返回；收到 0 字节也继续等
             while True:
                 time.sleep(1)
+        if MODE == "rootdeny":
+            # 模拟"只有系统挂载点根需要人工确认、而弹窗没人点"的场景：
+            # 对 /、/storage、/storage/Users 这类"已存在层级"的写请求挂起，
+            # 其余立即 allow。用于复现 mkdir -p 式逐级创建被无谓 ask 卡死。
+            try:
+                asked = json.loads(body).get("path", "")
+            except Exception:
+                asked = ""
+            if asked in ("/", "/storage", "/storage/Users", "/storage/Users/currentUser"):
+                log(f"HANG-ROOT {asked}")
+                while True:
+                    time.sleep(1)
         if MODE.startswith("delay:"):
             time.sleep(int(MODE.split(":", 1)[1]) / 1000.0)
         elif MODE.startswith("slow:"):
