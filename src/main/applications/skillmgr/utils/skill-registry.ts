@@ -23,7 +23,7 @@ import { getOpendeskDirectory, Setting } from '../../../utils/setting.js';
 import { toErrorMessage } from '../../../../common/utils/error.js';
 import { BaseTool, BaseToolset } from '../../../aikernel/tool.js';
 import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from '../skill-schema.js';
-import { isSkillEntryFilename, findSkillEntryFile, CANONICAL_SKILL_FILENAME } from '../skill-entry.js';
+import { isSkillEntryFilename, findSkillEntryFile, isDirectoryEntry, CANONICAL_SKILL_FILENAME } from '../skill-entry.js';
 import { logger } from '../../../utils/logger.js';
 import { getPlatform } from '../../../../platforms/base.js';
 
@@ -364,8 +364,16 @@ export class SkillRegistry {
         visitedScanDirs: Set<string>
     ): string[] {
         const resolved = path.resolve(dir);
-        if (visitedScanDirs.has(resolved)) return [];
-        visitedScanDirs.add(resolved);
+        let canonical: string;
+        try {
+            // path.resolve 不解析链接；按真实路径去重才能终止配置目录中的循环链接。
+            canonical = fs.realpathSync(resolved);
+        } catch (e) {
+            errors.push({ id: resolved, error: toErrorMessage(e) });
+            return [];
+        }
+        if (visitedScanDirs.has(canonical)) return [];
+        visitedScanDirs.add(canonical);
 
         const skillDirs: string[] = [];
         try {
@@ -389,7 +397,7 @@ export class SkillRegistry {
         }
 
         for (const ent of entries) {
-            if (!ent.isDirectory()) continue;
+            if (!isDirectoryEntry(ent, path.join(resolved, ent.name))) continue;
             skillDirs.push(
                 ...this._collectConfiguredSkillDirectories(
                     path.join(resolved, ent.name),
@@ -426,7 +434,7 @@ export class SkillRegistry {
         }
 
         for (const ent of entries) {
-            if (!ent.isDirectory()) continue;
+            if (!isDirectoryEntry(ent, path.join(dir, ent.name))) continue;
             const skillDir = path.join(dir, ent.name);
             const result = this._loadSkillFromDir(skillDir);
             if (result.success) {
