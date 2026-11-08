@@ -1,0 +1,33 @@
+version = 1
+default = "deny"
+
+[ask]
+endpoint = "http://127.0.0.1:18083/decide"
+token = "stub"
+timeout_ms = 330000
+cache_ttl_seconds = 0
+grant_ttl_seconds = 0
+
+# 复刻 OpenDesk「标准模式」的兜底三段：读放行、写问询、执行放行。
+# 修复前：node/devecocli 启动时 open("/dev/tty", O_WRONLY) 命中这条兜底
+# write=ask，ask 上游无人应答时命令卡满 timeout_ms（330s），表现就是
+# "devecocli 卡死且无输出"。
+[[rules]]
+path = "/"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "write"
+perm = "ask"
+
+[[rules]]
+path = "/**"
+access = "execute"
+perm = "allow"

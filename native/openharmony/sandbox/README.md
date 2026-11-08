@@ -544,6 +544,8 @@ tests/
 | 任意程序传 NULL / 空路径会让**沙箱自己崩** | `gate_resolve` 对 NULL 输入返回"成功"但 `vpath` 为空，随后策略匹配器 `memcmp(NULL)` | `gate1x` 对 NULL/空路径直接透传（交给内核报错）；`gate_resolve` 返回失败 |
 | 子进程被 `SIGKILL`（退出码 137）| `posix_spawn` 的 close-on-exec file actions（node 的 `close_fds`）关掉了看护 fd，`watch_thread` 把 `EBADF` 误判成"launcher 已死"→ 杀掉整棵树 | `start_watch()` 先校验 fd 可用性，无效则不启动看护 |
 | `fork` 与 `exec` 之间创建线程引发异常 | POSIX 只允许该窗口内调用 async-signal-safe 函数，而 `atfork_child` 里调了 `start_watch()` | 移除；`exec` 后构造函数会重建看护 |
+| 沙箱内命令**没有任何输出地卡死**数分钟（`devecocli` / `node` / `npm` 尤其明显）| 兜底规则 `path = "/**"` + `access = "write"` + `perm = "ask"`（OpenDesk 标准/受限模式的写法）命中了 `/dev/tty`：`dbox_policy_eval_static_ex()` 先返回规则判定，内建**设备白名单**（tty/console/ptmx/pts/null 读写放行，`dbox_system_allow()`）被遮蔽。node 一启动就 `open("/dev/tty", O_WRONLY)`，上游不响应时要等满 `timeout_ms`（OpenDesk 传 330s），进程在这期间不产生任何输出 | 抽出 `dbox_device_allow()`，在"只被 specificity=0 的兜底规则命中"时**先于规则**求值；显式列举（specificity>0，如 `/dev/tty`、`/dev/**`）仍可收紧设备访问。回归：`unit_policy` 的 `device-wl` 断言 + `run_all.sh` 的 "no ask for /dev/tty write" 断言 |
+| 沙箱内命令**毫无输出地消失**（`devecocli` 卡在 `Start generating p12` 后进程没了、node/python 一 spawn 子进程整条命令就没了）| 看护线程只校验 `F_GETFD` 是否成功：exec 之后宿主程序会关闭看护 fd 并把**同一个 fd 号**复用给普通文件（node `spawn` 的 close-on-exec，紧接着 JDK/node 的 `open()` 占走最小空闲 fd，通常就是 3）。此时 `poll/read` 立刻得到"别的对象 EOF"，被当成 launcher 死亡 → `kill(-pgid, SIGKILL)` 抹掉整棵进程树 | launcher 把看护管道读端的 `st_dev/st_ino` 写进 `DYNOBOX_WATCH_ID`；看护**每个 tick 都复核** fd 身份，一旦不一致就退出看护（宁可漏清理，绝不误杀），只有"身份一致 + EOF"才杀树。回归：`tests/t_watch.c`（用裸 syscall 精确构造"exec 后 fd 号被复用"）+ `run_all.sh` 的 `reused watch fd does not kill tree` 断言 |
 
 这些用例现已全部固化为回归测试（`t_probe` 的 `path` / `posix_spawn [closefds]` /
 `spawn_env`，以及 `unit_policy` 的路径解析断言）。

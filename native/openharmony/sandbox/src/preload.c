@@ -103,6 +103,10 @@ static pthread_mutex_t g_pol_mu;   /* grants */
 static pthread_mutex_t g_fd_mu;    /* fd table */
 
 static int g_watch_fd = -1;
+/* 看护 fd 的身份指纹（"dev:ino"，由 launcher 写入环境）。exec 后 fd 号可能被
+ * 宿主程序关闭并复用，只查 F_GETFD 分不清"还是那条看护管道"与"已被复用"，
+ * 见 watch_fd_is_ours()。 */
+static char g_watch_id[64];
 /* Set while real_posix_spawn() runs. musl implements posix_spawn with
  * CLONE_VM|CLONE_VFORK, so the child shares our address space and reaches the
  * exec hooks below while the parent is suspended — allocating, locking or
@@ -774,6 +778,7 @@ static int mode_to_acc(int mode)
 
 static const char *const k_inject_names[] = {
     "LD_PRELOAD", "DYNOBOX_CFG", "DYNOBOX_PRELOAD", "DYNOBOX_WATCH_FD",
+    "DYNOBOX_WATCH_ID",
     "DYNOBOX_SHM_FD", "DYNOBOX_LOG", "DYNOBOX_VERBOSE", "DYNOBOX_TMP",
     "DYNOBOX_TRASH", NULL
 };
@@ -803,6 +808,10 @@ static char **build_envp(char *const *envp, size_t *first_new)
     out[w++] = dbox_strdup(buf);
     if (g_watch_fd >= 0) {
         snprintf(buf, sizeof buf, "DYNOBOX_WATCH_FD=%d", g_watch_fd);
+        out[w++] = dbox_strdup(buf);
+    }
+    if (g_watch_id[0]) {
+        snprintf(buf, sizeof buf, "DYNOBOX_WATCH_ID=%s", g_watch_id);
         out[w++] = dbox_strdup(buf);
     }
     if (g_shm_fd >= 0) {
@@ -954,6 +963,37 @@ static char *find_in_path(const char *name, char *const *envp)
 /* watchdog: launcher died => kill this subtree (fail-safe)            */
 /* ------------------------------------------------------------------ */
 
+/* 看护 fd 是否仍是 launcher 创建的那条管道。
+ *
+ * exec 后 fd 号会被宿主程序"关闭 + 复用"：node 的 spawn 用 close-on-exec 关掉
+ * 非 stdio fd，紧跟着 JDK/node 启动时的大量 open() 又把同一个数字占走（通常是
+ * 3，因为它是关闭后最小的空闲 fd）。此时 F_GETFD 检查通过，但 fd 指向的是普通
+ * 文件：poll() 立刻可读、read() 返回 0（文件末尾），watch_thread 便把它当成
+ * "launcher 已死"，kill(-pgid, SIGKILL) 把整棵进程树无声抹掉。
+ *
+ * 这正是 devecocli 卡在 "Start generating p12" 的根因：signature generate 通过
+ * execa spawn /usr/bin/java，java 启动即占用该 fd 号，于是整条命令在毫秒级被
+ * 自己人杀掉，内部毫无输出、外部只看到"卡住后消失"。
+ *
+ * launcher 把管道读端的 st_dev/st_ino 通过 DYNOBOX_WATCH_ID 传下来，比对一致才
+ * 认为通道可信。 */
+static int watch_fd_is_ours(void)
+{
+    if (!g_watch_id[0]) return 0;
+    struct stat st;
+    if (dbox_raw_fstatat(g_watch_fd, "", &st, 0x1000 /* AT_EMPTY_PATH */) != 0)
+        return 0;
+    char cur[64];
+    snprintf(cur, sizeof cur, "%llu:%llu",
+             (unsigned long long)st.st_dev, (unsigned long long)st.st_ino);
+    return strcmp(cur, g_watch_id) == 0;
+}
+
+/* 说明：fd 校验已经足够区分"通道可信"与"fd 被复用"——可信的通道 EOF 只能是
+ * launcher 退出（写端只在 launcher 手里），不可信则根本不武装看护，因此这里
+ * 不需要再引入 pid 判据（launcher 被杀后会短暂成为僵尸，kill(pid,0) 对僵尸
+ * 仍返回成功，反而会漏掉真正的清理）。 */
+
 static void *watch_thread(void *arg)
 {
     (void)arg;
@@ -961,17 +1001,30 @@ static void *watch_thread(void *arg)
      * poll(), so a daemon-style close() must be detected by re-checking
      * fd validity between ticks (fail-closed either way). */
     for (;;) {
+        /* 每个 tick 先复核 fd 身份：宿主程序可能在 exec 前后关闭看护 fd 并把
+         * 同一个数字复用给别的东西（node spawn 的 close-on-exec，紧接着 JDK /
+         * node 的 open 占走最小的空闲 fd）。一旦 fd 不再指向 launcher 的管道，
+         * 读它只会得到"别的对象 EOF"——那不是 launcher 死亡，看护必须退出而不是
+         * kill 整棵树。devecocli 卡在 "Start generating p12" 正是这条路径。 */
+        if (!watch_fd_is_ours()) return NULL;
         struct pollfd p = { .fd = g_watch_fd, .events = POLLIN | POLLHUP };
         int r = dbox_raw_poll(&p, 1, 250);
         if (r > 0) {
             char c;
             ssize_t n = syscall(SYS_read, g_watch_fd, &c, 1);
-            if (n == 0) break;                       /* EOF: launcher gone */
-            if (n > 0) continue;                     /* spurious byte */
+            if (n == 0) {
+                /* EOF 前再确认一次，避免"刚好在 tick 之间被复用"的竞态 */
+                if (!watch_fd_is_ours()) return NULL;
+                break;                           /* EOF: launcher gone */
+            }
+            if (n > 0) continue;                 /* spurious byte */
             if (errno != EINTR && errno != EAGAIN) break;
         } else if (r == 0) {
-            if (syscall(SYS_fcntl, g_watch_fd, F_GETFD) == -1 && errno == EBADF)
-                break;                               /* fd closed by process */
+            if (syscall(SYS_fcntl, g_watch_fd, F_GETFD) == -1 && errno == EBADF) {
+                /* 进程自己关掉了看护 fd：通道已不存在，退出看护即可；launcher
+                 * 真死亡时写端关闭会先给出 POLLHUP/EOF，走上面那条路。 */
+                return NULL;
+            }
         } else if (errno != EINTR) {
             break;
         }
@@ -993,6 +1046,13 @@ static void start_watch(void)
      * applies, so the fail-safe degrades rather than firing spuriously. */
     if (g_watch_fd < 0) return;
     if (syscall(SYS_fcntl, g_watch_fd, F_GETFD) == -1) return;
+    if (!watch_fd_is_ours()) {
+        /* fd 号已被宿主复用（或指纹缺失）：通道不可信，不武装看护，避免把
+         * "读到别的对象 EOF" 误判成 launcher 死亡而 kill 整棵树。 */
+        if (dbox_log_path())
+            dbox_logf("watchdog not armed: fd %d reused by host", g_watch_fd);
+        return;
+    }
     if (dbox_log_path())
         dbox_logf("watchdog armed (watch_fd=%d)", g_watch_fd);
     pthread_t t;
@@ -1068,6 +1128,8 @@ static void init_from_env(void)
          * malloc 重入死锁。改由首次钩子调用（ensure_ready 后的
          * dbox_late_init）启动，彼时 CRT 已完全就绪。 */
     }
+    const char *wid = getenv("DYNOBOX_WATCH_ID");
+    if (wid && wid[0]) snprintf(g_watch_id, sizeof g_watch_id, "%s", wid);
     const char *shmenv = getenv("DYNOBOX_SHM_FD");
     if (shmenv && shmenv[0]) {
         g_shm_fd = atoi(shmenv);

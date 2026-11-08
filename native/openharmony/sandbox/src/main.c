@@ -439,6 +439,20 @@ static int cmd_run(int argc, char **argv)
     snprintf(wfdenv, sizeof wfdenv, "%d", rfd);
     setenv("DYNOBOX_WATCH_FD", wfdenv, 1);
 
+    /* 看护 fd 的身份指纹 + launcher pid。exec 后该 fd 号可能被宿主程序关闭并
+     * 复用（node spawn 的 close_fds 关掉它，紧接着 JDK/node 的 open() 又把同一
+     * 个数字占走），子进程里光看 F_GETFD 分不清"还是那条看护管道"与"已被复用"，
+     * 会把读到别的对象 EOF 误判成 launcher 退出而 kill 整棵树。把读端的
+     * st_dev/st_ino 与 launcher pid 一并传下去，看护据此校验。 */
+    struct stat wst;
+    if (fstat(rfd, &wst) == 0) {
+        char wid[64];
+        snprintf(wid, sizeof wid, "%llu:%llu",
+                 (unsigned long long)wst.st_dev,
+                 (unsigned long long)wst.st_ino);
+        setenv("DYNOBOX_WATCH_ID", wid, 1);
+    }
+
     /* shared ask-state region: grants + decision cache shared by the whole
      * sandbox tree (parity: the Windows manager holds this state) */
     int shm_fd = dbox_shared_create();
