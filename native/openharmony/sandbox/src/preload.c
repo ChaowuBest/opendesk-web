@@ -1012,6 +1012,18 @@ static int watch_fd_is_ours(void)
 
 static void *watch_thread(void *arg)
 {
+    /* 看护线程只做 poll/read/fcntl，绝不该参与宿主进程的信号处理。
+     *
+     * 线程创建时继承宿主的信号掩码，于是进程级 SIGCHLD 可能被这个线程领走；
+     * 单线程宿主（zsh / sh 等待前台作业时正是靠 sigsuspend() 等 SIGCHLD 唤醒）
+     * 的主线程于是永远停在 sigsuspend 里——子进程早已退出，它却在等一个不会再
+     * 来的信号，表现为"命令没有任何输出地无限期卡死"（无超时可自愈，只能被杀）。
+     * 屏蔽全部信号后，SIGCHLD 只能落到宿主自己的线程；同时看护的 poll() 也不会
+     * 再被 EINTR 打断。 */
+    sigset_t all;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, NULL);
+
     (void)arg;
     /* Poll in short ticks: closing the watched fd does NOT wake a blocked
      * poll(), so a daemon-style close() must be detected by re-checking
