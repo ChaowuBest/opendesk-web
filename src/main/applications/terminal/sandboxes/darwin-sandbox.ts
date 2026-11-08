@@ -21,6 +21,7 @@ import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyTextLinux } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
 import type { DynamicSandboxLaunch } from './linux-sandbox.js';
+import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export type { DynamicSandboxLaunch };
 
@@ -456,6 +457,8 @@ export async function prepareDarwinSandbox(options: {
     const taskId = options.taskState?.task_id || 'unknown-task';
     const trashDir = options.trashDir || path.join(getOpendeskDirectory(), 'trash', taskId);
     if (options.deleteToTrash || options.trashDir) fs.mkdirSync(trashDir, { recursive: true });
+    // 排除清单（':' 分隔注入环境变量）：归一化去重并挡掉非绝对路径
+    const trashExcludeDirs = normalizeTrashExcludeDirs(options.trashExcludeDirs);
 
     return {
         file: sandboxShellPath,
@@ -483,10 +486,9 @@ export async function prepareDarwinSandbox(options: {
             // 覆盖；写入由 dynabox-policy 的 ~/.cache/opendesk-sandbox/** write
             // allow 覆盖）。旧版 Python（<3.8）不落盘字节码，避免开放任意目录写权限。
             PYTHONPYCACHEPREFIX: `${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`,
-            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
-            ...(options.trashExcludeDirs && options.trashExcludeDirs.length > 0
-                ? { OPENDESK_SANDBOX_TRASH_EXCLUDE: options.trashExcludeDirs.join(':') }
-                : {}),
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）；
+            // 非绝对路径不下发（与其余平台共用同一归一化入口）
+            ...(trashExcludeDirs.length > 0 ? { OPENDESK_SANDBOX_TRASH_EXCLUDE: trashExcludeDirs.join(':') } : {}),
             ...(options.deleteToTrash ? { OPENDESK_SANDBOX_TRASH: '1' } : {})
         },
         attach: (proc: ChildProcess) => {
