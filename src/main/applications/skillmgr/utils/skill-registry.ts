@@ -23,7 +23,12 @@ import { getOpendeskDirectory, Setting } from '../../../utils/setting.js';
 import { toErrorMessage } from '../../../../common/utils/error.js';
 import { BaseTool, BaseToolset } from '../../../aikernel/tool.js';
 import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from '../skill-schema.js';
-import { isSkillEntryFilename, findSkillEntryFile, isDirectoryEntry, CANONICAL_SKILL_FILENAME } from '../skill-entry.js';
+import {
+    isSkillEntryFilename,
+    findSkillEntryFile,
+    isDirectoryEntry,
+    CANONICAL_SKILL_FILENAME
+} from '../skill-entry.js';
 import { logger } from '../../../utils/logger.js';
 import { getPlatform } from '../../../../platforms/base.js';
 
@@ -50,29 +55,6 @@ interface SkillCacheEntry {
     /** 技能目录；metadata.json 合成路径没有真实技能目录，此时为 undefined */
     skillDir?: string;
     source: SkillSource;
-}
-
-/** 模块私有：递归删除目录或文件；优先使用 fs.rmSync 以兼容鸿蒙 HarmonyOS */
-function rmRecursive(p: string): void {
-    if (!fs.existsSync(p)) return;
-    try {
-        if (typeof fs.rmSync === 'function') {
-            fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-            return;
-        }
-    } catch {
-        // fall back to manual recursive cleanup
-    }
-    try {
-        if (fs.statSync(p).isDirectory()) {
-            for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
-            fs.rmdirSync(p);
-        } else {
-            fs.unlinkSync(p);
-        }
-    } catch {
-        // ignore cleanup failures
-    }
 }
 
 /**
