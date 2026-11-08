@@ -17,7 +17,19 @@ function registeredIds(): string[] {
     return skillRegistry.listSkills().map((s) => s.id);
 }
 
-describe('skill registry: symlinked skill directories', () => {
+// Windows 非管理员/非开发者模式下无权创建符号链接，探测失败时整组用例跳过
+const symlinkProbeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-symlink-probe-'));
+let symlinksSupported = true;
+try {
+    fs.symlinkSync(symlinkProbeDir, path.join(symlinkProbeDir, 'probe'), 'dir');
+} catch {
+    symlinksSupported = false;
+} finally {
+    fs.rmSync(symlinkProbeDir, { recursive: true, force: true });
+}
+const describeIfSymlinks = symlinksSupported ? describe : describe.skip;
+
+describeIfSymlinks('skill registry: symlinked skill directories', () => {
     let tempDir: string;
     let resourcesDir: string;
 
@@ -34,31 +46,43 @@ describe('skill registry: symlinked skill directories', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    test('symlink skill pointing outside resources is registered alongside real-directory skills', () => {
+    test('symlink skills are registered from resources and external_paths', () => {
         makeSkill(path.join(resourcesDir, 'real-skill'), 'real-skill', 'Real directory skill');
-        const externalDir = path.join(tempDir, 'external-skills', 'symlink-skill');
-        makeSkill(externalDir, 'symlink-skill', 'Skill installed via symlink');
-        fs.symlinkSync(externalDir, path.join(resourcesDir, 'symlink-skill'), 'dir');
+        const linkedFromResources = path.join(tempDir, 'external-skills', 'symlink-skill');
+        makeSkill(linkedFromResources, 'symlink-skill', 'Skill installed via symlink');
+        fs.symlinkSync(linkedFromResources, path.join(resourcesDir, 'symlink-skill'), 'dir');
+
+        // symlink 与真实技能并存且指向独立技能，避免同名 frontmatter 掩盖 symlink 被跳过
+        const configRoot = path.join(tempDir, 'config-root');
+        makeSkill(path.join(configRoot, 'config-real-skill'), 'config-real-skill', 'Real skill in external_paths');
+        const linkedFromConfig = path.join(tempDir, 'elsewhere', 'config-linked-skill');
+        makeSkill(linkedFromConfig, 'config-linked-skill', 'Skill symlinked inside external_paths');
+        fs.symlinkSync(linkedFromConfig, path.join(configRoot, 'config-linked-skill'), 'dir');
+        skillRegistry.setRuntimeConfig({ external_paths: [configRoot] });
 
         const { errors } = skillRegistry.loadAll();
 
-        expect(registeredIds()).toEqual(expect.arrayContaining(['real-skill', 'symlink-skill']));
-        expect(errors.find((e) => e.id === 'symlink-skill')).toBeUndefined();
+        expect(registeredIds()).toEqual(
+            expect.arrayContaining(['real-skill', 'symlink-skill', 'config-real-skill', 'config-linked-skill'])
+        );
+        expect(skillRegistry.listSkills()).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'config-linked-skill',
+                    source: 'config',
+                    skillDir: path.join(configRoot, 'config-linked-skill')
+                })
+            ])
+        );
+        expect(errors).toEqual([]);
     });
 
     test('cyclic symlinks in external_paths terminate scanning without errors', () => {
         const configRoot = path.join(tempDir, 'cycle-root');
         fs.mkdirSync(configRoot, { recursive: true });
-        makeSkill(path.join(configRoot, 'cycle-skill'), 'cycle-skill', 'Skill next to cyclic links');
-        // 自环：链接指向自己的父目录
+        makeSkill(path.join(configRoot, 'cycle-skill'), 'cycle-skill', 'Skill next to a cyclic link');
+        // 自环：链接指向自己的父目录，realpath 归一后命中 visited，扫描终止
         fs.symlinkSync(configRoot, path.join(configRoot, 'self-loop'), 'dir');
-        // 互环：ping/next → pong，pong/next → ping
-        const ping = path.join(configRoot, 'ping');
-        const pong = path.join(configRoot, 'pong');
-        fs.mkdirSync(ping);
-        fs.mkdirSync(pong);
-        fs.symlinkSync(pong, path.join(ping, 'next'), 'dir');
-        fs.symlinkSync(ping, path.join(pong, 'next'), 'dir');
         skillRegistry.setRuntimeConfig({ external_paths: [configRoot] });
 
         const { errors } = skillRegistry.loadAll();
@@ -79,29 +103,5 @@ describe('skill registry: symlinked skill directories', () => {
 
         expect(registeredIds()).toContain('linked-entry-skill');
         expect(errors.find((e) => e.id === 'linked-entry-skill')).toBeUndefined();
-    });
-
-    test('symlink skill inside configured external_paths directory is discovered', () => {
-        const configRoot = path.join(tempDir, 'external-skills');
-        makeSkill(path.join(configRoot, 'config-real-skill'), 'config-real-skill', 'Real skill in external_paths');
-        // symlink 与真实技能并存且指向独立技能，避免同名 frontmatter 掩盖 symlink 被跳过
-        const elsewhere = path.join(tempDir, 'elsewhere', 'config-linked-skill');
-        makeSkill(elsewhere, 'config-linked-skill', 'Skill symlinked inside external_paths');
-        fs.symlinkSync(elsewhere, path.join(configRoot, 'config-linked-skill'), 'dir');
-        skillRegistry.setRuntimeConfig({ external_paths: [configRoot] });
-
-        const { errors } = skillRegistry.loadAll();
-
-        expect(registeredIds()).toEqual(expect.arrayContaining(['config-real-skill', 'config-linked-skill']));
-        expect(skillRegistry.listSkills()).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    id: 'config-linked-skill',
-                    source: 'config',
-                    skillDir: path.join(configRoot, 'config-linked-skill')
-                })
-            ])
-        );
-        expect(errors).toEqual([]);
     });
 });

@@ -8,7 +8,19 @@ function makeSkill(dir: string, name: string): void {
     fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Test skill\n---\n`, 'utf8');
 }
 
-describe('skill manager worker symlink scanning', () => {
+// Windows 非管理员/非开发者模式下无权创建符号链接，探测失败时整组用例跳过
+const symlinkProbeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-symlink-probe-'));
+let symlinksSupported = true;
+try {
+    fs.symlinkSync(symlinkProbeDir, path.join(symlinkProbeDir, 'probe'), 'dir');
+} catch {
+    symlinksSupported = false;
+} finally {
+    fs.rmSync(symlinkProbeDir, { recursive: true, force: true });
+}
+const describeIfSymlinks = symlinksSupported ? describe : describe.skip;
+
+describeIfSymlinks('skill manager worker symlink scanning', () => {
     let tempDir: string;
 
     beforeEach(() => {
