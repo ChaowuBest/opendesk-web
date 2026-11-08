@@ -106,6 +106,34 @@ describe('terminal Python environment isolation', () => {
         expect(env.PATH?.endsWith(`${path.delimiter}/work/.venv/bin`)).toBe(true);
     });
 
+    test('injects a managed hdcthis home independent of the isolated Python switch', () => {
+        const managed = path.join(tempDir, 'interpreters', 'hdcthis');
+        // 带 VIRTUAL_ENV 时 shouldUseIsolatedPython=false（继承用户 venv），不带时启用隔离
+        for (const explicitEnv of [{ PATH: '/usr/bin' }, { PATH: '/usr/bin', VIRTUAL_ENV: '/work/.venv' }]) {
+            const env = buildChildProcessEnv({ HDCTHIS_HOME: undefined, ...explicitEnv });
+
+            expect(env.HDCTHIS_HOME).toBe(managed);
+            expect(fs.existsSync(managed)).toBe(true);
+        }
+        // 与隔离 Python 无关的变量不应由解释器环境函数负责
+        const interpretersEnv = buildInterpretersEnv({ useIsolatedPython: false, baseEnv: { PATH: '/usr/bin' } });
+        expect(interpretersEnv.HDCTHIS_HOME).toBeUndefined();
+    });
+
+    test('preserves an explicitly configured hdcthis home', () => {
+        const custom = path.join(tempDir, 'custom-hdcthis');
+        const env = buildChildProcessEnv({ PATH: '/usr/bin', HDCTHIS_HOME: custom });
+
+        expect(env.HDCTHIS_HOME).toBe(custom);
+        expect(fs.existsSync(custom)).toBe(true);
+    });
+
+    test('falls back to the managed hdcthis home when the configured value is empty', () => {
+        const env = buildChildProcessEnv({ PATH: '/usr/bin', HDCTHIS_HOME: '' });
+
+        expect(env.HDCTHIS_HOME).toBe(path.join(tempDir, 'interpreters', 'hdcthis'));
+    });
+
     test('preserves explicitly configured interpreter directories', () => {
         const npmPrefix = path.join(tempDir, 'custom-npm');
         const pipTarget = path.join(tempDir, 'custom-pip');

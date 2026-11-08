@@ -149,8 +149,9 @@ export function bindWorkflowAgentAccess(
     requestedTools: string[] | undefined
 ): void {
     agentTask.harnessContext.permission = hostTask.harnessContext.permission;
-    agentTask.harnessContext.permissionPrompt = hostTask.harnessContext.permissionPrompt
-        ? new WorkflowAgentPermissionPrompt(hostTask.harnessContext.permissionPrompt, hostTask, agentTask)
+    const hostPrompt = hostTask.getActivePermissionPrompt();
+    agentTask.harnessContext.permissionPrompt = hostPrompt
+        ? new WorkflowAgentPermissionPrompt(hostPrompt, hostTask, agentTask)
         : null;
 
     const hostAllowedTools =

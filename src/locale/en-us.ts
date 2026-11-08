@@ -334,6 +334,10 @@ export const enUs: Record<string, string> = {
     'plugin.install.error.invalidStructure': 'The plugin has missing files or contains an unsafe file path.',
     'plugin.install.error.builtinConflict':
         'A built-in plugin or a plugin from an additional plugin directory already uses this plugin ID and cannot be replaced.',
+    'plugin.install.error.hostVersionTooOld':
+        'This plugin requires a newer version of OpenDesk and cannot be installed. Upgrade OpenDesk to the latest version and try again.',
+    'plugin.install.error.hostVersionTooNew':
+        'This plugin requires an older version of OpenDesk and cannot be installed. Check whether the plugin offers a release that supports your version.',
     'plugin.install.error.unknown': 'The plugin could not be installed. Check the application logs for details.',
     'plugin.uninstall.description': 'Uninstall a plugin',
     'plugin.uninstall.removeData.description':
@@ -422,6 +426,10 @@ export const enUs: Record<string, string> = {
     'plugin.security.doctor.description': 'Diagnose plugin runtime and installed plugins',
     'plugin.security.doctor.summary':
         'Plugin diagnostics completed: ${plugins} runtime entries, ${installed} installed plugins',
+    'plugin.diagnostic.opendeskVersionTooOld':
+        'The plugin requires a newer version of OpenDesk (${detail}) and cannot load. Upgrade OpenDesk and try again.',
+    'plugin.diagnostic.opendeskVersionTooNew':
+        'The plugin requires an older version of OpenDesk (${detail}) and cannot load.',
     'config.plugin.title': 'Plugin Center',
     'config.plugin.title.hint': 'View and manage discovered plugins',
     'plugin.settings.tab': 'Plugins',
@@ -554,6 +562,11 @@ export const enUs: Record<string, string> = {
     'plugin.center.market.installBlocked': 'Cannot install',
     'plugin.center.market.blockedBuiltinConflict': 'Conflicts with a built-in plugin',
     'plugin.center.market.blockedHostVersion': 'Requires OpenDesk ${range}',
+    'plugin.center.market.installBlockedTitle': 'Cannot install plugin',
+    'plugin.center.market.installBlockedTooOld':
+        'This plugin requires OpenDesk ${range}, but the current version is ${current}. Upgrade OpenDesk to the latest version and try again.',
+    'plugin.center.market.installBlockedTooNew':
+        'This plugin only supports OpenDesk ${range}, which is older than the current version ${current}. Check whether the plugin offers a release that supports your version.',
     'plugin.center.market.installedVersionLabel': 'Local version',
     'plugin.center.market.installedVersion': 'v${version}',
     'plugin.center.market.installFailedTitle': 'Plugin installation failed',

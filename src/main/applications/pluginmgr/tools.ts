@@ -20,6 +20,7 @@ import {
 
 import { BaseTool } from '../../aikernel/tool.js';
 import type { PermissionRequest } from '../../aikernel/types/index.js';
+import { formatPluginInstallException } from './management/errors.js';
 
 interface PluginManagementApplication {
     list(): Promise<unknown>;
@@ -206,7 +207,15 @@ export class InstallPluginTool extends BaseTool<typeof InstallPluginArgsSchema> 
     }
 
     private async install(args: z.output<typeof InstallPluginArgsSchema>): Promise<string> {
-        return serialize(await this.pluginApp.install(args.spec));
+        try {
+            return serialize(await this.pluginApp.install(args.spec));
+        } catch (error) {
+            // app.install 对宿主版本不满足的失败抛结构化串（渲染层要解析它弹模态）；
+            // AI 工具这边不需要结构，翻译成可操作的本地化文案再回给模型
+            const localized = formatPluginInstallException(error);
+            if (localized) throw new Error(localized);
+            throw error;
+        }
     }
 }
 

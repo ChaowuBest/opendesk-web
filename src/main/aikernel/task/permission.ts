@@ -152,7 +152,7 @@ export async function applyPersistentPermissionAllowForTask(task: TaskState, rul
 
     const providers: PermissionPromptProvider[] = [];
     for (const relatedTask of relatedTasks) {
-        const provider = relatedTask.harnessContext.permissionPrompt;
+        const provider = relatedTask.getActivePermissionPrompt();
         if (provider?.notifyPermissionRulesChanged && !providers.includes(provider)) {
             providers.push(provider);
         }
@@ -194,7 +194,7 @@ function computePrefixOptions(task: TaskState, requests: PermissionRequest[]): {
 }
 
 /**
- * 通过 harnessContext 的 permissionPrompt 向用户请求权限确认（合并后的批量请求）
+ * 通过任务本 turn 生效的 permissionPrompt（turn 绑定优先，其次任务默认）向用户请求权限确认（合并后的批量请求）
  */
 export async function promptPermissionBatchForTask(
     task: TaskState,
@@ -230,7 +230,7 @@ export async function promptPermissionBatchForTask(
         }
     }
 
-    const promptProvider = task.harnessContext.permissionPrompt;
+    const promptProvider = task.getActivePermissionPrompt();
     if (!promptProvider) {
         logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);
         return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };

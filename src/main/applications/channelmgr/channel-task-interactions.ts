@@ -10,15 +10,17 @@
  */
 
 /**
- * 渠道任务的交互 provider 注入。
+ * 渠道任务的交互 provider。
  *
- * 对于 origin.type === 'channel' 的任务，根据渠道是否支持结构化交互决定：
+ * 渠道任务不占用任务默认 provider（`harnessContext.permissionPrompt` / `task.interactionToolset`
+ * 仍由宿主入口注入，供桌面等入口使用）。每轮渠道入站 turn 在起点现场绑定本轮归属
+ * （`TaskState.setTurnInteractionBinding`，解析逻辑见 `ChannelMgrApplication.resolveTurnInteractionBinding`）：
  * - 渠道支持交互（capabilities.interactive + sendInteraction）：
- *   permissionPrompt 替换为 ChannelPermissionPromptProvider，askUser 走 ChannelAskUserProvider，
+ *   permissionPrompt 绑定 ChannelPermissionPromptProvider，askUser 走 ChannelAskUserProvider，
  *   权限审批与提问结构化透传到用户侧（如飞书确认卡片）；
  * - 渠道不支持交互：
- *   permissionPrompt 替换为自动拒绝 provider（无确认界面，不允许悬浮等待），
- *   且不挂载交互工具集（askUser / exitPlanMode 不暴露给模型）。
+ *   permissionPrompt 绑定自动拒绝 provider（无确认界面，不允许悬浮等待），
+ *   且本轮不挂载交互工具集（askUser / exitPlanMode 不暴露给模型）。
  */
 
 import type { AskUserProvider, AskUserRequest, AskUserResponse } from '../../aikernel/interaction/tools.js';

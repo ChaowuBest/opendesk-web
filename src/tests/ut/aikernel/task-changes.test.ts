@@ -134,6 +134,91 @@ describe('TaskState.getTaskChanges()', () => {
         expect(changes.files).toHaveLength(1);
         expect(changes.files[0].filePath).toBe('42');
     });
+
+    test('reports real file line numbers for CRLF files edited with LF tool args', () => {
+        const created = createTaskWithWorkspace();
+        const task = created.task;
+        workspace = created.workspace;
+        const lines = Array.from({ length: 20 }, (_, index) => `a${index + 1}`);
+        lines[9] = 'const npmPrefix = 1;';
+        lines[10] = 'const hdcthicHome = 2;';
+        lines[11] = 'const env = {};';
+        const filePath = path.join(workspace, 'crlf.ts');
+        fs.writeFileSync(filePath, `${lines.join('\r\n')}\r\n`, 'utf8');
+
+        // editFile 的 oldString/newString 使用 LF；工具写回时会还原为文件原本的 CRLF
+        appendSuccessfulToolCall(task, 'editFile', {
+            filePath: 'crlf.ts',
+            oldString: 'const npmPrefix = 1;\nconst env = {};',
+            newString: 'const npmPrefix = 1;\nconst hdcthicHome = 2;\nconst env = {};'
+        });
+
+        const changes = task.getTaskChanges();
+        const entry = changes.files[0].changes[0];
+
+        expect(entry.toolName).toBe('cumulative');
+        expect(entry.addedLines).toBe(1);
+        expect(entry.removedLines).toBe(0);
+        // 第 10 行的局部改动 → hunk 使用文件真实行号，而不是片段相对行号 1
+        expect(entry.hunks[0].oldStart).toBe(8);
+        expect(entry.hunks[0].newStart).toBe(8);
+        const addedLine = entry.hunks[0].lines.find((line) => line.type === 'added');
+        expect(addedLine?.newNum).toBe(11);
+        expect(addedLine?.content).toBe('const hdcthicHome = 2;');
+    });
+
+    test('reports real file line numbers when tool args carry CRLF', () => {
+        const created = createTaskWithWorkspace();
+        const task = created.task;
+        workspace = created.workspace;
+        const lines = Array.from({ length: 19 }, (_, index) => `a${index + 1}`);
+        lines.splice(10, 0, 'a10.5');
+        const filePath = path.join(workspace, 'crlf-args.ts');
+        fs.writeFileSync(filePath, `${lines.join('\r\n')}\r\n`, 'utf8');
+
+        // 模型偶尔会把 CRLF 原样写进参数；归一化必须同时覆盖内容与参数两侧
+        appendSuccessfulToolCall(task, 'editFile', {
+            filePath: 'crlf-args.ts',
+            oldString: 'a10\r\na11',
+            newString: 'a10\r\na10.5\r\na11'
+        });
+
+        const changes = task.getTaskChanges();
+        const entry = changes.files[0].changes[0];
+
+        expect(entry.toolName).toBe('cumulative');
+        expect(entry.addedLines).toBe(1);
+        expect(entry.hunks[0].oldStart).toBe(8);
+        const addedLine = entry.hunks[0].lines.find((line) => line.type === 'added');
+        expect(addedLine?.newNum).toBe(11);
+        expect(addedLine?.content).toBe('a10.5');
+    });
+
+    test('reports real file line numbers for CRLF files appended with writeFile', () => {
+        const created = createTaskWithWorkspace();
+        const task = created.task;
+        workspace = created.workspace;
+        const filePath = path.join(workspace, 'append.txt');
+        fs.writeFileSync(filePath, 'alpha\r\nbeta\r\ngamma\r\ndelta\r\n', 'utf8');
+
+        // 追加的内容带 CRLF：反向回放按长度切片，两侧口径不一致时整组会退化成片段 diff
+        appendSuccessfulToolCall(task, 'writeFile', {
+            path: 'append.txt',
+            mode: 'append',
+            content: 'delta\r\n'
+        });
+
+        const changes = task.getTaskChanges();
+        const entry = changes.files[0].changes[0];
+
+        expect(entry.toolName).toBe('cumulative');
+        expect(entry.addedLines).toBe(1);
+        expect(entry.removedLines).toBe(0);
+        expect(entry.hunks[0].oldStart).toBe(1);
+        const addedLine = entry.hunks[0].lines.find((line) => line.type === 'added');
+        expect(addedLine?.newNum).toBe(4);
+        expect(addedLine?.content).toBe('delta');
+    });
 });
 
 describe('TaskState.rewindToUserMessage()', () => {

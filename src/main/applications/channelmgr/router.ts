@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
+import type { TaskManagerState, TaskState, TurnInteractionBinding } from '../../aikernel/states/tasks.js';
 import {
     UserMessage,
     AssistantMessage,
@@ -381,15 +381,11 @@ export class ChannelMessageRouter {
         const currentModeId = task.activeModeId || task.getAgentMode().id;
         if (currentModeId === modeId) return;
 
-        // channel 任务的 permissionPrompt 由 applyChannelTaskProviders 注入；
-        // 此处兜底返回 deny provider，避免意外缺失 provider 时权限请求悬挂等待。
-        const permissionPrompt = task.harnessContext.permissionPrompt;
+        // 模式切换发生在 turn 起点之前：重建的 harness 只沿用任务默认 provider，
+        // 渠道 provider 由随后本轮 turn 的绑定覆盖（见 submitAndWaitForReply），不写进任务默认。
+        // 任务默认缺失时用 deny 兜底，避免权限请求悬挂等待。
         try {
-            const switched = await switchTaskMode(
-                task,
-                modeId,
-                () => permissionPrompt ?? createChannelDenyPermissionProvider()
-            );
+            const switched = await switchTaskMode(task, modeId, () => createChannelDenyPermissionProvider());
             if (switched) {
                 logger.info(`[router] 任务 ${task.task_id} 模式已随账号设定同步: ${currentModeId} -> ${modeId}`);
             } else {
@@ -534,9 +530,7 @@ export class ChannelMessageRouter {
             // 群聊的 recipientId 是群 ID：后续审批 / askUser 卡片要按它选接收方类型
             chatType: message.chatType
         };
-        // 按渠道交互能力注入权限/askUser provider：支持交互则透传到用户侧，
-        // 不支持交互则不挂载交互工具、权限请求自动拒绝。
-        this.applyChannelProviders(task);
+        // 渠道交互归属由本轮 turn 现场声明（见 submitAndWaitForReply），此处只登记出口。
         this.registry.bind(message.channelId, message.accountId, replyTarget, task.task_id);
 
         return task;
@@ -574,19 +568,19 @@ export class ChannelMessageRouter {
         }
         task.origin = { type: 'channel', ...origin };
         task.persistLater();
-        this.applyChannelProviders(task);
         logger.info(
             `[router] 任务 ${task.task_id} 的渠道出口切换为 ${origin.channel}:${origin.accountId}:${origin.recipientId}`
         );
     }
 
-    /** 按渠道交互能力为任务注入权限审批 / askUser provider。 */
-    private applyChannelProviders(task: TaskState): void {
+    /** 按渠道交互能力解析本轮 turn 的交互归属（渠道插件可能在运行期启停，每次 turn 重新解析）。 */
+    private resolveTurnInteractionBinding(task: TaskState): TurnInteractionBinding | null {
         try {
             const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
-            channelMgr?.applyChannelTaskProviders?.(task);
+            return channelMgr?.resolveTurnInteractionBinding?.(task) ?? null;
         } catch (err: any) {
-            logger.warn(`[router] applyChannelTaskProviders failed: ${err?.message || err}`);
+            logger.warn(`[router] resolveTurnInteractionBinding failed: ${err?.message || err}`);
+            return null;
         }
     }
 
@@ -652,14 +646,14 @@ export class ChannelMessageRouter {
                 });
             }
 
-            // 渠道支持交互时（interactionToolset 已由 applyChannelTaskProviders 注入），
-            // 标记当前 turn 为交互发起，使 buildToolsets 挂载 askUser 等交互工具。
-            if ((task as any).interactionToolset) {
-                (task as any).setTurnInteractive?.(true);
-            }
+            // 本 turn 由渠道入站消息发起：现场声明审批与 askUser 的归属。渠道支持交互则透传到
+            // 用户侧，否则直接拒绝且不挂载交互工具。用户回到桌面继续该任务时，
+            // submitUserMessage 会重置绑定，权限审批重新回到桌面。
+            task.setTurnInteractionBinding(this.resolveTurnInteractionBinding(task));
             const toolsets = await task.buildToolsets();
             await task.rebuildSystemPrompt(toolsets);
-            task.chat_context.attachToolsets(...toolsets);
+            // 非交互渠道本轮不挂载交互工具集，同时清掉上一个交互 turn 残留的那一份
+            task.syncManagedToolsets(toolsets);
             for (const ts of this.extraToolsets) {
                 task.chat_context.attachToolsets(ts);
             }

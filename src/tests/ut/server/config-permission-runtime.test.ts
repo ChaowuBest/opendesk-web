@@ -204,16 +204,18 @@ describe('OpenCode config permission runtime', () => {
         });
         const enforcer = runtime.wrapEnforcer('/workspace', new FallbackPermissionEnforcer('allow'));
         const prompt = jest.fn(async () => ({ decision: 'allow', rememberScope: 'none' }) as const);
+        const permissionPrompt = { prompt };
         const task = {
             task_id: 'task-bash-permission',
             task_name: 'bash permission',
             parent_id: null,
             harnessContext: {
                 permission: enforcer,
-                permissionPrompt: { prompt }
+                permissionPrompt
             },
             hooks: Hooks.createGlobal(),
             getWorkspace: () => '/workspace',
+            getActivePermissionPrompt: () => permissionPrompt,
             chat_context: { messages: [] }
         } as any;
         const tool = {

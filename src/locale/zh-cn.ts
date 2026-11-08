@@ -320,6 +320,10 @@ export const zhCn: Record<string, string> = {
     'plugin.install.error.incompatibleApi': '该插件使用了当前版本不支持的 OpenDesk 插件 API。',
     'plugin.install.error.invalidStructure': '插件缺少必要文件，或者包含不安全的文件路径。',
     'plugin.install.error.builtinConflict': '内置插件或附加插件目录中的插件已使用相同的插件 ID，无法覆盖。',
+    'plugin.install.error.hostVersionTooOld':
+        '该插件要求的 OpenDesk 版本高于当前版本，无法安装。请将 OpenDesk 升级到最新版本后重试。',
+    'plugin.install.error.hostVersionTooNew':
+        '该插件要求的 OpenDesk 版本低于当前版本，无法安装。请检查插件是否有支持当前版本的新版本。',
     'plugin.install.error.unknown': '插件安装失败，请查看应用日志了解详细信息。',
     'plugin.uninstall.description': '卸载插件',
     'plugin.uninstall.removeData.description': '同时删除插件的私有数据目录（默认保留，重新安装后仍可继承）',
@@ -406,6 +410,9 @@ export const zhCn: Record<string, string> = {
     'plugin.security.verify.integrity': '完整性：${status}',
     'plugin.security.doctor.description': '诊断插件运行时和已安装插件',
     'plugin.security.doctor.summary': '插件诊断完成：${plugins} 个运行时条目，${installed} 个已安装插件',
+    'plugin.diagnostic.opendeskVersionTooOld':
+        '插件要求的 OpenDesk 版本高于当前版本（${detail}），插件无法加载。请升级 OpenDesk 后重试。',
+    'plugin.diagnostic.opendeskVersionTooNew': '插件要求的 OpenDesk 版本低于当前版本（${detail}），插件无法加载。',
     'config.plugin.title': '插件中心',
     'config.plugin.title.hint': '查看和管理已发现的插件',
     'plugin.settings.tab': '插件',
@@ -537,6 +544,11 @@ export const zhCn: Record<string, string> = {
     'plugin.center.market.installBlocked': '无法安装',
     'plugin.center.market.blockedBuiltinConflict': '与内置插件冲突',
     'plugin.center.market.blockedHostVersion': '需要 OpenDesk ${range}',
+    'plugin.center.market.installBlockedTitle': '无法安装插件',
+    'plugin.center.market.installBlockedTooOld':
+        '该插件需要 OpenDesk ${range}，当前版本 ${current} 不满足要求。请将 OpenDesk 升级到最新版本后重试。',
+    'plugin.center.market.installBlockedTooNew':
+        '该插件仅支持 OpenDesk ${range}，当前版本 ${current} 过新，无法安装。请检查插件是否有支持当前版本的新版本。',
     'plugin.center.market.installedVersionLabel': '本地版本',
     'plugin.center.market.installedVersion': 'v${version}',
     'plugin.center.market.installFailedTitle': '插件安装失败',

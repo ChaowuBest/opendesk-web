@@ -173,6 +173,27 @@ describe('PluginMgr management tools', () => {
         ]);
     });
 
+    test('installPlugin 把宿主版本闸门的结构化错误翻译成本地化引导', async () => {
+        setRuntimeLocale('zh-CN');
+        try {
+            const app = createPluginApp({
+                install: jest.fn(async () => {
+                    throw new Error('plugin.install_host_version:too_old:≥ 99.0.0:0.4.1');
+                })
+            });
+            const tool = new InstallPluginTool(app as any);
+
+            const result = await tool.execute({ spec: 'future-plugin' });
+
+            expect(result.status).toBe('error');
+            expect(result.result).toContain('请将 OpenDesk 升级到最新版本');
+            // 内部结构化串不能回给模型
+            expect(result.result).not.toContain('plugin.install_host_version');
+        } finally {
+            setRuntimeLocale(null);
+        }
+    });
+
     test('uninstallPlugin delegates enforcement to the application', async () => {
         const app = createPluginApp();
         const tool = new UninstallPluginTool(app as any);

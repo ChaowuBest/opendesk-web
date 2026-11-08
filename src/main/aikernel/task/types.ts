@@ -11,6 +11,8 @@
 
 import type { UserMessagePart, AssistantMessagePart, Usage, RuntimeMetadata } from '../messages.js';
 import type { LLMRequestOptions } from '../llm.js';
+import type { InteractiveToolset } from '../tool.js';
+import type { PermissionPromptProvider } from '../security/permission.js';
 import type { TaskTurnInstrumentationExternalContext } from '../../telemetry/agent-execution.js';
 import type { TaskUsageSummary } from '../../telemetry/local-telemetry.js';
 
@@ -73,6 +75,25 @@ export interface ProcessTaskTurnOptions {
     generation?: number;
     modelRequestOptions?: TaskModelRequestOptions;
     instrumentationContext?: TaskTurnInstrumentationExternalContext;
+}
+
+/**
+ * 单个 turn 的交互归属绑定（运行时状态，不持久化）。
+ *
+ * 每个 turn 起点由发起入口现场声明：渠道入站消息发起的一轮，权限审批与 askUser
+ * 发给渠道用户；桌面 / TUI / ACP 等入口发起的一轮沿用任务默认 provider。
+ * 字段为 undefined 表示沿用任务默认（harnessContext.permissionPrompt / TaskState.interactionToolset）。
+ */
+export interface TurnInteractionBinding {
+    /** 本 turn 是否由用户交互发起，决定是否挂载交互工具集（askUser / exitPlanMode）。 */
+    interactive: boolean;
+    /** 本 turn 的权限审批 provider；省略沿用任务默认，null 表示本轮直接拒绝（无确认界面）。 */
+    permissionPrompt?: PermissionPromptProvider | null;
+    /**
+     * 本 turn 的交互工具集；省略沿用任务默认。null 表示本轮没有入口侧工具集
+     * （interactive 为 true 时仍会按需从 platform 补建，为 false 时一律不挂载）。
+     */
+    interactionToolset?: InteractiveToolset | null;
 }
 
 export interface StartInternalTurnOptions {

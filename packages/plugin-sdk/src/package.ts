@@ -187,6 +187,10 @@ export interface ValidatedOpenDeskPluginPackage {
     entry: string;
     apiVersion: number;
     capabilities: string[];
+    /** 插件要求的宿主版本下界（含）；未声明表示不限。安装期的宿主版本闸门据此拦截 */
+    minOpenDeskVersion?: string;
+    /** 插件要求的宿主版本上界（含）；未声明表示不限 */
+    maxOpenDeskVersion?: string;
 }
 
 function normalizePluginId(packageName: string): string {
@@ -371,7 +375,9 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
         version: packageVersion ?? declaration.version ?? '0.0.0',
         entry,
         apiVersion: declaration.apiVersion,
-        capabilities: [...declaration.capabilities]
+        capabilities: [...declaration.capabilities],
+        minOpenDeskVersion: declaration.minOpenDeskVersion,
+        maxOpenDeskVersion: declaration.maxOpenDeskVersion
     };
 }
 

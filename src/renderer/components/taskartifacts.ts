@@ -643,33 +643,41 @@ class TaskArtifacts extends HTMLElement {
                                 : change.toolName
                         );
 
-                        const hunksHtml = (change.hunks || [])
-                            .map((hunk: any) => {
-                                const oldRange = `${hunk.oldStart},${hunk.oldLines}`;
-                                const newRange = `${hunk.newStart},${hunk.newLines}`;
-                                const headerHtml =
-                                    hunk.oldLines === 0 && hunk.newLines > 0
-                                        ? '' // 纯新增不显示 hunk header
-                                        : `<div class="diff-hunk-header">@@ -${oldRange} +${newRange} @@</div>`;
-
-                                const linesHtml = hunk.lines
-                                    .map((line: any) => {
-                                        if (line.type === 'added') {
-                                            const num = line.newNum != null ? String(line.newNum) : '';
-                                            return `<div class="diff-line diff-line-added"><span class="diff-ln">${num}</span><span class="diff-op">+</span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
-                                        } else if (line.type === 'removed') {
-                                            const num = line.oldNum != null ? String(line.oldNum) : '';
-                                            return `<div class="diff-line diff-line-removed"><span class="diff-ln">${num}</span><span class="diff-op">-</span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
-                                        } else {
-                                            const oldNum = line.oldNum != null ? String(line.oldNum) : '';
-                                            return `<div class="diff-line diff-line-context"><span class="diff-ln">${oldNum}</span><span class="diff-op"> </span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
-                                        }
-                                    })
-                                    .join('');
-
-                                return `${headerHtml}${linesHtml}`;
-                            })
-                            .join('');
+                        // 与 editFile 工具卡片保持一致：双列行号（旧 / 新）+ marker 列 + 代码列
+                        const hunks: any[] = change.hunks || [];
+                        const rowsHtml: string[] = [];
+                        hunks.forEach((hunk: any, index: number) => {
+                            if (index > 0) {
+                                const prev: any = hunks[index - 1];
+                                const prevEnd = prev.oldStart + Math.max(prev.oldLines, 1);
+                                if (hunk.oldStart > prevEnd) {
+                                    rowsHtml.push(
+                                        '<tr class="diff-row-gap"><td class="diff-ln"></td><td class="diff-ln"></td><td class="diff-marker"></td><td class="diff-code">⋯</td></tr>'
+                                    );
+                                }
+                            }
+                            for (const line of hunk.lines || []) {
+                                const content = escapeHtml(line.content || ' ');
+                                if (line.type === 'added') {
+                                    const newNum = line.newNum != null ? String(line.newNum) : '';
+                                    rowsHtml.push(
+                                        `<tr class="diff-row-add"><td class="diff-ln"></td><td class="diff-ln">${newNum}</td><td class="diff-marker">+</td><td class="diff-code">${content}</td></tr>`
+                                    );
+                                } else if (line.type === 'removed') {
+                                    const oldNum = line.oldNum != null ? String(line.oldNum) : '';
+                                    rowsHtml.push(
+                                        `<tr class="diff-row-del"><td class="diff-ln">${oldNum}</td><td class="diff-ln"></td><td class="diff-marker">-</td><td class="diff-code">${content}</td></tr>`
+                                    );
+                                } else {
+                                    const oldNum = line.oldNum != null ? String(line.oldNum) : '';
+                                    const newNum = line.newNum != null ? String(line.newNum) : '';
+                                    rowsHtml.push(
+                                        `<tr class="diff-row-ctx"><td class="diff-ln">${oldNum}</td><td class="diff-ln">${newNum}</td><td class="diff-marker">&nbsp;</td><td class="diff-code">${content}</td></tr>`
+                                    );
+                                }
+                            }
+                        });
+                        const hunksHtml = `<table class="diff-table"><tbody>${rowsHtml.join('')}</tbody></table>`;
 
                         return `<div class="diff-change-block">
                     <div class="diff-change-label">${changeLabel} · <span class="diff-stat-add">+${change.addedLines}</span> <span class="diff-stat-remove">-${change.removedLines}</span></div>
@@ -2113,79 +2121,75 @@ class TaskArtifacts extends HTMLElement {
             }
             .diff-hunk-body {
                 overflow-x: auto;
+                background: #fff;
+            }
+            .diff-table {
+                width: 100%;
+                border-collapse: collapse;
+                border-spacing: 0;
                 font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
                 font-size: var(--fs-sm);
                 line-height: 1.55;
                 tab-size: 4;
             }
-            .diff-hunk-header {
-                padding: 2px 8px;
-                font-size: var(--fs-xs);
-                color: #6b7280;
-                background: #f0f4ff;
-                border-bottom: 1px solid #e5e7eb;
-                font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+            .diff-table td {
+                padding: 0;
+                vertical-align: top;
             }
-            .diff-line {
-                display: flex;
-                align-items: stretch;
-                min-width: max-content;
-                white-space: pre;
-            }
-            .diff-line-added {
-                background: #ecfdf5;
-            }
-            .diff-line-removed {
-                background: #fef2f2;
-            }
-            .diff-line-context {
-                background: #fff;
-            }
-            .diff-ln {
-                display: inline-block;
-                width: 36px;
-                min-width: 36px;
+            .diff-table td.diff-ln {
+                width: 1px;
+                min-width: 2.6em;
+                padding: 1px 8px;
                 text-align: right;
-                padding: 0 4px 0 2px;
-                color: #9ca3af;
+                white-space: nowrap;
                 user-select: none;
-                flex-shrink: 0;
-                font-size: var(--fs-xs);
-                line-height: inherit;
+                color: #cbd5e1;
+                border-right: 1px solid #eef2f6;
             }
-            .diff-op {
-                display: inline-block;
-                width: 14px;
-                min-width: 14px;
+            .diff-table td.diff-marker {
+                width: 1px;
+                padding: 1px 6px;
                 text-align: center;
+                white-space: nowrap;
                 user-select: none;
-                flex-shrink: 0;
-                font-weight: 600;
-                font-size: var(--fs-sm);
-                line-height: inherit;
+                color: #cbd5e1;
+                border-right: 1px solid #f1f5f9;
             }
-            .diff-line-added .diff-op {
-                color: #16a34a;
+            .diff-table td.diff-code {
+                padding: 1px 8px 1px 10px;
+                white-space: pre;
+                color: #6b7280;
             }
-            .diff-line-removed .diff-op {
-                color: #dc2626;
+            .diff-table tr.diff-row-add td.diff-ln,
+            .diff-table tr.diff-row-add td.diff-marker {
+                background: #f0fdf4;
+                color: #9ca3af;
+                border-right-color: #dcfce7;
             }
-            .diff-line-context .diff-op {
-                color: #d1d5db;
+            .diff-table tr.diff-row-add td.diff-marker {
+                background: #ecfdf5;
+                color: #10b981;
             }
-            .diff-content {
-                padding: 0 6px 0 0;
-                color: #1f2937;
-                line-height: inherit;
-            }
-            .diff-line-added .diff-content {
+            .diff-table tr.diff-row-add td.diff-code {
+                background: #ecfdf5;
                 color: #065f46;
             }
-            .diff-line-removed .diff-content {
+            .diff-table tr.diff-row-del td.diff-ln,
+            .diff-table tr.diff-row-del td.diff-marker {
+                background: #fff5f5;
+                color: #9ca3af;
+                border-right-color: #fee2e2;
+            }
+            .diff-table tr.diff-row-del td.diff-marker {
+                background: #fef2f2;
+                color: #f43f5e;
+            }
+            .diff-table tr.diff-row-del td.diff-code {
+                background: #fef2f2;
                 color: #991b1b;
             }
-            .diff-line-context .diff-content {
-                color: #6b7280;
+            .diff-table tr.diff-row-gap td.diff-code {
+                color: #cbd5e1;
             }
 
             /* File explorer styles (imported from fileExplorer.ts) */
@@ -2335,37 +2339,45 @@ class TaskArtifacts extends HTMLElement {
                 background: #252526 !important;
                 border-bottom-color: rgba(255, 255, 255, 0.08) !important;
             }
-            :host([data-theme="dark"]) .diff-hunk-header {
-                color: #ababab !important;
-                background: rgba(96, 165, 250, 0.08) !important;
-                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
-            }
-            :host([data-theme="dark"]) .diff-line-added {
-                background: rgba(16, 185, 129, 0.1) !important;
-            }
-            :host([data-theme="dark"]) .diff-line-removed {
-                background: rgba(244, 63, 94, 0.1) !important;
-            }
-            :host([data-theme="dark"]) .diff-line-context {
+            :host([data-theme="dark"]) .diff-hunk-body {
                 background: #1e1e1e !important;
             }
-            :host([data-theme="dark"]) .diff-ln {
-                color: #787878 !important;
+            :host([data-theme="dark"]) .diff-ln,
+            :host([data-theme="dark"]) .diff-marker {
+                color: #6b6b6b !important;
+                border-right-color: rgba(255, 255, 255, 0.08) !important;
             }
-            :host([data-theme="dark"]) .diff-content {
-                color: #cccccc !important;
-            }
-            :host([data-theme="dark"]) .diff-line-added .diff-content {
-                color: #6ee7b7 !important;
-            }
-            :host([data-theme="dark"]) .diff-line-removed .diff-content {
-                color: #fda4af !important;
-            }
-            :host([data-theme="dark"]) .diff-line-context .diff-content {
+            :host([data-theme="dark"]) .diff-code {
                 color: #ababab !important;
             }
-            :host([data-theme="dark"]) .diff-line-context .diff-op {
-                color: rgba(255, 255, 255, 0.18) !important;
+            :host([data-theme="dark"]) .diff-row-add .diff-ln,
+            :host([data-theme="dark"]) .diff-row-add .diff-marker {
+                background: rgba(16, 185, 129, 0.08) !important;
+                color: #8a8a8a !important;
+                border-right-color: rgba(16, 185, 129, 0.16) !important;
+            }
+            :host([data-theme="dark"]) .diff-row-add .diff-marker,
+            :host([data-theme="dark"]) .diff-row-add .diff-code {
+                color: #6ee7b7 !important;
+            }
+            :host([data-theme="dark"]) .diff-row-add .diff-code {
+                background: rgba(16, 185, 129, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .diff-row-del .diff-ln,
+            :host([data-theme="dark"]) .diff-row-del .diff-marker {
+                background: rgba(244, 63, 94, 0.08) !important;
+                color: #8a8a8a !important;
+                border-right-color: rgba(244, 63, 94, 0.16) !important;
+            }
+            :host([data-theme="dark"]) .diff-row-del .diff-marker,
+            :host([data-theme="dark"]) .diff-row-del .diff-code {
+                color: #fda4af !important;
+            }
+            :host([data-theme="dark"]) .diff-row-del .diff-code {
+                background: rgba(244, 63, 94, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .diff-row-gap .diff-code {
+                color: #4b4b4b !important;
             }
             :host([data-theme="dark"]) .tab-content::-webkit-scrollbar-thumb {
                 background: rgba(255, 255, 255, 0.18) !important;

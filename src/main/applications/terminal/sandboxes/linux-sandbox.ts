@@ -19,6 +19,7 @@ import { t } from '../locale/index.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyTextLinux } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
+import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export interface DynamicSandboxLaunch {
     file: string;
@@ -272,8 +273,9 @@ export async function prepareLinuxSandbox(options: {
             // Windows/OpenHarmony 的 --trash-dir 格式一致）；原生层仅在
             // --del-to-trash 启用时使用
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
-            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
-            ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）；
+            // 非绝对路径会让 dynobox 拒绝启动，统一在下发前过滤
+            ...normalizeTrashExcludeDirs(options.trashExcludeDirs).flatMap((dir) => ['--trash-exclude', dir]),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

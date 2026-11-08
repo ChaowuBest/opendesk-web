@@ -54,6 +54,8 @@ function makeDownload(patch: Partial<DownloadState> = {}): DownloadState {
 
 describe('benchmark 测评集下载中心', () => {
     let callMainWorld: jest.Mock;
+    /** 确认弹窗默认取消，需要真的走删除的用例自行放开 */
+    let showConfirmModal: jest.Mock;
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -80,9 +82,10 @@ describe('benchmark 测评集下载中心', () => {
         await jest.unstable_mockModule('../../../renderer/theme/theme-iframe-bridge.ts', () => ({
             OPENDESK_THEME_CHANGED: 'opendesk-theme-changed'
         }));
+        showConfirmModal = jest.fn(async () => false);
         await jest.unstable_mockModule('../../../renderer/components/confirmModal', () =>
             confirmModalMockShim({
-                showConfirmModal: jest.fn(),
+                showConfirmModal,
                 bindOverlayDismiss: jest.fn()
             })
         );
@@ -92,6 +95,10 @@ describe('benchmark 测评集下载中心', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
+        // 确认弹窗默认取消：要真的走删除的用例自己 mockResolvedValueOnce(true)，
+        // 重置掉上一个用例可能遗留的一次性实现
+        showConfirmModal.mockReset();
+        showConfirmModal.mockResolvedValue(false);
         callMainWorld = jest.fn(async () => undefined);
         (globalThis as any).window.applicationAPI = {
             call: jest.fn(),
@@ -297,6 +304,165 @@ describe('benchmark 测评集下载中心', () => {
 
         const subtitle = widget.shadowRoot.querySelector('.modal-banner-sub') as HTMLElement;
         expect(subtitle.textContent).not.toContain('本地版本');
+    });
+
+    // ── 弹窗操作按钮 ──────────────────────────────────────────────────────
+
+    function openCatalogModal(widget: any) {
+        widget.catalogModal = { registryName: 'official', catalogId: 'workbuddy-bench' };
+        widget.render();
+    }
+
+    function footerAction(widget: any, action: string): HTMLButtonElement | null {
+        return widget.shadowRoot.querySelector(`.modal-footer [data-action="${action}"]`) as HTMLButtonElement | null;
+    }
+
+    test('本地已是清单版本时弹窗给运行与删除', () => {
+        const widget = createWidget({ datasets: [makeDataset({ version: '0.1' })] });
+        openCatalogModal(widget);
+
+        expect(footerAction(widget, 'run-catalog')?.textContent?.trim()).toBe('运行');
+        expect(footerAction(widget, 'delete-dataset')?.textContent?.trim()).toBe('删除');
+        // 最新版没有下载/更新入口，也不能再挂一个禁用按钮占位
+        expect(footerAction(widget, 'download-dataset')).toBeNull();
+        // 关闭只靠右上角叉号，底栏不再重复一个文字关闭按钮
+        expect(footerAction(widget, 'close-catalog')).toBeNull();
+        expect(widget.shadowRoot.querySelector('.modal-close[data-action="close-catalog"]')).not.toBeNull();
+        expect(widget.shadowRoot.querySelector('.modal-footer .btn-primary')?.hasAttribute('disabled')).toBe(false);
+    });
+
+    test('弹窗底栏按钮不使用小号尺寸，删除与运行宽高一致', () => {
+        const widget = createWidget({ datasets: [makeDataset({ version: '0.1' })] });
+        openCatalogModal(widget);
+
+        const footer = widget.shadowRoot.querySelector('.modal-footer') as HTMLElement;
+        const buttons = Array.from(footer.querySelectorAll('button'));
+        expect(buttons).toHaveLength(2);
+        expect(buttons.every((button) => !button.classList.contains('btn-sm'))).toBe(true);
+    });
+
+    test('测评集弹窗同样只用叉号关闭，底栏只剩删除与运行', () => {
+        const widget = createWidget({ datasets: [makeDataset()] });
+        widget.datasetModalId = 'ds-1';
+        widget.render();
+
+        const footer = widget.shadowRoot.querySelector('.modal-footer') as HTMLElement;
+        expect(footer.querySelector('[data-action="close-dataset"]')).toBeNull();
+        expect(widget.shadowRoot.querySelector('.modal-close[data-action="close-dataset"]')).not.toBeNull();
+        expect(Array.from(footer.querySelectorAll('button')).map((button) => button.dataset.action)).toEqual([
+            'delete-dataset',
+            'run-dataset'
+        ]);
+    });
+
+    test('本地版本落后时弹窗给更新与删除，不提供运行', () => {
+        const widget = createWidget({ datasets: [makeDataset({ version: '0.0.9' })] });
+        openCatalogModal(widget);
+
+        const update = footerAction(widget, 'download-dataset');
+        expect(update?.textContent?.trim()).toBe('更新');
+        expect(update?.dataset.catalogId).toBe('workbuddy-bench');
+        expect(footerAction(widget, 'delete-dataset')).not.toBeNull();
+        // 旧版本跑起来和清单里的 track 对不上，运行只在装了最新版时开放
+        expect(footerAction(widget, 'run-catalog')).toBeNull();
+    });
+
+    test('未安装时弹窗只给下载，没有删除', () => {
+        const widget = createWidget();
+        openCatalogModal(widget);
+
+        expect(footerAction(widget, 'download-dataset')?.textContent?.trim()).toBe('下载');
+        expect(footerAction(widget, 'delete-dataset')).toBeNull();
+        expect(footerAction(widget, 'run-catalog')).toBeNull();
+    });
+
+    test('下载/安装进行中不给删除与运行', () => {
+        const widget = createWidget({
+            datasets: [makeDataset({ version: '0.0.9' })],
+            downloads: [makeDownload({ status: 'installing' })]
+        });
+        openCatalogModal(widget);
+
+        expect(footerAction(widget, 'delete-dataset')).toBeNull();
+        expect(footerAction(widget, 'run-catalog')).toBeNull();
+        expect(footerAction(widget, 'download-dataset')).toBeNull();
+        expect(widget.shadowRoot.querySelector('.modal-footer .btn-primary')?.hasAttribute('disabled')).toBe(true);
+    });
+
+    test('删除按钮指向本地已安装的测评集，而不是清单 id', () => {
+        const widget = createWidget({ datasets: [makeDataset({ id: 'local-ds', name: 'WorkBuddy Bench' })] });
+        openCatalogModal(widget);
+
+        const remove = footerAction(widget, 'delete-dataset');
+        expect(remove?.dataset.datasetId).toBe('local-ds');
+        expect(remove?.dataset.datasetName).toBe('WorkBuddy Bench');
+    });
+
+    test('弹窗里点运行切到运行弹窗', () => {
+        const widget = createWidget({ datasets: [makeDataset({ id: 'local-ds', version: '0.1' })] });
+        openCatalogModal(widget);
+
+        footerAction(widget, 'run-catalog')!.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(widget.catalogModal).toBeNull();
+        expect(widget.runModal?.datasetId).toBe('local-ds');
+        // 两个弹窗之间是同一次切换，不能再播一遍入场动画
+        expect((widget.shadowRoot.querySelector('.modal-overlay') as HTMLElement).classList.contains('no-anim')).toBe(
+            true
+        );
+    });
+
+    test('清单弹窗里删除后弹窗留在原地并切回下载', async () => {
+        showConfirmModal.mockResolvedValueOnce(true);
+        callMainWorld = jest.fn(async (method: string) => (method === 'listDatasets' ? [] : undefined));
+        (globalThis as any).window.applicationAPI.callMainWorld = callMainWorld;
+        const widget = createWidget({ datasets: [makeDataset({ id: 'local-ds', version: '0.1' })] });
+        openCatalogModal(widget);
+
+        await widget.deleteDataset('local-ds', 'WorkBuddy Bench');
+
+        expect(callMainWorld).toHaveBeenCalledWith('deleteDataset', 'local-ds');
+        // 删完还停在下载页的同一个弹窗上，按钮回到「下载」
+        expect(widget.catalogModal).toEqual({ registryName: 'official', catalogId: 'workbuddy-bench' });
+        expect(footerAction(widget, 'download-dataset')?.textContent?.trim()).toBe('下载');
+        expect(footerAction(widget, 'delete-dataset')).toBeNull();
+    });
+
+    test('清单弹窗里删除失败时错误画在弹窗内，弹窗不关', async () => {
+        showConfirmModal.mockResolvedValueOnce(true);
+        callMainWorld = jest.fn(async (method: string) => {
+            if (method === 'deleteDataset') throw new Error('测评集正在运行中');
+            return undefined;
+        });
+        (globalThis as any).window.applicationAPI.callMainWorld = callMainWorld;
+        const widget = createWidget({ datasets: [makeDataset({ id: 'local-ds', version: '0.1' })] });
+        openCatalogModal(widget);
+
+        await widget.deleteDataset('local-ds', 'WorkBuddy Bench');
+
+        // 弹窗盖住了页面顶部的 banner，错误必须落在弹窗里，否则用户点了删除什么都没看到
+        expect(widget.shadowRoot.querySelector('.modal-error')?.textContent).toContain('测评集正在运行中');
+        expect(widget.catalogModal).not.toBeNull();
+        expect(footerAction(widget, 'delete-dataset')).not.toBeNull();
+    });
+
+    test('换一项重新打开弹窗后不再带着上一次的删除错误', async () => {
+        showConfirmModal.mockResolvedValueOnce(true);
+        callMainWorld = jest.fn(async (method: string) => {
+            if (method === 'deleteDataset') throw new Error('测评集正在运行中');
+            return undefined;
+        });
+        (globalThis as any).window.applicationAPI.callMainWorld = callMainWorld;
+        const widget = createWidget({ datasets: [makeDataset({ id: 'local-ds' })] });
+        openCatalogModal(widget);
+        await widget.deleteDataset('local-ds', 'WorkBuddy Bench');
+        expect(widget.shadowRoot.querySelector('.modal-error')).not.toBeNull();
+
+        widget.shadowRoot
+            .querySelector('[data-action="open-catalog"]')!
+            .dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(widget.shadowRoot.querySelector('.modal-error')).toBeNull();
     });
 
     // ── 多 registry ────────────────────────────────────────────────────────

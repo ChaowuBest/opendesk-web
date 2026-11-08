@@ -28,7 +28,9 @@ import {
     isPluginEnabledFixed,
     setPluginEnabled,
     verifyInstalledPlugin,
+    formatPluginDiagnostic,
     formatPluginInstallError,
+    formatPluginInstallException,
     formatPluginUninstallError
 } from '../../applications/pluginmgr/index.js';
 import type { PluginCapability, PluginHostEntry } from '../../applications/pluginmgr/index.js';
@@ -94,8 +96,7 @@ function printRuntimeStatus(entries: PluginHostEntry[], json: boolean): void {
     for (const entry of entries) {
         console.log(`  ${entry.id} [${t(`plugin.runtime.status.${entry.status}`)}] ${entry.origin}`);
         for (const diagnostic of entry.diagnostics) {
-            const detail = diagnostic.detail ? `: ${diagnostic.detail}` : '';
-            console.log(`    ${diagnostic.stage}/${diagnostic.code}${detail}`);
+            console.log(`    ${formatPluginDiagnostic(diagnostic, t)}`);
         }
     }
 }
@@ -114,7 +115,10 @@ export function registerPluginsCommand(prog: Command): void {
             if (result.success) {
                 console.log(`✓ ${t('plugin.install.successDetail', { name: result.id ?? spec })}`);
             } else {
-                console.error(`✗ ${formatPluginInstallError(result)}`);
+                // 宿主版本闸门会把结构化串放在 error 里：优先还原成带版本范围的引导文案，
+                // 其余错误沿用按错误码本地化的短文案
+                const reason = formatPluginInstallException(result.error) ?? formatPluginInstallError(result);
+                console.error(`✗ ${reason}`);
                 process.exit(1);
             }
             process.exit(0);

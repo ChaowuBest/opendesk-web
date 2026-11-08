@@ -23,7 +23,9 @@ import {
     listVisiblePlugins,
     setPluginEnabled,
     reloadPluginHost,
-    applyPluginEnabledChange
+    applyPluginEnabledChange,
+    formatPluginInstallError,
+    formatPluginInstallException
 } from '../pluginmgr/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
@@ -95,7 +97,11 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
             await this.app.reloadChannels();
             return `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`;
         }
-        return `插件安装失败: ${result.error}`;
+        // 宿主版本不满足时给出带版本范围的升级引导（与 CLI / 插件工具同一段文案）；
+        // 其余失败保留底层原因，便于用户 / 模型直接对上 npm、磁盘或包结构问题
+        const reason =
+            formatPluginInstallException(result.error) ?? (result.error?.trim() || formatPluginInstallError(result));
+        return `插件安装失败: ${reason}`;
     }
 }
 

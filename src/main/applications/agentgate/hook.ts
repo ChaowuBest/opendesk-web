@@ -923,7 +923,7 @@ export function initAgentGateHook(): void {
     GlobalHooks.beforeToolCall(onBeforeToolCall);
 
     // 延迟推送通知（仅安全网关总开关已启用时）
-    setTimeout(() => {
+    const notifyTimer = setTimeout(() => {
         if (!isSecurityGatewayEnabled()) return;
         (async () => {
             try {
@@ -937,4 +937,7 @@ export function initAgentGateHook(): void {
             }
         })();
     }, 2000);
+    // 这只是一条延迟提示，不应把所在线程的存活时间拉长 2 秒：
+    // worker 线程退出、CLI 结束、测试 worker 回收都会被未 unref 的定时器拖住
+    notifyTimer.unref?.();
 }

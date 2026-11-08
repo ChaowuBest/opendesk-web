@@ -487,6 +487,66 @@ describe('plugin marketplace renderer', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    test('a package whose manifest needs a newer host pops the upgrade modal instead of a notice', async () => {
+        // 市场条目没声明宿主版本、包内清单却声明了的场景：主进程返回结构化 host_version outcome，
+        // 界面要弹「无法安装插件」并给出升级引导，而不是把内部错误串写进提示条
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') return [];
+            if (method === 'listPluginRegistries') return REGISTRIES;
+            if (method === 'getPluginCatalog') return catalog();
+            if (method === 'installFromPluginRegistry') {
+                return {
+                    success: false,
+                    code: 'host_version',
+                    direction: 'too_old',
+                    range: '≥ 99.0.0',
+                    current: '0.4.1',
+                    message: '插件需要 OpenDesk ≥ 99.0.0'
+                };
+            }
+            return undefined;
+        });
+        const widget = await createWidget();
+        await openMarket(widget);
+        widget.shadowRoot.querySelector('[data-market-install="office-plugin"]').dispatchEvent(new Event('click'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const overlay = widget.shadowRoot.querySelector('.od-confirm-modal-overlay') as HTMLElement;
+        expect(overlay).not.toBeNull();
+        expect(overlay.textContent).toContain('无法安装插件');
+        // 文案带方向引导，并给出插件要求的范围与当前宿主版本
+        expect(overlay.textContent).toContain('该插件需要 OpenDesk ≥ 99.0.0');
+        expect(overlay.textContent).toContain('当前版本 0.4.1');
+        const notice = widget.shadowRoot.querySelector('[data-region="notice"]');
+        expect(notice?.textContent ?? '').not.toContain('安装成功');
+        expect(notice?.textContent ?? '').not.toContain('plugin.install_host_version');
+    });
+
+    test('a local package rejected by the host version gate opens the same modal without a failure notice', async () => {
+        // 本地目录 / zip / npm 源安装失败时主进程抛结构化串，界面解析后同样弹升级引导模态
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') return [];
+            if (method === 'listPluginRegistries') return REGISTRIES;
+            if (method === 'getPluginCatalog') return catalog();
+            if (method === 'install') throw new Error('plugin.install_host_version:too_old:≥ 99.0.0:0.4.1');
+            return undefined;
+        });
+        const widget = await createWidget();
+        widget.install('some-plugin.zip');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const overlay = widget.shadowRoot.querySelector('.od-confirm-modal-overlay') as HTMLElement;
+        expect(overlay).not.toBeNull();
+        expect(overlay.textContent).toContain('请将 OpenDesk 升级到最新版本');
+        // 弹窗已经说明了原因，不再额外发系统通知
+        const notifications = (callMainWorld.mock.calls as unknown[][]).filter(
+            ([method]) => method === 'sendNotification'
+        );
+        expect(notifications).toHaveLength(0);
+    });
+
     test('an entry that needs a newer host is shown as not installable with the required range', async () => {
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];

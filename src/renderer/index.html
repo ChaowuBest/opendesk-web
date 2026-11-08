@@ -830,14 +830,17 @@
                         // 超时兜底，防止异常路径下占位永不消失。
                         contentReady = new Promise(function (resolve) {
                             var done = false;
+                            var fallbackTimer = null;
                             var finish = function () {
                                 if (done) return;
                                 done = true;
+                                // 信号先到时要把兜底定时器收掉，否则每开一个任务就残留一个 10s 定时器
+                                if (fallbackTimer !== null) clearTimeout(fallbackTimer);
                                 tv.removeEventListener('task-view-content-ready', finish);
                                 resolve();
                             };
+                            fallbackTimer = setTimeout(finish, 10000);
                             tv.addEventListener('task-view-content-ready', finish, { once: true });
-                            setTimeout(finish, 10000);
                         });
                         // 切回缓存视图时，调用 reload() 补齐后台运行期间跳过的更新
                         if (!isNewTaskView) {
@@ -861,13 +864,16 @@
                     loadingEl.style.transition = 'opacity 0.25s ease-out';
                     loadingEl.style.opacity = '0';
                     var __done = false;
+                    var __fallbackTimer = null;
                     var __cleanup = function () {
                         if (__done) return;
                         __done = true;
+                        // transitionend 先到时收掉兜底定时器，避免残留 400ms 定时器
+                        if (__fallbackTimer !== null) clearTimeout(__fallbackTimer);
                         loadingEl.remove();
                     };
+                    __fallbackTimer = setTimeout(__cleanup, 400);
                     loadingEl.addEventListener('transitionend', __cleanup, { once: true });
-                    setTimeout(__cleanup, 400);
                 }
                 // 统一同步侧边栏活跃任务高亮（所有打开任务的入口都经由 openTask）；
                 // revealCurrentTask 会让侧边栏自动展开任务所在分组并滚动到可见，

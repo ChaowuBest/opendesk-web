@@ -669,6 +669,13 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
         })
     };
 
+    // HDCTHIS_HOME（hdcthis 的 home）与隔离 Python 无关，因此不放在
+    // buildInterpretersEnv 里：统一注入点覆盖所有子进程，用户显式配置的值优先。
+    // 托管目录避免 hdcthis 在沙箱内写 $HOME 下不可写的路径而失败。
+    const hdcthisHome = env.HDCTHIS_HOME || path.join(getOpendeskDirectory(), 'interpreters', 'hdcthis');
+    fs.mkdirSync(hdcthisHome, { recursive: true });
+    env.HDCTHIS_HOME = hdcthisHome;
+
     if (!env.PYTHONIOENCODING) env.PYTHONIOENCODING = 'utf-8';
     if (!env.PYTHONUTF8) env.PYTHONUTF8 = '1';
     injectNonInteractiveEnv(env);

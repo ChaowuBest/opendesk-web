@@ -606,6 +606,15 @@ manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities`
 `minOpenDeskVersion` / `maxOpenDeskVersion` 分别是宿主版本的**下界与上界**（包含边界），
 不是区间表达式：写 `0.2.0` 表示"宿主 ≥ 0.2.0"。未声明时不限制。
 
+宿主在**安装期**就会用这两个字段拦截：无论从插件市场、本地目录/压缩包还是 npm 源安装，
+当前 OpenDesk 版本不满足清单声明范围时安装直接失败，磁盘上不会留下这个包（市场界面按不满足的
+方向弹「无法安装插件」的模态：宿主过低引导升级 OpenDesk，宿主过高引导寻找支持当前版本的
+插件；CLI 与 AI 工具会输出带版本范围的原因）。安装期只读取清单
+（`opendesk.plugin.json` / `package.json`）里的声明，不会执行插件代码；只在入口模块导出的
+插件对象上声明的范围，由加载期诊断兜底。已装插件在宿主升级/降级后不再满足范围时，同样由
+加载期的 `plugin.opendesk_version_too_old` / `plugin.opendesk_version_too_new`
+诊断兜底（插件中心卡片与 `opendesk plugins status` 都会展示本地化后的原因）。
+
 ### system 与 enabled（仅内置插件）
 
 随产品一起发布的内置插件可以在清单里声明两个布尔字段，把启停状态固定下来（当前 `opencodego`

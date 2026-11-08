@@ -31,7 +31,10 @@ describe('pluginmgr CLI uninstall --remove-data', () => {
             setPluginEnabled: jest.fn(),
             verifyInstalledPlugin: () => undefined,
             formatPluginInstallError: () => '',
-            formatPluginUninstallError: (error: string | undefined) => error ?? ''
+            formatPluginInstallException: () => undefined,
+            formatPluginUninstallError: (error: string | undefined) => error ?? '',
+            formatPluginDiagnostic: (diagnostic: { stage: string; code: string; detail?: string }) =>
+                `${diagnostic.stage}/${diagnostic.code}${diagnostic.detail ? `: ${diagnostic.detail}` : ''}`
         }));
         ({ registerPluginsCommand } = await import('../../../main/tui/subcommands/plugins.js'));
     });

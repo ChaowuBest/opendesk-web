@@ -26,9 +26,25 @@ import { policyTextOpenHarmony } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
 import { detectToolchainReadOnlyDirs, type DynamicSandboxLaunch } from './linux-sandbox.js';
 import { resolveOpenHarmonySandboxExecutable, resolveOpenHarmonySandboxLibrary } from './resolve-ohos.js';
+import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 // 复用公共定位逻辑（OPENDESK_DYNOBOX_BIN → /data/app/bin/dynobox → resources → dev）
 export { resolveOpenHarmonySandboxExecutable, resolveOpenHarmonySandboxLibrary } from './resolve-ohos.js';
+
+/**
+ * 回收站排除清单的内置项：应用沙箱根（el2）整棵子树。
+ *
+ * 根因是文件系统边界，而不是"这些删除不值得找回"：统一回收站根在用户家目录
+ * （<home>/.opendesk-trash，见 resolveTrashRootDirectory 的 OH 分支），与 el2
+ * 不在同一个文件系统，rename 过去必然返回 EXDEV；原生层对 EXDEV 是 fail-closed
+ * （保留原文件、把错误透出），即 el2 下的删除根本进不了回收站，只会让沙箱内的
+ * rm 全部报错。与其如此，不如整根排除：命中清单的删除直接真删。
+ *
+ * 代价是 el2 内的删除不再可恢复（含 appDataDir 下的 tasks/、interpreters/，
+ * 以及无 userHomeDir 的设备上默认落在 appDataDir/workspace 的工作区），这是
+ * 有意的取舍。原生层按组件边界目录前缀匹配，传根目录即覆盖整棵子树。
+ */
+const OHOS_BUILTIN_TRASH_EXCLUDE_DIRS = ['/data/storage/el2'] as const;
 
 /**
  * OpenHarmony 动态沙箱：dynobox（LD_PRELOAD 身份命名空间）run。路径无映射，
@@ -137,6 +153,12 @@ export async function prepareOpenHarmonySandbox(options: {
 
     const roDirs = detectToolchainReadOnlyDirs();
     const childArgs = [options.shellPath, ...options.shellArgs];
+    // 排除清单只在删除送回收站时才有意义（原生层仅在 --del-to-trash 下走删除分流）。
+    // 内置应用沙箱根 + 宿主传入的临时目录；归一化去重避免重复条目占用原生层长度预算，
+    // 并挡掉会让 dynobox 拒绝启动的非绝对路径
+    const trashExcludeDirs = options.deleteToTrash
+        ? normalizeTrashExcludeDirs([...OHOS_BUILTIN_TRASH_EXCLUDE_DIRS, ...(options.trashExcludeDirs ?? [])])
+        : [];
     return {
         file: executable,
         // 工具链目录经 --ro-dirs 以只读（write-denied）方式暴露，与 Linux 版一致。
@@ -158,8 +180,8 @@ export async function prepareOpenHarmonySandbox(options: {
             // 启用时使用（--trash 为 --trash-dir 的兼容别名，二者等价）
             ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
             ...(options.deleteToTrash ? ['--del-to-trash'] : []),
-            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
-            ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
+            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物、应用沙箱根零噪音）
+            ...trashExcludeDirs.flatMap((dir) => ['--trash-exclude', dir]),
             ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
             '--',
             ...childArgs

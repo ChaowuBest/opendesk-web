@@ -1,0 +1,30 @@
+version = 1
+default = "deny"
+
+[ask]
+endpoint = "http://127.0.0.1:18090/decide"
+token = "stub"
+timeout_ms = 330000
+cache_ttl_seconds = 0
+grant_ttl_seconds = 0
+
+# OpenDesk 标准模式兜底三段：读放行、写问询、执行放行
+[[rules]]
+path = "/"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "read"
+perm = "allow"
+
+[[rules]]
+path = "/**"
+access = "write"
+perm = "ask"
+
+[[rules]]
+path = "/**"
+access = "execute"
+perm = "allow"

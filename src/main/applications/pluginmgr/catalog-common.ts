@@ -68,28 +68,43 @@ export interface HostVersionRange {
     maxOpenDeskVersion?: string;
 }
 
+/** 宿主版本不满足的具体方向：`too_old` 是宿主低于下界，`too_new` 是宿主高于上界 */
+export type HostVersionIssueDirection = 'too_old' | 'too_new';
+
 /**
- * 当前宿主版本是否落在条目声明支持的范围内。
+ * 宿主版本违反了声明的哪一侧；兼容（或无从判断）时返回 undefined。
+ *
+ * 版本比较只写在这一处：`isHostVersionCompatible`、`describeHostVersionIssue` 以及
+ * 安装期闸门 / 市场卡片 / 加载期诊断都基于它，避免各处口径漂移。
  *
  * 与插件清单的 minOpenDeskVersion / maxOpenDeskVersion 同义：SemVer、含边界、
- * 省略表示不限。声明了却解析不了的上下界按「不满足」处理——宁可拦下来，
- * 也不要把一个装完必然加载失败的包装进用户机器。
+ * 省略（含空白）表示不限。声明了却解析不了的上下界按「不满足」处理——宁可拦下来，
+ * 也不要把一个装完必然加载失败的包装进用户机器。宿主版本自身无法解析时无从判断，
+ * 按放行处理。
  */
+function resolveHostVersionViolation(
+    range: HostVersionRange,
+    hostVersion: string
+): HostVersionIssueDirection | undefined {
+    const host = normalizeVersion(hostVersion);
+    if (host === undefined) return undefined;
+    if (range.minOpenDeskVersion?.trim()) {
+        const min = normalizeVersion(range.minOpenDeskVersion);
+        if (min === undefined || (compareVersion(host, min) ?? 0) < 0) return 'too_old';
+    }
+    if (range.maxOpenDeskVersion?.trim()) {
+        const max = normalizeVersion(range.maxOpenDeskVersion);
+        if (max === undefined || (compareVersion(host, max) ?? 0) > 0) return 'too_new';
+    }
+    return undefined;
+}
+
+/** 当前宿主版本是否落在条目声明支持的范围内（见 resolveHostVersionViolation） */
 export function isHostVersionCompatible(
     range: HostVersionRange,
     hostVersion: string = OPENDESK_RUNTIME_VERSION
 ): boolean {
-    const host = normalizeVersion(hostVersion);
-    if (host === undefined) return true;
-    if (range.minOpenDeskVersion) {
-        const min = normalizeVersion(range.minOpenDeskVersion);
-        if (min === undefined || (compareVersion(host, min) ?? 0) < 0) return false;
-    }
-    if (range.maxOpenDeskVersion) {
-        const max = normalizeVersion(range.maxOpenDeskVersion);
-        if (max === undefined || (compareVersion(host, max) ?? 0) > 0) return false;
-    }
-    return true;
+    return resolveHostVersionViolation(range, hostVersion) === undefined;
 }
 
 /**
@@ -105,4 +120,133 @@ export function describeHostVersionRange(range: HostVersionRange): string | unde
     if (min) return `≥ ${min}`;
     if (max) return `≤ ${max}`;
     return undefined;
+}
+
+/**
+ * 从插件市场安装的结果。
+ *
+ * 主进程 `installFromPluginRegistry` 的返回值与渲染层收到的形状必须一致，
+ * 类型定义放在本模块（渲染层可安全引用）由两侧共用，避免字段各写一份后漂移。
+ *
+ * 失败时**不抛错**而是返回（`success: false`），因为界面要对「上架信息与包内清单不一致」
+ * 或「宿主版本不满足」单独弹模态弹窗强调；其余失败（下载不了、内置冲突、id 对不上……）
+ * 仍然抛错，走的是统一的错误提示路径。
+ */
+export type PluginMarketInstallOutcome =
+    | { success: true; id?: string }
+    | {
+          success: false;
+          /** `manifest_mismatch` 表示包内清单与市场条目对不上 */
+          code: 'manifest_mismatch';
+          /** 给用户看的原因（已本地化） */
+          message: string;
+      }
+    | {
+          success: false;
+          /** `host_version` 表示当前 OpenDesk 不满足插件声明的宿主版本范围，安装已被拒绝 */
+          code: 'host_version';
+          /** 不满足的方向：宿主低于下界（too_old）/ 高于上界（too_new） */
+          direction: HostVersionIssueDirection;
+          /** 插件声明的版本范围描述（如 `≥ 1.0.0`） */
+          range: string;
+          /** 拦截时的宿主版本 */
+          current: string;
+          /** 给用户看的原因（已本地化；界面弹窗优先使用上面的结构化字段自行本地化） */
+          message: string;
+      };
+
+/** 宿主版本不满足的具体方向与范围描述 */
+export interface HostVersionIssue {
+    direction: HostVersionIssueDirection;
+    /** 插件声明的版本范围描述（见 describeHostVersionRange），直接放进本地化模板 */
+    range: string;
+}
+
+/**
+ * 宿主版本不满足时给出方向与范围描述；满足时返回 undefined。
+ *
+ * 安装期的宿主版本闸门、市场条目的「无法安装」提示共用这一份判定，
+ * 避免多处口径漂移。min/max 都声明却仍不满足时（min > max 的坏数据）优先按
+ * too_old 报告——反正装不上，方向只影响提示文案。
+ */
+export function describeHostVersionIssue(
+    range: HostVersionRange,
+    hostVersion: string = OPENDESK_RUNTIME_VERSION
+): HostVersionIssue | undefined {
+    const direction = resolveHostVersionViolation(range, hostVersion);
+    if (direction === undefined) return undefined;
+    return { direction, range: describeHostVersionRange(range) ?? '' };
+}
+
+/** PluginHostVersionError.message 的前缀：渲染层据此识别「宿主版本不满足」的安装失败 */
+export const PLUGIN_HOST_VERSION_MESSAGE_PREFIX = 'plugin.install_host_version:';
+
+export interface PluginHostVersionIssueData {
+    direction: HostVersionIssueDirection;
+    /** 插件声明的版本范围描述（如 `≥ 1.0.0`） */
+    range: string;
+    /** 拦截时的宿主版本 */
+    hostVersion: string;
+}
+
+/**
+ * 宿主版本不满足插件要求时在安装期抛出。
+ *
+ * message 是稳定格式的结构化串（`plugin.install_host_version:<direction>:<range>:<hostVersion>`）：
+ * 分类与渲染层解析都靠它，不要改成人类可读文案。
+ */
+export class PluginHostVersionError extends Error {
+    constructor(
+        readonly direction: HostVersionIssueDirection,
+        readonly range: string,
+        readonly hostVersion: string
+    ) {
+        super(`${PLUGIN_HOST_VERSION_MESSAGE_PREFIX}${direction}:${range}:${hostVersion}`);
+        this.name = 'PluginHostVersionError';
+    }
+}
+
+/** 解析 PluginHostVersionError 的 message；不是宿主版本错误（或缺字段）时返回 undefined */
+export function parsePluginHostVersionMessage(message: string): PluginHostVersionIssueData | undefined {
+    if (!message.startsWith(PLUGIN_HOST_VERSION_MESSAGE_PREFIX)) return undefined;
+    const rest = message.slice(PLUGIN_HOST_VERSION_MESSAGE_PREFIX.length);
+    const directionEnd = rest.indexOf(':');
+    if (directionEnd <= 0) return undefined;
+    const direction = rest.slice(0, directionEnd);
+    if (direction !== 'too_old' && direction !== 'too_new') return undefined;
+    const hostVersionStart = rest.lastIndexOf(':');
+    if (hostVersionStart <= directionEnd) return undefined;
+    return {
+        direction,
+        range: rest.slice(directionEnd + 1, hostVersionStart),
+        hostVersion: rest.slice(hostVersionStart + 1)
+    };
+}
+
+/**
+ * 有专用文案的加载期诊断码 → locale 词条（src/locale 的 plugin.diagnostic.*）。
+ *
+ * 渲染层插件中心与 CLI `plugins status` 共用；不在表里的诊断码保持
+ * `stage/code: detail` 原样输出（面向开发者的原始信息，不做本地化）。
+ */
+export const PLUGIN_DIAGNOSTIC_LOCALE_KEYS: Record<string, string> = {
+    'plugin.opendesk_version_too_old': 'plugin.diagnostic.opendeskVersionTooOld',
+    'plugin.opendesk_version_too_new': 'plugin.diagnostic.opendeskVersionTooNew'
+};
+
+/**
+ * 把一条加载期诊断渲染成给用户看的文案。
+ *
+ * 有映射的诊断码走本地化模板（detail 作为插值参数），其余保持
+ * `stage/code: detail` 原样——那部分是面向开发者的原始信息。
+ */
+export function formatPluginDiagnostic(
+    diagnostic: { stage: string; code: string; detail?: string },
+    translate: (key: string, params?: Record<string, string | number>) => string
+): string {
+    const localeKey = PLUGIN_DIAGNOSTIC_LOCALE_KEYS[diagnostic.code];
+    if (localeKey) {
+        return diagnostic.detail ? translate(localeKey, { detail: diagnostic.detail }) : translate(localeKey);
+    }
+    return `${diagnostic.stage}/${diagnostic.code}${diagnostic.detail ? `: ${diagnostic.detail}` : ''}`;
 }

@@ -33,7 +33,7 @@ describe('sandbox decide session-scoped allow', () => {
     let cleanups: Array<() => Promise<void>>;
 
     const makeTaskState = () => {
-        const state = {
+        const state: any = {
             task_id: 'task-session-test',
             task_name: 'session-test',
             getWorkspace: () => '/workspace',
@@ -55,6 +55,7 @@ describe('sandbox decide session-scoped allow', () => {
                 }
             }
         };
+        state.getActivePermissionPrompt = () => state.harnessContext.permissionPrompt;
         return state;
     };
 

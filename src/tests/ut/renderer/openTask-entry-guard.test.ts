@@ -52,7 +52,37 @@ function makeElementStub(tag: string, createdViews: any[]): any {
     return el;
 }
 
-function makeShell(createdViews: any[], errors: string[]): vm.Context {
+/**
+ * 记录宿主里仍挂起的定时器。
+ *
+ * 回归：openTask 的首屏占位用「就绪信号 + 10s 超时兜底」双保险，早期实现
+ * 在信号先到时没有 clearTimeout 兜底定时器，每打开一个任务就残留一个 10s
+ * 定时器（Node 侧表现为 worker/测试进程迟迟不退出）。
+ */
+function createTimerTracker() {
+    const pending = new Map<ReturnType<typeof setTimeout>, number>();
+    return {
+        setTimeout: ((fn: (...args: any[]) => void, delay?: number, ...args: any[]) => {
+            const timer = setTimeout(
+                () => {
+                    pending.delete(timer);
+                    fn(...args);
+                },
+                delay,
+                ...args
+            );
+            pending.set(timer, Number(delay ?? 0));
+            return timer;
+        }) as typeof setTimeout,
+        clearTimeout: ((timer: any) => {
+            pending.delete(timer);
+            clearTimeout(timer);
+        }) as typeof clearTimeout,
+        pendingDelays: () => [...pending.values()]
+    };
+}
+
+function makeShell(createdViews: any[], errors: string[], timers = createTimerTracker()): vm.Context {
     const document: any = Object.assign(new EventTarget(), {
         getElementById: () => null,
         querySelector: () => null,
@@ -62,8 +92,8 @@ function makeShell(createdViews: any[], errors: string[]): vm.Context {
     const shell = vm.createContext({
         document,
         console: { error: (msg: string) => errors.push(msg) },
-        setTimeout,
-        clearTimeout,
+        setTimeout: timers.setTimeout,
+        clearTimeout: timers.clearTimeout,
         Date,
         Promise,
         Object,
@@ -142,5 +172,18 @@ describe('index.html openTask entry guard', () => {
         );
         expect(cacheKeys).toEqual(['task_real_1', 'task_real_2']);
         expect(errors).toHaveLength(0);
+    });
+
+    test('首屏就绪后不残留 10s 超时兜底定时器', async () => {
+        const timers = createTimerTracker();
+        const createdViews: any[] = [];
+        const errors: string[] = [];
+        const shell = makeShell(createdViews, errors, timers);
+
+        await (shell as any).openTask('task_timer_1');
+
+        // 桩视图在 addEventListener 阶段就派发 task-view-content-ready，
+        // 兜底定时器必须被收掉，否则每开一个任务就残留一个 10s 定时器
+        expect(timers.pendingDelays()).not.toContain(10000);
     });
 });

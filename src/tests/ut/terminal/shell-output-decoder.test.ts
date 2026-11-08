@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, jest, test } from '@jest/globals';
 import iconv from 'iconv-lite';
 import {
     createShellOutputDecoder,
@@ -75,31 +75,44 @@ describe('createShellOutputDecoder 无换行输出', () => {
         expect(decoded).not.toContain('\uFFFD');
     });
 
-    test('无换行输出处理接近线性，不再出现 O(n²) 放大', () => {
-        const run = (chunks: number): number => {
-            const decoder = createShellOutputDecoder();
-            const chunk = Buffer.alloc(64 * 1024, 0x61);
-            const start = process.hrtime.bigint();
+    /**
+     * 统计一次解码流程中实际被复制的字节数。
+     *
+     * O(n²) 放大的是「复制量」而不是「解码量」：旧实现每来一个分片都要
+     * `pending = Buffer.concat([pending, chunk])`，复制量随输入字节数平方增长。
+     * 这里直接对 Buffer.concat 计数，得到与机器快慢、GC 时机、CI 并行负载
+     * 全都无关的确定性指标；用耗时比值来断言时，同一份线性实现实测会在
+     * 4x~39x 之间抖动，必然误报。
+     */
+    const measureCopiedBytes = (chunks: number): { copied: number; input: number } => {
+        const decoder = createShellOutputDecoder();
+        const chunk = Buffer.alloc(64 * 1024, 0x61);
+        // 捕获原始实现，避免 mock 内部递归调用到自己
+        const originalConcat = Buffer.concat;
+        let copied = 0;
+        const spy = jest.spyOn(Buffer, 'concat').mockImplementation((list, totalLength) => {
+            for (const item of list) copied += item.length;
+            return originalConcat(list, totalLength);
+        });
+        try {
             for (let i = 0; i < chunks; i++) decoder.push(chunk);
             decoder.flush();
-            return Number(process.hrtime.bigint() - start) / 1e6;
-        };
+        } finally {
+            spy.mockRestore();
+        }
+        return { copied, input: chunks * chunk.length };
+    };
 
-        run(50); // warmup
+    test('无换行输出的复制量随输入线性增长，不再出现 O(n²) 放大', () => {
+        const small = measureCopiedBytes(200); // 13MiB
+        const large = measureCopiedBytes(800); // 50MiB
 
-        // 时序测量受 JIT/GC/宿主并行负载影响，单次采样易误报；
-        // 取多次采样的最小值（最小值最接近真实成本）再比较
-        const bestOf = (chunks: number, samples: number): number => {
-            let best = Number.POSITIVE_INFINITY;
-            for (let i = 0; i < samples; i++) best = Math.min(best, run(chunks));
-            return best;
-        };
-        const small = bestOf(200, 3); // 13MiB
-        const large = bestOf(800, 3); // 50MiB
-
-        // 修复前 200→413ms、800→7406ms（约 18x）；线性实现应接近 4x
-        expect(large / Math.max(small, 1)).toBeLessThan(8);
-        expect(large).toBeLessThan(1500);
+        // 线性实现每片最多复制「残片 + 新分片」两个分片大小，复制量 ≈ 输入量 × 常数
+        expect(small.copied / small.input).toBeLessThan(3);
+        expect(large.copied / large.input).toBeLessThan(3);
+        // 输入扩大 4 倍，复制量也应只扩大 4 倍左右；
+        // 旧实现对同样的 4 倍输入会放大到约 16 倍，阈值取中间值留出余量
+        expect(large.copied / Math.max(small.copied, 1)).toBeLessThan(6);
     });
 });
 

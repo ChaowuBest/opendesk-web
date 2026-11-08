@@ -427,6 +427,28 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
 /* evaluation                                                          */
 /* ------------------------------------------------------------------ */
 
+/* 设备与终端：进程 I/O 基础设施，读写一律本地放行。
+ *
+ * 单独抽出来是因为它要**先于过宽通配兜底规则**求值：一条 path = "/" + "**"
+ * 的 write=ask 规则（OpenDesk 标准/受限模式的兜底写法）会命中 /dev/tty，
+ * 而 devecocli / node / npm 一启动就 open("/dev/tty", O_WRONLY)，于是每条命令都
+ * 卡在 ask 上等满 timeout_ms（OpenDesk 侧 330s），表现为"命令无输出卡死"。
+ */
+static int dbox_device_allow(const char *path, int acc)
+{
+    static const char *const tty_dev[] = {
+        "/dev/tty", "/dev/console", "/dev/ptmx", "/dev/pts", NULL
+    };
+    /* terminal devices need read+write for interactive tools */
+    for (int i = 0; tty_dev[i]; i++)
+        if (dbox_path_under(path, tty_dev[i]))
+            return (acc & (ACC_READ | ACC_WRITE)) ? 1 : 0;
+    /* /dev/null accepts writes by design (redirects must not fail) */
+    if (dbox_path_under(path, "/dev/null"))
+        return (acc & (ACC_READ | ACC_WRITE)) ? 1 : 0;
+    return 0;
+}
+
 int dbox_system_allow(const char *path, int acc)
 {
     /* Runtime/toolchain prefixes: read always, exec also allowed
@@ -457,16 +479,7 @@ int dbox_system_allow(const char *path, int acc)
         "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt",
         "/system", NULL
     };
-    static const char *const tty_dev[] = {
-        "/dev/tty", "/dev/console", "/dev/ptmx", "/dev/pts", NULL
-    };
-    /* terminal devices need read+write for interactive tools */
-    for (int i = 0; tty_dev[i]; i++)
-        if (dbox_path_under(path, tty_dev[i]))
-            return (acc & (ACC_READ | ACC_WRITE)) ? 1 : 0;
-    /* /dev/null accepts writes by design (redirects must not fail) */
-    if (dbox_path_under(path, "/dev/null"))
-        return (acc & (ACC_READ | ACC_WRITE)) ? 1 : 0;
+    if (dbox_device_allow(path, acc)) return 1;
     for (int i = 0; sys_read[i]; i++)
         if (dbox_path_under(path, sys_read[i])) {
             if (acc == ACC_READ) return 1;
@@ -511,6 +524,13 @@ dperm_t dbox_policy_eval_static_ex(const dbox_policy_t *p, const char *vpath,
             best_len = len;
         }
     }
+    if (best >= 0 && best_len > 0) return p->rules[best].perm;
+    /* device/tty 基线优先于"仅由过宽通配（特定的兜底规则，specificity 为 0）命中"
+     * 的判定，理由见 dbox_device_allow 的注释：否则兜底的 write=ask 会把
+     * /dev/tty 的写送到上游，命令在 ask 超时前完全无输出（devecocli 卡死的根因）。
+     * 只有 specificity > 0 的规则（显式写明 /dev/tty 或 dev 子树的通配）才能覆盖它。 */
+    if (allow_system && p->system_read && dbox_device_allow(vpath, acc))
+        return PERM_ALLOW;
     if (best >= 0) return p->rules[best].perm;
     if (allow_system && p->system_read && dbox_system_allow(vpath, acc))
         return PERM_ALLOW;

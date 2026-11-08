@@ -164,6 +164,45 @@ static void test_toml_and_eval(void)
     CHECK(rc != 0, "roots rejected in identity namespace");
 }
 
+/* 回归：catch-all 兜底规则不得遮蔽内建设备白名单。
+ * OpenDesk 标准/受限模式以 `/** write = ask` 兜底，而 node / devecocli 启动即
+ * open("/dev/tty", O_WRONLY)；若 /dev/tty 走到 ask，上游无人应答时命令会卡满
+ * timeout_ms（330s），外部表现就是"devecocli 卡死且没有任何输出"。 */
+static void test_device_whitelist_vs_catchall(void)
+{
+    char err[256];
+    dbox_policy_t p;
+    int rc = dbox_policy_load_toml(
+        "version = 1\n"
+        "default = \"deny\"\n"
+        "[[rules]]\npath = \"/**\"\naccess = \"write\"\nperm = \"ask\"\n",
+        &p, err, sizeof err);
+    CHECK(rc == 0, "device-wl: catch-all policy parse ok");
+    if (rc != 0) { fprintf(stderr, "  err: %s\n", err); return; }
+
+    CHECK(dbox_policy_eval_static(&p, "/dev/tty", ACC_WRITE) == PERM_ALLOW,
+          "device-wl: /dev/tty write not shadowed by catch-all ask");
+    CHECK(dbox_policy_eval_static(&p, "/dev/tty", ACC_READ) == PERM_ALLOW,
+          "device-wl: /dev/tty read not shadowed by catch-all ask");
+    CHECK(dbox_policy_eval_static(&p, "/dev/pts/3", ACC_WRITE) == PERM_ALLOW,
+          "device-wl: /dev/pts write allowed");
+    CHECK(dbox_policy_eval_static(&p, "/dev/null", ACC_WRITE) == PERM_ALLOW,
+          "device-wl: /dev/null write allowed");
+    CHECK(dbox_policy_eval_static(&p, "/var/tmp/x", ACC_WRITE) == PERM_ASK,
+          "device-wl: ordinary path still asks");
+    dbox_policy_free(&p);
+
+    /* 显式规则（specificity > 0）仍然可以收紧设备访问 */
+    rc = dbox_policy_load_toml(
+        "version = 1\n"
+        "default = \"deny\"\n"
+        "[[rules]]\npath = \"/dev/tty\"\naccess = \"write\"\nperm = \"deny\"\n",
+        &p, err, sizeof err);
+    CHECK(rc == 0 && dbox_policy_eval_static(&p, "/dev/tty", ACC_WRITE) == PERM_DENY,
+          "device-wl: explicit rule still wins over device baseline");
+    dbox_policy_free(&p);
+}
+
 static int fake_ask_allow;
 static int fake_ask_calls;
 static const char *fake_ask_grant;
@@ -708,6 +747,7 @@ int main(void)
     test_path_rel();
     test_glob();
     test_toml_and_eval();
+    test_device_whitelist_vs_catchall();
     test_grants_ask_cache();
     test_system_allow();
     test_cfg_roundtrip();

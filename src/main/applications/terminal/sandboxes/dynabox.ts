@@ -20,6 +20,7 @@ import { virtualPathToHostPath } from './ask-path.js';
 import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyText } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
+import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export interface DynamicSandboxLaunch {
     file: string;
@@ -98,8 +99,9 @@ export function sandboxRunArgs(options: {
         // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建），原生层
         // 仅在 --del-to-trash 启用时使用
         ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
-        // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）
-        ...(options.trashExcludeDirs ?? []).flatMap((dir) => ['--trash-exclude', dir]),
+        // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）；
+        // 非绝对路径在下发前过滤，避免死条目占用原生层清单
+        ...normalizeTrashExcludeDirs(options.trashExcludeDirs).flatMap((dir) => ['--trash-exclude', dir]),
         '--policy',
         options.policyPath,
         '--upstream',

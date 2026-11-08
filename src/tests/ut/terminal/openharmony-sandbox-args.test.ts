@@ -101,6 +101,70 @@ describe('prepareOpenHarmonySandbox 回收站参数（统一协议）', () => {
         expect(env!.PYTHONPYCACHEPREFIX).toBe('/storage/Users/currentUser/.cache/opendesk-sandbox/pycache');
     });
 
+    test('回收站排除清单内置 /data/storage/el2，与宿主传入目录合并去重', async () => {
+        const launch = await prepareOpenHarmonySandbox({
+            shellPath: '/usr/bin/zsh',
+            shellArgs: ['-c', 'pwd'],
+            command: 'pwd',
+            cwd: '/storage/Users/currentUser/workspace',
+            taskState: {
+                task_id: 'task_oh_05',
+                harnessContext: { permission: { getRules: () => undefined } },
+                getWorkspace: () => '/storage/Users/currentUser/workspace'
+            } as any,
+            deleteToTrash: true,
+            trashDir: '/tmp/od/trash/task_oh_05',
+            trashExcludeDirs: ['/tmp', '/data/storage/el2']
+        });
+        const args = launch!.args;
+        const excluded = args.filter((_, index) => args[index - 1] === '--trash-exclude');
+        // 应用沙箱根整体排除：el2 下删除均不入回收站
+        expect(excluded).toContain('/data/storage/el2');
+        // 宿主清单与内置项重复时只出现一次（原生层条目长度有限）
+        expect(excluded.filter((dir) => dir === '/data/storage/el2')).toHaveLength(1);
+        expect(excluded).toContain('/tmp');
+        expect(args.indexOf('--trash-exclude')).toBeLessThan(args.indexOf('--'));
+    });
+
+    test('未传宿主排除清单时仍注入内置 /data/storage/el2', async () => {
+        const launch = await prepareOpenHarmonySandbox({
+            shellPath: '/usr/bin/zsh',
+            shellArgs: ['-c', 'pwd'],
+            command: 'pwd',
+            cwd: '/storage/Users/currentUser/workspace',
+            taskState: {
+                task_id: 'task_oh_06',
+                harnessContext: { permission: { getRules: () => undefined } },
+                getWorkspace: () => '/storage/Users/currentUser/workspace'
+            } as any,
+            deleteToTrash: true,
+            trashDir: '/tmp/od/trash/task_oh_06'
+        });
+        const args = launch!.args;
+        const excluded = args.filter((_, index) => args[index - 1] === '--trash-exclude');
+        expect(excluded).toEqual(['/data/storage/el2']);
+    });
+
+    test('宿主传入的相对路径不下发（原生层会因此拒绝启动）', async () => {
+        const launch = await prepareOpenHarmonySandbox({
+            shellPath: '/usr/bin/zsh',
+            shellArgs: ['-c', 'pwd'],
+            command: 'pwd',
+            cwd: '/storage/Users/currentUser/workspace',
+            taskState: {
+                task_id: 'task_oh_08',
+                harnessContext: { permission: { getRules: () => undefined } },
+                getWorkspace: () => '/storage/Users/currentUser/workspace'
+            } as any,
+            deleteToTrash: true,
+            trashDir: '/tmp/od/trash/task_oh_08',
+            trashExcludeDirs: ['tmp/relative', ' ', '/tmp']
+        });
+        const args = launch!.args;
+        const excluded = args.filter((_, index) => args[index - 1] === '--trash-exclude');
+        expect(excluded).toEqual(['/data/storage/el2', '/tmp']);
+    });
+
     test('仅 trashDir 无 deleteToTrash：只传 --trash-dir，无 --del-to-trash', async () => {
         const launch = await prepareOpenHarmonySandbox({
             shellPath: '/usr/bin/zsh',
@@ -118,6 +182,25 @@ describe('prepareOpenHarmonySandbox 回收站参数（统一协议）', () => {
         expect(args).toContain('--trash-dir');
         expect(args).toContain('/tmp/od/trash/task_oh_02');
         expect(args).not.toContain('--del-to-trash');
+    });
+
+    test('未启用 deleteToTrash 时不注入排除清单（原生层不会走删除分流）', async () => {
+        const launch = await prepareOpenHarmonySandbox({
+            shellPath: '/usr/bin/zsh',
+            shellArgs: ['-c', 'pwd'],
+            command: 'pwd',
+            cwd: '/storage/Users/currentUser/workspace',
+            taskState: {
+                task_id: 'task_oh_07',
+                harnessContext: { permission: { getRules: () => undefined } },
+                getWorkspace: () => '/storage/Users/currentUser/workspace'
+            } as any,
+            trashDir: '/tmp/od/trash/task_oh_07',
+            trashExcludeDirs: ['/tmp']
+        });
+        const args = launch!.args;
+        expect(args).not.toContain('--trash-exclude');
+        expect(args).not.toContain('/data/storage/el2');
     });
 
     test('无 trashDir 无 deleteToTrash：不产生任何回收站参数', async () => {

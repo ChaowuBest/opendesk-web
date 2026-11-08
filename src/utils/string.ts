@@ -10,6 +10,17 @@
  */
 
 /**
+ * 归一化换行符：将 \r\n 和 \r 统一为 \n。
+ *
+ * 文件内容与工具调用参数的比较必须先在 LF 口径下进行：editFile 在 CRLF 文件上写回时会把结果
+ * 还原成 CRLF，而工具调用参数（oldString/newString/content）永远是 LF，两侧不归一化就匹配不到。
+ * 归一化只替换换行符、不改变行数，因此基于它算出的行号与原文件一致。
+ */
+export function normalizeLineEndings(text: string): string {
+    return text.replace(/\r\n|\r/g, '\n');
+}
+
+/**
  * 计算两个字符串的编辑距离（Levenshtein distance）。
  * 仅用于工具名近拼写容错，字符串很短，直接做完整 DP 即可。
  */

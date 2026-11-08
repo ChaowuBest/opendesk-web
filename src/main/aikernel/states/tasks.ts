@@ -78,7 +78,7 @@ import { FileReadStateCache } from './read-state.js';
 import { GlobalHooks, type Hooks } from '../hooks.js';
 import type { Participant } from '../types/index.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
-import { escapeGlobLiteralPath } from '../security/permission.js';
+import { escapeGlobLiteralPath, type PermissionPromptProvider } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
 import {
@@ -140,6 +140,7 @@ export type {
     ProcessTaskTurnOptions,
     StartInternalTurnOptions,
     InterruptRunningTurnOptions,
+    TurnInteractionBinding,
     TaskUpdateUserChunk,
     TaskUpdateAssistantChunk,
     TaskUpdateAssistantReplaceChunk,
@@ -161,6 +162,7 @@ import type {
     TaskUpdateCompactChunk,
     TaskUpdateRetryChunk,
     TaskUpdateUserReplaceChunk,
+    TurnInteractionBinding,
     TaskUsageSnapshot
 } from '../task/types.js';
 import {
@@ -515,8 +517,8 @@ export class TaskState {
     profiler: TaskProfiler | null = null;
 
     /**
-     * 交互工具集（askUser / exitPlanMode），由 Electron/TUI 层在任务创建时注入。
-     * 仅当当前 turn 由用户交互发起（interactive）时才挂载；子任务、内部流程不挂载。
+     * 任务默认的交互工具集（askUser / exitPlanMode），由 Electron/TUI 层在任务创建时注入。
+     * 仅当当前 turn 由用户交互发起时才挂载；本轮 turn 的绑定（TurnInteractionBinding）可覆盖。
      */
     interactionToolset: InteractiveToolset | null = null;
 
@@ -526,8 +528,11 @@ export class TaskState {
      */
     entryToolset: BaseToolset | null = null;
 
-    /** 当前 turn 是否由用户交互发起（运行时状态，不持久化），决定是否挂载交互工具集。 */
-    private _currentTurnInteractive: boolean = false;
+    /**
+     * 当前 turn 的交互归属绑定（运行时状态，不持久化）。
+     * 每个 turn 起点由发起入口现场声明；null 表示本轮沿用任务默认 provider。
+     */
+    private _turnInteractionBinding: TurnInteractionBinding | null = null;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: Hooks = GlobalHooks.createChildHooks();
@@ -1293,7 +1298,8 @@ export class TaskState {
         const generation = ++this._turnGeneration;
         const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
         this._activeTurnMetadata = metadata;
-        this._currentTurnInteractive = false;
+        // 内部 turn 不由任何用户入口发起，一律沿用任务默认 provider。
+        this._turnInteractionBinding = null;
         const allToolsets = await this.buildToolsets();
         await this.rebuildSystemPrompt(allToolsets);
         this.task_status = 'running';
@@ -1316,7 +1322,8 @@ export class TaskState {
         assistantMessage.metadata = this.withAssistantTurnExecutionMetadata(metadata);
         this.chat_context.appendMessage(assistantMessage);
 
-        this.chat_context.attachToolsets(...allToolsets);
+        // 内部 turn 不挂载交互工具，同时要清掉上一个交互 turn 残留的受控工具集
+        this.syncManagedToolsets(allToolsets);
 
         logger.info(`internal turn started for task ${this.task_id} (${options.source})`);
         this.processTaskTurn({
@@ -1643,13 +1650,14 @@ export class TaskState {
     }
 
     /**
-     * 重新构建基础工具集并同步到 chat_context。
-     * 用于模式切换、执行主机切换等场景，使 isAvailable / 工具过滤立即重新求值。
-     * 会移除本次不再返回的受控工具集（interaction / entry），但保留 renderer 动态挂载的工具集。
+     * 用本轮构建的工具集同步 chat_context：挂载本次返回的工具集，并移除本次不再返回的
+     * 受控工具集（interaction / entry）。
+     *
+     * 单纯 attachToolsets 只覆盖同名条目，不会移除缺席的工具集，导致上一个交互 turn 挂载的
+     * askUser / exitPlanMode 残留到非交互 turn（如渠道不支持交互、内部 turn），本轮仍能调用。
+     * renderer 动态挂载的工具集不在受控清单内，不受影响。
      */
-    async refreshBaseToolsets(): Promise<void> {
-        const allToolsets = await this.buildToolsets();
-        await this.rebuildSystemPrompt(allToolsets);
+    syncManagedToolsets(allToolsets: BaseToolset[]): void {
         const returnedNames = new Set(allToolsets.map((ts) => ts.name));
         for (const managedName of ['interaction', this.entryToolset?.name]) {
             if (managedName && !returnedNames.has(managedName)) {
@@ -1659,6 +1667,17 @@ export class TaskState {
         for (const toolset of allToolsets) {
             this.chat_context.toolsets.set(toolset.name, toolset);
         }
+    }
+
+    /**
+     * 重新构建基础工具集并同步到 chat_context。
+     * 用于模式切换、执行主机切换等场景，使 isAvailable / 工具过滤立即重新求值。
+     * 会移除本次不再返回的受控工具集（interaction / entry），但保留 renderer 动态挂载的工具集。
+     */
+    async refreshBaseToolsets(): Promise<void> {
+        const allToolsets = await this.buildToolsets();
+        await this.rebuildSystemPrompt(allToolsets);
+        this.syncManagedToolsets(allToolsets);
         this.resolveAllToolCalls();
     }
 
@@ -1988,7 +2007,9 @@ export class TaskState {
         const telemetryRequestOptions = this.withUsageTelemetry(options.modelRequestOptions);
         this.setAutoCompactState(AutoCompactStates.beginRecovery(this.auto_compact_state));
         this._contextCompactionPaused = false;
-        this._currentTurnInteractive = options.interactive === true;
+        // turn 起点重置交互归属：未显式声明绑定的入口（桌面 / TUI / ACP / 子任务）
+        // 一律回到任务默认 provider，避免上一个渠道 turn 的绑定残留到本轮。
+        this._turnInteractionBinding = options.interactive === true ? { interactive: true } : null;
         const allToolsets = await this.buildToolsets();
         await this.rebuildSystemPrompt(allToolsets);
         this.task_status = 'running';
@@ -2098,7 +2119,9 @@ export class TaskState {
         });
         this.chat_context.appendMessage(assistant_message);
 
-        this.chat_context.attachToolsets(...allToolsets);
+        // 本轮不挂载的受控工具集（如交互工具）要从 chat_context 里移除，避免上一个
+        // 交互 turn 挂载的 askUser / exitPlanMode 残留到本轮
+        this.syncManagedToolsets(allToolsets);
 
         // 检测用户消息中的 /skillname 引用并预加载到 assistant message
         await this.preloadSlashSkills(message, assistant_message);
@@ -2199,12 +2222,12 @@ export class TaskState {
             this._pluginAbortController.abort();
             this.stop_requested_by_user = reason === 'user';
             this.finished_at = new Date();
-            // turn 结束，清空交互标记，避免模式切换时读到上一个 turn 的残留值
-            this._currentTurnInteractive = false;
             logger.info(`task ${this.task_id} stopped (reason=${reason})`);
-            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            this.getActivePermissionPrompt()?.cancelTaskPrompts?.([this.task_id]);
             // 取消 askUser / exitPlanMode 等阻塞式交互提示，避免任务停止后 GUI 中残留无响应的提示窗口
             this.cancelInteractionPrompts();
+            // turn 结束，清空交互绑定，避免模式切换时读到上一个 turn 的残留值
+            this._turnInteractionBinding = null;
             this.markInterruptedToolCalls('任务已停止');
             // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
             // 改回 'running' 后继续发送 scheduled 状态
@@ -2264,9 +2287,11 @@ export class TaskState {
             this.stop_requested_by_user = true;
             this.finished_at = new Date();
             logger.info(`task ${this.task_id} interrupted for new message`);
-            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            this.getActivePermissionPrompt()?.cancelTaskPrompts?.([this.task_id]);
             // 取消 askUser / exitPlanMode 等阻塞式交互提示，避免任务中断后 GUI 中残留无响应的提示窗口
             this.cancelInteractionPrompts();
+            // turn 结束，清空交互绑定（与 stop 一致），避免残留到下一次 turn 起点之前
+            this._turnInteractionBinding = null;
             this.markInterruptedToolCalls('任务已停止');
             this._retryDelayPending = false;
         }
@@ -2312,7 +2337,7 @@ export class TaskState {
             skipFinishHooks: options.skipFinishHooks
         };
         if (options.cancelPermissionPrompts) {
-            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+            this.getActivePermissionPrompt()?.cancelTaskPrompts?.([this.task_id]);
         }
         // 取消 askUser / exitPlanMode 等阻塞式交互提示（goal 停止/清除、执行超时等中断场景）
         this.cancelInteractionPrompts();
@@ -2973,9 +2998,10 @@ export class TaskState {
     }
 
     async buildToolsets(): Promise<BaseToolset[]> {
-        // 交互工具集仅在当前 turn 由用户交互发起时挂载。
-        let interactionToolset = this._currentTurnInteractive ? this.interactionToolset : null;
-        if (this._currentTurnInteractive && !interactionToolset) {
+        // 交互工具集仅在当前 turn 由用户交互发起时挂载，并优先使用本轮声明的绑定。
+        const interactive = this.isTurnInteractive();
+        let interactionToolset = interactive ? this.getActiveInteractionToolset() : null;
+        if (interactive && !interactionToolset) {
             // 内部入口（channel/agentoffice 等）创建的任务未在创建时注入交互工具集，
             // 被用户手动打开后需按需从 platform 补充注入。
             interactionToolset = getPlatform().createInteractionToolset(this);
@@ -2988,16 +3014,32 @@ export class TaskState {
      * 取消当前等待中的交互提示（模式切换为不交互模式时调用）。
      */
     cancelInteractionPrompts(): void {
-        this.interactionToolset?.cancelAll();
+        this.getActiveInteractionToolset()?.cancelAll();
     }
 
     /**
-     * 标记当前 turn 是否由用户交互发起（决定 buildToolsets 是否挂载交互工具集）。
-     * 供渠道入站（router）、定时触发等外部入口在构建工具集前显式声明；
-     * submitUserMessage / startInternalTurn 仍按各自语义设置该标记。
+     * 声明本 turn 的交互归属（在 turn 起点、构建工具集之前调用）。
+     * 传 null 表示本轮沿用任务默认 provider；绑定不做持久化，也不跨 turn 复用。
      */
-    setTurnInteractive(interactive: boolean): void {
-        this._currentTurnInteractive = interactive;
+    setTurnInteractionBinding(binding: TurnInteractionBinding | null): void {
+        this._turnInteractionBinding = binding;
+    }
+
+    /** 本 turn 是否由用户交互发起（决定是否挂载交互工具集）。 */
+    isTurnInteractive(): boolean {
+        return this._turnInteractionBinding?.interactive === true;
+    }
+
+    /** 本 turn 生效的权限审批 provider：turn 绑定优先，其次任务默认。 */
+    getActivePermissionPrompt(): PermissionPromptProvider | null {
+        const bound = this._turnInteractionBinding?.permissionPrompt;
+        return bound === undefined ? this.harnessContext.permissionPrompt : bound;
+    }
+
+    /** 本 turn 生效的交互工具集：turn 绑定优先，其次任务默认。 */
+    getActiveInteractionToolset(): InteractiveToolset | null {
+        const bound = this._turnInteractionBinding?.interactionToolset;
+        return bound === undefined ? this.interactionToolset : bound;
     }
 
     async ensureToolsResolved() {

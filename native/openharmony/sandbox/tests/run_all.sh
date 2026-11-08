@@ -275,6 +275,34 @@ check "[network] loopback allows 127.0.0.1" $?
 "$B" run --policy "$NETPOL" -- "$ROOT/build/t_net" udp_connect_fail 192.0.2.1 53 >/dev/null 2>&1
 check "[network] loopback blocks external IP" $?
 
+echo "== device baseline: catch-all rules must not shadow /dev/tty =="
+# 回归（devecocli 卡死）：OpenDesk 标准/受限模式用 `/** write = ask` 兜底，而
+# node / devecocli 启动即 open("/dev/tty", O_WRONLY)。设备白名单若被兜底规则
+# 遮蔽，这个 open 会变成一次 ask，上游不响应时命令卡满 timeout（330s）。
+TTYPOL="$WORK/tty.toml"
+cat > "$TTYPOL" <<EOT
+version = 1
+default = "deny"
+
+[ask]
+endpoint = "http://127.0.0.1:$PORT/decide"
+timeout_ms = 1500
+cache_ttl_seconds = 0
+
+[[rules]]
+path = "/**"
+access = "write"
+perm = "ask"
+EOT
+TTY_A0=$(grep -c "/dev/tty" "$AUDIT" 2>/dev/null); TTY_A0=${TTY_A0:-0}
+"$B" run --policy "$TTYPOL" -- /bin/sh -c 'exec 3>/dev/tty 2>/dev/null || true' >/dev/null 2>&1
+TTY_A1=$(grep -c "/dev/tty" "$AUDIT" 2>/dev/null); TTY_A1=${TTY_A1:-0}
+# 断言"没有产生 ask"而不是"open 成功"：测试环境可能没有控制终端（ENXIO）
+[ "$TTY_A1" = "$TTY_A0" ] && rc=0 || rc=1
+check "device baseline: no ask for /dev/tty write (base=$TTY_A0 now=$TTY_A1)" $rc
+"$B" run --policy "$TTYPOL" -- /bin/sh -c 'exec 3>/dev/null' >/dev/null 2>&1
+check "device baseline: /dev/null write bypasses catch-all ask" $?
+
 echo "== ask: http decisions =="
 # Each TSH runs a whole shell SEQUENCE inside ONE sandbox tree so the
 # shared ask cache and endpoint grants are exercised across processes.
@@ -327,6 +355,22 @@ RT odir_open_ok "$SRC/public"                       >/dev/null; check "dir open 
 RT otmpfile_fail "$SRC/public"                      >/dev/null; check "O_TMPFILE still write-checked (EACCES)" $?
 RT odir_open_fail "$SRC/vault"                      >/dev/null; check "dir open honors read-deny rules" $?
 RT ls "$SRC/public"                                 >/dev/null; check "opendir unaffected" $?
+# 回归（hdcthis connect 卡死根因）：mkdir -p 式逐级创建会对 /storage、$HOME 这些
+# 早已存在的层级反复 mkdir。目标已存在时本次调用只会得到 EEXIST，没有副作用，
+# 沙箱不该为它 ask 上游（上游不响应时整条命令卡满 ask 超时）。
+RT mkdir_eexist "$SRC/public"                       >/dev/null; check "mkdir on existing dir -> EEXIST, never write-asked" $?
+# 同一捷径不得绕过 deny：已存在目录若在写-deny 区，仍必须被拒（Windows 侧
+# CreateDirectoryW 用的是 deny-only 判定，这里保持同一语义）
+MKDENY="$WORK/mkdir-deny.toml"
+{
+    printf 'version = 1\ndefault = "deny"\n\n'
+    printf '[[rules]]\npath = "@SRC@/vault"\naccess = "write"\nperm = "deny"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "read"\nperm = "allow"\n\n'
+    printf '[[rules]]\npath = "/**"\naccess = "write"\nperm = "ask"\n'
+} | sed -e "s|@SRC@|$SRC|g" > "$MKDENY"
+"$B" run --policy "$MKDENY" -- "$PROBE" mkdir_eexist "$SRC/vault" >/dev/null 2>&1
+rc=$?; [ "$rc" != "0" ] && rc=0 || rc=1
+check "mkdir on existing dir in write-deny area still denied" $rc
 AUDR0=$(grep -c "decide" "$AUDIT" 2>/dev/null); AUDR0=${AUDR0:-0}
 "$B" run --policy "$RPOL" --log "$LOG" -- /usr/bin/find "$SRC" -maxdepth 3 >/dev/null 2>&1
 check "find traversal rc=0 (no EACCES)" $?
@@ -406,6 +450,14 @@ check "kill launcher -> whole tree dies (levels=$U0, after=$U1, surv=${SURV:-0})
 echo "== reliability: chain survives while launcher alive =="
 "$B" run --policy "$POL" --log "$LOG" -- "$ROOT/build/t_exec_chain" "$ROOT/build/t_exec_chain" 3 CHAIN >/dev/null 2>&1
 check "grandchild chain completes normally" $?
+
+echo "== reliability: reused watch fd must not kill the tree =="
+# 回归（devecocli 卡在 "Start generating p12" 的根因）：exec 后宿主程序关闭看护
+# fd，紧接着把同一个 fd 号复用为普通文件（node spawn 的 close-on-exec + JDK/node
+# 的 open）。旧实现只校验 F_GETFD，于是把"读到别的对象 EOF"当作 launcher 已死，
+# kill(-pgid) 抹掉整棵树 —— 外部表现为命令毫无输出地消失。t_watch 精确复现该状态。
+"$B" run --policy "$POL" --log "$LOG" -- "$ROOT/build/t_watch" >/dev/null 2>&1
+check "reused watch fd does not kill tree (fd number recycled after exec)" $?
 
 echo "== reliability: parallel sandboxes =="
 "$B" run --policy "$POL" --log "$LOG" -- "$ROOT/build/t_threads" "$SRC/public/p1.dat" 2 15 >/dev/null 2>&1 &
