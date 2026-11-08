@@ -23,6 +23,7 @@ import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
 import { getTempDir } from '../../utils/temp.js';
+import { normalizeLineEndings } from '../../../utils/string.js';
 import { sanitizeLocalPath } from '../../utils/path.js';
 import { EXTRACT_TEXT_SUPPORTED_EXTENSIONS, isExtractTextSupported } from './parser/extract.js';
 import { ImageSourceError, isOnlineImageSource, loadImageSource } from './image.js';
@@ -244,13 +245,6 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number,
     }
 
     return body;
-}
-
-/**
- * 归一化换行符：将 \r\n 和 \r 统一为 \n
- */
-function normalizeLineEndings(text: string): string {
-    return text.replace(/\r\n|\r/g, '\n');
 }
 
 function trimTrailingWhitespace(text: string): string {

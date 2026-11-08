@@ -13,6 +13,7 @@ import * as diff from 'diff';
 import path from 'path';
 import fs from 'fs';
 import { cleanPathInput } from '../../../utils/path.js';
+import { normalizeLineEndings } from '../../../utils/string.js';
 import { Setting } from '../../utils/setting.js';
 import { AssistantMessage, ToolCall, ToolCallMessagePart } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
@@ -96,8 +97,13 @@ export function getTaskChangesFromTask(task: TaskState): TaskChangesResult {
                 if (tc.status !== 'success') continue;
 
                 // 解析 args：优先使用 args_object，回退到解析 args_string
-                const args = resolveToolCallArgs(tc);
-                if (!args) continue;
+                const rawArgs = resolveToolCallArgs(tc);
+                if (!rawArgs) continue;
+
+                // 统一在 LF 口径下做回放/反向回放：editFile 在 CRLF 文件上写回时会把结果还原成
+                // CRLF，而工具调用参数永远是 LF；只归一化文件内容而不归一化参数，反向回放仍然匹配
+                // 不到，会退化成片段 diff（行号从 1 开始，不是文件真实行号）。
+                const args = normalizeOperationArgs(rawArgs);
 
                 const entry = computeFileChangeEntry(shortName, args);
                 if (!entry) continue;
@@ -211,10 +217,13 @@ function normalizeChangeFilePath(filePath: string, task: TaskState): { displayPa
 }
 
 function computeCumulativeFileChange(group: FileChangeGroup): FileChangeEntry | null | undefined {
-    const finalContent = readChangeFileContent(group.absolutePath) ?? replayOperationsForward(group);
-    if (finalContent === undefined) {
+    const rawContent = readChangeFileContent(group.absolutePath) ?? replayOperationsForward(group);
+    if (rawContent === undefined) {
         return undefined;
     }
+    // 磁盘内容统一归一化成 LF 后再回放：参数侧已在 normalizeOperationArgs 中归一化，
+    // 两侧口径一致才能反解出原始内容。归一化不改变行数，diff 行号与原文件一致。
+    const finalContent = normalizeLineEndings(rawContent);
 
     let originalContent = finalContent;
     for (let i = group.operations.length - 1; i >= 0; i--) {
@@ -230,6 +239,25 @@ function computeCumulativeFileChange(group: FileChangeGroup): FileChangeEntry | 
     }
 
     return buildDiffEntry('cumulative', originalContent, finalContent);
+}
+
+/** 换行符敏感的参数键：这几项都会与磁盘内容做字面量比对。 */
+const EOL_SENSITIVE_ARG_KEYS = ['content', 'oldString', 'newString'];
+
+/**
+ * 归一化工具调用参数中的换行符，返回浅拷贝（不得改动已持久化的 args_object）。
+ * 回放与反向回放都依赖 "内容与参数同为 LF 口径" 这一前提，集中在这里归一化一次，
+ * 下游的 fallback 片段也不会带 \r 进 HTML。
+ */
+function normalizeOperationArgs(args: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = { ...args };
+    for (const key of EOL_SENSITIVE_ARG_KEYS) {
+        const value = args[key];
+        if (typeof value === 'string') {
+            normalized[key] = normalizeLineEndings(value);
+        }
+    }
+    return normalized;
 }
 
 function readChangeFileContent(filePath: string): string | undefined {
