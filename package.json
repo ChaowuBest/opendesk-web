@@ -202,6 +202,7 @@
         "nedb": "^1.8.0",
         "nedb-promises": "^6.2.3",
         "node-imap": "^0.9.6",
+        "node-pty": "^1.1.0",
         "node-pop3": "^0.11.0",
         "node-screenshots": "^0.2.1",
         "node-sqlite3-wasm": "^0.8.55",

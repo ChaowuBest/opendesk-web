@@ -1132,6 +1132,44 @@ function exposeApplicationAPI() {
     });
 }
 
+/** 子应用和主窗口共用的交互式终端桥；主进程负责校验会话归属。 */
+function exposeInteractiveTerminalAPI() {
+    const dataListeners = new Set();
+    const exitListeners = new Set();
+    const dataHandler = (_event, payload) => {
+        for (const listener of dataListeners) listener(payload);
+    };
+    const exitHandler = (_event, payload) => {
+        for (const listener of exitListeners) listener(payload);
+    };
+    ipcRenderer.on('terminal:data', dataHandler);
+    ipcRenderer.on('terminal:exit', exitHandler);
+
+    const invoke = async (channel, ...args) => {
+        const result = await ipcRenderer.invoke(channel, ...args);
+        if (result.status !== 'ok') throw new Error(result.message);
+        return result.data;
+    };
+
+    safeExposeInMainWorld('terminalAPI', {
+        listProfiles: () => invoke('terminal:listProfiles'),
+        create: (options) => invoke('terminal:create', options),
+        start: (sessionId) => invoke('terminal:start', sessionId),
+        write: (sessionId, data) => invoke('terminal:write', sessionId, data),
+        resize: (sessionId, cols, rows) => invoke('terminal:resize', sessionId, cols, rows),
+        close: (sessionId) => invoke('terminal:close', sessionId),
+        acknowledge: (sessionId, count) => invoke('terminal:acknowledge', sessionId, count),
+        onData: (callback) => {
+            dataListeners.add(callback);
+            return () => dataListeners.delete(callback);
+        },
+        onExit: (callback) => {
+            exitListeners.add(callback);
+            return () => exitListeners.delete(callback);
+        }
+    });
+}
+
 // 文件回收站：统一回收站的搜索、找回与任务上下文（GUI 文件回收站弹窗使用）
 function exposeTrashAPI() {
     safeExposeInMainWorld('trashAPI', {
@@ -1171,6 +1209,7 @@ function exposeTrashAPI() {
 }
 
 exposeApplicationAPI();
+exposeInteractiveTerminalAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
 exposeTrashAPI();
