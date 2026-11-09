@@ -1,5 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
-import { NAV_INTERCEPT_SCRIPT, NAV_INTERCEPT_CONSOLE_PREFIX } from '../../../renderer/webviewScripts';
+import { makeNavInterceptScript, NAV_INTERCEPT_CONSOLE_PREFIX } from '../../../renderer/webviewScripts';
+
+const NAV_INTERCEPT_SCRIPT = makeNavInterceptScript('testtoken123');
 
 describe('NAV_INTERCEPT_SCRIPT', () => {
     it('compiles as a script function body without errors', () => {
@@ -12,8 +14,11 @@ describe('NAV_INTERCEPT_SCRIPT', () => {
     });
 
     it('emits the canonical console prefix expected by the renderer bridge', () => {
-        // renderer 侧以该前缀识别导航信令，两侧必须一致
-        expect(NAV_INTERCEPT_SCRIPT).toContain("var PREFIX = '" + NAV_INTERCEPT_CONSOLE_PREFIX + "';");
+        // renderer 侧以 前缀+token 识别导航信令，两侧必须一致；token 由宿主按
+        // tab 注入脚本闭包（页面读不到），消费端据此拒绝伪造信令
+        expect(NAV_INTERCEPT_SCRIPT).toContain(
+            "var PREFIX = '" + NAV_INTERCEPT_CONSOLE_PREFIX + 'testtoken123:' + "';"
+        );
         expect(NAV_INTERCEPT_CONSOLE_PREFIX).toBe('__od_nav__:');
     });
 
@@ -40,6 +45,13 @@ describe('NAV_INTERCEPT_SCRIPT', () => {
         // 仅 GET http(s) 表单序列化后走信令，POST / 非 http(s) 放行原生
         expect(NAV_INTERCEPT_SCRIPT).toContain("(form.getAttribute('method') || 'get').toLowerCase() !== 'get'");
         expect(NAV_INTERCEPT_SCRIPT).toContain('console.log(PREFIX + action.toString())');
+    });
+
+    it('lets <a download> through so the browser handles the file download natively', () => {
+        // 带 download 属性的链接语义就是"下载文件"：若也拦成宿主 loadURL，
+        // loadURL 会以 ERR_FAILED(-2) 拒绝，并在 Electron 主进程的
+        // GUEST_VIEW_MANAGER_CALL handler 里留下一条错误日志。
+        expect(NAV_INTERCEPT_SCRIPT).toContain("a.hasAttribute('download')");
     });
 
     it('does not fall back to the per-input search-box whitelist hack', () => {

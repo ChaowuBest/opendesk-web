@@ -98,6 +98,9 @@ function makeSession(evals: string[]) {
         isHealthy: jest.fn(async () => true),
         waitForPageReady: jest.fn(async () => {}),
         waitForDOMStable: jest.fn(async () => {}),
+        // 对话框接管（BUG-02 修复后 click/type 会先启用 Page 域）
+        ensureDialogHandling: jest.fn(async () => {}),
+        takeLastDialog: jest.fn(() => null),
         send: jest.fn(async (method: string, params: any) => {
             const expr = params?.expression || '';
             if (expr) evals.push(expr);
@@ -146,7 +149,8 @@ function makeCtrl(session: any, webviewFocused: boolean) {
 }
 
 function findClickScript(evals: string[], ref: string): string | undefined {
-    return evals.find((e) => e.includes(`data-od-ref="${ref}"`) && e.includes('mousedown'));
+    // ref 解析已改为 shadow 穿透的 __odFindRef（BUG-33）
+    return evals.find((e) => e.includes(`__odFindRef('${ref}')`) && e.includes('mousedown'));
 }
 
 describe('isolated click focuses text-entry controls (webview not focused)', () => {

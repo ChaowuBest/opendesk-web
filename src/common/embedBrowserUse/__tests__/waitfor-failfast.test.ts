@@ -10,12 +10,22 @@
 import { BrowserController, BrowserScriptGenerators } from '../main';
 import { jest } from '@jest/globals';
 
-function makeMockSession(isLoading = false) {
+function makeMockSession(isLoading = false, mainFrameTextCheck: () => Promise<boolean> = async () => false) {
     return {
         waitForPageReady: jest.fn(async () => {}),
         waitForDOMStable: jest.fn(async () => {}),
         isHealthy: jest.fn(async () => true),
-        webContents: { isLoading: jest.fn(() => isLoading), isDestroyed: jest.fn(() => false) },
+        webContents: {
+            isLoading: jest.fn(() => isLoading),
+            isDestroyed: jest.fn(() => false),
+            // waitFor（无 iframeRef）的文本检测已覆盖全部 frame（BUG-28 修复），
+            // 主 frame 走 WebFrameMain.executeJavaScript 而非 Runtime.evaluate
+            mainFrame: {
+                url: 'https://example.com/',
+                frames: [],
+                executeJavaScript: jest.fn(mainFrameTextCheck)
+            }
+        },
         send: jest.fn()
     };
 }
@@ -66,15 +76,16 @@ describe('waitFor fail-fast', () => {
 
     it('gives up after the execution context keeps failing across polls', async () => {
         jest.useFakeTimers();
-        const session = makeMockSession(false /* not loading */);
+        const session = makeMockSession(false /* not loading */, async () => {
+            throw new Error('Execution context was destroyed');
+        });
         session.send.mockImplementation(async (_method: string, params: any) => {
             const expr = params.expression as string;
             if (expr.includes('chrome-error://')) {
                 // Not an error page — no error reported
                 return { result: { value: '' } };
             }
-            // Text check keeps failing as if the JS context is gone
-            throw new Error('Execution context was destroyed');
+            throw new Error('unexpected Runtime.evaluate');
         });
         const ctrl = makeController(session);
 
@@ -91,12 +102,7 @@ describe('waitFor fail-fast', () => {
         jest.useFakeTimers();
         // Page keeps navigating the whole time — evaluate failures are the
         // expected transient state and must never trip the crash guard.
-        const session = makeMockSession(true);
-        session.send.mockImplementation(async (_method: string, params: any) => {
-            const expr = params.expression as string;
-            if (expr.includes('chrome-error://')) {
-                return { result: { value: '' } };
-            }
+        const session = makeMockSession(true, async () => {
             throw new Error('Execution context was destroyed');
         });
         const ctrl = makeController(session);
@@ -112,7 +118,7 @@ describe('waitFor fail-fast', () => {
 
     it('uses a 3-second default timeout', async () => {
         jest.useFakeTimers();
-        const session = makeMockSession();
+        const session = makeMockSession(false, async () => false);
         session.send.mockImplementation(async (_method: string, params: any) => {
             const expr = params.expression as string;
             if (expr.includes('chrome-error://')) {
@@ -130,13 +136,13 @@ describe('waitFor fail-fast', () => {
     });
 
     it('resolves when the target text appears', async () => {
-        const session = makeMockSession();
+        const session = makeMockSession(false, async () => true);
         session.send.mockImplementation(async (_method: string, params: any) => {
             const expr = params.expression as string;
             if (expr.includes('chrome-error://')) {
                 return { result: { value: '' } };
             }
-            return { result: { value: true } };
+            throw new Error('unexpected Runtime.evaluate');
         });
         const ctrl = makeController(session);
 
@@ -145,7 +151,7 @@ describe('waitFor fail-fast', () => {
     });
 
     it('resolves when the target text disappears', async () => {
-        const session = makeMockSession();
+        const session = makeMockSession(false, async () => false);
         session.send.mockImplementation(async (_method: string, params: any) => {
             const expr = params.expression as string;
             if (expr.includes('chrome-error://')) {
@@ -220,6 +226,50 @@ describe('waitFor fail-fast', () => {
         await jest.advanceTimersByTimeAsync(1000 + 100);
         expect(settled).toBe(true);
         // Settle the promise chain so no unhandled rejection leaks after the test.
+        await promise.catch(() => undefined);
+    });
+
+    it('bounds multi-frame text checks by the overall deadline (hung child frames)', async () => {
+        jest.useFakeTimers();
+        const session = makeMockSession(false);
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            const expr = params.expression as string;
+            if (expr.includes('chrome-error://')) {
+                return { result: { value: '' } };
+            }
+            throw new Error('unexpected Runtime.evaluate');
+        });
+        // 主 frame 立即返回 false；两个子 frame 的 executeJavaScript 挂死。
+        // 每个 frame 的预算从 poll 截止时间逐 frame 重算：第一个 hung frame
+        // 耗尽预算后，后续 frame 不得再获得新的完整预算，否则单次 poll 就会
+        // 超出 waitFor 的总 deadline（1s 变 2s+）。
+        const hangingChild = (name: string) => ({
+            url: `https://example.com/${name}`,
+            frames: [],
+            executeJavaScript: jest.fn(() => new Promise<boolean>(() => {}))
+        });
+        const fakeMainFrame = {
+            url: 'https://example.com/main',
+            frames: [hangingChild('a'), hangingChild('b')],
+            executeJavaScript: jest.fn(async () => false)
+        };
+        session.webContents.mainFrame = fakeMainFrame;
+        const ctrl = makeController(session);
+
+        const promise = ctrl.waitFor({ text: '目标文本', timeout: 1 });
+        let settled = false;
+        promise.then(
+            () => {
+                settled = true;
+            },
+            () => {
+                settled = true;
+            }
+        );
+        // 第一个子 frame 挂到 ~1s（预算上限），第二个子 frame 必须因预算耗尽被
+        // 跳过 —— t≈1.15s 时整个 waitFor 必须已按超时结束。
+        await jest.advanceTimersByTimeAsync(1000 + 150);
+        expect(settled).toBe(true);
         await promise.catch(() => undefined);
     });
 });

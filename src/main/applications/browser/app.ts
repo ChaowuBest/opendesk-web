@@ -190,20 +190,26 @@ const AUTOMATED_DOWNLOAD_WEB_CONTENTS_TTL_MS = 15 * 60 * 1000;
 function appendAutomatedDownloadsToToolResult(result: string, downloads: DownloadState[]): string {
     if (downloads.length === 0) return result;
 
+    const serialized = downloads.map((download) => ({ ...download }));
+
     try {
         const parsed = JSON.parse(result);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            return result;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const existingDownloads = Array.isArray(parsed.downloads) ? parsed.downloads : [];
+            return JSON.stringify({ ...parsed, downloads: [...existingDownloads, ...serialized] });
         }
-
-        const existingDownloads = Array.isArray(parsed.downloads) ? parsed.downloads : [];
-        return JSON.stringify({
-            ...parsed,
-            downloads: [...existingDownloads, ...downloads.map((download) => ({ ...download }))]
-        });
     } catch {
-        return result;
+        // 非 JSON 结果（浏览器工具输出的是 YAML 行文本）继续走下面的分支
     }
+
+    // 浏览器工具的结果是 `- key: value` 形式的 YAML 行文本。此前这里只处理
+    // JSON，于是 navigate 到会触发下载的资源（Content-Disposition / 二进制）
+    // 时下载信息被整体丢弃：页面没变、结果里也没有下载提示，agent 既不知道
+    // 导航失败的原因，也不知道文件已经落盘，重试还会重复下载。
+    if (/^- /m.test(result)) {
+        return `${result}\n- downloads: ${JSON.stringify(serialized)}`;
+    }
+    return result;
 }
 
 class BrowserApplication extends BaseApplication {

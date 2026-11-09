@@ -23,10 +23,14 @@ import { createTranslatorForBrowser } from '../locale/renderer.js';
 // 注册 <content-loading-view> 加载中组件，用于页面加载反馈
 import '../../../../renderer/components/loading.js';
 import {
-    WINDOW_OPEN_PROXY_SCRIPT,
-    OPENER_BRIDGE_SCRIPT,
+    createWebviewSignalTokenStore,
+    makeOpenerBridgeScript,
+    makeNavInterceptScript,
+    makeWindowOpenProxyScript,
     NOTIFY_POPUP_CLOSED_SCRIPT,
-    NAV_INTERCEPT_CONSOLE_PREFIX
+    resolveWebviewConsoleSignal,
+    resolveSignalOrigin,
+    loadWebviewUrlQuietly
 } from '../../../../renderer/webviewScripts';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 
@@ -161,6 +165,16 @@ class BrowserEntryWidget extends HTMLElement {
     private _hintRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     private _hintSeq: number = 0;
     private _lastHintKey: string = '';
+
+    /**
+     * 每个 tab 的一次性 console 信令令牌（BUG-35 安全修复）。
+     *
+     * console-message 是页面完全可控的无认证通道，且 <webview> 的该事件不携带
+     * frame 信息。信令脚本由宿主注入、token 存于脚本闭包内，页面脚本读不到，
+     * 凭空伪造的信令因缺少 token 被消费端拒绝。仓库实现见
+     * createWebviewSignalTokenStore（与 EmbeddedBrowser 共用同一实现）。
+     */
+    private readonly _signalToken = createWebviewSignalTokenStore();
 
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
@@ -3081,17 +3095,15 @@ class BrowserEntryWidget extends HTMLElement {
             if (tab.pendingUrl) {
                 const url = tab.pendingUrl;
                 tab.pendingUrl = null;
-                try {
-                    wv.loadURL(url);
-                } catch {
-                    wv.src = url;
-                }
+                if (!loadWebviewUrlQuietly(wv, url)) wv.src = url;
             }
             // 覆盖 guest 页面的 window.open，使其在弹窗被 Electron 拦截时
             // 返回一个模拟的 window 对象，让调用方认为弹窗正常打开。
-            this.injectWindowOpenProxy(wv);
+            this.injectWindowOpenProxy(tab, wv);
             // 若此 tab 是由弹窗产生的，注入 window.opener 桥接
             this.injectOpenerBridge(tab);
+            // 导航拦截 workaround（主 frame 专用，见脚本内顶层守卫）
+            this.injectNavIntercept(tab);
         });
 
         // 当 guest 页面调用 window.close()（如 OAuth 授权完成后自动关闭弹窗），
@@ -3170,8 +3182,9 @@ class BrowserEntryWidget extends HTMLElement {
             }
             if (tab.ready) this.syncNavButtons();
             // 新页面加载后重新注入 window.open proxy 和 opener 桥接
-            this.injectWindowOpenProxy(wv);
+            this.injectWindowOpenProxy(tab, wv);
             this.injectOpenerBridge(tab);
+            this.injectNavIntercept(tab);
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
@@ -3205,69 +3218,73 @@ class BrowserEntryWidget extends HTMLElement {
             }
             if (tab.ready) this.syncNavButtons();
             // 页面完全加载后再次注入，确保 SSO 重定向后的页面也被覆盖
-            this.injectWindowOpenProxy(wv);
+            this.injectWindowOpenProxy(tab, wv);
             this.injectOpenerBridge(tab);
+            this.injectNavIntercept(tab);
         });
 
         // 监听弹窗 tab 中通过 console.log 转发的信号：
         // - opener.postMessage → 分发到父 tab
         // - window.close() → 关闭当前 tab
         // - opener.location.reload → 刷新父 tab
+        // 安全：console-message 是页面可控通道且不携带 frame 信息，消费端按
+        // tab 的一次性 token 校验信令（token 注入脚本闭包，页面读不到）；
+        // postMessage 的 origin 由宿主按 tab 当前 URL 计算，不信任页面传值。
         wv.addEventListener('console-message', (event: any) => {
             if (tab.openerTabId == null) return;
-            const msg: string = event.message;
-            if (!msg) return;
-            if (msg === '__openDesk_window_close__') {
-                this.closeTab(tab.id);
-                return;
-            }
-            if (msg === '__openDesk_opener_reload__') {
-                const openerTab = this.tabs.find((t) => t.id === tab.openerTabId);
-                if (openerTab?.webview && openerTab.ready) {
-                    try {
-                        openerTab.webview.reload();
-                    } catch {
-                        /* ignore */
+            const signal = resolveWebviewConsoleSignal(event.message, this._signalToken(tab), true);
+            switch (signal.kind) {
+                case 'windowClose':
+                    this.closeTab(tab.id);
+                    return;
+                case 'openerReload': {
+                    const openerTab = this.tabs.find((t) => t.id === tab.openerTabId);
+                    if (openerTab?.webview && openerTab.ready) {
+                        try {
+                            openerTab.webview.reload();
+                        } catch {
+                            /* ignore */
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-            if (msg.startsWith('__openDesk_opener_postMessage__:')) {
-                try {
-                    const payload = JSON.parse(msg.slice('__openDesk_opener_postMessage__:'.length));
-                    this.deliverOpenerMessage(tab.openerTabId, payload.data, payload.origin);
-                } catch {
-                    /* ignore parse errors */
+                case 'openerPostMessage': {
+                    const origin = resolveSignalOrigin(tab.url);
+                    this.deliverOpenerMessage(tab.openerTabId, signal.data, origin);
+                    return;
                 }
+                default:
+                    return;
             }
         });
 
         // 监听父 tab 中 proxy.focus() / proxy.close() 的信号，
         // 切换到对应的 popup tab 或关闭它
         wv.addEventListener('console-message', (event: any) => {
-            const msg: string = event.message;
-            if (!msg) return;
-            if (msg.startsWith('__openDesk_popup_focus__:')) {
-                const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
-                if (childTab) {
-                    this.switchToTab(childTab.id);
+            const signal = resolveWebviewConsoleSignal(event.message, this._signalToken(tab), false);
+            switch (signal.kind) {
+                case 'popupFocus': {
+                    const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
+                    if (childTab) {
+                        this.switchToTab(childTab.id);
+                    }
+                    return;
                 }
-                return;
-            }
-            if (msg.startsWith('__openDesk_popup_close__:')) {
-                const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
-                if (childTab) {
-                    this.closeTab(childTab.id);
+                case 'popupClose': {
+                    const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
+                    if (childTab) {
+                        this.closeTab(childTab.id);
+                    }
+                    return;
                 }
-                return;
-            }
-            // 导航劫持 workaround：guest 内同窗口导航被框架层静默中止，
-            // 页面脚本将导航转为信令，这里对来源 tab 用 loadURL 完成。
-            if (msg.startsWith(NAV_INTERCEPT_CONSOLE_PREFIX)) {
-                const url = msg.slice(NAV_INTERCEPT_CONSOLE_PREFIX.length);
-                if (url && /^https?:\/\//.test(url)) {
-                    this.navigateTo(url, tab);
-                }
+                // 导航劫持 workaround：guest 内同窗口导航被框架层静默中止，
+                // 页面脚本将导航转为信令，这里对来源 tab 用 loadURL 完成。
+                // 仅顶层文档安装拦截脚本（脚本内顶层守卫），iframe 导航走原生通道。
+                case 'navigate':
+                    this.navigateTo(signal.url, tab);
+                    return;
+                default:
+                    return;
             }
         });
 
@@ -3307,8 +3324,23 @@ class BrowserEntryWidget extends HTMLElement {
      * 仍返回一个模拟 window 对象（而非 null），让页面逻辑正常运行。
      * proxy.closed 会在弹窗 tab 关闭时被外部通过 notifyOpenerPopupClosed 更新。
      */
-    private injectWindowOpenProxy(wv: WebviewTag): void {
-        wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
+    private injectWindowOpenProxy(tab: BrowserTab, wv: WebviewTag): void {
+        wv.executeJavaScript(makeWindowOpenProxyScript(this._signalToken(tab))).catch(() => {
+            /* ignore */
+        });
+    }
+
+    /**
+     * 注入导航拦截脚本（workaround）。
+     *
+     * 之前由主进程在 did-attach-webview / did-frame-navigate 时把脚本注入全部
+     * frame；现在脚本带顶层守卫（iframe 内不安装）且信令需要 tab 级 token，
+     * 因此改为 renderer 侧在 dom-ready / did-navigate / did-finish-load 注入
+     * 主 frame，注入通道（webview.executeJavaScript）本身就是主 frame 专属。
+     */
+    private injectNavIntercept(tab: BrowserTab): void {
+        if (!tab.webview) return;
+        tab.webview.executeJavaScript(makeNavInterceptScript(this._signalToken(tab))).catch(() => {
             /* ignore */
         });
     }
@@ -3349,7 +3381,7 @@ class BrowserEntryWidget extends HTMLElement {
     private injectOpenerBridge(tab: BrowserTab): void {
         const wv = tab.webview;
         if (!wv || tab.openerTabId == null) return;
-        wv.executeJavaScript(OPENER_BRIDGE_SCRIPT).catch(() => {
+        wv.executeJavaScript(makeOpenerBridgeScript(this._signalToken(tab))).catch(() => {
             /* ignore */
         });
     }
@@ -3547,6 +3579,9 @@ class BrowserEntryWidget extends HTMLElement {
             return;
         }
 
+        // 导航被拒绝（下载资源）时用来回滚乐观更新的地址
+        const previousUrl = tab.url;
+
         const wasCreated = !tab.webview;
         // 如果当前 tab 还是主页，需要创建 webview
         this.ensureTabHasWebview(tab, targetUrl);
@@ -3557,11 +3592,20 @@ class BrowserEntryWidget extends HTMLElement {
 
         if (!wasCreated) {
             if (tab.ready && tab.webview) {
-                try {
-                    tab.webview.loadURL(targetUrl);
-                } catch {
-                    tab.webview.src = targetUrl;
-                }
+                // loadURL 的拒绝（下载资源 ERR_FAILED / 主动中断 ERR_ABORTED）已由
+                // loadWebviewUrlQuietly 收口；拒绝时回滚 tab.url，避免"页面没导航、
+                // 地址栏却停在资源地址"。
+                const started = loadWebviewUrlQuietly(tab.webview, targetUrl, () => {
+                    // 真实加载失败会走 did-fail-load 并展示错误页，地址栏应保留目标地址
+                    if (tab.errorInfo) return;
+                    // 已被后续导航接管
+                    if (tab.url !== targetUrl) return;
+                    tab.url = previousUrl;
+                    this.syncUrlBar();
+                    this.syncStarButton();
+                    this.updateHomePageVisibility();
+                });
+                if (!started) tab.webview.src = targetUrl;
             } else if (tab.webview) {
                 tab.pendingUrl = targetUrl;
             }
@@ -3590,23 +3634,41 @@ class BrowserEntryWidget extends HTMLElement {
 
     public goBack(): void {
         const tab = this.getActiveTab();
-        if (tab?.ready && tab.webview) {
-            try {
-                if (tab.webview.canGoBack()) tab.webview.goBack();
-            } catch {
-                /* not ready */
+        if (!tab?.ready || !tab.webview) return;
+        const wv = tab.webview as any;
+        try {
+            if (typeof wv.canGoBack === 'function' && typeof wv.goBack === 'function' && wv.canGoBack()) {
+                wv.goBack();
+                return;
             }
+        } catch {
+            /* webview 历史 API 不可用，走下面的兜底 */
+        }
+        // 新版 Electron 弱化/移除了 <webview>.goBack()：直接调用会抛错并被静默吞掉，
+        // 表现为"按了返回但页面没动"。退化到 guest 内 history.back() 保证可用。
+        try {
+            void Promise.resolve(wv.executeJavaScript?.('history.back()')).catch(() => {});
+        } catch {
+            /* not ready */
         }
     }
 
     public goForward(): void {
         const tab = this.getActiveTab();
-        if (tab?.ready && tab.webview) {
-            try {
-                if (tab.webview.canGoForward()) tab.webview.goForward();
-            } catch {
-                /* not ready */
+        if (!tab?.ready || !tab.webview) return;
+        const wv = tab.webview as any;
+        try {
+            if (typeof wv.canGoForward === 'function' && typeof wv.goForward === 'function' && wv.canGoForward()) {
+                wv.goForward();
+                return;
             }
+        } catch {
+            /* webview 历史 API 不可用，走下面的兜底 */
+        }
+        try {
+            void Promise.resolve(wv.executeJavaScript?.('history.forward()')).catch(() => {});
+        } catch {
+            /* not ready */
         }
     }
 

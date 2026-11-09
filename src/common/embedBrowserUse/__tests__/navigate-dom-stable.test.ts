@@ -14,6 +14,8 @@ function makeMockSession() {
     return {
         waitForPageReady: jest.fn(async () => {}),
         waitForDOMStable: jest.fn(async () => {}),
+        // navigate 成功后会消费导航过程触发的对话框信息（beforeunload 回显）
+        takeLastDialog: jest.fn(() => null),
         send: jest.fn(async () => ({
             result: { value: JSON.stringify({ url: 'https://example.com/hello', title: 'Example' }) }
         })),

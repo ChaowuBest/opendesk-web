@@ -70,8 +70,6 @@ import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfile } from './utils/window-recovery.js';
-import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
-import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import { scanSupportedShells } from './applications/terminal/scan.js';
@@ -668,13 +666,10 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
 
         installBrowserCredentials(hostWindow, webContents);
 
-        // 导航拦截 workaround：guest 的 renderer 自发起跨文档导航会被框架层静默取消，
-        // preload 仅注入主 frame；搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）
-        // 需要把 NAV_INTERCEPT_SCRIPT 注入每个 frame。注入脚本自带幂等标记，重复执行无害。
-        injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
-        webContents.on('did-frame-navigate', () => {
-            injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
-        });
+        // 导航拦截 workaround（NAV_INTERCEPT_SCRIPT）由 renderer 侧按 tab 注入：
+        // 脚本只安装在顶层文档（iframe 导航走原生通道，避免 sandbox 绕过），
+        // 且 console 信令需要 renderer 生成的 tab 级一次性 token —— 主进程注入
+        // 无法共享该 token，且会因幂等标记抢先占用而让 token 注入失效。
         installEmbeddedBrowserLifecycleHandlers(hostWindow, webContents);
         installWebviewKeyboardForwarding(hostWindow, webContents, true);
     });

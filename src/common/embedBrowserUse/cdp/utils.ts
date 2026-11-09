@@ -90,6 +90,8 @@ export interface KeyDescriptor {
     text?: string;
     /** Whether the Shift modifier is needed to produce this character on a US QWERTY keyboard */
     shiftKey?: boolean;
+    /** false 表示键名未命中任何映射（多字符且不在 KEY_MAP 中），按键不会产生任何真实事件 */
+    recognized?: boolean;
 }
 
 /**
@@ -187,7 +189,22 @@ export function resolveKey(keyName: string): KeyDescriptor {
     }
 
     // Fallback: use as-is
-    return { key: keyName, code: keyName, keyCode: 0 };
+    return { key: keyName, code: keyName, keyCode: 0, recognized: false };
+}
+
+/**
+ * 从 CDP Runtime.evaluate 的 exceptionDetails 中提取对使用者有意义的异常信息。
+ *
+ * exceptionDetails.text 只是 "Uncaught" 这类前缀，完整的异常消息与堆栈在
+ * exception.description 里 —— 取反的话（text 优先）就会把完整信息短路成一句
+ * "Uncaught"（iframe 内路径无此问题，导致同一异常在两个路径下信息量不一致）。
+ */
+export function describeRuntimeException(details: any): string {
+    const description = details?.exception?.description ?? details?.exception?.value;
+    if (description !== undefined && description !== null && String(description) !== '') {
+        return String(description);
+    }
+    return String(details?.text || 'Evaluation error');
 }
 
 /**
@@ -217,4 +234,18 @@ export function modifiersBitmask(modifiers?: string[]): number {
         }
     }
     return mask;
+}
+
+/**
+ * 统一的 ref 未命中文案。
+ *
+ * 嵌套 ref（如 e3-e6）找不到元素有两种原因：元素被移除，或者该 iframe 在快照
+ * 之后自己导航了（WebFrameMain.url 的更新有延迟，URL 校验可能刚好错过）。
+ * 给嵌套 ref 追加一句 iframe 提示，agent 才知道该重新快照，而不是怀疑 ref 拼错。
+ */
+export function describeRefMiss(ref: string): string {
+    const base = `Element ref "${ref}" not found. Page may have changed — call snapshot to refresh`;
+    const nested = /^e\d+(-e\d+)+$/.test(ref);
+    if (!nested) return `${base}.`;
+    return `${base}. 若目标在 iframe 内，该 iframe 可能已在快照后导航（其中的旧 ref 已全部失效）。`;
 }
