@@ -28,7 +28,9 @@ bool Rule::matches(const std::wstring& vpath, const std::string& kind) const
     // 字面前缀预筛
     if (vpath.size() < literalPrefix.size()) return false;
     if (_wcsnicmp(vpath.c_str(), literalPrefix.c_str(), literalPrefix.size()) != 0) return false;
-    if (coreGlobMatch(path, vpath)) return true;
+    // 预编译匹配（省掉每规则每次的 normpath + 模式切分/小写化）；
+    // 句柄缺失（OOM）时回退逐次解析
+    if (glob ? coreGlobMatchCompiled(glob, vpath) : coreGlobMatch(path, vpath)) return true;
     // `/dir/**` 同时匹配 `/dir` 本身
     if (!basePath.empty() && coreGlobMatch(basePath, vpath)) return true;
     return false;
@@ -60,6 +62,7 @@ static bool buildRule(const std::wstring& rawPath, const std::wstring& rawAccess
     r.access = access;
     r.perm = parsePerm(perm);
     r.literalPrefix = coreGlobLiteralPrefix(r.path);
+    r.glob = coreGlobCompile(r.path);   // 装载时编译一次，判定热路径复用
     if (r.path.size() >= 3 && r.path.compare(r.path.size() - 3, 3, L"/**") == 0) {
         std::wstring base = r.path.substr(0, r.path.size() - 3);
         r.basePath = base.empty() ? L"/" : base;

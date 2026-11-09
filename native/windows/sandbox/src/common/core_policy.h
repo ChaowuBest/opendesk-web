@@ -10,8 +10,14 @@
  */
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
+
+// core 的预编译路径 glob 句柄（dynobox.h 的 dbox_glob_t，C 链接、全局命名空间）。
+// 规则在策略生命周期内不变、被判定路径不断变化，因此"模式解析"（normpath +
+// 按组件切分、小写化）只做一次，热路径上只处理 vpath。
+struct dbox_glob;
 
 namespace sbx {
 
@@ -47,6 +53,12 @@ bool coreParsePolicyToml(const std::wstring& utf16Text,
 
 // 策略路径 glob 匹配（大小写不敏感，经 core 的 dbox_glob_match）。
 bool coreGlobMatch(const std::wstring& pattern, const std::wstring& vpath);
+
+// 预编译句柄：编译在规则装载时做一次（含小写化），匹配时只转换/小写 vpath。
+// 编译失败返回空句柄，调用方回退 coreGlobMatch（保证 OOM 下行为不变）。
+using CoreGlob = std::shared_ptr<::dbox_glob>;
+CoreGlob coreGlobCompile(const std::wstring& pattern);
+bool coreGlobMatchCompiled(const CoreGlob& glob, const std::wstring& vpath);
 
 // 规则的字面前缀（首个通配符之前的小写部分），用于热路径预筛。
 // 纯词法操作，本地实现（core 未导出等价函数）。

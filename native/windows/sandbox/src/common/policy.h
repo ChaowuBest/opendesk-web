@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "ask.h"
+#include "core_policy.h"
 #include "paths.h"
 
 namespace sbx {
@@ -32,6 +33,7 @@ struct Rule {
     Perm perm = Perm::Deny;
     std::wstring literalPrefix;   // 小写字面前缀（热路径预筛）
     std::wstring basePath;        // `/dir/**` 剥离出的 base（`/dir/**` 需匹配 `/dir` 本身）
+    CoreGlob glob;                // 预编译 glob（空句柄时回退 coreGlobMatch）
 
     bool matchesKind(const std::string& kind) const {
         return access == kAccessAll || access == kind;

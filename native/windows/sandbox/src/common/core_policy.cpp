@@ -120,6 +120,26 @@ bool coreGlobMatch(const std::wstring& pattern, const std::wstring& vpath)
     return dbox_glob_match(pat.c_str(), path.c_str()) != 0;
 }
 
+// 预编译句柄的释放走 core 的 dbox_glob_free（dynobox.h 已在本 TU 内可见）
+static void coreGlobDeleter(::dbox_glob *p)
+{
+    if (p) dbox_glob_free(p);
+}
+
+CoreGlob coreGlobCompile(const std::wstring& pattern)
+{
+    const std::string pat = wideToUtf8Simple(toLowerSimple(pattern));
+    ::dbox_glob *g = dbox_glob_compile(pat.c_str());
+    return g ? CoreGlob(g, coreGlobDeleter) : CoreGlob();
+}
+
+bool coreGlobMatchCompiled(const CoreGlob& glob, const std::wstring& vpath)
+{
+    if (!glob) return false;
+    const std::string path = wideToUtf8Simple(toLowerSimple(vpath));
+    return dbox_glob_match_compiled(glob.get(), path.c_str()) != 0;
+}
+
 std::wstring coreGlobLiteralPrefix(const std::wstring& pattern)
 {
     size_t cut = pattern.find_first_of(L"*?");

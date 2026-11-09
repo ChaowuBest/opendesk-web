@@ -84,6 +84,107 @@ static void test_glob(void)
     CHECK(dbox_glob_match("/public/*", "/public/sub/f") == 0, "glob * single level");
 }
 
+/* 预编译会把 rules[] 按 specificity 降序重排（qsort 不稳定），因此必须锁定：
+ *  1) 判定语义仍是"最具体优先、同长度取最严"，与声明顺序无关；
+ *  2) 提前结束（spec 更小的规则不再检查）不改变结果。 */
+static void test_eval_specificity_order(void)
+{
+    /* 故意把最具体的规则写在最后，验证与声明顺序无关 */
+    static const char *toml =
+        "version = 1\n"
+        "default = \"deny\"\n"
+        "[[rules]]\npath = \"/a/**\"\naccess = \"all\"\nperm = \"allow\"\n"
+        "[[rules]]\npath = \"/a/b/**\"\naccess = \"all\"\nperm = \"ask\"\n"
+        "[[rules]]\npath = \"/a/b/c\"\naccess = \"all\"\nperm = \"deny\"\n";
+    dbox_policy_t p;
+    dbox_policy_init(&p);
+    char err[256];
+    CHECK(dbox_policy_load_toml(toml, &p, err, sizeof err) == 0, "order: load ok");
+    CHECK(p.rules_compiled == 1, "order: rules compiled at load");
+    CHECK(p.nrules == 3 && p.rules[0].spec >= p.rules[1].spec &&
+          p.rules[1].spec >= p.rules[2].spec, "order: rules sorted by specificity desc");
+    CHECK(dbox_policy_eval_static(&p, "/a/b/c", ACC_ALL) == PERM_DENY,
+          "order: most specific rule wins regardless of declaration order");
+    CHECK(dbox_policy_eval_static(&p, "/a/b/x", ACC_ALL) == PERM_ASK,
+          "order: /a/b/** beats /a/**");
+    CHECK(dbox_policy_eval_static(&p, "/a/x", ACC_ALL) == PERM_ALLOW,
+          "order: falls back to /a/**");
+    dbox_policy_free(&p);
+
+    /* 同长度规则：deny > ask > allow，且与谁先声明无关（qsort 不稳定） */
+    static const char *same_allow_first =
+        "version = 1\n"
+        "default = \"deny\"\n"
+        "[[rules]]\npath = \"/same\"\naccess = \"all\"\nperm = \"allow\"\n"
+        "[[rules]]\npath = \"/same\"\naccess = \"all\"\nperm = \"deny\"\n";
+    dbox_policy_init(&p);
+    CHECK(dbox_policy_load_toml(same_allow_first, &p, err, sizeof err) == 0,
+          "order: same-length load ok");
+    CHECK(dbox_policy_eval_static(&p, "/same", ACC_ALL) == PERM_DENY,
+          "order: same specificity -> deny wins");
+    dbox_policy_free(&p);
+
+    /* 未编译（rules_compiled=0）时走旧路径，结果必须一致 */
+    dbox_policy_init(&p);
+    CHECK(dbox_policy_load_toml(toml, &p, err, sizeof err) == 0, "order: reload ok");
+    p.rules_compiled = 0;   /* 强制旧路径 */
+    CHECK(dbox_policy_eval_static(&p, "/a/b/c", ACC_ALL) == PERM_DENY,
+          "order: legacy path agrees (deny)");
+    CHECK(dbox_policy_eval_static(&p, "/a/x", ACC_ALL) == PERM_ALLOW,
+          "order: legacy path agrees (allow)");
+    dbox_policy_free(&p);
+}
+
+/* 预编译 glob（三平台共用 API）必须与逐次解析版逐条一致 */
+static const char *k_glob_pats[] = {
+    "/", "/**", "/docs/**", "/docs/*", "/*.txt", "/a?c", "/a/**/b",
+    "/notes/x.txt", "/public/*", "/a/b/c", "/**/x/**", "/storage/Users/**",
+    NULL
+};
+
+static const char *k_glob_paths[] = {
+    "/", "/x", "/a", "/a/b", "/a/b/c", "/docs", "/docs/a", "/docs/a/b",
+    "/docsx", "/a.txt", "/d/a.txt", "/abc", "/ac", "/abbc", "/a/x/y/b",
+    "/notes/x.txt", "/public/sub/f", "/x/y/z", "/storage/Users/currentUser/p",
+    NULL
+};
+
+static void test_glob_compiled(void)
+{
+    int mismatches = 0, pairs = 0;
+    for (int i = 0; k_glob_pats[i]; i++) {
+        dbox_glob_t *g = dbox_glob_compile(k_glob_pats[i]);
+        CHECK(g != NULL, "glob compile returns handle");
+        if (!g) continue;
+        for (int j = 0; k_glob_paths[j]; j++) {
+            int plain = dbox_glob_match(k_glob_pats[i], k_glob_paths[j]);
+            int comp = dbox_glob_match_compiled(g, k_glob_paths[j]);
+            pairs++;
+            if (plain != comp) {
+                mismatches++;
+                printf("     mismatch: pat=%s path=%s plain=%d compiled=%d\n",
+                       k_glob_pats[i], k_glob_paths[j], plain, comp);
+            }
+        }
+        dbox_glob_free(g);
+    }
+    CHECK(pairs > 0 && mismatches == 0, "glob compiled == plain (every pair)");
+    /* specificity：尾部 "/**" 被剥离后取前缀长度（排序/提前结束依赖它） */
+    dbox_glob_t *g1 = dbox_glob_compile("/docs/**");
+    dbox_glob_t *g2 = dbox_glob_compile("/*.txt");
+    dbox_glob_t *g3 = dbox_glob_compile("/a/b/c");
+    CHECK(g1 && dbox_glob_specificity(g1) == 5, "glob specificity dir/** strips suffix");
+    CHECK(g2 && dbox_glob_specificity(g2) == 6, "glob specificity plain length");
+    CHECK(g3 && dbox_glob_specificity(g3) == 6, "glob specificity exact path");
+    dbox_glob_free(g1); dbox_glob_free(g2); dbox_glob_free(g3);
+    /* 非规范写法必须与直接匹配同一模式等价（compile 内部先 normpath） */
+    dbox_glob_t *g4 = dbox_glob_compile("/docs//a/../b/**");
+    CHECK(g4 && dbox_glob_match_compiled(g4, "/docs/b/x") == 1,
+          "glob compiled normalizes pattern");
+    dbox_glob_free(g4);
+    dbox_glob_free(NULL);   /* 空句柄安全 */
+}
+
 static const char *k_policy_toml =
     "version = 1\n"
     "default = \"deny\"\n"
@@ -746,6 +847,8 @@ int main(void)
     test_path_under();
     test_path_rel();
     test_glob();
+    test_glob_compiled();
+    test_eval_specificity_order();
     test_toml_and_eval();
     test_device_whitelist_vs_catchall();
     test_grants_ask_cache();

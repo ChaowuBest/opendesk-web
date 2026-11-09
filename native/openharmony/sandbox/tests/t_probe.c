@@ -21,6 +21,7 @@
  *   trunc <p> <n>
  *   symlink_ok <tgt> <lp> / symlink_fail <tgt> <lp>
  *   readlink_ok <lp>
+ *   pcache_symlink <allow_dir> <deny_dir> <file>   目录缓存不得绕过 deny（符号链接替换）
  *   cat_eq <p> <expected>         content equals
  *   fnv <p>                       print 64-bit FNV-1a hash of content
  *   getcwd_is <p>                 getcwd equals (virtual expectation)
@@ -172,6 +173,36 @@ int main(int argc, char **argv)
     if (!strcmp(op, "readlink_ok")) {
         char buf[512];
         return readlink(argv[2], buf, sizeof buf) < 0 ? fail("readlink_ok", argv[2]) : 0;
+    }
+    /* 目录前缀缓存不得成为"符号链接替换"的绕过通道。同一进程内：
+     *   1) 读 allow 区内的文件（填充该目录的解析缓存）；
+     *   2) 把该目录 rename 走、换成指向 deny 区的符号链接；
+     *   3) 仍按原路径访问 deny 区里的文件 —— 必须被拒。
+     * 判定必须基于当前解析结果而不是缓存，否则 TTL 窗口内就能越权读取。
+     * 用法: pcache_symlink <allow_dir> <deny_dir> <file_in_deny> */
+    if (!strcmp(op, "pcache_symlink")) {
+        if (argc < 5) return fail("pcache_symlink", "needs <allow_dir> <deny_dir> <file>");
+        char f[PATH_MAX], moved[PATH_MAX], target[PATH_MAX];
+        snprintf(f, sizeof f, "%s/f.txt", argv[2]);
+        snprintf(moved, sizeof moved, "%s.orig", argv[2]);
+        snprintf(target, sizeof target, "%s/%s", argv[2], argv[4]);
+        int fd = open(f, O_RDONLY);
+        if (fd < 0) return fail("pcache_symlink warmup", strerror(errno));
+        close(fd);
+        unlink(moved);
+        if (rename(argv[2], moved) != 0)
+            return fail("pcache_symlink rename", strerror(errno));
+        if (symlink(argv[3], argv[2]) != 0)
+            return fail("pcache_symlink symlink", strerror(errno));
+        fd = open(target, O_RDONLY);
+        if (fd >= 0) {
+            close(fd);
+            printf("PROBE-FAIL pcache_symlink opened %s (cached resolution bypassed deny)\n",
+                   target);
+            return 1;
+        }
+        if (errno != EACCES) return fail("pcache_symlink wrong errno", strerror(errno));
+        return 0;
     }
     if (!strcmp(op, "cat_eq")) {
         int fd = open(argv[2], O_RDONLY);

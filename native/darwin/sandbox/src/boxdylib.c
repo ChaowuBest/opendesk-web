@@ -299,7 +299,13 @@ typedef struct {
     char *path; /* 绝对路径前缀，** 结尾表示整棵子树 */
     int access; /* ACC_* 位或 */
     int perm;   /* PERM_*_box */
+    /* 预编译 glob（core 的 dbox_glob_compile，三平台共用）：判定热路径上
+     * 不再每次重新 normpath + 切分模式。NULL 时回退逐次解析（OOM 降级）。 */
+    dbox_glob_t *glob;
+    size_t base_len;   /* 预计算模式特异性（原先每次命中都要重算） */
 } PolicyRule;
+
+static size_t pattern_base_len(const char *pattern);
 
 typedef struct {
     char *endpoint;
@@ -335,6 +341,8 @@ static void policy_add_rule(Policy *p, const char *path, int access, int perm)
     r->path = copy;
     r->access = access;
     r->perm = perm;
+    r->glob = dbox_glob_compile(copy);
+    r->base_len = r->glob ? dbox_glob_specificity(r->glob) : pattern_base_len(copy);
     p->rule_count++;
 }
 
@@ -411,8 +419,12 @@ static struct PolicyHit policy_lookup_detailed(const char *path, int access)
     for (size_t i = 0; i < g_policy.rule_count; i++) {
         PolicyRule *r = &g_policy.rules[i];
         if ((r->access & access) == 0) continue;
-        if (!pattern_matches(r->path, path)) continue;
-        size_t len = pattern_base_len(r->path);
+        /* 预编译匹配：语义与 pattern_matches 一致，省掉每规则每判定的
+         * normpath + 模式切分；句柄缺失（OOM）时回退逐次解析 */
+        if (r->glob) {
+            if (dbox_glob_match_compiled(r->glob, path) == 0) continue;
+        } else if (!pattern_matches(r->path, path)) continue;
+        size_t len = r->base_len;
         slog("rule[%zu] hit: path=%s access=%d perm=%d (len=%zu) for %s", i, r->path, r->access, r->perm, len, path);
         if (hit.perm < 0 || len > hit.base_len || (len == hit.base_len && r->perm < hit.perm)) {
             hit.perm = r->perm;
