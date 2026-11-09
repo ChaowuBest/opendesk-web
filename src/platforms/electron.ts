@@ -178,6 +178,18 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     /**
+     * 注入到所有子进程的环境变量。只覆写在 ElectronPlatform：CLI（CliPlatform，含其
+     * worker 线程）与 WorkerPlatform 都不带这条变量，OpenDesk 本机的 shell 沙箱由 Electron
+     * 主进程发起，覆盖这里即可。
+     *
+     * OPENSSL_armcap=0：关闭 openssl 的 ARM 运行时 capability 探测，固定走通用实现，
+     * 避免探测结果在宿主/沙箱环境下与真实可执行指令不一致而踩到非法加速分支。
+     */
+    getInjectedEnviron(): Map<string, string> {
+        return new Map([['OPENSSL_armcap', '0']]);
+    }
+
+    /**
      * Electron 主进程直接读 Setting：WorkerPlatform 的实现返回的是 workerData 快照，
      * 在主线程里为空，不能代表用户当前配置。
      */
