@@ -22,13 +22,15 @@ describe('estimateDynoboxPolicySerializedSize', () => {
         expect(size).toBeGreaterThanOrEqual(text.length);
     });
 
-    test('native 实测校准：最坏膨胀率（全 base64 路径字段）不超过安全系数', () => {
-        // native 最坏情形：path 字段全部经 base64（4/3），其余为短控制字段。
-        // 纯 base64 字符集内容的明文 → 编码后 ≈1.17x，安全系数 1.25 必须覆盖
-        const worst = 'a'.repeat(40000); // base64 安全字符，代表纯路径类内容
-        const estimated = estimateDynoboxPolicySerializedSize(`x\n${worst}`);
-        const nativeUpper = Math.ceil(Buffer.byteLength(worst) * 1.2);
-        expect(estimated).toBeGreaterThan(nativeUpper);
+    test('长路径（path 占比最高）时估算仍不低于 native 真实编码', () => {
+        // 最坏膨胀情形：path 占明文绝大部分。native 对每条规则编码
+        // `L <b64(path)> <acc> <perm>`，path 经两次 base64 ≈ 16/9 × len(path)；
+        // "明文 × 固定系数"的估算会在此处偏小，逐段估算必须覆盖。
+        const longPath = `/home/tester/${'d'.repeat(400)}`;
+        const text = `version = 1\ndefault = "deny"\n[[rules]]\npath = "${longPath}"\naccess = "read"\nperm = "allow"\n`;
+        const pathBytes = Buffer.byteLength(longPath, 'utf8');
+        const nativeLowerBound = Math.floor(pathBytes * 1.7);
+        expect(estimateDynoboxPolicySerializedSize(text)).toBeGreaterThan(nativeLowerBound);
     });
 });
 
@@ -89,8 +91,9 @@ describe('serializePolicyForSandbox', () => {
     test('超限但去重后即可回到上限内：只去重、不裁剪', () => {
         const base = policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work');
         const block = '[[rules]]\npath = "/opt/toolchain/bin"\naccess = "read"\nperm = "allow"';
-        // 重复同一规则块 800 次把体积推过上限
-        const oversized = base + '\n' + Array(800).fill(block).join('\n') + '\n';
+        // 重复同一规则块 2000 次把体积推过上限（逐段估算口径下该块的 native 编码
+        // ≈ 35 字节，2000 次 ≈ 70KB > 64KB；旧的固定系数估算只需 800 次）
+        const oversized = base + '\n' + Array(2000).fill(block).join('\n') + '\n';
         expect(estimateDynoboxPolicySerializedSize(oversized)).toBeGreaterThanOrEqual(DYNOBOX_POLICY_SERIALIZED_LIMIT);
 
         const guarded = serializePolicyForSandbox(oversized);
@@ -99,6 +102,28 @@ describe('serializePolicyForSandbox', () => {
         expect(guarded.split(block).length - 1).toBe(1);
         // 且没有裁掉任何（去重后仍存在的）规则
         expect(guarded).toContain(block);
+    });
+
+    test('成对的 X 与 X/** 必须同删，不留"目录可读但内容不可读"的半截规则', () => {
+        // 生成侧对 allow 的 X/** 会自动补一条 X（native 尾部 ** 不覆盖目录自身），
+        // 两条一起才是完整语义；裁剪只删掉其中一条会让 readonly 模式下的子树
+        // 读直接 deny（落到全盘 read deny），而不是"多一次 ask 往返"。
+        const pathRules: string[] = [];
+        for (let i = 0; i < 1200; i++) {
+            pathRules.push(`[[rules]]\npath = "/home/tester/tool-${i}"\naccess = "read"\nperm = "allow"`);
+            pathRules.push(`[[rules]]\npath = "/home/tester/tool-${i}/**"\naccess = "read"\nperm = "allow"`);
+        }
+        const oversized =
+            policyTextLinux('http://127.0.0.1:1/decide', 't', '/home/tester/work') + '\n' + pathRules.join('\n') + '\n';
+        expect(estimateDynoboxPolicySerializedSize(oversized)).toBeGreaterThanOrEqual(DYNOBOX_POLICY_SERIALIZED_LIMIT);
+
+        const guarded = serializePolicyForSandbox(oversized, { keepPrefixes: ['/home/tester/work'] });
+        expect(estimateDynoboxPolicySerializedSize(guarded)).toBeLessThan(DYNOBOX_POLICY_SERIALIZED_LIMIT);
+        for (let i = 0; i < 1200; i++) {
+            const exact = guarded.includes(`path = "/home/tester/tool-${i}"\naccess = "read"\nperm = "allow"`);
+            const deep = guarded.includes(`path = "/home/tester/tool-${i}/**"\naccess = "read"\nperm = "allow"`);
+            expect(exact).toBe(deep);
+        }
     });
 });
 

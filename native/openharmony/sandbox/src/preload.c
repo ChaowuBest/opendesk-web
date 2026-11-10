@@ -542,8 +542,11 @@ static int gate_resolve(const char *input, int nofollow_last, gate_t *g)
         }
     }
     int flags = nofollow_last ? DBOX_NOFOLLOW_LAST : DBOX_FOLLOW_ALL;
-    return dbox_plan_path(&g_ctx, src, flags, &g->vpath,
-                          &g->real, &g->partial);
+    /* identity namespace：策略视角路径 == 真实路径，不需要两份字符串拷贝。
+     * real 与 vpath 指向同一块内存，由 gate_free 只释放一次。 */
+    int rc = dbox_plan_path(&g_ctx, src, flags, &g->vpath, NULL, &g->partial);
+    if (rc == 0) g->real = g->vpath;
+    return rc;
 }
 
 static int ask_gate(const dbox_policy_t *p, const char *vpath, int acc,
@@ -554,30 +557,23 @@ static int ask_gate(const dbox_policy_t *p, const char *vpath, int acc,
 
 /* 回收站保护：回收站内的**任何写操作**一律拒绝（只读保护）——包括
  * unlink/rmdir/rename/truncate，以及 open 写模式（O_WRONLY/O_RDWR/O_TRUNC，
- * 覆盖 open+ftruncate 类实现的"清空"路径）；读不受影响。 */
-static int check_one(gate_t *g, int acc, const char *what, int allow_system)
+ * 覆盖 open+ftruncate 类实现的"清空"路径）；读不受影响。
+ *
+ * 调用方必须持有 g_pol_mu（gate_check 对整个类别序列只加一次锁）。返回
+ * CHECK_ALLOW / CHECK_DENY / CHECK_TRASH，**不在这里写日志**：dbox_logf 会做
+ * write 系统调用并取自己的锁，放在策略锁内会让一次日志 I/O 阻塞全进程的
+ * 文件操作（原先日志在锁外，合并锁时必须保持这一点）。 */
+enum { CHECK_ALLOW = 0, CHECK_DENY = 1, CHECK_TRASH = 2 };
+
+static int check_one_locked(gate_t *g, int acc, int allow_system)
 {
-    if (g->tmp_area) return 1;   /* tmp 映射区总是可读可写，无需策略规则 */
+    if (g->tmp_area) return CHECK_ALLOW;   /* tmp 映射区总是可读可写，无需策略规则 */
     if (g_trash_dir[0] && (acc & ACC_WRITE) &&
-        dbox_path_under(g->vpath, g_trash_dir)) {
-        dbox_logf("DENY  %-7s %s (trash-protected)", dbox_access_name(acc & ACC_ALL),
-                  g->vpath);
-        errno = EACCES;
-        return 0;
-    }
-    pthread_mutex_lock(&g_pol_mu);
+        dbox_path_under(g->vpath, g_trash_dir))
+        return CHECK_TRASH;
     dperm_t perm = dbox_policy_check_ex(&g_ctx.pol, g->vpath, acc, ask_gate,
                                         dbox_now_ms(), allow_system);
-    pthread_mutex_unlock(&g_pol_mu);
-    if (perm == PERM_ALLOW) {
-        if (dbox_verbose_enabled)
-            dbox_logf("allow %-7s %s", dbox_access_name(acc & ACC_ALL), g->vpath);
-        return 1;
-    }
-    dbox_logf("DENY  %-7s %s (%s)", dbox_access_name(acc & ACC_ALL),
-              g->vpath, what);
-    errno = EACCES;
-    return 0;
+    return perm == PERM_ALLOW ? CHECK_ALLOW : CHECK_DENY;
 }
 
 /* Evaluate each requested access category independently (Windows parity:
@@ -586,10 +582,32 @@ static int gate_check(gate_t *g, int acc, const char *what, int allow_system)
 {
     if (!g_ready) return 1;
     static const int cats[3] = { ACC_READ, ACC_WRITE, ACC_EXEC };
-    for (int i = 0; i < 3; i++)
+    int verdict = CHECK_ALLOW;
+    int fail_acc = 0;
+    pthread_mutex_lock(&g_pol_mu);
+    for (int i = 0; i < 3 && verdict == CHECK_ALLOW; i++) {
         if (acc & cats[i]) {
-            if (!check_one(g, cats[i], what, allow_system)) return 0;
+            verdict = check_one_locked(g, cats[i], allow_system);
+            if (verdict != CHECK_ALLOW) fail_acc = cats[i];
         }
+    }
+    pthread_mutex_unlock(&g_pol_mu);
+
+    /* 日志与 errno 都在锁外（见 check_one_locked 注释） */
+    if (verdict == CHECK_TRASH) {
+        dbox_logf("DENY  %-7s %s (trash-protected)",
+                  dbox_access_name(fail_acc & ACC_ALL), g->vpath);
+        errno = EACCES;
+        return 0;
+    }
+    if (verdict == CHECK_DENY) {
+        dbox_logf("DENY  %-7s %s (%s)", dbox_access_name(fail_acc & ACC_ALL),
+                  g->vpath, what);
+        errno = EACCES;
+        return 0;
+    }
+    if (dbox_verbose_enabled)
+        dbox_logf("allow %-7s %s", dbox_access_name(acc & ACC_ALL), g->vpath);
     if (!(acc & ACC_ALL)) {   /* unknown bits: fail-closed */
         dbox_logf("DENY  ?%d %s (%s)", acc, g->vpath, what);
         errno = EACCES;
@@ -635,8 +653,11 @@ static int gate_meta(const char *input, int nofollow_last, int acc,
     if (gate_resolve(input, nofollow_last, &g) != 0) { errno = EACCES; return 0; }
     int ok = gate_meta_read(&g, acc, what);
     if (ok && realp) {
+        /* real 与 vpath 是同一块内存：移交所有权后两者都要清空，
+         * 否则 gate_free 会把已移交的指针释放掉 */
         *realp = g.real;
         g.real = NULL;
+        g.vpath = NULL;
     }
     gate_free(&g);
     return ok;
@@ -665,6 +686,10 @@ static int mkdir_target_exists(const char *p)
     if (!p || !p[0]) return 0;
     if (g_tmp_dir[0] && (strcmp(p, "/tmp") == 0 || strncmp(p, "/tmp/", 5) == 0))
         return 0;
+    /* 这里**不能**用目录前缀缓存做捷径：返回 1 会让调用方只做 deny 判定就把
+     * 调用透传给内核，而内核会真的创建目录。若缓存误判"目标已存在"（例如
+     * 目录在 TTL 内被删除后重建），本该 ask 的 mkdir 就被静默放行——那是
+     * 审批绕过。必须真实 stat。 */
     struct stat st;
     return syscall(SYS_newfstatat, AT_FDCWD_C, p, &st, 0) == 0;
 }
@@ -681,33 +706,46 @@ static int mkdir_target_exists(const char *p)
 static int write_parent_missing(const char *p)
 {
     if (!p || !p[0]) return 0;
-    /* 剥掉末段分量（最后一个 '/' 之前），得到直接父目录 */
-    char *dup = dbox_strdup(p);
-    if (!dup) return 0;
+    /* 剥掉末段分量（最后一个 '/' 之前），得到直接父目录。
+     * 栈上拷贝：该函数在每次写打开时执行，堆分配会成为热路径噪声。 */
+    size_t len = strlen(p);
+    if (len + 1 > DBOX_PATH_MAX) return 0;
+    char dup[DBOX_PATH_MAX];
+    /* 目录前缀缓存以绝对路径为键：相对路径先拼上 cwd，才能吃到缓存。
+     * 未命中只是走下面的 stat（语义不变）。 */
+    if (p[0] == '/') {
+        memcpy(dup, p, len + 1);
+    } else {
+        const char *cwd = g_ctx.rpwd;
+        size_t cl = strlen(cwd);
+        if (cl + 1 + len + 1 > sizeof dup) return 0;
+        memcpy(dup, cwd, cl);
+        dup[cl] = '/';
+        memcpy(dup + cl + 1, p, len + 1);
+    }
     /* 末尾 '/' 是路径分隔符而非分量，内核接受尾斜杠（mkdir("a/b/") 等同
      * "a/b"）。不先剥掉的话下方 strrchr 会把目标自身当成父目录，"父目录
      * 存在、目标不存在"的普通创建会被误判成父链缺失并直接返回 ENOENT，
      * 例如 git init 的 mkdir(".git/hooks/")。 */
-    size_t len = strlen(dup);
-    while (len > 1 && dup[len - 1] == '/') dup[--len] = '\0';
+    size_t dlen = strlen(dup);   /* 相对路径已拼上 cwd，长度以 dup 为准 */
+    while (dlen > 1 && dup[dlen - 1] == '/') dup[--dlen] = '\0';
     char *slash = strrchr(dup, '/');
-    if (!slash || slash == dup) {   /* 无父目录分量（相对单段名 / 根） */
-        dbox_free(dup);
-        return 0;
-    }
+    if (!slash || slash == dup) return 0;   /* 无父目录分量（相对单段名 / 根） */
     *slash = '\0';
+    /* 父目录刚被解析验证过（目录前缀缓存）⇒ 必然存在，免掉这次 stat：
+     * 解压/安装类负载每个文件都要走这里，而父目录是同一棵树的同一层。 */
+    if (dbox_dir_cache_hit(dup)) return 0;
     int missing = 0;
     struct stat st;
     if (syscall(SYS_newfstatat, AT_FDCWD_C, dup, &st, 0) != 0)
         missing = (errno == ENOENT);
-    dbox_free(dup);
     return missing;
 }
 
 static void gate_free(gate_t *g)
 {
+    if (g->real && g->real != g->vpath) dbox_free(g->real);
     dbox_free(g->vpath);
-    dbox_free(g->real);
     memset(g, 0, sizeof *g);
 }
 
@@ -726,10 +764,16 @@ static int gate1x(const char *input, int nofollow_last, int acc,
      * NULL path into the policy matcher and fault inside the sandbox itself. */
     if (!g_ready || !input || !input[0]) return 1;
     gate_t g;
-    if (gate_resolve(input, nofollow_last, &g) != 0) { errno = EACCES; return 0; }
+    if (gate_resolve(input, nofollow_last, &g) != 0) {
+        gate_free(&g);   /* 防御：失败路径也不留部分分配 */
+        errno = EACCES;
+        return 0;
+    }
     if (!gate_check(&g, acc, what, allow_system)) { gate_free(&g); return 0; }
+    /* real == vpath（identity namespace）：移交后清空两者，避免双重释放 */
     *realp = g.real;
     g.real = NULL;
+    g.vpath = NULL;
     gate_free(&g);
     return 1;
 }
@@ -1012,6 +1056,18 @@ static int watch_fd_is_ours(void)
 
 static void *watch_thread(void *arg)
 {
+    /* 看护线程只做 poll/read/fcntl，绝不该参与宿主进程的信号处理。
+     *
+     * 线程创建时继承宿主的信号掩码，于是进程级 SIGCHLD 可能被这个线程领走；
+     * 单线程宿主（zsh / sh 等待前台作业时正是靠 sigsuspend() 等 SIGCHLD 唤醒）
+     * 的主线程于是永远停在 sigsuspend 里——子进程早已退出，它却在等一个不会再
+     * 来的信号，表现为"命令没有任何输出地无限期卡死"（无超时可自愈，只能被杀）。
+     * 屏蔽全部信号后，SIGCHLD 只能落到宿主自己的线程；同时看护的 poll() 也不会
+     * 再被 EINTR 打断。 */
+    sigset_t all;
+    sigfillset(&all);
+    pthread_sigmask(SIG_BLOCK, &all, NULL);
+
     (void)arg;
     /* Poll in short ticks: closing the watched fd does NOT wake a blocked
      * poll(), so a daemon-style close() must be detected by re-checking

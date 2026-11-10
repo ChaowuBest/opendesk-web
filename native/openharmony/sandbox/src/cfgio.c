@@ -143,12 +143,16 @@ int dbox_cfg_decode(const char *b64, dbox_policy_t *p)
                 if (ld) {
                     p->rules = dbox_realloc(p->rules,
                         sizeof(dbox_rule_t) * (size_t)(p->nrules + 1));
+                    /* 新条目的预编译字段必须清零（realloc 不初始化新内存），
+                     * 否则评估快路径会读到野指针 */
+                    memset(&p->rules[p->nrules], 0, sizeof(dbox_rule_t));
                     p->rules[p->nrules].path = dbox_malloc(ll + 1);
                     memcpy(p->rules[p->nrules].path, ld, ll);
                     p->rules[p->nrules].path[ll] = '\0';
                     p->rules[p->nrules].acc = atoi(f2);
                     p->rules[p->nrules].perm = (dperm_t)atoi(f3);
                     p->nrules++;
+                    p->rules_compiled = 0;
                     dbox_free(ld);
                     rc = 0;
                 }
@@ -174,5 +178,6 @@ int dbox_cfg_decode(const char *b64, dbox_policy_t *p)
     next:;
     }
     dbox_free(text);
+    dbox_policy_compile(p);
     return rc;
 }

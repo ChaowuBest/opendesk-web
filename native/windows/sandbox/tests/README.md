@@ -29,5 +29,12 @@ stdout/stderr forwarding, stdin, exit codes, authorization, Python scripts,
 Node.js scripts, and Windows console commands such as `chcp`.
 
 `runtime.test.ts`, `cross-shell-runtime.test.ts` and `sandbox-coverage.test.ts`
-validate the Detours implementation. OpenDesk integration tests remain under
-`src/tests/ut/terminal/`.
+validate the Detours implementation. Policy-evaluation semantics have their own
+suites — `policy-semantics.test.ts` (most-specific ordering, `/dir/**` covers the
+subtree only) and `glob-semantics.test.ts` (`*` / `**` / `?` behaviour):
+
+```powershell
+npx tsx --test native/windows/sandbox/tests/policy-semantics.test.ts native/windows/sandbox/tests/glob-semantics.test.ts
+```
+
+OpenDesk integration tests remain under `src/tests/ut/terminal/`.

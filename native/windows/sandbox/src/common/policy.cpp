@@ -22,19 +22,29 @@ Policy& Policy::operator=(Policy&&) noexcept = default;
 
 // -- Rule --------------------------------------------------------------------
 
-bool Rule::matches(const std::wstring& vpath, const std::string& kind) const
+bool Rule::matches(const std::wstring& vpath, const std::string& pathKey,
+                   const std::string& kind) const
 {
     if (!matchesKind(kind)) return false;
+    // `/dir/**` 只覆盖子树，不匹配 `/dir` 自身（与 core 的四平台语义一致：
+    // core 的尾部 ** 不匹配空段，macOS boxdylib 走同一份 glob）。这里显式短路，
+    // 不要依赖下面字面前缀预筛的字符串长度巧合：`/dir/**` 的预筛前缀是 `/dir/`，
+    // 它恰好比 `/dir` 长一个字符，靠它"碰巧"挡住目录自身会让下一个人当成预筛
+    // 写错而"修"回来。需要连目录自身一起覆盖时，策略里显式写 path = /dir。
+    if (!basePath.empty() && vpath.size() == basePath.size() &&
+        _wcsnicmp(vpath.c_str(), basePath.c_str(), basePath.size()) == 0) return false;
     // 字面前缀预筛
     if (vpath.size() < literalPrefix.size()) return false;
     if (_wcsnicmp(vpath.c_str(), literalPrefix.c_str(), literalPrefix.size()) != 0) return false;
-    if (coreGlobMatch(path, vpath)) return true;
-    // `/dir/**` 同时匹配 `/dir` 本身
-    if (!basePath.empty() && coreGlobMatch(basePath, vpath)) return true;
-    return false;
+    // 预编译匹配（省掉每规则每次的 normpath + 模式切分/小写化）；
+    // 句柄缺失时回退逐次解析
+    return glob ? coreGlobMatchCompiled(glob, pathKey) : coreGlobMatch(path, vpath);
 }
 
 // -- Policy ------------------------------------------------------------------
+
+// 内置引导区规则的 specificity：取最大值使其永远最具体（见 loadFromFile 的注释）。
+static const size_t kBuiltinSpec = static_cast<size_t>(-1);
 
 static Perm parsePerm(const std::wstring& perm)
 {
@@ -42,6 +52,19 @@ static Perm parsePerm(const std::wstring& perm)
     if (perm == L"ask") return Perm::Ask;
     if (perm == L"deny") return Perm::Deny;
     throw std::runtime_error("perm 非法（allow|ask|deny）");
+}
+
+// 与 core 的 rule_specificity 同算法：尾部 "/**" 剥离后取长度。必须按 **UTF-8
+// 字节** 计算（core 用 strlen），不能用 wstring 长度——非 ASCII 路径（中文用户名
+// 等）会得到与 core 不同的 specificity，同 spec 平局时的取舍随平台分叉。
+// 输入是大小写折叠后的路径键（core 侧用原始模式），ASCII 路径下字节数完全相同；
+// 仅在 glob 编译失败（OOM）时使用，正常路径取句柄里的 spec。
+static size_t pathSpecFallback(const std::wstring& vpath)
+{
+    const std::string key = corePathKey(vpath);
+    const size_t n = key.size();
+    if (n >= 3 && key.compare(n - 3, 3, "/**") == 0) return n - 3;
+    return n;
 }
 
 static bool buildRule(const std::wstring& rawPath, const std::wstring& rawAccess,
@@ -60,6 +83,11 @@ static bool buildRule(const std::wstring& rawPath, const std::wstring& rawAccess
     r.access = access;
     r.perm = parsePerm(perm);
     r.literalPrefix = coreGlobLiteralPrefix(r.path);
+    r.glob = coreGlobCompile(r.path);            // 装载时编译一次，判定热路径复用
+    // most-specific 选优的键。句柄缺失时按 core 的 rule_specificity 兜底——
+    // 与 core 的 rule_compile_one 一致，否则 OOM 下这条规则会被当成 spec=0 的
+    // 过宽通配，输给任何 spec>0 的 allow（deny 规则 fail-open）。
+    r.spec = r.glob ? coreGlobSpecificity(r.glob) : pathSpecFallback(r.path);
     if (r.path.size() >= 3 && r.path.compare(r.path.size() - 3, 3, L"/**") == 0) {
         std::wstring base = r.path.substr(0, r.path.size() - 3);
         r.basePath = base.empty() ? L"/" : base;
@@ -120,11 +148,23 @@ Policy Policy::loadFromFile(const std::wstring& path)
     p.m_ask.cacheTtlSeconds = (int)coreAsk.cacheTtlSeconds;
     p.m_ask.grantTtlSeconds = (int)coreAsk.grantTtlSeconds;
 
-    // 内置引导区规则（与 C# 版一致：用户规则无法关闭沙箱内部路径）
+    // 内置引导区规则（与 C# 版一致：用户规则无法关闭沙箱内部路径）。
+    // most-specific 语义下"排在最前"不再意味着优先（同 specificity 时 deny 会反超
+    // allow），所以把内置规则的 spec 提到最大值：内部路径（判定日志、ask 端点）
+    // 恒为 allow，用户无法用同长度或更长的 deny 把它关掉——否则沙箱会把自己
+    // 的日志/审批通道拒之门外。这与 core 的 specificity 定义（模式长度）不同，
+    // 属 Windows 独有的引导区机制，故只作用于这两条规则。
+    // 注意 `/dynobox` 目前没有 roots 映射（addSrcRoot 只映射 `/`，addAutomountRoots
+    // 只映射 `/C` 等盘符，policy.cpp 的 roots 里没有 /dynobox 项），所以这两条规则
+    // 实际不会命中任何宿主路径：它们只是"将来给 /dynobox 挂真实目录时不会被用户
+    // 策略关闭"的预留。若真挂了映射，该目录立即成为用户策略无权约束的 access=all
+    // 白通道——届时必须重新评估这个 SIZE_MAX，而不是直接沿用。
     {
         Rule dynobox, dynoboxDeep;
         buildRule(L"/dynobox", L"all", L"allow", dynobox);
         buildRule(L"/dynobox/**", L"all", L"allow", dynoboxDeep);
+        dynobox.spec = kBuiltinSpec;
+        dynoboxDeep.spec = kBuiltinSpec;
         p.m_rules.push_back(std::move(dynobox));
         p.m_rules.push_back(std::move(dynoboxDeep));
     }
@@ -171,26 +211,49 @@ void Policy::addAutomountRoots()
     }
 }
 
-bool Policy::check(const std::wstring& vpath, const std::string& kind, std::string* why)
+const Rule* Policy::bestMatch(const std::wstring& vpath, const std::string& pathKey,
+                              const std::string& kind, size_t& index) const
 {
-    // 静态规则顺序匹配（deny/allow 硬边界）
+    const Rule* best = nullptr;
     for (size_t i = 0; i < m_rules.size(); i++) {
         const Rule& rule = m_rules[i];
-        if (!rule.matches(vpath, kind)) continue;
-        if (rule.perm != Perm::Ask) {
-            bool allowed = rule.perm == Perm::Allow;
-            if (why) *why = std::string("rule#") + std::to_string(i) +
+        // 这里刻意**不做**"遇到更不具体的规则就 break"的提前结束（core 的快路径
+        // 有该优化）：那会把"m_rules 恒按 spec 降序"变成判定正确性的前提，顺序
+        // 一旦不成立就会跳过一条本可胜出的更严规则（漏 deny 是 fail-open 方向）。
+        // 代价可控——规则表是装载期一次性构建的定长向量（内置两条 + core 排序后
+        // 的用户规则），170+ 条规则的全表预筛在微秒量级；真要做这个优化，应先让
+        // 规则表在装载后自证降序，而不是在判定路径上假设它。
+        if (!rule.matches(vpath, pathKey, kind)) continue;
+        if (!best || rule.spec > best->spec ||
+            (rule.spec == best->spec && permRank(rule.perm) > permRank(best->perm))) {
+            best = &rule;
+            index = i;
+        }
+    }
+    return best;
+}
+
+bool Policy::check(const std::wstring& vpath, const std::string& kind, std::string* why)
+{
+    // 路径键每次判定只算一次（小写 + UTF-8），全部规则复用它做 glob 匹配
+    const std::string pathKey = corePathKey(vpath);
+    size_t index = 0;
+    const Rule* rule = bestMatch(vpath, pathKey, kind, index);
+    if (rule) {
+        if (rule->perm != Perm::Ask) {
+            bool allowed = rule->perm == Perm::Allow;
+            if (why) *why = std::string("rule#") + std::to_string(index) +
                               (allowed ? " allow" : " deny");
             return allowed;
         }
         // 静态 ask 规则 → 先查端点下发的子树授权
-        if (matchGrant(vpath, kind)) {
-            if (why) *why = std::string("rule#") + std::to_string(i) + "+grant";
+        if (matchGrant(vpath, pathKey, kind)) {
+            if (why) *why = std::string("rule#") + std::to_string(index) + "+grant";
             return true;
         }
         bool allowed = false;
         bool ok = askUpstreamAndCache(vpath, kind, allowed);
-        if (why) *why = std::string("rule#") + std::to_string(i) + "+ask(" +
+        if (why) *why = std::string("rule#") + std::to_string(index) + "+ask(" +
                         (ok ? (allowed ? "allow" : "deny") : "fail-closed") + ")";
         return allowed;
     }
@@ -201,14 +264,12 @@ bool Policy::check(const std::wstring& vpath, const std::string& kind, std::stri
 
 bool Policy::checkDenyOnly(const std::wstring& vpath, const std::string& kind) const
 {
-    // 顺序匹配：第一个命中的规则决定。deny -> 拦截；allow/ask -> 放行（探测不触发 ask）。
-    for (size_t i = 0; i < m_rules.size(); i++) {
-        const Rule& rule = m_rules[i];
-        if (!rule.matches(vpath, kind)) continue;
-        if (rule.perm == Perm::Deny) return true;
-        return false;
-    }
-    return m_default == "deny";
+    // 探测只看最优规则的 deny 硬边界：deny -> 拦截，allow/ask -> 放行（不触发 ask）。
+    const std::string pathKey = corePathKey(vpath);
+    size_t index = 0;
+    const Rule* rule = bestMatch(vpath, pathKey, kind, index);
+    if (!rule) return m_default == "deny";
+    return rule->perm == Perm::Deny;
 }
 
 bool Policy::tryCached(const std::wstring& vpath, const std::string& kind, bool& allowed) const
@@ -245,7 +306,8 @@ void Policy::putCached(const std::wstring& vpath, const std::string& kind, bool 
         (long long)GetTickCount64() + (long long)m_ask.cacheTtlSeconds * 1000 };
 }
 
-bool Policy::matchGrant(const std::wstring& vpath, const std::string& kind) const
+bool Policy::matchGrant(const std::wstring& vpath, const std::string& pathKey,
+                        const std::string& kind) const
 {
     long long now = (long long)GetTickCount64();
     std::lock_guard<std::mutex> lock(m_state->mutex);
@@ -254,7 +316,7 @@ bool Policy::matchGrant(const std::wstring& vpath, const std::string& kind) cons
         else ++it;
     }
     for (const auto& g : m_state->grants) {
-        if (g.rule.matches(vpath, kind)) return true;
+        if (g.rule.matches(vpath, pathKey, kind)) return true;
     }
     return false;
 }

@@ -60,7 +60,7 @@ describe('policyText', () => {
         expect(text).not.toContain('/dev/null');
     });
 
-    test('系统维护路径（组件存储/缓存/Recent/PowerShell 框架写）放通；回收站不放通且早于兜底 write ask', () => {
+    test('系统维护路径（组件存储/缓存/Recent/PowerShell 框架写）放通；回收站不放通（回收站 deny 更具体）', () => {
         const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
         for (const p of [
             '/C/Windows/system32/catroot**',
@@ -79,7 +79,8 @@ describe('policyText', () => {
         // 回收站是误删数据的恢复区，不放通 write（--del-to-trash 经 SHFileOperation
         // 内部操作不受策略判定，不需要放通回收站）
         expect(text).not.toContain('/C/$RECYCLE.BIN');
-        // 放行规则须是 write allow，且早于兜底 write ask（沙箱按顺序匹配）
+        // 放行规则须是 write allow，且排在兜底 write ask 之前导出（most-specific
+        // 下判定按 spec 取优、与位置无关；此处只固化可读的导出顺序）
         const recentAt = text.indexOf('/AppData/Roaming/Microsoft/Windows/Recent/**');
         const block = text.slice(recentAt - 40, recentAt + 120);
         expect(block).toContain('access = "write"');
@@ -113,7 +114,8 @@ describe('policyText', () => {
         const ruleBlock = text.slice(ruleStart - 40, ruleStart + 120);
         expect(ruleBlock).toContain('access = "write"');
         expect(ruleBlock).toContain('perm = "allow"');
-        // 放行规则须早于兜底 write ask 命中
+        // 放行规则排在兜底 write ask 之前导出（判定按 spec 取优、与位置无关，
+        // 此处只固化可读的导出顺序）
         expect(text.indexOf('/AppData/Local/Temp/**')).toBeLessThan(text.indexOf('perm = "ask"'));
     });
 
@@ -122,7 +124,7 @@ describe('policyText', () => {
         expect(policyText('http://ep/decide', 't')).not.toContain('AppData/Local/Temp');
     });
 
-    test('opendeskDataDir 提供时生成 OpenDesk 数据目录（logs/artifacts/tasks）写放行且先于兜底 write ask', () => {
+    test('opendeskDataDir 提供时生成 OpenDesk 数据目录（logs/artifacts/tasks）写放行（排在兜底 write ask 之前导出）', () => {
         const text = policyText(
             'http://ep/decide',
             't',
@@ -216,7 +218,7 @@ describe('policyText', () => {
             expect(text.slice(at - 40, at + 120)).toContain('access = "read"');
             expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
         }
-        // 放行规则须早于兜底 write ask 命中
+        // 放行规则排在兜底 write ask 之前导出（判定按 spec 取优、与位置无关）
         const fallbackAskAt = text.indexOf('access = "write"\nperm = "ask"');
         expect(text.indexOf('CryptnetUrlCache')).toBeLessThan(fallbackAskAt);
         expect(text.indexOf('/AppData/LocalLow/Temp/**')).toBeLessThan(fallbackAskAt);
@@ -234,7 +236,7 @@ describe('policyText', () => {
         expect(at).toBeGreaterThanOrEqual(0);
         expect(text.slice(at - 40, at + 120)).toContain('access = "read"');
         expect(text.slice(at - 40, at + 120)).toContain('perm = "allow"');
-        // 放行须早于 /** read ask 兜底块（文本内首个 read ask 是调试实例
+        // 放行须排在 /** read ask 兜底块之前导出（文本内首个 read ask 是调试实例
         // 凭据规则，不能用 indexOf('perm = "ask"') 当锚点）
         const fallbackReadAskAt = text.indexOf('path = "/**"\naccess = "read"');
         expect(fallbackReadAskAt).toBeGreaterThan(0);
@@ -248,12 +250,11 @@ describe('policyText', () => {
         expect(linuxText).not.toContain('desktop.ini');
     });
 
-    test('用户显式 deny 优先于 desktop.ini 全卷读放行（原生 first-match：deny/ask 规则先于运行时放行导出）', () => {
-        // 运行时放行不能吞掉用户对特定目录的显式拒绝：用户 deny 规则经
-        // orderedRules（deny > ask > allow）排序后先导出，原生 first-match
-        // 命中即停（原生 sandbox.exe debug-rules 实测 /C/keys/** deny 下
-        // /C/keys/desktop.ini 仍 deny）。此处固化"deny 规则块在 desktop.ini
-        // 放行块之前导出"的文本顺序前提。
+    test('用户显式 deny 优先于 desktop.ini 全卷读放行（deny 更具体/更严，与导出顺序无关）', () => {
+        // 运行时放行不能吞掉用户对特定目录的显式拒绝：原生 most-specific 语义下
+        // /C/keys/desktop.ini 同时命中 /C/keys/** deny 与 /**/desktop.ini allow，
+        // 前者更长，判定为 deny（原生 sandbox.exe debug-rules 实测）。这里仍固化
+        // "deny 规则块先导出"的文本顺序（便于阅读），但不作为判定依据。
         const rules = [{ resourceType: 'file', action: 'read', pathPattern: 'C:/keys/**', effect: 'deny' }] as any[];
         const text = policyText('http://ep/decide', 't', rules, 'C:\\Users\\tester');
         const denyAt = text.indexOf('path = "/C/keys/**"');
@@ -274,5 +275,55 @@ describe('policyText', () => {
     test('virtualPathToHostPath 回转（ask 路径 → 宿主路径）', () => {
         expect(virtualPathToHostPath('/C/Users/a.txt')).toBe('C:/Users/a.txt');
         expect(virtualPathToHostPath('/C/a/../b')).toBeNull();
+    });
+});
+
+// 原生 glob 的尾部 `**` 只覆盖子树、不匹配目录自身（四平台一致），所以 allow 的
+// `X/**` 必须在生成侧补一条 `X`，否则目录自身会落到更宽的兜底规则上。
+describe('policyText: allow 的 X/** 自动附带 X', () => {
+    const countPath = (text: string, pattern: string): number =>
+        text.split('\n').filter((line) => line === `path = ${JSON.stringify(pattern)}`).length;
+    // readonly 签名：全盘 write deny 且无全盘 read allow
+    const readonlyRules = [{ resourceType: 'file', action: 'write', pathPattern: '**', effect: 'deny' }] as any[];
+
+    test('readonly：/C/Windows/** read allow 附带 /C/Windows 本身（否则 dir C:\\Windows 被全盘 deny）', () => {
+        const text = policyText('http://ep/decide', 't', readonlyRules);
+        expect(text).toContain('path = "/C/Windows/**"');
+        expect(countPath(text, '/C/Windows')).toBe(1);
+        expect(text).toContain('path = "/C/Windows"\naccess = "read"\nperm = "allow"');
+    });
+
+    test('allow 的 X/** 按 access 各补一条（write 与 read 互不替代）', () => {
+        const text = policyText('http://ep/decide', 't', undefined, 'C:\\Users\\tester');
+        const temp = '/C/Users/tester/AppData/Local/Temp';
+        expect(text).toContain(`path = "${temp}/**"\naccess = "write"\nperm = "allow"`);
+        expect(text).toContain(`path = "${temp}"\naccess = "write"\nperm = "allow"`);
+        expect(text).toContain(`path = "${temp}"\naccess = "read"\nperm = "allow"`);
+    });
+
+    test('deny 侧不补：敏感目录 X/** read deny 不附带 X（目录仍可列、只拦内容）', () => {
+        const text = policyTextLinux('http://ep/decide', 't', '/home/tester/work', undefined, '/home/tester');
+        expect(text).toContain('path = "/home/tester/.ssh/**"\naccess = "read"\nperm = "deny"');
+        expect(countPath(text, '/home/tester/.ssh')).toBe(0);
+        // 用户规则里的即 write deny 同理
+        const winText = policyText('http://ep/decide', 't', [
+            { resourceType: 'file', action: 'read', pathPattern: 'C:/keys/**', effect: 'deny' }
+        ] as any[]);
+        expect(countPath(winText, '/C/keys')).toBe(0);
+    });
+
+    test('/** allow 附带根 /（execute 兜底同样生效）', () => {
+        const text = policyText('http://ep/decide', 't', undefined);
+        expect(text).toContain('path = "/**"\naccess = "execute"\nperm = "allow"');
+        expect(text).toContain('path = "/"\naccess = "execute"\nperm = "allow"');
+    });
+
+    test('已显式成对声明的不重复补（用户 {,/**} 规则）', () => {
+        const rules = [
+            { resourceType: 'file', action: 'read', pathPattern: 'C:/proj{,/**}', effect: 'allow' }
+        ] as any[];
+        const text = policyText('http://ep/decide', 't', rules);
+        expect(text).toContain('path = "/C/proj/**"\naccess = "read"\nperm = "allow"');
+        expect(countPath(text, '/C/proj')).toBe(1);
     });
 });

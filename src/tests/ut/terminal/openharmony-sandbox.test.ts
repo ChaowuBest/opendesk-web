@@ -97,7 +97,8 @@ describe('policyTextOpenHarmony', () => {
         expect(text).toContain(cacheWrite);
         expect(text).toContain(tempRead);
         expect(text).toContain(cacheRead);
-        // 顺序：可写目录规则必须早于兜底 /** write ask（first-match 才生效）
+        // 兜底 /** write ask 存在，且可写目录规则的 spec 更长（most-specific 下
+        // 具体规则胜出，与两块的先后位置无关）
         const tempIdx = text.indexOf('path = "/data/storage/el2/temp/**"');
         const writeAskIdx = text.indexOf('path = "/**"\naccess = "write"\nperm = "ask"');
         const readAskIdx = text.indexOf('path = "/**"\naccess = "read"\nperm = "ask"');
@@ -118,7 +119,8 @@ describe('policyTextOpenHarmony', () => {
         }
         // 系统前缀只放行 read：write 兜底仍是 ask（不放大写授权面）
         expect(text).toContain('path = "/**"\naccess = "write"\nperm = "ask"');
-        // read allow 规则须位于兜底 read ask 之前（first-match/most-specific 语义下放行生效）
+        // read allow 规则与兜底 read ask 都已导出（most-specific 下 /system/** 的
+        // spec 更长，放行生效，与位置无关）
         const systemIdx = text.indexOf('path = "/system/**"\naccess = "read"\nperm = "allow"');
         const readAskIdx = text.indexOf('path = "/**"\naccess = "read"\nperm = "ask"');
         expect(systemIdx).toBeGreaterThanOrEqual(0);

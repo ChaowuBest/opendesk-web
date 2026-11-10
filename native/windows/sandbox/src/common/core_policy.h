@@ -10,8 +10,14 @@
  */
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
+
+// core 的预编译路径 glob 句柄（dynobox.h 的 dbox_glob_t，C 链接、全局命名空间）。
+// 规则在策略生命周期内不变、被判定路径不断变化，因此"模式解析"（normpath +
+// 按组件切分、小写化）只做一次，热路径上只处理 vpath。
+struct dbox_glob;
 
 namespace sbx {
 
@@ -47,6 +53,19 @@ bool coreParsePolicyToml(const std::wstring& utf16Text,
 
 // 策略路径 glob 匹配（大小写不敏感，经 core 的 dbox_glob_match）。
 bool coreGlobMatch(const std::wstring& pattern, const std::wstring& vpath);
+
+// 判定的路径键：vpath 折叠为小写后转 UTF-8（Windows 路径大小写不敏感，core 的
+// 匹配大小写敏感，桥接层统一在两侧折叠）。一次判定只算一次，全部规则复用。
+std::string corePathKey(const std::wstring& vpath);
+
+// 预编译句柄：编译在规则装载时做一次，匹配时只处理 corePathKey 的结果。
+// 编译失败返回空句柄，调用方回退 coreGlobMatch（保证 OOM 下行为不变）。
+using CoreGlob = std::shared_ptr<::dbox_glob>;
+CoreGlob coreGlobCompile(const std::wstring& pattern);
+// pathKey 必须是 corePathKey 的输出。空句柄返回 false（调用方回退）。
+bool coreGlobMatchCompiled(const CoreGlob& glob, const std::string& pathKey);
+// 模式的 specificity（core 的 rule_specificity 等价物），most-specific 选优用。
+size_t coreGlobSpecificity(const CoreGlob& glob);
 
 // 规则的字面前缀（首个通配符之前的小写部分），用于热路径预筛。
 // 纯词法操作，本地实现（core 未导出等价函数）。

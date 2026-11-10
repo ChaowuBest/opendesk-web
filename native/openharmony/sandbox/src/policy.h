@@ -14,13 +14,18 @@
 int  dbox_policy_load_toml(const char *text, dbox_policy_t *p,
                            char *err, size_t errsz);
 
-/* Translate a comma-separated list of host directories into leading
- * write-deny rules (dir + 双星号递归后缀): the identity namespace has no mount
- * concept, so "read-only directories" are enforced as policy-level write
- * bans, mirroring --ro-dirs of the FUSE dynobox-linux. The rules are
- * PREPENDED before the user rules so they take precedence (parity with a
- * kernel read-only bind mount which cannot be overridden). Returns 0 on
- * success (including empty spec), -1 on allocation failure. */
+/* Translate a comma-separated list of host directories into write-deny rules:
+ * each dir becomes TWO rules — the dir itself and dir + recursive two-star
+ * suffix (a trailing two-star does not match the directory itself, so the
+ * exact rule is what keeps "make the read-only dir itself unwritable" true).
+ * The identity namespace has no mount concept, so "read-only directories" are
+ * enforced as policy-level write bans, mirroring --ro-dirs of the FUSE
+ * dynobox-linux. Both rules carry the same specificity as the directory, and
+ * evaluation picks the stricter perm on a tie (deny > allow), so an equally
+ * specific or wider user allow cannot re-enable writes — parity with a kernel
+ * read-only bind mount which cannot be overridden. (They are still inserted at
+ * the front for readability, but ordering no longer decides the outcome.)
+ * Returns 0 on success (including empty spec), -1 on allocation failure. */
 int  dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec);
 
 /* Evaluation with optional built-in system allowlist. `allow_system = 0`

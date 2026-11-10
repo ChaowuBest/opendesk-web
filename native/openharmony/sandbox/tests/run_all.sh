@@ -178,6 +178,16 @@ T rd_fail "$SRC/public/link-out"                        >/dev/null; check "symli
 T symlink_fail "$SRC/docs/readme.txt" "$SRC/vault/link-v" >/dev/null; check "symlink create in deny area" $?
 T readlink_ok "$SRC/public/link-in"                     >/dev/null; check "readlink allowed" $?
 
+# 目录前缀缓存（pathmap 的 pcache）不能变成"符号链接替换"的绕过通道：
+# 先访问 allow 区的文件填充缓存，再把该目录换成指向 deny 区的链接，
+# 原路径访问 deny 内容必须仍被拦截。
+CACHEDIR="$SRC/public/symcache"
+rm -rf "$CACHEDIR" "$CACHEDIR.orig"; mkdir -p "$CACHEDIR"
+printf 'x' > "$CACHEDIR/f.txt"
+T pcache_symlink "$CACHEDIR" "$SRC/vault" "secret.txt" >/dev/null
+check "目录缓存命中后仍按当前解析判定（符号链接替换不绕过 deny）" $?
+rm -rf "$CACHEDIR" "$CACHEDIR.orig"
+
 echo "== functional: exec control =="
 T x_ok "$SRC/tools/bin/ok.sh"                           >/dev/null; check "x_ok allowed tool" $?
 T spawn "$SRC/tools/bin/ok.sh"                          >/dev/null; check "exec allowed tool" $?

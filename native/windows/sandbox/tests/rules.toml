@@ -1,9 +1,11 @@
 # ============================================================
 # dynobox 访问控制规则（示例：配套 examples/src 测试夹具）
 # ============================================================
-# 规则按声明顺序匹配，第一条命中的生效 —— 把更具体的规则放在前面。
+# 命中多条规则时取**最具体**的模式（剥离尾部 `/**` 后的前缀最长），同长按
+# deny > ask > allow —— 规则书写顺序不影响判定，defense 不依赖把 deny 放前面。
 # path   : 沙箱内虚拟路径（/ 开头）。`**` 跨层级，`*` 单层级，`?` 单字符；
-#          约定 `/dir/**` 同时匹配 `/dir` 本身。
+#          尾部 `/**` 只覆盖子树、**不含目录自身**（`/dir/**` 不命中 `/dir`，
+#          要连目录本身一起约束须再写一条 `path = "/dir"`）。
 # access : read | write | execute | all
 #          read    = 读内容/列目录/读属性
 #          write   = 写内容/创建/删除/改名/改属性
@@ -13,11 +15,10 @@
 version = 1
 default = "deny"                     # 没有任何规则命中时的兜底
 
-# 单根声明：整个 examples\src 目录映射为卷根 /
-# （等价于旧版 --src examples\src；多盘请参考 rules_drive.toml 的 [[roots]] 用法）
-[[roots]]
-virtual = "/"
-real    = "examples/src"
+# 单根声明：把单个目录映射为卷根 / —— 由命令行 `--src <DIR>` 提供（例如
+# `--src examples/src`，配合下面的 /tests/**、/docs/** 等相对路径规则）。
+# 策略文件里的 `[[roots]]` 已不再支持（core 会 fail-loud 拒绝该表）；
+# 多盘请改用 `--automount` 并参考同目录的 rules_drive.toml。
 
 [ask]
 endpoint = "http://127.0.0.1:8080/decide"   # 可被命令行 --upstream 覆盖

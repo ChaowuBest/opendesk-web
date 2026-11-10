@@ -294,7 +294,7 @@ perm   = "allow"
 
 | 字段 | 取值 | 含义 |
 |---|---|---|
-| `path` | `/home/u/work/**` 之类 | 真实路径 glob（身份命名空间，无映射）：`**` 跨层级、`*` 单层级、`?` 单字符；`/dir/**` 同时匹配 `/dir` 本身；`/**` 匹配整棵文件树 |
+| `path` | `/home/u/work/**` 之类 | 真实路径 glob（身份命名空间，无映射）：`**` 跨层级、`*` 单层级、`?` 单字符；**尾部 `**` 只覆盖子树、不含目录自身**（`/dir/**` 不命中 `/dir`，`/**` 不命中根 `/`；要含须显式写 `path = "/dir"`），中间段 `**` 仍匹配 0+ 组件（`/a/**/b` 命中 `/a/b`） |
 | `access` | `read` | 读内容、列目录、读属性 |
 | | `write` | 写内容、创建、删除、改名、改属性（删除/改名对相关路径都按 write 判定） |
 | | `execute` | 拉起进程、加载共享库（dlopen）、mmap 可执行 |
@@ -475,7 +475,7 @@ strip  →  binary-sign-tool sign -selfSign 1 -inFile ... -outFile ... -signAlg 
 src/
   dynobox.h    公共类型（perm/access/roots/rules/grants）
   mini_toml.*  极简 TOML 子集解析器（对应 Windows 版 MiniToml）
-  policy.*     策略引擎：glob 编译与顺序匹配、类别分解、grants、
+  policy.*     策略引擎：glob 编译与 most-specific 匹配、类别分解、grants、
                ask 决策缓存、系统目录允许清单、共享内存状态
   pathmap.*    虚拟↔真实映射（最长前缀）、`..` 归一化、组件级符号链接
                解析（raw syscall，含 ENOENT 尾段与 NOFOLLOW 语义）

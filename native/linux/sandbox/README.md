@@ -88,6 +88,12 @@ grant_ttl_seconds = 300
 语义下该写法是 fail-open 陷阱，见 OpenHarmony bugs.md BUG-009）。同一策略在
 Linux / OpenHarmony / macOS / Windows 上判定结果一致。
 
+尾部 `**` **只覆盖子树，不匹配目录自身**：`/x/**` 命中 `/x/a`、`/x/a/b`，
+但不命中 `/x`；`/**` 同理不命中根 `/`。要连目录自身一起约束须显式再写一条
+`path = "/x"`。策略生成侧（`dynabox-policy.ts`）对 `perm = "allow"` 的 `X/**`
+会自动补一条 `X`，deny 侧不补——"敏感目录读 deny"这类规则只拦内容、目录本身
+仍可列，这是预期语义。
+
 ### ask 架构（协议入 core，传输按平台）
 
 请求构造（`dbox_ask_build_request`）与响应解析（`dbox_ask_parse_response`，

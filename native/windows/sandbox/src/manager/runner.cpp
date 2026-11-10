@@ -101,6 +101,19 @@ static std::wstring buildEnvironment(const SandboxLaunchOptions& opts)
         entries.push_back(std::move(kv));
     };
 
+    // 先剥掉从父进程继承的沙箱变量，再按本次 CLI 重新注入：本进程很可能就是
+    // 另一个沙箱的子进程（OpenDesk 里跑 OpenDesk、嵌套任务的终端、或沙箱集成
+    // 测试），继承下来的 DYNOBOX_UPSTREAM / ASK_TOKEN 会让内层 ask 打到外层
+    // 端点（对方按 401 拒绝，表现为所有写操作莫名 deny），LOG_FILE 会让内层
+    // 判定日志写进外层文件，TRASH_DIR / TRASH_EXCLUDE 会让内层删除进外层任务
+    // 的回收站，SESSION_START 则把外层会话开始时刻当成自己的（"会话内创建"
+    // 判定错位 → 本该送回收站的删除被当场真删）。内层沙箱的行为只应取决于
+    // 本次命令行参数。
+    for (auto it = entries.begin(); it != entries.end();) {
+        if (it->rfind(L"DYNOBOX_", 0) == 0) it = entries.erase(it);
+        else ++it;
+    }
+
     set(L"DYNOBOX_SANDBOX", L"1");
     set(L"DYNOBOX_POLICY", opts.policyPath);
     // 判定日志通道：把 --log-file 路径与 -v 开关注入子进程，hook 侧 DllMain 据此

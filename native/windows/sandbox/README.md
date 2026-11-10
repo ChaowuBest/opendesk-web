@@ -5,8 +5,10 @@
 - 任务设置保存 `task_config.shell_path` 和 `task_config.shell_sandboxed`。终端初始化探测 shell 清单，路径不可用时选择第一个；仅 Windows pwsh 提供沙箱选项，每个任务只注册选中的执行工具及 `checkShellStatus`。
 - 任务设置保存 `task_config.shell_sandbox_del_to_trash`；开启后 OpenDesk 在启动参数中追加 `--del-to-trash`。开启后沙箱内的删除经 SHFileOperation 送 Windows 回收站；**沙箱会话内创建的文件例外**——删除视为自发清理，不触发 ask、不进回收站、直接删除（见"已知限制"一节）；回收站不可用的位置（网络路径、无回收站介质）或移动失败时保留原文件并写诊断日志，绝不静默永久删除。
 - 开发运行固定使用 `native/windows/sandbox/runtime/sandbox.exe`（与 `sandbox_hook.dll` 同目录）；安装包固定使用 `resources/sandbox/sandbox.exe`。
-- OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。`--log-file` 路径同时经 `DYNOBOX_LOG_FILE` 注入 hook 子进程：整棵沙箱树的每次策略判定（`[POLICY] pid=N access vpath -> ALLOW|DENY (rule#N)`）都写回同一文件，事故后可归因"哪个进程、哪个路径、哪条规则、放行还是拒绝"。
+- OpenDesk 传入 `--log-file`，管理进程诊断信息写入 OpenDesk 日志目录的 `sandbox/dynamic-sandbox-<id>.log`。该文件是内部诊断日志，不进入终端结果；终端的 stdout、stderr、stdin 和退出码直接来自子进程。`--log-file` 路径同时经 `DYNOBOX_LOG_FILE` 注入 hook 子进程：整棵沙箱树的每次策略判定（`[POLICY] pid=N access vpath -> ALLOW|DENY (rule#N)`）都写回同一文件，事故后可归因"哪个进程、哪个路径、哪条规则、放行还是拒绝"。`rule#N` 的 N 是**装载后**的规则下标：两条内置引导区规则固定为 0/1，用户规则在其后按 specificity 降序（同长 deny > ask > allow）排列——不是 TOML 里的书写顺序，按编号回溯策略时以 `debug-rules` 的打印为准。
 - 授权端点随进程存活；终端工具超时转入后台不会关闭端点。用户确认最多等待五分钟（ask `timeout_ms=330000`）。
+- 全部 `DYNOBOX_*` 注入变量都由 `run` 按本次命令行**重新生成**：管理进程在构造子进程环境时会先剥掉从父进程继承的 `DYNOBOX_*`。否则嵌套沙箱（OpenDesk 里跑 OpenDesk、嵌套任务的终端、沙箱集成测试）会继承外层的
+  `DYNOBOX_UPSTREAM`/`ASK_TOKEN`（内层 ask 打到外层端点，被按 401 拒成 deny）、`DYNOBOX_LOG_FILE`（内层判定日志写进外层任务文件）、`DYNOBOX_TRASH_DIR`/`TRASH_EXCLUDE`（内层删除进外层任务的回收站）、`DYNOBOX_SESSION_START`（"会话内创建"判定错位，该入站的删除被当场真删）。
 - 每次访问均查询 OpenDesk 当前权限规则，不下发原生 TTL 授权。同一命令的相同路径和操作复用单次确认结果；切换任务模式会清除此缓存。选择记住目录或操作类型时，写回任务权限引擎。
 - 沙箱子进程以**普通用户令牌**运行（Detours 强制点在 API 层，无法与 AppContainer 的内核级路径控制共存——见"安全模型"）。不再需要 `network-ensure`/`pipes-ensure`（AppContainer 网络/命名管道限制消失，相关 CLI 子命令已移除）。
 - 沙箱内进程树经 Job 对象治理：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`（管理进程退出 → 整树终止），不授予 breakaway；后代进程经 `CreateProcessW` hook 递归注入 hook DLL，管控覆盖整棵进程树。
@@ -24,13 +26,14 @@
 :: 决策端点（内置参考实现）
 sandbox.exe endpoint --port 8080 --default deny
 
-:: 全盘 automount 运行构建脚本
-sandbox.exe run --automount --policy rules.toml ^
-    --upstream http://127.0.0.1:8080/decide -- build.cmd
+:: 全盘 automount 运行命令（策略用 tests\rules_drive.toml：整盘读放行、写按需）
+sandbox.exe run --automount --policy tests\rules_drive.toml ^
+    --upstream http://127.0.0.1:8080/decide -- cmd /c dir C:\
 ```
 
 - `--automount` 由注入 DLL 在子进程内枚举宿主全部盘符（`/C ↔ C:\`、`/D ↔ D:\` …）。
-- `--src DIR` 单根模式：把单个目录映射到沙箱根 `/`（与 `--automount` 互斥）。
+- `--src DIR` 单根模式：把单个目录映射到沙箱根 `/`（与 `--automount` 互斥）；
+  `tests\rules.toml` 就是配合它写的单根示例（规则形如 `/tests/**`）。
 - `--` 之后是真正要跑的命令；子进程直接使用宿主路径，无需卷路径换算。
 
 ### 1.1 端点与策略怎么配
@@ -83,8 +86,9 @@ Win32 程序的文件 IO 都经过 kernel32 导出。**direct syscall（NtCreate
 ### 2.2 决策引擎与求值顺序
 
 与 Linux/OpenHarmony/macOS 一致：静态规则（`[[rules]]`，**most-specific 匹配**——
-四平台统一，详见下方语义说明）、端点下发的**临时授权**（`grants`，带 TTL）、
-决策缓存（`路径+访问类型` 键）。TOML 解析与路径 glob 匹配由共享 core
+四平台统一，详见下方语义说明）、端点下发的**临时授权**（`grants`，带 TTL；
+macOS 目前只在协议层解析、判定不消费，见其 README）、决策缓存（`路径+访问类型`
+键）。TOML 解析与路径 glob 匹配由共享 core
 （`native/openharmony/sandbox/src` 的 mini_toml.c / policy.c）提供，经
 `common/core_policy.cpp` 桥接（UTF-16↔UTF-8 + 大小写折叠）。
 
@@ -104,6 +108,12 @@ Win32 程序的文件 IO 都经过 kernel32 导出。**direct syscall（NtCreate
 同长按 deny > ask > allow。**规则书写顺序无关**——"宽 allow 在前 + 精确 deny
 在后"的防御写法总是生效（历史 first-match 语义下该写法是 fail-open 陷阱）。
 同一策略在 Windows / Linux / OpenHarmony / macOS 上判定结果一致。
+
+尾部 `**` **只覆盖子树，不匹配目录自身**：`/x/**` 命中 `/x/a`、`/x/a/b`，
+但不命中 `/x`；`/**` 同理不命中根 `/`。要连目录自身一起约束须显式再写一条
+`path = "/x"`。策略生成侧（`dynabox-policy.ts`）对 `perm = "allow"` 的 `X/**`
+会自动补一条 `X`（否则 `dir C:\Windows` 这类"列目录自身"会落到全盘 deny），
+deny 侧不补——"敏感目录读 deny"只拦内容、目录本身仍可列，这是预期语义。
 
 fail-closed：超时、连接失败、非 200、字段缺失 → 按 deny 且失败决策不进缓存。
 策略判定发生在子进程内的 hook 中（无跨进程 IPC 往返，stat 单价 ~10µs）。
@@ -227,11 +237,11 @@ src/
 ├── common/                  # 共享库（sandbox.exe 与 sandbox_hook.dll 各持一份）
 │   ├── log.{h,cpp}          # 线程安全日志（UTF-8，stdout 保留给子进程）
 │   ├── toml.{h,cpp}         # 极简 TOML 解析（策略文件）
-│   ├── glob.{h,cpp}         # 策略 glob 匹配（** / * / ?，/dir/** 匹配 /dir 本身）
+│   ├── glob.{h,cpp}         # 策略 glob 匹配（** / * / ?，/dir/** 只覆盖子树，不含 /dir 自身）
 │   ├── paths.{h,cpp}        # 路径归一化（.. / 8.3 短名 / 尾点 / \\?\）+ roots 映射
 │   ├── json.{h,cpp}         # 极简 JSON（ask 协议）
 │   ├── ask.{h,cpp}          # ask 上游：Winsock HTTP（绝对超时）+ 命名管道
-│   ├── policy.{h,cpp}       # 策略引擎：加载/顺序匹配/ask/grants/决策缓存
+│   ├── policy.{h,cpp}       # 策略引擎：加载/most-specific 匹配/ask/grants/决策缓存
 │   └── hook_scope.{h,cpp}   # TLS 线程级 hook 抑制（ask 传输内部不递归）
 ├── manager/                 # sandbox.exe
 │   ├── main.cpp             # CLI 入口与子命令
@@ -306,6 +316,12 @@ node scripts/build-windows-sandbox.cjs      # x64（默认）；OPENDESK_SANDBOX
 产物：`dist/<rid>/bin/sandbox.exe` + `sandbox_hook.dll`（x86 版为
 `sandbox_hook32.dll`），复制到 `native/windows/sandbox/runtime/`（开发态）与
 `resources/sandbox/`（安装包，forge `stageWindowsSandboxResource`）。
+
+增量构建：`src/Makefile` 已把 `common/*.h`、`hook/*.h` 和共享 core 的头文件
+声明为每个 `.obj` 的依赖，改头文件会自动重编相关 TU（此前缺这层依赖，新旧结构体
+布局会混进同一个二进制——`Rule` 增加成员后 `debug-rules` 直接 0xC0000005，
+另有"能跑但每 op 少判定一次"的隐性不一致）。改动 `Makefile` 本身（CFLAGS/宏）
+或换编译器版本时仍需先 `clean` 再构建。
 
 ---
 

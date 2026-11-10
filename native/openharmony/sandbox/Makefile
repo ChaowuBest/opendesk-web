@@ -28,7 +28,7 @@ unit: tests/unit_policy.c $(CORE_SRCS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $(BUILD)/unit_policy tests/unit_policy.c $(CORE_SRCS) -lpthread
 
-tests: $(LIB) $(CLI) $(BUILD)/t_probe $(BUILD)/t_threads $(BUILD)/t_exec_chain $(BUILD)/t_net $(BUILD)/t_mmap $(BUILD)/t_dlopen $(BUILD)/t_adversarial $(BUILD)/t_stat_storm $(BUILD)/t_watch $(BUILD)/libadv_helper.so unit
+tests: $(LIB) $(CLI) $(BUILD)/t_probe $(BUILD)/t_io_storm $(BUILD)/t_threads $(BUILD)/t_exec_chain $(BUILD)/t_net $(BUILD)/t_mmap $(BUILD)/t_dlopen $(BUILD)/t_adversarial $(BUILD)/t_stat_storm $(BUILD)/t_watch $(BUILD)/libadv_helper.so unit
 
 $(BUILD)/t_adversarial: tests/t_adversarial.c
 	@mkdir -p $(BUILD)
@@ -60,6 +60,10 @@ $(BUILD)/t_dlopen: tests/t_dlopen.c
 
 # file stat 风暴压测探针（性能基线与退化记录见 tests/PERF.md）
 $(BUILD)/t_stat_storm: tests/t_stat_storm.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+# 小文件创建/写入风暴压测探针（模拟解压、包安装的 O_CREAT 写负载）
+$(BUILD)/t_io_storm: tests/t_io_storm.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 # 看护 fd 被宿主复用时的误杀回归探针（devecocli 卡在 Start generating p12 的根因）

@@ -34,10 +34,17 @@ const char *dbox_perm_name(dperm_t p);
 const char *dbox_access_name(int acc);   /* returns "read"/"write"/"execute"/"all" */
 
 /* ---- policy ---- */
+/* 预编译的路径 glob：dbox_rule_t 持有它，实现见下方 glob 段 */
+typedef struct dbox_glob dbox_glob_t;
+
 typedef struct {
     char   *path;    /* virtual glob (two-star/one-star/question-mark) */
     int     acc;     /* ACC_* bitmask */
     dperm_t perm;
+    /* 预编译匹配数据（dbox_policy_compile 填充）。没有它时评估退化为
+     * 每次重新解析模式（旧行为），保证手工构造规则的调用方不受影响。 */
+    dbox_glob_t *glob;
+    size_t  spec;    /* 规范化后模式的 specificity（排序/提前结束用） */
 } dbox_rule_t;
 
 typedef struct {
@@ -67,13 +74,24 @@ typedef struct {
     /* built-in system runtime read/exec allowance (parity: Windows keeps
      * system directories readable for the sandboxed processes) */
     int     system_read;      /* default 1 */
+
+    /* rules[] 已预编译并按 specificity 降序排列（dbox_policy_compile 置位）。
+     * 置位后评估走"预编译 + 提前结束"的快路径，否则回退旧逻辑。 */
+    int     rules_compiled;
 } dbox_policy_t;
 
 void  dbox_policy_init(dbox_policy_t *p);
 void  dbox_policy_free(dbox_policy_t *p);
 
+/* 为 rules[] 预编译 glob 组件并按 specificity 降序排序（幂等）。
+ * 只做纯实现优化，不改变判定语义。 */
+void  dbox_policy_compile(dbox_policy_t *p);
+
 /* Evaluate a path for the given access mask (single category).
- * Returns PERM_ALLOW / PERM_DENY. `ask_cb`-free core used by tests. */
+ * Returns PERM_ALLOW / PERM_ASK / PERM_DENY — no ask transport is performed, so
+ * ASK means "a rule wants the endpoint consulted"; the caller decides what to do
+ * with it: dbox_policy_check_ex() sends it upstream (+ grants/cache), while
+ * deny-only probes (preload.c gate_meta_read) treat anything but DENY as pass. */
 dperm_t dbox_policy_eval_static(const dbox_policy_t *p, const char *path, int acc);
 
 /* Full evaluation incl. grants + ask transport. `now_ms` = monotonic ms. */
@@ -87,10 +105,26 @@ int dbox_system_allow(const char *path, int acc);
 
 /* ---- glob (path pattern) ----
  * a two-star segment crosses directory levels, one-star stays within one
- * level, question-mark matches a single character. A trailing two-star
- * pattern also matches the directory itself; a lone two-star pattern
- * matches the whole volume. */
+ * level, question-mark matches a single character. A TRAILING two-star
+ * segment covers the subtree only and does NOT match the directory itself
+ * (`/a/**` matches `/a/x` but not `/a`; `/**` does not match `/`) — write
+ * `path = "/a"` explicitly to cover the directory. A non-trailing two-star
+ * still matches zero or more segments (e.g. `/a/` + two-star + `/b` matches
+ * `/a/b`). Same semantics on every platform (core / macOS boxdylib / Windows
+ * Policy). */
 int dbox_glob_match(const char *pat, const char *path);
+
+/* ---- pre-compiled glob ----
+ * 策略生命周期内模式不变、被判定路径不断变化，因此把"模式解析"（normpath +
+ * 按组件切分）从每次判定里拿出来做一次。判定时只切分路径，语义与
+ * dbox_glob_match 完全一致。
+ *
+ * 供三平台共用（Linux/OpenHarmony 的规则快路径直接用它，macOS 的
+ * boxdylib 与 Windows 的 Policy 在各自的规则结构里持有该句柄）。 */
+dbox_glob_t *dbox_glob_compile(const char *pattern);   /* NULL = 失败 */
+int   dbox_glob_match_compiled(const dbox_glob_t *g, const char *path);
+size_t dbox_glob_specificity(const dbox_glob_t *g);    /* 排序/提前结束用 */
+void  dbox_glob_free(dbox_glob_t *g);
 
 /* ---- monotonic milliseconds ---- */
 int64_t dbox_now_ms(void);

@@ -108,7 +108,13 @@ static int match_list(char **pat, int np, char **pth, int nt)
 {
     if (np == 0) return nt == 0;
     if (strcmp(pat[0], "**") == 0) {
-        if (np == 1) return 1;   /* trailing ** matches the rest incl. empty */
+        /* 尾部 ** 只覆盖子树，不匹配目录自身（np==1 && nt==0）：`/a/**` 命中
+         * /a 下的全部内容，但不命中 /a —— 要让目录自身也命中须显式写 path="/a"。
+         * 四平台统一语义（core / macOS boxdylib / Windows Policy），策略生成侧
+         * 对 allow 的 `X/**` 会自动补一条 `X`，deny 侧不补（只拒内部是预期）。
+         * 中间段双星（如 /a 与 /b 之间夹一段）仍匹配 0+ 组件（可命中
+         * `/a/b`），故只有末段 np==1 走这个特判。 */
+        if (np == 1) return nt > 0;
         for (int i = 0; i <= nt; i++)
             if (match_list(pat + 1, np - 1, pth + i, nt - i)) return 1;
         return 0;
@@ -116,6 +122,62 @@ static int match_list(char **pat, int np, char **pth, int nt)
     if (nt == 0) return 0;
     if (!match_comp(pat[0], pth[0])) return 0;
     return match_list(pat + 1, np - 1, pth + 1, nt - 1);
+}
+
+/* ------------------------------------------------------------------ */
+/* fast path: pre-compiled rules                                       */
+/*                                                                     */
+/* 每次判定都重新 normpath + 切分"模式"和"路径"是热路径上最大的一笔     */
+/* malloc/free 开销（每条规则每次判定约 6 + 2×组件数 次分配）。规则在    */
+/* 策略生命周期内不变，因此在加载完成后把每条规则按组件预编译一次，     */
+/* 判定时只在栈上切分被判定路径。语义与 dbox_glob_match 完全一致。      */
+/* ------------------------------------------------------------------ */
+
+#define DBOX_MAX_COMPS 128
+
+static void rule_free(dbox_rule_t *r)
+{
+    dbox_free(r->path);
+    dbox_glob_free(r->glob);
+    r->path = NULL;
+    r->glob = NULL;
+    r->spec = 0;
+}
+
+/* 把 path 拷进调用方的栈缓冲后原地按 '/' 切分（零堆分配）。
+ * 返回组件数；路径过长或组件过多返回 -1，调用方回退到 dbox_glob_match。 */
+static int split_inplace(char *buf, size_t bufsz, const char *path,
+                         const char **comps, int maxc)
+{
+    size_t n = strlen(path);
+    if (n + 1 > bufsz) return -1;
+    memcpy(buf, path, n + 1);
+    int cnt = 0;
+    char *p = buf;
+    while (*p) {
+        while (*p == '/') p++;
+        if (!*p) break;
+        if (cnt >= maxc) return -1;
+        comps[cnt++] = p;
+        while (*p && *p != '/') p++;
+        if (*p) *p++ = '\0';
+    }
+    return cnt;
+}
+
+static int match_list_c(const char *const *pat, int np,
+                        const char *const *pth, int nt)
+{
+    if (np == 0) return nt == 0;
+    if (strcmp(pat[0], "**") == 0) {
+        if (np == 1) return nt > 0;   /* 同 match_list：尾部 ** 不匹配目录自身 */
+        for (int i = 0; i <= nt; i++)
+            if (match_list_c(pat + 1, np - 1, pth + i, nt - i)) return 1;
+        return 0;
+    }
+    if (nt == 0) return 0;
+    if (!match_comp(pat[0], pth[0])) return 0;
+    return match_list_c(pat + 1, np - 1, pth + 1, nt - 1);
 }
 
 int dbox_glob_match(const char *pat, const char *path)
@@ -153,13 +215,17 @@ void dbox_policy_init(dbox_policy_t *p)
 
 void dbox_policy_free(dbox_policy_t *p)
 {
-    for (int i = 0; i < p->nrules; i++) dbox_free(p->rules[i].path);
+    for (int i = 0; i < p->nrules; i++) rule_free(&p->rules[i]);
     dbox_free(p->rules);
     for (int i = 0; i < p->ngrants; i++) dbox_free(p->grants[i].path);
     dbox_free(p->grants);
     dbox_free(p->ask_endpoint);
     dbox_free(p->ask_token);
     memset(p, 0, sizeof(*p));
+    /* memset 会把 default_perm 置成 0（= PERM_ALLOW）。释放后若某个调用方
+     * 忘了检查加载失败就继续求值，那就是 fail-open。显式落回 DENY，保持
+     * 与 dbox_policy_init 一致的"默认拒绝"姿态。 */
+    p->default_perm = PERM_DENY;
 }
 
 static int parse_access(const char *s, int *acc)
@@ -314,6 +380,7 @@ int dbox_policy_load_toml(const char *text, dbox_policy_t *p,
     }
 
     mini_toml_free(&doc);
+    dbox_policy_compile(p);
     return 0;
 bad:
     mini_toml_free(&doc);
@@ -367,7 +434,8 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
     }
     if (n == 0) return 0;
 
-    dbox_rule_t *nr = dbox_malloc(sizeof(dbox_rule_t) * (size_t)(p->nrules + n));
+    /* 每个只读目录注入两条规则，故按 2n 预留 */
+    dbox_rule_t *nr = dbox_malloc(sizeof(dbox_rule_t) * (size_t)(p->nrules + 2 * n));
     if (!nr) return -1;
 
     int w = 0;
@@ -388,8 +456,10 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
             dbox_free(nr);
             return -1;
         }
-        /* pattern "{norm}**" with recursive-glob suffix — also matches the
-         * directory itself */
+        /* 只读目录注入两条 deny：精确的 `{norm}`（目录自身）与 `{norm}/**`
+         * （子树）。glob 语义规定尾部 ** 不匹配目录自身，只写 `{norm}/**`
+         * 会让只读目录本身的写操作落回兜底规则（ask/allow）——只读暴露的
+         * "自身也不可改"语义失效。根目录 norm=="/" 时同样是 "/" + "/**" 两条。 */
         size_t plen = strlen(norm);
         char *pat = dbox_malloc(plen + 4);   /* slash + 双星号 + NUL */
         if (!pat) {
@@ -404,13 +474,18 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
             memcpy(pat, norm, plen);
             memcpy(pat + plen, "/**", 4);
         }
-        dbox_free(norm);
 
-        dbox_rule_t *r = &nr[w++];
-        memset(r, 0, sizeof(*r));
-        r->path = pat;
-        r->acc  = ACC_WRITE;
-        r->perm = PERM_DENY;
+        dbox_rule_t *exact = &nr[w++];
+        memset(exact, 0, sizeof(*exact));
+        exact->path = norm;              /* 所有权转移（不再 free） */
+        exact->acc  = ACC_WRITE;
+        exact->perm = PERM_DENY;
+
+        dbox_rule_t *deep = &nr[w++];
+        memset(deep, 0, sizeof(*deep));
+        deep->path = pat;
+        deep->acc  = ACC_WRITE;
+        deep->perm = PERM_DENY;
         cur = end;
     }
 
@@ -420,6 +495,9 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
     dbox_free(p->rules);
     p->rules   = nr;
     p->nrules += w;
+    /* 规则集变化（新增 + 重排）：重新预编译（已编译项只重排，不重复分配） */
+    p->rules_compiled = 0;
+    dbox_policy_compile(p);
     return 0;
 }
 
@@ -503,6 +581,105 @@ static size_t rule_specificity(const char *pat)
     return n;
 }
 
+/* ------------------------------------------------------------------ */
+/* pre-compiled glob (public API — shared by every platform sandbox)   */
+/* ------------------------------------------------------------------ */
+
+struct dbox_glob {
+    char  *pattern;   /* 规范化后的模式（回退路径/诊断用） */
+    char **comps;
+    int    ncomps;
+    size_t spec;
+};
+
+dbox_glob_t *dbox_glob_compile(const char *pattern)
+{
+    if (!pattern) return NULL;
+    char *norm = dbox_normpath(pattern);
+    if (!norm) return NULL;
+    dbox_glob_t *g = dbox_malloc(sizeof *g);
+    memset(g, 0, sizeof *g);
+    g->pattern = norm;
+    comps_t cs;
+    comps_split(norm, &cs);
+    g->comps = cs.c;
+    g->ncomps = cs.n;
+    g->spec = rule_specificity(norm);
+    return g;
+}
+
+int dbox_glob_match_compiled(const dbox_glob_t *g, const char *path)
+{
+    if (!g || !path) return 0;
+    /* 栈上 1KB：路径超长/组件过多时回退逐次解析（保证语义不变），
+     * 同时避免在信号处理器重入路径上占用大栈帧。 */
+    char cbuf[1024];
+    const char *pc[DBOX_MAX_COMPS];
+    int npc = split_inplace(cbuf, sizeof cbuf, path, pc, DBOX_MAX_COMPS);
+    if (npc < 0)   /* 超长/组件过多：回退到逐次解析，保证语义不变 */
+        return dbox_glob_match(g->pattern, path);
+    return match_list_c((const char *const *)g->comps, g->ncomps, pc, npc);
+}
+
+size_t dbox_glob_specificity(const dbox_glob_t *g)
+{
+    return g ? g->spec : 0;
+}
+
+void dbox_glob_free(dbox_glob_t *g)
+{
+    if (!g) return;
+    dbox_free(g->pattern);
+    if (g->comps) {
+        for (int i = 0; i < g->ncomps; i++) dbox_free(g->comps[i]);
+        dbox_free(g->comps);
+    }
+    dbox_free(g);
+}
+
+static void rule_compile_one(dbox_rule_t *r)
+{
+    if (!r->path || r->glob) return;
+    r->glob = dbox_glob_compile(r->path);
+    /* 规范化后的模式由 dbox_glob_compile 持有；规则自身的 path 保持原样
+     * （debug-rules 输出与 cfgio 序列化都基于它），specificity 取编译结果，
+     * 与旧的 rule_specificity(path) 等价（compile 内部先做 normpath）。 */
+    r->spec = r->glob ? dbox_glob_specificity(r->glob) : rule_specificity(r->path);
+}
+
+static int rule_spec_desc(const void *a, const void *b)
+{
+    const dbox_rule_t *ra = (const dbox_rule_t *)a;
+    const dbox_rule_t *rb = (const dbox_rule_t *)b;
+    if (ra->spec > rb->spec) return -1;
+    if (ra->spec < rb->spec) return 1;
+    /* 同 specificity 时按 perm 强弱降序（PERM_ALLOW=0 < ASK=1 < DENY=2）。
+     * 判定本身只依赖"spec 单调不增"（快路径据此提前结束），与同 spec 规则
+     * 之间的先后无关（同 spec 取 perm 更严者，不取先出现者）。次级键定的是
+     * 相等元素的相对次序，供三处消费：
+     *   1. debug-rules 打印的规则顺序；
+     *   2. [POLICY] 日志里 rule#N 的归因下标——Windows 的 Policy 按 p.rules[]
+     *      顺序 import 规则表，rule#N 就是本函数的排序结果（该索引已不再参与
+     *      判定，Windows 侧改为遍历取最优）；
+     *   3. cfg 序列化往返。
+     * 没有次级键时 qsort 对相等元素不稳定：同 spec 的 deny/allow 在数组里的
+     * 先后会随实现与元素个数漂移，"日志上哪条规则生效"变得不可复现。 */
+    if (ra->perm > rb->perm) return -1;
+    if (ra->perm < rb->perm) return 1;
+    return 0;
+}
+
+void dbox_policy_compile(dbox_policy_t *p)
+{
+    if (!p) return;
+    if (p->rules_compiled) return;
+    if (!p->rules || p->nrules <= 0) { p->rules_compiled = 1; return; }
+    for (int i = 0; i < p->nrules; i++) rule_compile_one(&p->rules[i]);
+    /* 按 specificity 降序：判定时可在"当前规则不如已命中者具体"处提前结束 */
+    qsort(p->rules, (size_t)p->nrules, sizeof(dbox_rule_t), rule_spec_desc);
+    p->rules_compiled = 1;
+}
+
 dperm_t dbox_policy_eval_static_ex(const dbox_policy_t *p, const char *vpath,
                                    int acc, int allow_system)
 {
@@ -514,14 +691,46 @@ dperm_t dbox_policy_eval_static_ex(const dbox_policy_t *p, const char *vpath,
      * 顺序无关，防护不依赖作者记得把 deny 放前面。 */
     int best = -1;
     size_t best_len = 0;
-    for (int i = 0; i < p->nrules; i++) {
-        const dbox_rule_t *r = &p->rules[i];
-        if (!(r->acc & acc)) continue;
-        if (!dbox_glob_match(r->path, vpath)) continue;
-        size_t len = rule_specificity(r->path);
-        if (best < 0 || len > best_len || (len == best_len && r->perm > p->rules[best].perm)) {
-            best = i;
-            best_len = len;
+    /* vpath 为 NULL 时走旧路径：逐条 dbox_glob_match 会返回"不匹配"，最终落到
+     * default。快路径的 split_inplace 不接受 NULL（公共 API 的调用方可能传，
+     * 例如策略探针），必须显式排除。 */
+    if (p->rules_compiled && p->rules && p->nrules > 0 && vpath) {
+        /* 快路径：规则已按组件预编译并按 specificity 降序排列，被判定路径
+         * 只在栈上切分一次，无堆分配。缓冲取 1KB：超长路径回退逐次解析，
+         * 避免在信号处理器重入路径上占用大栈帧。 */
+        char cbuf[1024];
+        const char *pc[DBOX_MAX_COMPS];
+        int npc = split_inplace(cbuf, sizeof cbuf, vpath, pc, DBOX_MAX_COMPS);
+        for (int i = 0; i < p->nrules; i++) {
+            const dbox_rule_t *r = &p->rules[i];
+            if (!(r->acc & acc)) continue;
+            /* 降序 + 同长段取 perm 最大：遇到更不具体的规则即可停止 */
+            if (best >= 0 && r->spec < best_len) break;
+            int m;
+            if (npc >= 0 && r->glob)
+                m = match_list_c((const char *const *)r->glob->comps, r->glob->ncomps, pc, npc);
+            else if (r->glob)
+                m = dbox_glob_match_compiled(r->glob, vpath);
+            else
+                m = dbox_glob_match(r->path, vpath);
+            if (!m) continue;
+            size_t len = r->spec;
+            if (best < 0 || len > best_len ||
+                (len == best_len && r->perm > p->rules[best].perm)) {
+                best = i;
+                best_len = len;
+            }
+        }
+    } else {
+        for (int i = 0; i < p->nrules; i++) {
+            const dbox_rule_t *r = &p->rules[i];
+            if (!(r->acc & acc)) continue;
+            if (!dbox_glob_match(r->path, vpath)) continue;
+            size_t len = rule_specificity(r->path);
+            if (best < 0 || len > best_len || (len == best_len && r->perm > p->rules[best].perm)) {
+                best = i;
+                best_len = len;
+            }
         }
     }
     if (best >= 0 && best_len > 0) return p->rules[best].perm;
