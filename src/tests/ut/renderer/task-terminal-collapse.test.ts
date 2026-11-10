@@ -9,6 +9,8 @@ import { parseHTML } from 'linkedom';
  * 2. 收起不销毁会话：收起只是折叠 UI，后台命令保持运行；再展开不重复建联。
  * 3. 收起态的一切建联兜底（visibilitychange / resize / 任务切换 / profile 切换）
  *    均被 collapsed 门禁拦截，等展开后按需补建。
+ * 4. 收起期间的上下文变化（profile/任务/工作区）不立即生效：会话保活；
+ *    展开时与会话建立时的快照比对，上下文已过期才按新值重建，切回原值则无感保留。
  */
 
 function rect(top: number, bottom: number): () => object {
@@ -251,6 +253,69 @@ describe('task-terminal-panel 收起/展开（默认收起，展开才建联）'
         await flushMicrotasks();
         expect(createCalls).toBe(1);
         expect(lastCreateOptions!.profileId).toBe('bash:git-bash');
+    });
+
+    test('已建联后收起切 profile：展开时按新 profile 重建（关旧会话）', async () => {
+        const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
+        await flushMicrotasks();
+        expect(createCalls).toBe(1);
+        clickToggle(panel);
+        await flushMicrotasks();
+        const select = panel.querySelector('[data-task-terminal-profile]');
+        select.value = 'bash:git-bash';
+        select.dispatchEvent(new win.Event('change', { bubbles: true }));
+        await flushMicrotasks();
+        // 收起态门禁：不建联也不杀当前会话（收起期间保活优先）
+        expect(createCalls).toBe(1);
+        expect(closeCalls).toBe(0);
+        clickToggle(panel);
+        await flushMicrotasks();
+        // 展开时快照比对发现 profile 已过期：关旧会话、按新 profile 重建
+        expect(createCalls).toBe(2);
+        expect(closeCalls).toBe(1);
+        expect(lastCreateOptions!.profileId).toBe('bash:git-bash');
+    });
+
+    test('收起态切 profile 又切回原值：展开后会话无感保留', async () => {
+        const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
+        await flushMicrotasks();
+        clickToggle(panel);
+        await flushMicrotasks();
+        const select = panel.querySelector('[data-task-terminal-profile]');
+        select.value = 'bash:git-bash';
+        select.dispatchEvent(new win.Event('change', { bubbles: true }));
+        select.value = 'powershell:pwsh';
+        select.dispatchEvent(new win.Event('change', { bubbles: true }));
+        await flushMicrotasks();
+        clickToggle(panel);
+        await flushMicrotasks();
+        // 最终选中值与会话快照一致：切走又切回不算过期，不重建
+        expect(createCalls).toBe(1);
+        expect(closeCalls).toBe(0);
+    });
+
+    test('已建联后收起切任务：展开时按新任务重建', async () => {
+        const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
+        await flushMicrotasks();
+        expect(lastCreateOptions!.taskId).toBeUndefined();
+        clickToggle(panel);
+        await flushMicrotasks();
+        panel.setTaskContext('task-9', 'ws-9');
+        await flushMicrotasks();
+        // 收起态 setTaskContext 被 collapsed 门禁拦截：上下文更新但不建联
+        expect(createCalls).toBe(1);
+        clickToggle(panel);
+        await flushMicrotasks();
+        // 展开时任务快照过期：按新任务（及其工作区）重建
+        expect(createCalls).toBe(2);
+        expect(closeCalls).toBe(1);
+        expect(lastCreateOptions!.taskId).toBe('task-9');
     });
 
     test('收起态 host 可见时 visibilitychange 兜底也不建联', async () => {

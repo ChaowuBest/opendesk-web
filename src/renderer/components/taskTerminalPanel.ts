@@ -115,6 +115,11 @@ export class TaskTerminalPanel extends HTMLElement {
     private settingUnsubscribe: (() => void) | null = null;
     /** 默认收起：只显示标题栏、不建联，用户展开（toggle）才建联；收起不销毁已有会话。 */
     private collapsed = true;
+    /** 会话建立时的上下文快照：收起期间上下文变化不立即生效（会话保活），
+     * 展开时与当前值比对，不一致才按新上下文重建；切回原值则无感保留。 */
+    private sessionProfileId = '';
+    private sessionTaskId = '';
+    private sessionWorkspace = '';
 
     // 拖拽监听挂在 window 上（指针可能移出面板甚至窗口），以 pointerId 过滤多指。
     private readonly onDragPointerMove = (event: PointerEvent): void => {
@@ -401,9 +406,25 @@ export class TaskTerminalPanel extends HTMLElement {
         // host 几何不可见（tab 未激活）时留待 visibilitychange / resize 兜底。
         this.openTerminal();
         this.resizeTerminal();
-        if (this.featureEnabled && this.profileId && !this.sessionId && this.isTerminalVisible()) {
+        // 按需建联覆盖两种情况：尚无会话（首次展开），或收起期间上下文
+        // （profile/任务/工作区）已变而会话还活着——后者按新上下文重建。
+        if (
+            this.featureEnabled &&
+            this.profileId &&
+            (!this.sessionId || this.isSessionStale()) &&
+            this.isTerminalVisible()
+        ) {
             void this.restartSession();
         }
+    }
+
+    /** 会话建立时的上下文快照与当前值不一致：视为过期（收起期间被切换过），需按新上下文重建。 */
+    private isSessionStale(): boolean {
+        return (
+            this.profileId !== this.sessionProfileId ||
+            this.taskId !== this.sessionTaskId ||
+            this.taskWorkspace !== this.sessionWorkspace
+        );
     }
 
     private applyCollapsedState(): void {
@@ -454,6 +475,10 @@ export class TaskTerminalPanel extends HTMLElement {
                 return;
             }
             this.sessionId = session.sessionId;
+            // 记录会话建立时的上下文快照：收起期间上下文再变，展开时据此判定过期。
+            this.sessionProfileId = this.profileId;
+            this.sessionTaskId = this.taskId;
+            this.sessionWorkspace = this.taskWorkspace;
             this.setStatus(
                 session.backend === 'pty'
                     ? this.t('renderer.taskTerminal.ready')
