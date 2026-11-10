@@ -27,21 +27,31 @@ inline constexpr const char* kAccessAll = "all";
 
 enum class Perm { Allow, Ask, Deny };
 
+// 规则求值语义（四平台统一，与 core 的 dbox_policy_eval_static 对齐）：
+// 命中规则里取 specificity 最大者；同 specificity 取 perm 更严者
+// （Perm 的枚举序 Allow < Ask < Deny 与 core 的 PERM_ALLOW/ASK/DENY 数值序一致）。
+// 历史实现是 first-match-wins，宽 allow 写在前面会吞掉后面更具体的 deny
+// （bugs.md BUG-009 的 fail-open 陷阱），规则书写顺序因此曾经有意义。
+inline int permRank(Perm p) { return static_cast<int>(p); }
+
 struct Rule {
     std::wstring path;            // 归一化虚拟路径
     std::string access;           // read/write/execute/all
     Perm perm = Perm::Deny;
     std::wstring literalPrefix;   // 小写字面前缀（热路径预筛）
-    std::wstring basePath;        // `/dir/**` 剥离出的 base（`/dir/**` 需匹配 `/dir` 本身）
+    std::wstring basePath;        // `/dir/**` 剥离出的 base：判定时排除目录自身（`/dir/**` 不覆盖 `/dir`）
+    size_t spec = 0;              // 模式特异性（core 的 rule_specificity，选优用）
     CoreGlob glob;                // 预编译 glob（空句柄时回退 coreGlobMatch）
 
     bool matchesKind(const std::string& kind) const {
         return access == kAccessAll || access == kind;
     }
-    bool matches(const std::wstring& vpath, const std::string& kind) const;
+    // pathKey 必须是 corePathKey(vpath) 的结果（每次判定只算一次，全部规则复用）。
+    bool matches(const std::wstring& vpath, const std::string& pathKey,
+                 const std::string& kind) const;
 };
 
-// 策略：TOML 加载 + 顺序匹配 + ask 双传输 + 子树授权 + 决策缓存。
+// 策略：TOML 加载 + most-specific 匹配 + ask 双传输 + 子树授权 + 决策缓存。
 class Policy {
 public:
     Policy();
@@ -115,7 +125,12 @@ private:
         std::unique_ptr<AskGate> askGate = std::make_unique<AskGate>();
     };
 
-    bool matchGrant(const std::wstring& vpath, const std::string& kind) const;
+    bool matchGrant(const std::wstring& vpath, const std::string& pathKey,
+                    const std::string& kind) const;
+    // most-specific 选优：命中规则里 spec 最大者，同 spec 取 perm 更严者；
+    // 无命中返回 nullptr，否则经 index 回传该规则在 m_rules 中的下标（why 文案用）。
+    const Rule* bestMatch(const std::wstring& vpath, const std::string& pathKey,
+                          const std::string& kind, size_t& index) const;
     bool askUpstreamAndCache(const std::wstring& vpath, const std::string& kind, bool& allowed);
     void installGrants(const std::vector<Grant>& grants);
 

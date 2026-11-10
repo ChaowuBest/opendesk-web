@@ -384,9 +384,11 @@ static int policy_parse(Policy *p, const char *text)
 }
 
 /*
- * 路径匹配语义（经 core 的 dbox_glob_match，glob 语义一致）：
- * pattern "**"      → 匹配一切
- * pattern "/a/星"   → 匹配 /a 与 /a 下整棵子树（星 = 双星号）
+ * 路径匹配语义（经 core 的 dbox_glob_match，glob 语义四平台一致）：
+ * pattern "**"      → 匹配一切路径（不含根 "/" 自身）
+ * pattern "/a/星"   → 匹配 /a 下整棵子树，但不含 /a 自身（星 = 双星号）；
+ *                     要连目录自身一起覆盖须另写一条 pattern "/a"。策略生成侧
+ *                     对 allow 的 X/星 会自动补一条 X，deny 侧不补（只拒内部）
  * pattern "/a/b"    → 仅匹配 /a/b
  * 匹配基于调用时路径（不解析符号链接，与调用时路径语义一致）。
  */

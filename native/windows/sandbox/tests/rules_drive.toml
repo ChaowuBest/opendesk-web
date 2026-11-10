@@ -1,14 +1,15 @@
 # ============================================================
-# 整盘镜像示例（多根模式）
+# 整盘 / 多盘示例策略（配合 --automount）
 # ============================================================
-# 用 [[roots]] 声明要镜像的盘，沙箱内通过 Z:\C\、Z:\D\ ... 访问：
-#   Z:\C\Windows\win.ini  ↔  C:\Windows\win.ini
-#   Z:\D\data\a.txt       ↔  D:\data\a.txt
-# 有几块盘/几个位置就声明几个 roots；网络位置用 UNC（如 "\\\\filesrv\\share"），
-# 需预先建立连接与认证（net use / 资源管理器访问一次）。
+# Detours 版没有虚拟卷：子进程直接用宿主真实路径，`--automount` 把各盘符映射
+# 进策略的虚拟命名空间供规则书写：
+#   C:\Windows\win.ini  ↔  /C/Windows/win.ini
+#   D:\data\a.txt       ↔  /D/data/a.txt
+# 不需要逐盘声明映射（旧版的 [[roots]] 已移除，core 会 fail-loud 拒绝该表）；
+# 只想暴露单个目录时用 `--src <DIR>`（该目录映射为卷根 /）。
 #
-# 读全放行；写默认拒绝（可按需对工作目录放行/ask）。
-# 多根模式下运行时不需要 --src。
+# 读全放行；写默认拒绝（示例对 D:\data 放行写）。
+# 运行：sandbox.exe run --automount --policy tests\rules_drive.toml -- cmd /c dir C:\
 
 version = 1
 default = "deny"
@@ -19,17 +20,13 @@ timeout_ms        = 2000
 cache_ttl_seconds = 60
 grant_ttl_seconds = 300
 
-[[roots]]
-virtual = "/C"
-real    = "C:\\"
-
-[[roots]]
-virtual = "/D"
-real    = "D:\\"
-
 # ------------------------------------------------------------
 # 规则（按沙箱内虚拟路径书写）
 # ------------------------------------------------------------
+# 尾部 `**` 只覆盖子树、不含目录自身：`/C/**` 不命中 `/C`，所以盘根与目录本身
+# 都单独再写一条——否则 `dir C:\`、`dir D:\data` 这类"列目录/改目录自身"的访问
+# 会落到 default deny。
+
 [[rules]]
 path  = "/"
 access = "read"
@@ -56,6 +53,11 @@ access = "read"
 perm  = "allow"
 
 # 示例：允许在 D:\data 下写（其余写操作默认拒绝）
+[[rules]]
+path  = "/D/data"
+access = "write"
+perm  = "allow"
+
 [[rules]]
 path  = "/D/data/**"
 access = "write"

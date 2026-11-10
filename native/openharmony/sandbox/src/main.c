@@ -323,9 +323,10 @@ static int cmd_run(int argc, char **argv)
         fprintf(stderr, "dynobox: %s\n", err);
         return 2;
     }
-    /* --ro-dirs: inject read-only directories as leading write-deny rules
-     * (identity namespace has no mount primitive; must happen before
-     * dbox_cfg_encode serializes the policy into the child environment) */
+    /* --ro-dirs: inject write-deny rules per dir (the dir itself + recursive
+     * two-star suffix; a trailing two-star alone would leave the dir itself
+     * writable). Identity namespace has no mount primitive; must happen before
+     * dbox_cfg_encode serializes the policy into the child environment. */
     if (dbox_policy_prepend_ro_dirs(&pol, o.ro_dirs) != 0) {
         fprintf(stderr, "dynobox: --ro-dirs 规则注入失败（内存不足）\n");
         dbox_policy_free(&pol);

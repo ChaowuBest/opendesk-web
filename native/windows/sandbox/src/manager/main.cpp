@@ -33,8 +33,8 @@ static const wchar_t* kUsage =
     L"  sandbox cleanup\n"
     L"\n"
     L"示例:\n"
-    L"  sandbox run --automount --policy examples\\rules_drive.toml ^\n"
-    L"      --upstream pipe://dynobox-decide -- cmd /c tests\\run_tests.bat\n";
+    L"  sandbox run --automount --policy tests\\rules_drive.toml ^\n"
+    L"      --upstream pipe://dynobox-decide -- cmd /c dir C:\\\n";
 
 struct CliOptions {
     std::wstring policy;

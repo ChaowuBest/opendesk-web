@@ -22,6 +22,68 @@ export function expandPermissionPattern(pattern: string): string[] {
     return [normalized];
 }
 
+/**
+ * 策略文本后处理：`perm = "allow"` 的 `X/**` 自动附带一条同 access 的 `X`。
+ *
+ * 为什么需要：四平台 native 侧的路径 glob 语义一致——**尾部 `**` 只覆盖子树，
+ * 不匹配目录自身**（`/x/**` 命中 `/x/a`，不命中 `/x`；`/**` 同理不命中根 `/`）。
+ * 所以只写 `X/** allow` 时，`X` 自身仍会落到更宽的兜底规则上：readonly 模式下
+ * `/C/Windows/** read allow` 若不附带 `/C/Windows`，全盘 `/** read deny` 会让
+ * `dir C:\Windows`、PATH 目录的逐目录 stat、工具链安装根的探测全部失败。
+ *
+ * 为什么只补 allow：deny 的 `X/**` 语义就是"只拒内部、目录本身放行"
+ * （SENSITIVE_HOME_DIRS 这类敏感目录读 deny 依赖它——目录仍可列，内容读被拒），
+ * 补 `X` 会把目录本身也拒掉，与预期特性相反。
+ *
+ * 去重键取 (access, path) 而非 (access, path, perm)：如果策略里已有 `X` 的
+ * deny/ask，补一条 `X` allow 只会输给同 spec 的它（同 spec 取更严者），结果不变，
+ * 不如不补。
+ *
+ * 追加位置在文本末尾（`[[rules]]` 之后，`[ask]` 段与所有规则同在它之前），
+ * most-specific 语义下顺序无关，且不重排既有行——既有精确断言的测试仍成立。
+ */
+function expandAllowTreeRules(text: string): string {
+    const seen = new Set<string>();
+    const trees: { base: string; access: string }[] = [];
+    let current: { path?: string; access?: string; perm?: string } | null = null;
+    const flush = (): void => {
+        if (current && current.path !== undefined && current.access !== undefined) {
+            seen.add(`${current.access}\u0000${current.path}`);
+            if (current.perm === 'allow' && current.path.endsWith('/**')) {
+                trees.push({ base: current.path.slice(0, -3) || '/', access: current.access });
+            }
+        }
+        current = null;
+    };
+    for (const line of text.split('\n')) {
+        if (line.trim() === '[[rules]]') {
+            flush();
+            current = {};
+            continue;
+        }
+        if (!current) continue;
+        const match = /^\s*(path|access|perm)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/.exec(line);
+        if (!match) continue;
+        // 值由 JSON.stringify 生成，这里反解转义后按原文处理
+        try {
+            current[match[1] as 'path' | 'access' | 'perm'] = JSON.parse(`"${match[2]}"`) as string;
+        } catch {
+            /* 非法转义：跳过该字段，宁缺勿错 */
+        }
+    }
+    flush();
+
+    const additions: string[] = [];
+    for (const { base, access } of trees) {
+        const key = `${access}\u0000${base}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        additions.push(`[[rules]]\npath = ${JSON.stringify(base)}\naccess = ${JSON.stringify(access)}\nperm = "allow"`);
+    }
+    if (additions.length === 0) return text;
+    return `${text.replace(/\n+$/, '')}\n\n${additions.join('\n\n')}\n`;
+}
+
 /** Windows：宿主盘符路径 → 沙箱根相对路径（/C/foo ↔ C:\foo）；非盘符路径返回 null。 */
 export function hostPatternToVirtual(pattern: string): string | null {
     const normalized = pattern.replace(/\\/g, '/');
@@ -124,8 +186,9 @@ function serializeOpendeskDataDirRules(
 }
 
 function orderedRules(rules: PermissionRule[] | undefined): PermissionRule[] {
-    // GlobPermissionEnforcer evaluates deny > ask > allow regardless of insertion
-    // order. Keep the same precedence in Policy's first-match table.
+    // 权限引擎（GlobPermissionEnforcer）按 deny > ask > allow 求值、与插入顺序无关；
+    // 这里同序导出只是让策略文本可读（most-specific 下判定与顺序无关，同 spec
+    // 平局由 native 侧取更严者，不取先出现者）。
     const rank = { deny: 0, ask: 1, allow: 2 } as const;
     return [...(rules || [])].sort((left, right) => rank[left.effect] - rank[right.effect]);
 }
@@ -134,7 +197,10 @@ function rulesToLines(rules: PermissionRule[] | undefined, toVirtual: (expanded:
     const lines: string[] = [];
     // 同一 (path, access, perm) 的规则块只导出一次：规则集来自权限引擎快照 +
     // 各生成器内建清单，重复块（PATH 展开撞系统前缀等）只会白白放大序列化体积，
-    // 推高 dynobox 64KB 环境变量上限的触发概率
+    // 推高 dynobox 64KB 环境变量上限的触发概率。
+    // 注意这里**不做** allow 的 `X/**` → `X` 补全：那是策略文本组装（policyText*）
+    // 的职责（expandAllowTreeRules），本函数只负责"引擎规则 → TOML 行"的映射，
+    // 单独导出（permissionRulesForSandbox）时应保持与引擎规则一一对应。
     const seen = new Set<string>();
     const push = (line: string) => {
         if (seen.has(line)) return;
@@ -238,7 +304,7 @@ export function policyText(
         // （对齐 tempRoot 的 %TEMP% 语义，仅 LocalLow 变体）
         '/C/Users/*/AppData/LocalLow/Temp/**'
     ];
-    return [
+    const policy = [
         'version = 1',
         'default = "deny"',
         '',
@@ -307,6 +373,17 @@ export function policyText(
                   ...POSIX_TEMP_DIR_PATTERNS.map(
                       (p) => `[[rules]]\npath = ${quote(p)}\naccess = "read"\nperm = "allow"`
                   ),
+                  // 根目录 "/" 自身读放行：尾部 ** 不匹配目录自身，`/**` 兜底不再
+                  // 命中 "/"，node/OpenSSL/Electron 运行时初始化会 open("/")——
+                  // 无规则命中就落到 default deny，启动早期直接失败（与 Linux
+                  // policyLinuxTail 里显式 path="/" read allow 同一个坑）。
+                  // 只放行根目录本身：`path = "/"` 经组件化 glob 拆出 0 个组件，
+                  // 仅与 "/" 相等，不会意外放行根下子树。
+                  '[[rules]]',
+                  'path = "/"',
+                  'access = "read"',
+                  'perm = "allow"',
+                  '',
                   '[[rules]]',
                   'path = "/**"',
                   'access = "read"',
@@ -324,6 +401,8 @@ export function policyText(
                   ''
               ])
     ].join('\n');
+    // allow 的 `X/**` 补 `X`（尾部 ** 不覆盖目录自身，见 expandAllowTreeRules）
+    return expandAllowTreeRules(policy);
 }
 
 /**
@@ -379,8 +458,9 @@ function windowsRuntimeReadPatterns(home?: string): string[] {
     // 逐次命中 /** read ask 弹窗。按语义类别整类放行（`**` 匹配 0+ 组件，
     // 卷根到任意深度、任意盘符），不逐文件夹枚举。仅 read：desktop.ini 可
     // 劫持文件夹视图，写仍由兜底 ask 管控。用户显式 deny/ask 规则经
-    // orderedRules 排序后先行导出、first-match 命中即停，优先级不受影响
-    // （原生实测 deny 目录下的 desktop.ini 仍 deny）。desktop.ini 是 Windows
+    // orderedRules 排序后导出；most-specific 下同 spec 平局取更严者，用户对具体
+    // 路径的 deny 不会被这条更宽的 allow 顶掉（原生实测 deny 目录下的 desktop.ini
+    // 仍 deny）。desktop.ini 是 Windows
     // Shell 特有文件，Linux/OH 策略不生成（本函数仅 Windows policyText 调用）。
     // 不依赖 home 推导，无条件生成。
     patterns.push('/**/desktop.ini');
@@ -683,7 +763,7 @@ export function policyTextLinux(
 ): string {
     const quote = (value: string) => JSON.stringify(value);
     const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
-    return [
+    const policy = [
         'version = 1',
         'default = "deny"',
         '',
@@ -700,6 +780,8 @@ export function policyTextLinux(
             isReadonlyModeRules(rules)
         )
     ].join('\n');
+    // allow 的 `X/**` 补 `X`（尾部 ** 不覆盖目录自身，见 expandAllowTreeRules）
+    return expandAllowTreeRules(policy);
 }
 
 /**
@@ -914,7 +996,7 @@ export function policyTextOpenHarmony(
                       `[[rules]]\npath = ${quote(`${dir}/**`)}\naccess = "read"\nperm = "allow"`
                   ])
             : [];
-    return [
+    const policy = [
         'version = 1',
         'default = "deny"',
         '',
@@ -933,4 +1015,6 @@ export function policyTextOpenHarmony(
             isReadonlyModeRules(rules)
         )
     ].join('\n');
+    // allow 的 `X/**` 补 `X`（尾部 ** 不覆盖目录自身，见 expandAllowTreeRules）
+    return expandAllowTreeRules(policy);
 }

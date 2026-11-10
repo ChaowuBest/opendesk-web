@@ -120,6 +120,11 @@ bool coreGlobMatch(const std::wstring& pattern, const std::wstring& vpath)
     return dbox_glob_match(pat.c_str(), path.c_str()) != 0;
 }
 
+std::string corePathKey(const std::wstring& vpath)
+{
+    return wideToUtf8Simple(toLowerSimple(vpath));
+}
+
 // 预编译句柄的释放走 core 的 dbox_glob_free（dynobox.h 已在本 TU 内可见）
 static void coreGlobDeleter(::dbox_glob *p)
 {
@@ -128,16 +133,20 @@ static void coreGlobDeleter(::dbox_glob *p)
 
 CoreGlob coreGlobCompile(const std::wstring& pattern)
 {
-    const std::string pat = wideToUtf8Simple(toLowerSimple(pattern));
+    const std::string pat = corePathKey(pattern);
     ::dbox_glob *g = dbox_glob_compile(pat.c_str());
     return g ? CoreGlob(g, coreGlobDeleter) : CoreGlob();
 }
 
-bool coreGlobMatchCompiled(const CoreGlob& glob, const std::wstring& vpath)
+bool coreGlobMatchCompiled(const CoreGlob& glob, const std::string& pathKey)
 {
     if (!glob) return false;
-    const std::string path = wideToUtf8Simple(toLowerSimple(vpath));
-    return dbox_glob_match_compiled(glob.get(), path.c_str()) != 0;
+    return dbox_glob_match_compiled(glob.get(), pathKey.c_str()) != 0;
+}
+
+size_t coreGlobSpecificity(const CoreGlob& glob)
+{
+    return glob ? dbox_glob_specificity(glob.get()) : 0;
 }
 
 std::wstring coreGlobLiteralPrefix(const std::wstring& pattern)

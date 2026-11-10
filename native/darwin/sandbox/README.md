@@ -7,13 +7,16 @@
 - **写目标父链缺失透传（判定层，四平台统一）**：写类操作（open 写模式/creat/fopen 写/rename/mkdir/chmod/symlink/link/mknod/setxattr——全部汇聚 `check_write_path`）目标**直接父目录当前不存在**时该写注定失败（内核 ENOENT），直接透传不触发 ask（deny 规则仍优先拦截，alias 变体参与最具体竞争）。典型：dbghelp/SymSrv 按模块内嵌 CodeView 路径（node.exe 的 `c:\ws\out\Release\node.pdb`）探测写符号缓存，不再弹审批框；
 - **读目标缺失透传（判定层，与 Linux/Windows 读 ENOENT 豁免同语义）**：纯读操作（open 读模式/openat 读/fopen 读——汇聚 `check_read_path`）目标当前不存在时读不到任何内容，直接透传不判定不 ask（deny 规则仍优先拦截防 deny 区存在性探测泄露，alias 变体参与最具体竞争）。典型：git status 每次对 attributes 查找链上不存在的 `~/.config/git/attributes`、`<Git 安装前缀>/share/git-core/gitattributes` 做存在性探测，cache_ttl=0 不缓存，此前逐次弹读审批框；
 - **匹配语义**：most-specific（四平台统一）——命中多条规则取最具体模式（剥尾
-  `/**` 的前缀最长），同长 deny > ask > allow，规则顺序无关；
+  `/**` 的前缀最长），同长 deny > ask > allow，规则顺序无关；尾部 `**` 只覆盖
+  子树、不含目录自身（`/x/**` 不命中 `/x`，要含须显式写 `path = "/x"`）；
 - **策略引擎复用共享 core**：TOML 解析（mini_toml.c）与路径 glob 匹配由
   `native/openharmony/sandbox/src` 提供（三平台单一来源）；本 dylib 保留 macOS
   特有外壳：`/var↔/private/var` 别名竞争、curl ask 传输；
 - **权限审批**：ask 请求走与 Linux/Windows 相同的 HTTP `/decide` 协议
   （`sandbox-decide.ts`），请求构造/响应解析用共享 core 的协议函数（严格 JSON，
-  含 grants 下发语义对齐）；
+  含 grants 下发语义对齐）。注意：响应里的 `grants` 只做协议解析与安装，
+  boxdylib 的 most-specific 判定**暂不消费**（每个新路径重新问询），与
+  Linux/OpenHarmony 的"子树授权 TTL 内零问询"尚有差距；
 - **watchdog 进程治理**（对齐 Linux/OH）：dylib 为每个沙箱进程布防 kqueue
   EVFILT_PROC 监听父进程；宿主退出 → kill 本进程组整树陪葬（沙箱 shell 由
   TS 层 detached spawn 建立独立进程组）；

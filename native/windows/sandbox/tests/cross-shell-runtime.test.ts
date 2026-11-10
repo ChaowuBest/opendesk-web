@@ -17,6 +17,12 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     if (file === executable && args[0] === 'run' && !args.includes('--src') && !args.includes('--automount'))
         args = ['run', '--automount', ...args.slice(1)];
     const proc = spawn(file, args, { windowsHide: true, env });
+    // spawn 失败（ENOENT/EACCES：runtime/sandbox.exe 未构建、被杀软隔离、构建替换
+    // 窗口期）只 emit 'error'；无人监听时 Node 会以 "Unhandled 'error' event" 直接
+    // 终止整个测试进程，同文件其它用例结果全丢。捕获后随返回值带出（code = null），
+    // 让调用方的断言变成一条明确的失败。
+    let spawnError: NodeJS.ErrnoException | null = null;
+    proc.once('error', (e) => { spawnError = e as NodeJS.ErrnoException; });
     let stdout = '',
         stderr = '';
     proc.stdout.on('data', (data) => (stdout += data));
@@ -26,6 +32,10 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     try {
         const [code] = await once(proc, 'close');
+        // spawn 失败直接抛，而不是返回 code=null：null 会让 `assert.notEqual(code, 0)`
+        // 这类"期望失败"的断言静默通过（把崩溃伪装成预期结果）；抛出则让该用例
+        // 明确失败，且不影响同文件其它用例（异常被 test runner 归到当前用例）。
+        if (spawnError) throw new Error(`sandbox.exe spawn failed: ${spawnError.code ?? 'unknown'}`);
         return { code, stdout, stderr };
     } finally {
         clearTimeout(timer);
@@ -255,9 +265,14 @@ test('killing the manager kills the whole descendant tree (Job KILL_ON_JOB_CLOSE
             '--',
             `"${process.execPath}" "${holdScript}"`
         ], { windowsHide: true, stdio: 'ignore' });
+        // 无监听器时 spawn 失败会崩掉整个测试进程；记录后在下面的 marker 等待
+        // 循环里尽快失败，而不是白等 15 秒。
+        let procSpawnError: NodeJS.ErrnoException | null = null;
+        proc.once('error', (e) => { procSpawnError = e as NodeJS.ErrnoException; });
         // 等 marker 出现（后代确实在运行）
         const deadline = Date.now() + 15000;
         while (!fs.existsSync(marker) || fs.readFileSync(marker, 'utf8') !== '1') {
+            if (procSpawnError) assert.fail(`sandbox.exe spawn failed: ${procSpawnError.code ?? 'unknown'}`);
             if (Date.now() > deadline) throw new Error('descendant never started');
             await new Promise((resolve) => setTimeout(resolve, 100));
         }

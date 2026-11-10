@@ -17,6 +17,12 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     if (file === executable && args[0] === 'run' && !args.includes('--src') && !args.includes('--automount'))
         args = ['run', '--automount', ...args.slice(1)];
     const proc = spawn(file, args, { windowsHide: true, env, cwd });
+    // spawn 失败（ENOENT/EACCES：runtime/sandbox.exe 未构建、被杀软隔离、构建替换
+    // 窗口期）只 emit 'error'；无人监听时 Node 会以 "Unhandled 'error' event" 直接
+    // 终止整个测试进程，同文件其它用例结果全丢。捕获后随返回值带出（code = null），
+    // 让调用方的断言变成一条明确的失败。
+    let spawnError: NodeJS.ErrnoException | null = null;
+    proc.once('error', (e) => { spawnError = e as NodeJS.ErrnoException; });
     let stdout = '', stderr = '';
     proc.stdout.on('data', (d) => (stdout += d));
     proc.stderr.on('data', (d) => (stderr += d));
@@ -25,6 +31,10 @@ async function run(file: string, args: string[], stdin = '', env = process.env, 
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     try {
         const [code] = await once(proc, 'close');
+        // spawn 失败直接抛，而不是返回 code=null：null 会让 `assert.notEqual(code, 0)`
+        // 这类"期望失败"的断言静默通过（把崩溃伪装成预期结果）；抛出则让该用例
+        // 明确失败，且不影响同文件其它用例（异常被 test runner 归到当前用例）。
+        if (spawnError) throw new Error(`sandbox.exe spawn failed: ${spawnError.code ?? 'unknown'}`);
         return { code, stdout, stderr };
     } finally {
         clearTimeout(timer);
@@ -742,6 +752,9 @@ test('named-pipe ask transport works end-to-end inside the sandbox', { skip: !wi
         windowsHide: true,
         stdio: 'ignore'
     });
+    // 无监听器时 spawn 失败会崩掉整个测试进程；端点没起来时下面的断言会给出
+    // 明确的失败信息（write ask fail-closed）。
+    endpoint.once('error', () => {});
     try {
         // 服务器就绪后触发 write ask：echo 重定向 -> CreateFileW write -> hook 经
         // 命名管道询问宿主管道端点 -> allow -> 文件写入成功
@@ -846,9 +859,14 @@ test('killing the manager stops the descendant heartbeat (Job tree termination)'
             'run', '--automount', '--policy', policy, '--',
             `"${process.execPath}" "${beatScript}"`
         ], { windowsHide: true, stdio: 'ignore' });
+        // 无监听器时 spawn 失败会崩掉整个测试进程；这里记录后让下面的心跳等待
+        // 循环尽快以明确信息失败，而不是白等 15 秒。
+        let procSpawnError: NodeJS.ErrnoException | null = null;
+        proc.once('error', (e) => { procSpawnError = e as NodeJS.ErrnoException; });
         // 等心跳写入
         const deadline = Date.now() + 15000;
         while (!fs.existsSync(beatFile) || parseInt(fs.readFileSync(beatFile, 'utf8'), 10) < 3) {
+            if (procSpawnError) assert.fail(`sandbox.exe spawn failed: ${procSpawnError.code ?? 'unknown'}`);
             if (Date.now() > deadline) throw new Error('heartbeat never started');
             await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -1123,7 +1141,7 @@ test('ask rule can authorize launching an exe (execute ask)', { skip: !windows }
     }
 });
 
-test('deny rule takes precedence over a later allow (ordered evaluation)', { skip: !windows }, async () => {
+test('more specific deny beats a broad allow in either declaration order (most-specific evaluation)', { skip: !windows }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-cov-denyorder-'));
     try {
         const policy = path.join(directory, 'policy.toml');
@@ -1143,7 +1161,7 @@ test('deny rule takes precedence over a later allow (ordered evaluation)', { ski
             `"${shell}" -NoProfile -NonInteractive -Command "${inner.replace(/"/g, '\\"')}"`
         ]);
         assert.equal(result.code, 0, result.stdout + result.stderr);
-        // 先声明的 deny 必须覆盖后面的 allow（顺序匹配，第一条命中）
+        // 精确 deny 比 "/**" allow 更具体，因此与两者的书写顺序无关
         assert.match(result.stdout, /READ-DENIED/);
         assert.doesNotMatch(result.stdout, /READ-ALLOWED/);
     } finally {

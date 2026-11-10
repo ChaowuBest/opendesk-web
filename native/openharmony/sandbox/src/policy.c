@@ -108,7 +108,13 @@ static int match_list(char **pat, int np, char **pth, int nt)
 {
     if (np == 0) return nt == 0;
     if (strcmp(pat[0], "**") == 0) {
-        if (np == 1) return 1;   /* trailing ** matches the rest incl. empty */
+        /* 尾部 ** 只覆盖子树，不匹配目录自身（np==1 && nt==0）：`/a/**` 命中
+         * /a 下的全部内容，但不命中 /a —— 要让目录自身也命中须显式写 path="/a"。
+         * 四平台统一语义（core / macOS boxdylib / Windows Policy），策略生成侧
+         * 对 allow 的 `X/**` 会自动补一条 `X`，deny 侧不补（只拒内部是预期）。
+         * 中间段双星（如 /a 与 /b 之间夹一段）仍匹配 0+ 组件（可命中
+         * `/a/b`），故只有末段 np==1 走这个特判。 */
+        if (np == 1) return nt > 0;
         for (int i = 0; i <= nt; i++)
             if (match_list(pat + 1, np - 1, pth + i, nt - i)) return 1;
         return 0;
@@ -164,7 +170,7 @@ static int match_list_c(const char *const *pat, int np,
 {
     if (np == 0) return nt == 0;
     if (strcmp(pat[0], "**") == 0) {
-        if (np == 1) return 1;
+        if (np == 1) return nt > 0;   /* 同 match_list：尾部 ** 不匹配目录自身 */
         for (int i = 0; i <= nt; i++)
             if (match_list_c(pat + 1, np - 1, pth + i, nt - i)) return 1;
         return 0;
@@ -428,7 +434,8 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
     }
     if (n == 0) return 0;
 
-    dbox_rule_t *nr = dbox_malloc(sizeof(dbox_rule_t) * (size_t)(p->nrules + n));
+    /* 每个只读目录注入两条规则，故按 2n 预留 */
+    dbox_rule_t *nr = dbox_malloc(sizeof(dbox_rule_t) * (size_t)(p->nrules + 2 * n));
     if (!nr) return -1;
 
     int w = 0;
@@ -449,8 +456,10 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
             dbox_free(nr);
             return -1;
         }
-        /* pattern "{norm}**" with recursive-glob suffix — also matches the
-         * directory itself */
+        /* 只读目录注入两条 deny：精确的 `{norm}`（目录自身）与 `{norm}/**`
+         * （子树）。glob 语义规定尾部 ** 不匹配目录自身，只写 `{norm}/**`
+         * 会让只读目录本身的写操作落回兜底规则（ask/allow）——只读暴露的
+         * "自身也不可改"语义失效。根目录 norm=="/" 时同样是 "/" + "/**" 两条。 */
         size_t plen = strlen(norm);
         char *pat = dbox_malloc(plen + 4);   /* slash + 双星号 + NUL */
         if (!pat) {
@@ -465,13 +474,18 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
             memcpy(pat, norm, plen);
             memcpy(pat + plen, "/**", 4);
         }
-        dbox_free(norm);
 
-        dbox_rule_t *r = &nr[w++];
-        memset(r, 0, sizeof(*r));
-        r->path = pat;
-        r->acc  = ACC_WRITE;
-        r->perm = PERM_DENY;
+        dbox_rule_t *exact = &nr[w++];
+        memset(exact, 0, sizeof(*exact));
+        exact->path = norm;              /* 所有权转移（不再 free） */
+        exact->acc  = ACC_WRITE;
+        exact->perm = PERM_DENY;
+
+        dbox_rule_t *deep = &nr[w++];
+        memset(deep, 0, sizeof(*deep));
+        deep->path = pat;
+        deep->acc  = ACC_WRITE;
+        deep->perm = PERM_DENY;
         cur = end;
     }
 
@@ -639,6 +653,19 @@ static int rule_spec_desc(const void *a, const void *b)
     const dbox_rule_t *rb = (const dbox_rule_t *)b;
     if (ra->spec > rb->spec) return -1;
     if (ra->spec < rb->spec) return 1;
+    /* 同 specificity 时按 perm 强弱降序（PERM_ALLOW=0 < ASK=1 < DENY=2）。
+     * 判定本身只依赖"spec 单调不增"（快路径据此提前结束），与同 spec 规则
+     * 之间的先后无关（同 spec 取 perm 更严者，不取先出现者）。次级键定的是
+     * 相等元素的相对次序，供三处消费：
+     *   1. debug-rules 打印的规则顺序；
+     *   2. [POLICY] 日志里 rule#N 的归因下标——Windows 的 Policy 按 p.rules[]
+     *      顺序 import 规则表，rule#N 就是本函数的排序结果（该索引已不再参与
+     *      判定，Windows 侧改为遍历取最优）；
+     *   3. cfg 序列化往返。
+     * 没有次级键时 qsort 对相等元素不稳定：同 spec 的 deny/allow 在数组里的
+     * 先后会随实现与元素个数漂移，"日志上哪条规则生效"变得不可复现。 */
+    if (ra->perm > rb->perm) return -1;
+    if (ra->perm < rb->perm) return 1;
     return 0;
 }
 

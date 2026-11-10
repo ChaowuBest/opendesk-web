@@ -69,7 +69,21 @@ DETOURS_OBJS = $(OBJDIR)\detours.obj $(OBJDIR)\image.obj $(OBJDIR)\creatwth.obj 
 MANAGER_OBJS = $(OBJDIR)\main.obj $(OBJDIR)\runner.obj $(OBJDIR)\endpoint.obj
 HOOK_OBJS = $(OBJDIR)\dllmain.obj $(OBJDIR)\hooks_file.obj $(OBJDIR)\hooks_proc.obj $(OBJDIR)\hooks_nt.obj $(OBJDIR)\hooks_symlink.obj
 INJECT_OBJ = $(OBJDIR)\inject.obj
-HEADERS = $(COMMON)\*.h $(HOOK)\*.h
+# 头文件依赖（下面 -- 编译依赖 -- 段把它们挂到 .obj 上）。nmake 的双后缀推断
+# 规则只能表达 "x.cpp -> x.obj"，无法声明头文件依赖；改 header 后未改动的 .cpp
+# 会复用旧 .obj，新旧结构体布局混进同一个二进制。曾发生：Rule 增加 CoreGlob/spec
+# 成员后 static 的 main.obj 仍按旧 sizeof 遍历 vector，产物 `debug-rules` 直接
+# 0xC0000005（全量重建即恢复），以及一次"能跑但每 op 少判定一次"的隐性不一致。
+# 这里显式列全（不用通配符：依赖里的通配符一旦匹配不到会让 nmake 报
+# "don't know how to make"），让改任一共享头都触发相关 TU 重编。
+COMMON_HEADERS = $(COMMON)\ask.h $(COMMON)\core_policy.h $(COMMON)\hook_scope.h \
+    $(COMMON)\json.h $(COMMON)\log.h $(COMMON)\paths.h $(COMMON)\policy.h $(COMMON)\utf.h
+HOOK_HEADERS = $(HOOK)\hook.h $(HOOK)\inject.h
+HEADERS = $(COMMON_HEADERS) $(HOOK_HEADERS)
+# core 的头：dynobox.h 定义规则/glob/policy 结构（桥接层直接 include），
+# policy.h 被 policy.c 自身 include（改它同样要重编），mini_toml.h/util.h 同理。
+CORE_HEADERS = $(CORE_SRC_DIR)\dynobox.h $(CORE_SRC_DIR)\mini_toml.h \
+    $(CORE_SRC_DIR)\policy.h $(CORE_SRC_DIR)\util.h
 
 all: $(OBJDIR) $(OUT) $(OUT)\sandbox.exe $(OUT)\$(HOOK_DLL)
 
@@ -78,6 +92,13 @@ $(OUT):
 
 $(OBJDIR):
 	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
+
+# -- 编译依赖（头文件） -------------------------------------------------------
+# 这些目标本身不带命令：真正编译由上面/下面的推断规则提供，这里只补依赖，
+# 使头文件时间戳也能判定 .obj 是否过期。core 头一并挂上：core_policy.cpp 直接
+# include dynobox.h（core 的规则/glob 结构定义），改它同样要重编。
+$(COMMON_OBJS) $(MANAGER_OBJS) $(HOOK_OBJS) $(INJECT_OBJ): $(HEADERS) $(CORE_HEADERS)
+$(DETOURS_OBJS): $(DETOURS)\detours.h $(DETOURS)\detver.h
 
 # -- 编译推断规则 -------------------------------------------------------------
 
@@ -99,15 +120,15 @@ $(OBJDIR):
 
 # -- 共享 core 的 .c 编译（C 编译单元，include core 目录；/TC 强制 C 编译） -----
 # 显式规则（nmake 的 {dir}.c{dir2}.obj 双后缀推断不支持自定义目标后缀）。
-$(OBJDIR)\mini_toml_core.obj: $(CORE_SRC_DIR)\mini_toml.c
+$(OBJDIR)\mini_toml_core.obj: $(CORE_SRC_DIR)\mini_toml.c $(CORE_HEADERS)
 	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
 	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\mini_toml.c
 
-$(OBJDIR)\policy_core.obj: $(CORE_SRC_DIR)\policy.c $(CORE_SRC_DIR)\pthread_compat.h
+$(OBJDIR)\policy_core.obj: $(CORE_SRC_DIR)\policy.c $(CORE_HEADERS) $(CORE_SRC_DIR)\pthread_compat.h
 	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
 	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\policy.c
 
-$(OBJDIR)\util_core.obj: $(CORE_SRC_DIR)\util.c $(CORE_SRC_DIR)\util.h
+$(OBJDIR)\util_core.obj: $(CORE_SRC_DIR)\util.c $(CORE_HEADERS)
 	@if not exist "$(OBJDIR)" mkdir "$(OBJDIR)"
 	$(CC) $(CFLAGS) /TC /I$(CORE_SRC_DIR) /Fo$@ /c $(CORE_SRC_DIR)\util.c
 

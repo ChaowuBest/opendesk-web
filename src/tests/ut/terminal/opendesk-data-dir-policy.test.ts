@@ -6,7 +6,7 @@
  * policyLinuxTail 共用。本测试固化：
  * - 构建器纯函数行为：trash 写 deny、凭据文件 read ask、整树读写 allow、
  *   主实例写放行粒度（Windows 子目录 / Linux 整树）、-debug 目录防重入；
- * - Windows 接入：虚拟路径映射、readonly 跳过、顺序首个命中下更具体规则前置；
+ * - Windows 接入：虚拟路径映射、readonly 跳过、更具体规则（凭据/trash）排在整树通配之前导出；
  * - Linux 接入：宿主真实路径形态、readonly 跳过、主实例 trash deny。
  */
 
@@ -41,7 +41,7 @@ describe('opendeskDataDirRules（单一来源构建器）', () => {
         const at = (path: string, action: string) =>
             rules.find((rule) => rule.pathPattern === path && rule.action === action);
 
-        // 更具体规则在整树通配之前（顺序首个命中生效）
+        // 更具体规则排在整树通配之前导出（判定按 spec 取优、与位置无关）
         const trashIndex = rules.findIndex(
             (rule) => rule.pathPattern === `${OPENDESK_WIN.replace(/\\/g, '/')}/trash/**`
         );
@@ -105,7 +105,8 @@ describe('Windows policyText 接入框架数据目录规则', () => {
         for (const pattern of ['setting.json', '*.enc', '**/*.enc']) {
             expect(rulesFor(text, `${VIRTUAL_OPENDESK}-debug/${pattern}`, 'read')?.perm).toBe('ask');
         }
-        // 顺序首个命中生效：凭据 ask 与 trash deny 必须声明在整树 allow 之前
+        // 凭据 ask 与 trash deny 排在整树 allow 之前导出（判定按 spec 取优、
+        // 与位置无关，这里只固化导出顺序）
         const credIndex = text.indexOf(`path = "${VIRTUAL_OPENDESK}-debug/setting.json"`);
         const trashIndex = text.indexOf(`path = "${VIRTUAL_OPENDESK}-debug/trash/**"`);
         const treeReadIndex = text.indexOf(`path = "${VIRTUAL_OPENDESK}-debug/**"\naccess = "read"`);
@@ -160,7 +161,8 @@ describe('Linux policyTextLinux 接入框架数据目录规则', () => {
         for (const pattern of ['setting.json', '*.enc', '**/*.enc']) {
             expect(rulesFor(text, `/home/tester/.opendesk-debug/${pattern}`, 'read')?.perm).toBe('ask');
         }
-        // 更具体规则先于整树通配（顺序首个命中）
+        // 精确文件规则比整树通配更具体（most-specific 下由 spec 决定，与位置无关；
+        // 此处只固化导出顺序）
         const credIndex = text.indexOf('path = "/home/tester/.opendesk-debug/setting.json"');
         const treeReadIndex = text.indexOf('path = "/home/tester/.opendesk-debug/**"\naccess = "read"');
         expect(credIndex).toBeLessThan(treeReadIndex);
@@ -209,13 +211,21 @@ describe('Linux policyTextLinux 接入框架数据目录规则', () => {
 });
 
 describe('凭据 read ask 覆盖数据目录下所有 .enc（通配而非文件名清单）', () => {
-    /** 按沙箱"顺序首个命中"语义求值：规则数组顺序即生效顺序 */
-    function firstMatch(rules: PermissionRule[], filePath: string, action: string): string {
+    /** 按沙箱的 most-specific 语义求值：spec 最大者胜，同 spec 取 deny > ask > allow
+     * （与 native core 的 rule_specificity 一致：剥掉尾部 `/**` 后的前缀长度）。 */
+    function bestMatch(rules: PermissionRule[], filePath: string, action: string): string {
+        const rank = { deny: 0, ask: 1, allow: 2 } as const;
+        const spec = (pattern: string) => (pattern.endsWith('/**') ? pattern.length - 3 : pattern.length);
+        let best: { spec: number; effect: PermissionRule['effect'] } | undefined;
         for (const rule of rules) {
             if (rule.action !== action) continue;
-            if (picomatch(rule.pathPattern, { dot: true })(filePath)) return rule.effect;
+            if (!picomatch(rule.pathPattern, { dot: true })(filePath)) continue;
+            const current = spec(rule.pathPattern);
+            if (!best || current > best.spec || (current === best.spec && rank[rule.effect] < rank[best.effect])) {
+                best = { spec: current, effect: rule.effect };
+            }
         }
-        return 'ask';
+        return best ? best.effect : 'ask';
     }
 
     // 覆盖根目录顶层与 apps/<bundle>/ 子目录两类落点：adminconsole 令牌已归入
@@ -230,20 +240,20 @@ describe('凭据 read ask 覆盖数据目录下所有 .enc（通配而非文件�
     test('调试实例：任意层级的 .enc 都命中 ask，不被整树 read allow 吞掉', () => {
         const rules = opendeskDataDirRules('/home/tester/.opendesk', { mainWriteGranularity: 'tree' });
         for (const rel of CREDENTIAL_PATHS) {
-            expect(firstMatch(rules, `/home/tester/.opendesk-debug/${rel}`, 'read')).toBe('ask');
+            expect(bestMatch(rules, `/home/tester/.opendesk-debug/${rel}`, 'read')).toBe('ask');
         }
     });
 
     test('主实例：任意层级的 .enc read 不放通为 allow', () => {
         const rules = opendeskDataDirRules('/home/tester/.opendesk', { mainWriteGranularity: 'tree' });
         for (const rel of CREDENTIAL_PATHS) {
-            expect(firstMatch(rules, `/home/tester/.opendesk/${rel}`, 'read')).toBe('ask');
+            expect(bestMatch(rules, `/home/tester/.opendesk/${rel}`, 'read')).toBe('ask');
         }
     });
 
     test('非凭据文件仍由调试实例整树 read allow 放通（Electron 启动 IO 不受影响）', () => {
         const rules = opendeskDataDirRules('/home/tester/.opendesk', { mainWriteGranularity: 'tree' });
-        expect(firstMatch(rules, '/home/tester/.opendesk-debug/Cache/index', 'read')).toBe('allow');
-        expect(firstMatch(rules, '/home/tester/.opendesk-debug/logs/run.log', 'read')).toBe('allow');
+        expect(bestMatch(rules, '/home/tester/.opendesk-debug/Cache/index', 'read')).toBe('allow');
+        expect(bestMatch(rules, '/home/tester/.opendesk-debug/logs/run.log', 'read')).toBe('allow');
     });
 });

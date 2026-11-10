@@ -88,7 +88,10 @@ void  dbox_policy_free(dbox_policy_t *p);
 void  dbox_policy_compile(dbox_policy_t *p);
 
 /* Evaluate a path for the given access mask (single category).
- * Returns PERM_ALLOW / PERM_DENY. `ask_cb`-free core used by tests. */
+ * Returns PERM_ALLOW / PERM_ASK / PERM_DENY — no ask transport is performed, so
+ * ASK means "a rule wants the endpoint consulted"; the caller decides what to do
+ * with it: dbox_policy_check_ex() sends it upstream (+ grants/cache), while
+ * deny-only probes (preload.c gate_meta_read) treat anything but DENY as pass. */
 dperm_t dbox_policy_eval_static(const dbox_policy_t *p, const char *path, int acc);
 
 /* Full evaluation incl. grants + ask transport. `now_ms` = monotonic ms. */
@@ -102,9 +105,13 @@ int dbox_system_allow(const char *path, int acc);
 
 /* ---- glob (path pattern) ----
  * a two-star segment crosses directory levels, one-star stays within one
- * level, question-mark matches a single character. A trailing two-star
- * pattern also matches the directory itself; a lone two-star pattern
- * matches the whole volume. */
+ * level, question-mark matches a single character. A TRAILING two-star
+ * segment covers the subtree only and does NOT match the directory itself
+ * (`/a/**` matches `/a/x` but not `/a`; `/**` does not match `/`) — write
+ * `path = "/a"` explicitly to cover the directory. A non-trailing two-star
+ * still matches zero or more segments (e.g. `/a/` + two-star + `/b` matches
+ * `/a/b`). Same semantics on every platform (core / macOS boxdylib / Windows
+ * Policy). */
 int dbox_glob_match(const char *pat, const char *path);
 
 /* ---- pre-compiled glob ----

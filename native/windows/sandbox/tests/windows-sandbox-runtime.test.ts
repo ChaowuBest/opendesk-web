@@ -29,6 +29,11 @@ async function runSandbox(directory: string, command: string, rules = '', extraA
             windowsHide: true
         }
     );
+    // spawn 失败（ENOENT/EACCES：二进制未构建/被杀软隔离）只 emit 'error'；无人
+    // 监听时 Node 会以 "Unhandled 'error' event" 终止整个测试进程。这里捕获后让
+    // 下面的 close 路径带着负 code 走到 assert，产出可读的失败信息。
+    let spawnError: NodeJS.ErrnoException | null = null;
+    proc.once('error', (e) => { spawnError = e as NodeJS.ErrnoException; });
     const completion = once(proc, 'close');
     let stdout = '';
     let stderr = '';
@@ -38,6 +43,9 @@ async function runSandbox(directory: string, command: string, rules = '', extraA
     const timer = setTimeout(() => proc.kill(), 30000);
     try {
         const [code] = await completion;
+        if (spawnError) {
+            assert.fail(`sandbox.exe spawn failed: ${spawnError.code ?? 'unknown'}（先跑 npm run build-sandbox:windows）`);
+        }
         assert.equal(code, 0, stdout + stderr + (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''));
         return { stdout, stderr, log: fs.readFileSync(log, 'utf8') };
     } finally {
