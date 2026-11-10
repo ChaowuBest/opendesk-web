@@ -10,6 +10,8 @@ import { parseHTML } from 'linkedom';
  *    且 terminal.onData 的 sessionId 拦截导致无法输入。
  * 2. hidden 期间切换 tab 的 display 变化同样不会触发 ResizeObserver 回调：
  *    页面恢复可见时（visibilitychange）需要兜底补启动尚未建立的会话。
+ * 3. 默认收起、展开才建联：rAF 冻结不能阻断 profile 预载；会话由用户展开触发，
+ *    visibilitychange 兜底覆盖“已展开但 host 几何不可见”的补启动场景。
  */
 
 function rect(top: number, bottom: number): () => object {
@@ -160,7 +162,11 @@ describe('task-terminal-panel 会话启动时序（页面后台 / rAF 冻结）'
         doc.dispatchEvent(new win.Event('visibilitychange'));
     }
 
-    test('页面后台挂载（rAF 冻结）时仍会加载 profile 并建立会话', async () => {
+    function clickToggle(panel: any): void {
+        panel.querySelector('[data-task-terminal-toggle]').dispatchEvent(new win.Event('click', { bubbles: true }));
+    }
+
+    test('页面后台挂载（rAF 冻结）时仍会加载 profile；展开后建立会话', async () => {
         const panel = createPanel(300);
         await flushMicrotasks();
         // rAF 冻结不能阻断 profile 加载：否则 sessionId 永远为 null，
@@ -168,16 +174,23 @@ describe('task-terminal-panel 会话启动时序（页面后台 / rAF 冻结）'
         expect(listProfilesCalls).toBe(1);
         const select = panel.querySelector('[data-task-terminal-profile]');
         expect(select.children.length).toBe(1);
-        // host 可见（tab 已激活），profile 就绪后应立即建立会话
+        // 默认收起：profile 就绪也不建联
+        expect(createCalls).toBe(0);
+        clickToggle(panel);
+        await flushMicrotasks();
         expect(createCalls).toBe(1);
         expect(startCalls).toBe(1);
     });
 
-    test('后台挂载且 host 不可见：恢复可见时 visibilitychange 兜底补启动', async () => {
+    test('后台挂载且 host 不可见：展开不建联，恢复可见时 visibilitychange 兜底补启动', async () => {
         const panel = createPanel(0);
         await flushMicrotasks();
         expect(listProfilesCalls).toBe(1);
-        expect(createCalls).toBe(0); // host 不可见（tab 未激活），暂不启动
+        expect(createCalls).toBe(0); // 默认收起
+        clickToggle(panel);
+        await flushMicrotasks();
+        // host 不可见（tab 未激活）：已展开也不建联，等几何可见
+        expect(createCalls).toBe(0);
         // hidden 期间用户切到 workspace tab：ResizeObserver 同样被冻结不回调，
         // 只有恢复可见后的 visibilitychange 能补启动。
         setHostHeight(panel, 300);
@@ -188,7 +201,9 @@ describe('task-terminal-panel 会话启动时序（页面后台 / rAF 冻结）'
     });
 
     test('恢复可见时已有会话则不重启（防切窗丢会话）', async () => {
-        createPanel(300);
+        const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
         await flushMicrotasks();
         expect(createCalls).toBe(1);
         visibilityState = 'visible';
@@ -200,6 +215,8 @@ describe('task-terminal-panel 会话启动时序（页面后台 / rAF 冻结）'
 
     test('断开连接后移除 visibilitychange 监听', async () => {
         const panel = createPanel(0);
+        await flushMicrotasks();
+        clickToggle(panel); // 展开后无会话（host 不可见），销毁后不得再补建
         await flushMicrotasks();
         panel.remove();
         await flushMicrotasks();

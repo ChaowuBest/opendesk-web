@@ -8,6 +8,7 @@ import { parseHTML } from 'linkedom';
  *    声明了 display:block 作者样式，恒覆盖 hidden 属性的 UA 规则（黑屏 bug 同构陷阱）。
  * 2. 开关关闭时不加载 profile、不建立会话；运行中关闭要停掉已有会话（防 PTY 泄漏）。
  * 3. 设置读取失败保持隐藏（默认关闭），与 homepage 的 immersive_desktop 消费模式一致。
+ * 4. 开关开启后面板默认收起：只预载 profile、不建联，用户展开（toggle）才建联。
  */
 
 function rect(top: number, bottom: number): () => object {
@@ -168,6 +169,10 @@ describe('task-terminal-panel 实验性功能门禁（builtin_terminal）', () =
         }
     }
 
+    function clickToggle(panel: any): void {
+        panel.querySelector('[data-task-terminal-toggle]').dispatchEvent(new win.Event('click', { bubbles: true }));
+    }
+
     test('开关关闭：面板以内联 display 隔离，且不加载 profile、不建立会话', async () => {
         const panel = createPanel(300);
         await flushMicrotasks();
@@ -178,12 +183,16 @@ describe('task-terminal-panel 实验性功能门禁（builtin_terminal）', () =
         expect(createCalls).toBe(0);
     });
 
-    test('开关开启：面板显示并正常建立会话', async () => {
+    test('开关开启：面板显示但默认收起，用户展开后建立会话', async () => {
         builtinTerminalEnabled = true;
         const panel = createPanel(300);
         await flushMicrotasks();
         expect(panel.style.display).toBe('');
         expect(listProfilesCalls).toBe(1);
+        // 默认收起：profile 已预载但不建联
+        expect(createCalls).toBe(0);
+        clickToggle(panel);
+        await flushMicrotasks();
         expect(createCalls).toBe(1);
         expect(startCalls).toBe(1);
     });
@@ -191,6 +200,8 @@ describe('task-terminal-panel 实验性功能门禁（builtin_terminal）', () =
     test('运行中关闭开关：隐藏面板并关闭已有会话', async () => {
         builtinTerminalEnabled = true;
         const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
         await flushMicrotasks();
         expect(createCalls).toBe(1);
         emitSettingChanged(false);
@@ -203,6 +214,8 @@ describe('task-terminal-panel 实验性功能门禁（builtin_terminal）', () =
     test('运行中重新开启：恢复显示并重建会话（profile 已在内存，不重新加载）', async () => {
         builtinTerminalEnabled = true;
         const panel = createPanel(300);
+        await flushMicrotasks();
+        clickToggle(panel);
         await flushMicrotasks();
         emitSettingChanged(false);
         await flushMicrotasks();

@@ -2624,6 +2624,8 @@ export const zhCn: Record<string, string> = {
     'renderer.taskTerminal.exited': '已退出（代码 ${code}）',
     'renderer.taskTerminal.unavailable': '当前平台没有可用 Shell',
     'renderer.taskTerminal.resize': '拖拽调整终端高度',
+    'renderer.taskTerminal.expand': '展开终端',
+    'renderer.taskTerminal.collapse': '收起终端',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': '打开智能体对话',
     'renderer.applicationAgent.close': '收起智能体对话',

@@ -2716,6 +2716,8 @@ export const enUs: Record<string, string> = {
     'renderer.taskTerminal.exited': 'Exited (code ${code})',
     'renderer.taskTerminal.unavailable': 'No local shell is available',
     'renderer.taskTerminal.resize': 'Drag to resize terminal height',
+    'renderer.taskTerminal.expand': 'Expand terminal',
+    'renderer.taskTerminal.collapse': 'Collapse terminal',
     'renderer.applicationAgent.title': 'OpenDesk',
     'renderer.applicationAgent.open': 'Open agent chat',
     'renderer.applicationAgent.close': 'Collapse agent chat',

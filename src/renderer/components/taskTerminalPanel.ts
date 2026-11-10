@@ -67,10 +67,18 @@ const PANEL_CSS = `
        纯黑背景盖住终端主体，absolute 定位还截获 mousedown 使 terminal.focus()
        永不触发（黑屏 + 输入无响应）。必须用同源规则显式恢复 hidden 语义。 */
     .task-terminal-message[hidden] { display: none !important; }
+    .task-terminal-actions button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--od-border-strong, #d1d5db); border-radius: 5px; background: var(--od-bg-elevated, #fff); color: var(--od-text, #374151); font: inherit; font-size: 11px; cursor: pointer; }
+    .task-terminal-actions button:hover { background: var(--od-bg-hover, #f3f4f6); }
+    /* 收起态依赖 [hidden] 折叠 body/resizer：作者源一旦为二者声明 display，
+       将恒覆盖 UA 样式表的 [hidden]{display:none}（message 遮罩黑屏 bug 同构陷阱），
+       必须用同源规则显式恢复 hidden 语义。 */
+    .task-terminal-body[hidden] { display: none !important; }
+    .task-terminal-resizer[hidden] { display: none !important; }
 `;
 
 /**
  * 常驻于任务面板“工作空间”tab 底部的内置终端。
+ * 默认收起：挂载后只显示标题栏、不建立会话，用户展开（toggle）才建联；收起不销毁会话。
  * 目录不提供手动选择：始终由主进程按任务工作区解析（回落全局工作区）。
  */
 export class TaskTerminalPanel extends HTMLElement {
@@ -105,6 +113,8 @@ export class TaskTerminalPanel extends HTMLElement {
     /** 实验性功能（builtin_terminal）开关状态：设置读取完成前视为关闭。 */
     private featureEnabled = false;
     private settingUnsubscribe: (() => void) | null = null;
+    /** 默认收起：只显示标题栏、不建联，用户展开（toggle）才建联；收起不销毁已有会话。 */
+    private collapsed = true;
 
     // 拖拽监听挂在 window 上（指针可能移出面板甚至窗口），以 pointerId 过滤多指。
     private readonly onDragPointerMove = (event: PointerEvent): void => {
@@ -249,7 +259,7 @@ export class TaskTerminalPanel extends HTMLElement {
         this.innerHTML = `
             <style>${PANEL_CSS}</style>
             <div class="task-terminal-resizer" data-task-terminal-resizer data-od-no-longpress="1"
-                role="separator" aria-orientation="horizontal" aria-label="${this.t('renderer.taskTerminal.resize')}"></div>
+                role="separator" aria-orientation="horizontal" aria-label="${this.t('renderer.taskTerminal.resize')}"${this.collapsed ? ' hidden' : ''}></div>
             <section class="task-terminal" data-task-terminal>
                 <div class="task-terminal-bar">
                     <span class="task-terminal-title">
@@ -259,9 +269,15 @@ export class TaskTerminalPanel extends HTMLElement {
                     <span class="task-terminal-status" data-task-terminal-status>${this.t('renderer.taskTerminal.closed')}</span>
                     <div class="task-terminal-actions">
                         <select data-task-terminal-profile aria-label="${this.t('renderer.taskTerminal.profile')}"></select>
+                        <button type="button" class="task-terminal-toggle" data-task-terminal-toggle
+                            aria-expanded="${this.collapsed ? 'false' : 'true'}"
+                            title="${this.t('renderer.taskTerminal.expand')}"
+                            aria-label="${this.t('renderer.taskTerminal.expand')}">
+                            <i class="fa-solid ${this.collapsed ? 'fa-chevron-up' : 'fa-chevron-down'}" aria-hidden="true"></i>
+                        </button>
                     </div>
                 </div>
-                <div class="task-terminal-body" style="height: ${this.currentHeight}px">
+                <div class="task-terminal-body" style="height: ${this.currentHeight}px"${this.collapsed ? ' hidden' : ''}>
                     <div class="task-terminal-host" data-task-terminal-host></div>
                     <div class="task-terminal-message" data-task-terminal-message hidden></div>
                 </div>
@@ -282,6 +298,7 @@ export class TaskTerminalPanel extends HTMLElement {
             this.profileId = this.profileSelect?.value || '';
             void this.restartSession();
         });
+        this.querySelector('[data-task-terminal-toggle]')?.addEventListener('click', () => this.toggleCollapsed());
     }
 
     private startDrag(pointerId: number, startClientY: number): void {
@@ -374,9 +391,43 @@ export class TaskTerminalPanel extends HTMLElement {
         return !!host && host.getBoundingClientRect().height > 0;
     }
 
+    /** 收起/展开终端主体。收起只折叠 UI，不销毁会话（后台命令继续跑）；展开是建联的唯一主动入口。 */
+    private toggleCollapsed(): void {
+        this.collapsed = !this.collapsed;
+        this.applyCollapsedState();
+        if (this.collapsed) return;
+        // 展开走局部更新而非重绘 render：已 open 的 xterm 实例挂在旧 host 上，
+        // 重绘 innerHTML 会使其脱挂（黑屏）。这里直接补 open/fit 并按需建联；
+        // host 几何不可见（tab 未激活）时留待 visibilitychange / resize 兜底。
+        this.openTerminal();
+        this.resizeTerminal();
+        if (this.featureEnabled && this.profileId && !this.sessionId && this.isTerminalVisible()) {
+            void this.restartSession();
+        }
+    }
+
+    private applyCollapsedState(): void {
+        const toggle = this.querySelector<HTMLElement>('[data-task-terminal-toggle]');
+        if (toggle) {
+            const label = this.t(this.collapsed ? 'renderer.taskTerminal.expand' : 'renderer.taskTerminal.collapse');
+            toggle.setAttribute('aria-expanded', this.collapsed ? 'false' : 'true');
+            toggle.setAttribute('title', label);
+            toggle.setAttribute('aria-label', label);
+            const icon = toggle.querySelector('i');
+            if (icon) icon.className = `fa-solid ${this.collapsed ? 'fa-chevron-up' : 'fa-chevron-down'}`;
+        }
+        const body = this.querySelector<HTMLElement>('.task-terminal-body');
+        for (const element of [this.resizerElement, body]) {
+            if (!element) continue;
+            if (this.collapsed) element.setAttribute('hidden', '');
+            else element.removeAttribute('hidden');
+        }
+    }
+
     private async restartSession(): Promise<void> {
-        // 实验性功能未开启时不建立会话（visibilitychange / resize / 任务切换兜底都被拦截）。
-        if (!this.featureEnabled) return;
+        // 实验性功能未开启或面板收起时不建立会话（visibilitychange / resize /
+        // 任务切换 / profile 切换等兜底都被拦截）：建联的唯一主动路径是用户展开。
+        if (!this.featureEnabled || this.collapsed) return;
         const generation = ++this.generation;
         await this.closeSession();
         if (generation !== this.generation || !this.profileId) return;
