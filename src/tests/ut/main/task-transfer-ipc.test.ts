@@ -9,6 +9,7 @@ const importTasks = jest.fn<any>();
 const warn = jest.fn();
 const currentWorkspace = jest.fn(() => '/default');
 jest.unstable_mockModule('electron', () => ({
+    app: { once: jest.fn() },
     dialog: { showOpenDialog: chooseFile },
     ipcMain: { handle: (name: string, handler: any) => handlers.set(name, handler) }
 }));
@@ -49,6 +50,17 @@ describe('task transfer workspace IPC', () => {
     afterEach(async () => {
         await invoke('discardTaskImport', token);
         fs.rmSync(directory, { recursive: true, force: true });
+    });
+
+    test('returns the localized ZIP corruption error before showing a preview', async () => {
+        const file = path.join(directory, 'broken.zip');
+        fs.writeFileSync(file, 'PK\x03\x04');
+        chooseFile.mockResolvedValueOnce({ canceled: false, filePaths: [file] });
+        expect(await invoke('previewTaskImport')).toEqual({
+            status: 'error',
+            message: 'taskTransfer.error.corruptArchive'
+        });
+        expect(importTasks).not.toHaveBeenCalled();
     });
 
     test('uses the chosen directory for the batch and consumes the preview once', async () => {

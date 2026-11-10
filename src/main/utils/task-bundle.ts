@@ -11,11 +11,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { inflateRaw, crc32 } from 'node:zlib';
-import { promisify } from 'node:util';
-import { setImmediate } from 'node:timers/promises';
-import AdmZip from 'adm-zip';
-import { buildAtomicWriteTmpPath } from './temp.js';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { StringDecoder } from 'node:string_decoder';
+import { crc32 } from 'node:zlib';
+import yauzl, { type Entry, type ZipFile } from 'yauzl';
+import yazl from 'yazl';
+import { buildAtomicWriteTmpPath, getTempDir } from './temp.js';
 
 import { TaskTransferError } from './task-transfer-error.js';
 export { TaskTransferError, type TaskTransferErrorCode } from './task-transfer-error.js';
@@ -26,18 +28,16 @@ export interface TaskImportEntry {
     name: string;
     parentId: string | null;
     messageCount: number;
-    json: TaskJson;
+    readJson(): Promise<TaskJson>;
 }
 
-export const TASK_BUNDLE_LIMITS = {
-    tasks: 1000,
-    taskBytes: 16 * 1024 * 1024,
-    totalBytes: 128 * 1024 * 1024,
-    fileBytes: 64 * 1024 * 1024
-};
+export interface TaskImportPreview {
+    entries: TaskImportEntry[];
+    dispose(): Promise<void>;
+}
+
 const safeId = (id: unknown): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(id);
 const isObject = (value: unknown): value is TaskJson => !!value && typeof value === 'object' && !Array.isArray(value);
-const inflate = promisify(inflateRaw);
 
 function validMessage(message: unknown): boolean {
     if (!isObject(message)) return false;
@@ -54,7 +54,7 @@ function validMessage(message: unknown): boolean {
     });
 }
 
-function parseEntry(raw: string, id?: string): TaskImportEntry {
+function parseTask(raw: string, id?: string): TaskJson {
     try {
         const json = JSON.parse(raw);
         if (
@@ -68,171 +68,220 @@ function parseEntry(raw: string, id?: string): TaskImportEntry {
         ) {
             throw new TaskTransferError('invalidTask');
         }
-        return {
-            id: json.task_id,
-            name: typeof json.task_name === 'string' ? json.task_name : '',
-            parentId: typeof json.parent_id === 'string' ? json.parent_id : null,
-            messageCount: json.chat_context.messages.length,
-            json
-        };
-    } catch {
-        throw new TaskTransferError('invalidTask');
+        return json;
+    } catch (error) {
+        if (error instanceof TaskTransferError) throw error;
+        throw new TaskTransferError('invalidTask', error);
     }
 }
 
-async function readLimited(filePath: string): Promise<Buffer> {
-    const handle = await fs.promises.open(filePath, 'r');
-    try {
-        const stat = await handle.stat();
-        if (!stat.isFile() || stat.size > TASK_BUNDLE_LIMITS.fileBytes) throw new TaskTransferError('tooLarge');
-        // A fixed buffer also bounds a file that grows between stat and read.
-        const bytes = Buffer.alloc(stat.size + 1);
-        let offset = 0;
-        while (offset < bytes.length) {
-            const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
-            if (!bytesRead) break;
-            offset += bytesRead;
-        }
-        if (offset !== stat.size) throw new TaskTransferError('invalidBundle');
-        return bytes.subarray(0, offset);
-    } finally {
-        await handle.close();
-    }
+async function previewEntry(read: () => Promise<TaskJson>): Promise<TaskImportEntry> {
+    const json = await read();
+    return {
+        id: json.task_id,
+        name: typeof json.task_name === 'string' ? json.task_name : '',
+        parentId: typeof json.parent_id === 'string' ? json.parent_id : null,
+        messageCount: json.chat_context.messages.length,
+        readJson: read
+    };
 }
 
-export async function readTaskImportFile(filePath: string): Promise<TaskImportEntry[]> {
-    const bytes = await readLimited(filePath);
-    if (path.extname(filePath).toLowerCase() === '.json') {
-        if (bytes.length > TASK_BUNDLE_LIMITS.taskBytes) throw new TaskTransferError('tooLarge');
-        return [parseEntry(bytes.toString('utf8'))];
-    }
+function archiveError(error: unknown, entry?: string): TaskTransferError {
+    const systemError = error as NodeJS.ErrnoException;
+    const code =
+        systemError?.code === 'ERR_STRING_TOO_LONG'
+            ? 'taskExceedsRuntimeCapacity'
+            : systemError?.syscall && systemError?.errno !== undefined
+              ? 'writeFailed'
+              : 'corruptArchive';
+    return new TaskTransferError(code, error, 'readImportFile', entry);
+}
+
+async function indexArchive(zip: ZipFile): Promise<Map<string, Entry>> {
+    const entries = new Map<string, Entry>();
     try {
-        const zip = new AdmZip(bytes);
-        const entries = zip.getEntries();
-        if (entries.length > TASK_BUNDLE_LIMITS.tasks + 2) throw new TaskTransferError('tooLarge');
-        const names = new Set<string>();
-        let total = 0;
-        for (const entry of entries) {
-            const name = entry.entryName;
+        for await (const entry of zip.eachEntry()) {
+            const name = String(entry.fileName);
             if (
-                names.has(name) ||
+                entries.has(name) ||
                 !/^(manifest\.json|tasks\/|tasks\/[a-zA-Z0-9_-]{1,128}\.json)$/.test(name) ||
-                entry.header.flags & 1 ||
-                ((entry.attr >>> 16) & 0xf000) === 0xa000
+                entry.isEncrypted() ||
+                (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) ||
+                ((entry.externalFileAttributes >>> 16) & 0xf000) === 0xa000
             ) {
                 throw new TaskTransferError('invalidBundle');
             }
-            names.add(name);
-            total += entry.header.size;
-            if (entry.header.size > TASK_BUNDLE_LIMITS.taskBytes || total > TASK_BUNDLE_LIMITS.totalBytes) {
-                throw new TaskTransferError('tooLarge');
-            }
+            entries.set(name, entry);
         }
-        let inflatedBytes = 0;
-        const readEntry = async (name: string): Promise<string> => {
-            const entry = zip.getEntry(name);
-            if (!entry || entry.isDirectory) throw new TaskTransferError('invalidBundle');
-            const compressed = entry.getCompressedData();
-            // Do not trust the ZIP's advertised size: bound the inflater's actual output.
-            const data =
-                entry.header.method === 0
-                    ? compressed
-                    : entry.header.method === 8
-                      ? await inflate(compressed, { maxOutputLength: TASK_BUNDLE_LIMITS.taskBytes }).catch(() => {
-                            throw new TaskTransferError('tooLarge');
-                        })
-                      : undefined;
-            inflatedBytes += data?.length ?? 0;
-            if (inflatedBytes > TASK_BUNDLE_LIMITS.totalBytes) throw new TaskTransferError('tooLarge');
-            if (!data || data.length !== entry.header.size || crc32(data) !== entry.header.crc) {
-                throw new TaskTransferError('invalidBundle');
-            }
-            return data.toString('utf8');
-        };
-        const manifest = JSON.parse(await readEntry('manifest.json'));
-        if (!isObject(manifest) || manifest.format !== 'opendesk-task-bundle')
-            throw new TaskTransferError('invalidBundle');
-        if (manifest.version !== 1) throw new TaskTransferError('unsupportedVersion');
-        if (
-            !Array.isArray(manifest.tasks) ||
-            !manifest.tasks.length ||
-            manifest.tasks.length > TASK_BUNDLE_LIMITS.tasks
-        ) {
-            throw new TaskTransferError('invalidBundle');
-        }
-        const ids = new Set<string>();
-        for (const item of manifest.tasks) {
-            if (!isObject(item) || !safeId(item.id) || ids.has(item.id) || item.path !== `tasks/${item.id}.json`) {
-                throw new TaskTransferError('invalidBundle');
-            }
-            ids.add(item.id);
-        }
-        if (
-            entries.some(
-                (entry) =>
-                    !entry.isDirectory &&
-                    entry.entryName !== 'manifest.json' &&
-                    !manifest.tasks.some((item: any) => item.path === entry.entryName)
-            )
-        )
-            throw new TaskTransferError('invalidBundle');
-        const result: TaskImportEntry[] = [];
-        for (const item of manifest.tasks) result.push(parseEntry(await readEntry(item.path), item.id));
-        const byId = new Map(result.map((entry) => [entry.id, entry]));
-        for (const entry of result) {
-            const visited = new Set<string>();
-            let current: TaskImportEntry | undefined = entry;
-            while (current) {
-                if (visited.has(current.id)) {
-                    throw new TaskTransferError('invalidTask');
-                }
-                visited.add(current.id);
-                current = current.parentId ? byId.get(current.parentId) : undefined;
-            }
-        }
-        return result;
     } catch (error) {
-        if (error instanceof TaskTransferError) throw error;
-        throw new TaskTransferError('invalidBundle');
+        throw error instanceof TaskTransferError ? error : archiveError(error);
+    }
+    return entries;
+}
+
+async function readArchiveEntry(zip: ZipFile, entry: Entry): Promise<string> {
+    let stream: Readable | undefined;
+    try {
+        stream = await zip.openReadStreamPromise(entry);
+        const decoder = new StringDecoder('utf8');
+        let result = '';
+        let checksum = 0;
+        let length = 0;
+        for await (const chunk of stream) {
+            length += chunk.length;
+            if (length > entry.uncompressedSize) throw new Error('ZIP entry exceeded its declared size');
+            checksum = crc32(chunk, checksum);
+            result += decoder.write(chunk);
+        }
+        if (length !== entry.uncompressedSize || checksum !== entry.crc32) {
+            throw new Error('ZIP entry size or CRC does not match');
+        }
+        return result + decoder.end();
+    } catch (error) {
+        stream?.destroy();
+        throw archiveError(error, String(entry.fileName));
     }
 }
 
-export async function writeTaskBundle(filePath: string, tasks: Iterable<TaskJson>): Promise<void> {
-    const zip = new AdmZip();
+async function previewArchive(zip: ZipFile): Promise<TaskImportEntry[]> {
+    const files = await indexArchive(zip);
+    const manifestFile = files.get('manifest.json');
+    if (!manifestFile) throw new TaskTransferError('invalidBundle');
+    const raw = await readArchiveEntry(zip, manifestFile);
+    let manifest: unknown;
+    try {
+        manifest = JSON.parse(raw);
+    } catch (error) {
+        throw new TaskTransferError('invalidBundle', error);
+    }
+    if (!isObject(manifest) || manifest.format !== 'opendesk-task-bundle') throw new TaskTransferError('invalidBundle');
+    if (manifest.version !== 1) throw new TaskTransferError('unsupportedVersion');
+    if (!Array.isArray(manifest.tasks) || !manifest.tasks.length) throw new TaskTransferError('invalidBundle');
+    files.delete('manifest.json');
+    files.delete('tasks/');
+    const tasks = new Map<string, Entry>();
+    for (const item of manifest.tasks) {
+        if (!isObject(item) || !safeId(item.id) || item.path !== `tasks/${item.id}.json`) {
+            throw new TaskTransferError('invalidBundle');
+        }
+        const file = files.get(item.path);
+        if (!file) throw new TaskTransferError('invalidBundle');
+        files.delete(item.path);
+        tasks.set(item.id, file);
+    }
+    if (files.size) throw new TaskTransferError('invalidBundle');
+
+    const result: TaskImportEntry[] = [];
+    for (const [id, entry] of tasks) {
+        result.push(await previewEntry(async () => parseTask(await readArchiveEntry(zip, entry), id)));
+    }
+    const parentIds = new Map(result.map(({ id, parentId }) => [id, parentId]));
+    const checked = new Set<string>();
+    for (const { id } of result) {
+        const chain = new Set<string>();
+        let current: string | null | undefined = id;
+        while (current && !checked.has(current)) {
+            if (chain.has(current)) throw new TaskTransferError('invalidTask');
+            chain.add(current);
+            current = parentIds.get(current);
+        }
+        for (const ancestor of chain) checked.add(ancestor);
+    }
+    return result;
+}
+
+export async function readTaskImportFile(filePath: string): Promise<TaskImportPreview> {
+    if (!(await fs.promises.stat(filePath)).isFile()) throw new TaskTransferError('invalidBundle');
+    const directory = await fs.promises.mkdtemp(path.join(getTempDir(), 'opendesk-task-preview-'));
+    const snapshot = path.join(directory, 'snapshot');
+    let zip: ZipFile | undefined;
+    const dispose = async () => {
+        try {
+            if (zip?.isOpen) {
+                const archive = zip;
+                await new Promise<void>((resolve, reject) => {
+                    archive.once('close', resolve);
+                    archive.once('error', reject);
+                    archive.close();
+                });
+            }
+        } finally {
+            await fs.promises.rm(directory, { recursive: true, force: true });
+        }
+    };
+    try {
+        // Keep the reviewed bytes stable across preview, selection and retries.
+        await fs.promises.copyFile(filePath, snapshot, fs.constants.COPYFILE_FICLONE);
+        if (path.extname(filePath).toLowerCase() === '.json') {
+            const entry = await previewEntry(async () => {
+                const raw = await fs.promises.readFile(snapshot, 'utf8').catch((error: NodeJS.ErrnoException) => {
+                    if (error.code === 'ERR_FS_FILE_TOO_LARGE' || error.code === 'ERR_STRING_TOO_LONG') {
+                        throw new TaskTransferError('taskExceedsRuntimeCapacity', error, 'readImportFile');
+                    }
+                    throw error;
+                });
+                return parseTask(raw);
+            });
+            return { entries: [entry], dispose };
+        }
+        zip = await yauzl.openPromise(snapshot, { autoClose: false, decodeStrings: false }).catch((error) => {
+            throw archiveError(error);
+        });
+        return { entries: await previewArchive(zip), dispose };
+    } catch (error) {
+        await dispose().catch(() => {});
+        throw error;
+    }
+}
+
+export async function writeTaskBundle(
+    filePath: string,
+    ids: Iterable<string>,
+    snapshot: (id: string) => TaskJson | Promise<TaskJson>
+): Promise<void> {
+    const tasks = new Map<string, string>();
+    for (const id of ids) {
+        if (!safeId(id) || tasks.has(id)) throw new TaskTransferError('invalidTask');
+        tasks.set(id, `tasks/${id}.json`);
+    }
+    if (!tasks.size) throw new TaskTransferError('invalidTask');
     const manifest = {
         format: 'opendesk-task-bundle',
         version: 1,
         exportedAt: new Date().toISOString(),
-        tasks: [] as { id: string; path: string }[]
+        tasks: Array.from(tasks, ([id, path]) => ({ id, path }))
     };
-    let total = 0;
-    const ids = new Set<string>();
-    for (const task of tasks) {
-        if (ids.size >= TASK_BUNDLE_LIMITS.tasks) throw new TaskTransferError('tooLarge');
-        if (!safeId(task.task_id) || ids.has(task.task_id)) throw new TaskTransferError('invalidTask');
-        ids.add(task.task_id);
-        // Freeze each task before yielding control; running tasks may change afterwards.
-        const bytes = Buffer.from(JSON.stringify(task, null, 4));
-        total += bytes.length;
-        if (bytes.length > TASK_BUNDLE_LIMITS.taskBytes || total > TASK_BUNDLE_LIMITS.totalBytes)
-            throw new TaskTransferError('tooLarge');
-        const entryPath = `tasks/${task.task_id}.json`;
-        zip.addFile(entryPath, bytes);
-        manifest.tasks.push({
-            id: task.task_id,
-            path: entryPath
-        });
-        await setImmediate();
-    }
-    if (!ids.size) throw new TaskTransferError('tooLarge');
-    zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 4)));
-    const bytes = await new Promise<Buffer>((resolve, reject) => zip.toBuffer(resolve, reject));
-    if (bytes.length > TASK_BUNDLE_LIMITS.fileBytes) throw new TaskTransferError('tooLarge');
+
+    const zip = new yazl.ZipFile();
     const temporary = buildAtomicWriteTmpPath(filePath);
+    let active: Readable | undefined;
+    const stream = zip.outputStream as Readable;
+    zip.on('error', (error) => stream.destroy(error));
+    const output = fs.createWriteStream(temporary, { flags: 'wx', mode: 0o600 });
+    const writing = pipeline(stream, output);
     try {
-        await fs.promises.writeFile(temporary, bytes);
+        for (const [id, entryPath] of tasks) {
+            zip.addReadStreamLazy(entryPath, {}, (callback) => {
+                void (async () => {
+                    const task = await snapshot(id);
+                    if (task.task_id !== id) throw new TaskTransferError('invalidTask');
+                    if (stream.destroyed) return;
+                    active = Readable.from([Buffer.from(JSON.stringify(task, null, 4))]);
+                    callback(null, active);
+                })().catch((error) => zip.emit('error', error));
+            });
+        }
+        zip.addReadStreamLazy('manifest.json', {}, (callback) => {
+            active = Readable.from([Buffer.from(JSON.stringify(manifest, null, 4))]);
+            callback(null, active);
+        });
+        zip.end();
+        await writing;
         await fs.promises.rename(temporary, filePath);
     } finally {
+        active?.destroy();
+        stream.destroy();
+        await writing.catch(() => {});
         await fs.promises.unlink(temporary).catch(() => {});
     }
 }

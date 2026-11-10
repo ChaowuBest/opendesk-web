@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
-import { readTaskImportFile, writeTaskBundle, normalizeImportedTask } from '../../../main/utils/task-bundle.js';
+import {
+    readTaskImportFile,
+    writeTaskBundle,
+    normalizeImportedTask,
+    type TaskImportPreview
+} from '../../../main/utils/task-bundle.js';
 
 const task = (id: string, parent: string | null = null) => ({
     task_id: id,
@@ -12,24 +17,42 @@ const task = (id: string, parent: string | null = null) => ({
     chat_context: { messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] }
 });
 
+function writeTasks(target: string, tasks: ReturnType<typeof task>[]) {
+    const byId = new Map(tasks.map((entry) => [entry.task_id, entry]));
+    return writeTaskBundle(target, byId.keys(), (id) => byId.get(id)!);
+}
+
 describe('task bundle format', () => {
     let dir: string;
+    let previews: TaskImportPreview[];
     beforeEach(() => {
+        previews = [];
         dir = fs.mkdtempSync(path.join(os.tmpdir(), 'od-task-bundle-'));
     });
-    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+    afterEach(async () => {
+        await Promise.all(previews.map((preview) => preview.dispose()));
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    async function readEntries(file: string) {
+        const preview = await readTaskImportFile(file);
+        previews.push(preview);
+        return preview.entries;
+    }
 
     test('one ZIP preserves relationships and freezes each snapshot before yielding', async () => {
         const target = path.join(dir, 'tasks.zip');
         const tasks = [task('parent'), task('child', 'parent')];
-        function* snapshots() {
-            yield tasks[0];
+        await writeTaskBundle(target, ['parent', 'child'], (id) => {
+            if (id === 'parent') return tasks[0];
             tasks[0].chat_context.messages[0].content[0].text = 'changed after snapshot';
-            yield tasks[1];
-        }
-        await writeTaskBundle(target, snapshots());
-        const entries = await readTaskImportFile(target);
-        expect(entries.map((entry) => entry.json)).toEqual([task('parent'), task('child', 'parent')]);
+            return tasks[1];
+        });
+        const entries = await readEntries(target);
+        expect(await Promise.all(entries.map((entry) => entry.readJson()))).toEqual([
+            task('parent'),
+            task('child', 'parent')
+        ]);
         const zip = new AdmZip(target);
         expect(JSON.parse(zip.readAsText('manifest.json'))).toMatchObject({
             format: 'opendesk-task-bundle',
@@ -40,9 +63,9 @@ describe('task bundle format', () => {
     test('accepts old single-task JSON and rejects ZIPs containing malformed tasks', async () => {
         const legacy = path.join(dir, 'legacy.json');
         fs.writeFileSync(legacy, JSON.stringify(task('old')));
-        expect((await readTaskImportFile(legacy))[0].json.task_id).toBe('old');
+        expect((await readEntries(legacy))[0].id).toBe('old');
         const target = path.join(dir, 'mixed.zip');
-        await writeTaskBundle(target, [task('good'), task('bad')]);
+        await writeTasks(target, [task('good'), task('bad')]);
         const zip = new AdmZip(target);
         zip.updateFile('tasks/bad.json', Buffer.from('{broken'));
         zip.writeZip(target);
@@ -70,16 +93,18 @@ describe('task bundle format', () => {
         }
     });
 
-    // These 17 MiB boundary cases can exceed Jest's 5-second default under full-suite CPU contention.
-    test('rejects oversized exports without creating a partial output', async () => {
+    test('round-trips a task beyond the former per-task limit as ZIP and JSON', async () => {
         const target = path.join(dir, 'large.zip');
         const json = task('large');
         json.chat_context.messages[0].content[0].text = 'x'.repeat(17 * 1024 * 1024);
-        await expect(writeTaskBundle(target, [json])).rejects.toThrow('tooLarge');
-        expect(fs.existsSync(target)).toBe(false);
+        await writeTasks(target, [json]);
+        expect((await readEntries(target))[0].messageCount).toBe(1);
+        const legacy = path.join(dir, 'large.json');
+        fs.writeFileSync(legacy, JSON.stringify(json));
+        expect((await readEntries(legacy))[0].messageCount).toBe(1);
     }, 30000);
 
-    test('bounds actual inflation even when ZIP size headers lie', async () => {
+    test('reports damaged compressed data when the ZIP size headers lie', async () => {
         const zip = new AdmZip();
         zip.addFile(
             'manifest.json',
@@ -106,12 +131,52 @@ describe('task bundle format', () => {
         }
         const target = path.join(dir, 'forged.zip');
         fs.writeFileSync(target, bytes);
-        await expect(readTaskImportFile(target)).rejects.toThrow('tooLarge');
+        await expect(readTaskImportFile(target)).rejects.toThrow('corruptArchive');
     }, 30000);
+
+    test('reads more than 1,000 tasks from the snapshot even after the source ZIP is removed', async () => {
+        const target = path.join(dir, 'many.zip');
+        const tasks = Array.from({ length: 1001 }, (_, index) => task(`task-${index}`));
+        await writeTasks(target, tasks);
+        const entries = await readEntries(target);
+        expect(entries).toHaveLength(tasks.length);
+        fs.unlinkSync(target);
+        expect(await entries.at(-1)!.readJson()).toEqual(tasks.at(-1));
+    }, 30000);
+
+    test.each(['deflate', 'crc', 'truncated'] as const)('classifies %s damage as ZIP corruption', async (kind) => {
+        const zip = new AdmZip();
+        zip.addFile(
+            'manifest.json',
+            Buffer.from(
+                JSON.stringify({
+                    format: 'opendesk-task-bundle',
+                    version: 1,
+                    tasks: [{ id: 'a', path: 'tasks/a.json' }]
+                })
+            )
+        );
+        zip.addFile('tasks/a.json', Buffer.from(JSON.stringify(task('a'))));
+        const bytes = zip.toBuffer();
+        if (kind !== 'truncated') {
+            const name = Buffer.from('tasks/a.json');
+            const local = bytes.indexOf(name) - 30;
+            const central = bytes.lastIndexOf(name) - 46;
+            if (kind === 'deflate') {
+                const data = local + 30 + name.length + bytes.readUInt16LE(local + 28);
+                bytes[data] = (bytes[data] & 0xf8) | 0x07;
+            } else {
+                bytes.writeUInt32LE(0, central + 16);
+            }
+        }
+        const target = path.join(dir, 'damaged.zip');
+        fs.writeFileSync(target, kind === 'truncated' ? bytes.subarray(0, -20) : bytes);
+        await expect(readTaskImportFile(target)).rejects.toMatchObject({ code: 'corruptArchive' });
+    });
 
     test('rejects cyclic parent relationships', async () => {
         const target = path.join(dir, 'cycle.zip');
-        await writeTaskBundle(target, [task('one', 'two'), task('two', 'one')]);
+        await writeTasks(target, [task('one', 'two'), task('two', 'one')]);
         await expect(readTaskImportFile(target)).rejects.toThrow('invalidTask');
     });
 

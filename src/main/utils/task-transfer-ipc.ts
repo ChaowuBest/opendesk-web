@@ -9,13 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { TaskManagerState } from '../aikernel/task/manager.js';
 import type * as TaskTransfer from '../aikernel/task/transfer.js';
-import { readTaskImportFile, TaskTransferError, type TaskImportEntry } from './task-bundle.js';
+import { readTaskImportFile, TaskTransferError, type TaskImportPreview } from './task-bundle.js';
 import { Setting } from './setting.js';
 import { logger } from './logger.js';
 import { t } from '../../locale/index.js';
@@ -25,12 +25,18 @@ export function registerTaskTransferHandlers(
     getWindow: () => BrowserWindow | null,
     { exportTaskBundle, importTaskEntries }: typeof TaskTransfer
 ): void {
-    let preview: { token: string; entries: TaskImportEntry[] } | undefined;
+    let preview: (TaskImportPreview & { token: string }) | undefined;
     let expiry: ReturnType<typeof setTimeout> | undefined;
     let busy = false;
-    const discard = () => {
+    const discard = async () => {
+        const previous = preview;
         preview = undefined;
         clearTimeout(expiry);
+        await previous?.dispose().catch((error) => logger.warn('Could not remove task import snapshot', error));
+    };
+    const startExpiry = () => {
+        expiry = setTimeout(() => void discard(), 10 * 60 * 1000);
+        expiry.unref();
     };
     const handle = (name: string, action: (...args: any[]) => Promise<unknown>) => {
         ipcMain.handle(`taskManager:${name}`, async (event, ...args) => {
@@ -61,27 +67,26 @@ export function registerTaskTransferHandlers(
         });
     };
     handle('previewTaskImport', async () => {
-        discard();
+        await discard();
         const selected = await dialog.showOpenDialog(getWindow()!, {
             title: t('taskTransfer.import'),
             properties: ['openFile'],
             filters: [{ name: t('taskTransfer.files'), extensions: ['zip', 'json'] }]
         });
         if (selected.canceled || !selected.filePaths.length) return null;
-        const entries = await readTaskImportFile(selected.filePaths[0]);
-        const token = randomUUID();
         const workspace = Setting.getInstance().getEffectiveWorkspace();
-        preview = { token, entries };
-        expiry = setTimeout(discard, 10 * 60 * 1000);
-        expiry.unref();
+        const token = randomUUID();
+        const prepared = await readTaskImportFile(selected.filePaths[0]);
+        preview = { token, ...prepared };
+        startExpiry();
         return {
             token,
             workspace,
-            entries: entries.map(({ json: _json, ...entry }) => entry)
+            entries: prepared.entries.map(({ readJson: _readJson, ...entry }) => entry)
         };
     });
     handle('discardTaskImport', async (token: unknown) => {
-        if (preview?.token === token) discard();
+        if (preview?.token === token) await discard();
     });
     handle('importTaskBundle', async (token: unknown, selectedIds: unknown, workspace: unknown) => {
         if (!preview || token !== preview.token) throw new TaskTransferError('expired');
@@ -93,16 +98,16 @@ export function registerTaskTransferHandlers(
             !(await stat(workspace).catch(() => null))?.isDirectory()
         )
             throw new TaskTransferError('invalidWorkspace');
+        if (!preview || token !== preview.token) throw new TaskTransferError('expired');
         const prepared = preview;
         clearTimeout(expiry);
         try {
             const count = await importTaskEntries(prepared.entries, selectedIds, manager, workspace);
-            discard();
+            await discard();
             return count;
         } catch (error) {
             // Keep the same snapshot and selections available for a corrected retry.
-            expiry = setTimeout(discard, 10 * 60 * 1000);
-            expiry.unref();
+            startExpiry();
             throw error;
         }
     });
@@ -118,6 +123,7 @@ export function registerTaskTransferHandlers(
         const count = await exportTaskBundle(manager, selectedIds, selected.filePath);
         return { count, filePath: selected.filePath };
     });
+    app.once('will-quit', () => void discard());
 }
 
 function formatDiagnostic(error: unknown, operation: string): string {

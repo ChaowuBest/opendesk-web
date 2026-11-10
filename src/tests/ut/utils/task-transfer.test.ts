@@ -9,17 +9,20 @@ import { getGoalExtension } from '../../../main/aikernel/goal/task-extension.js'
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 import { exportTaskBundle, importTaskEntries } from '../../../main/aikernel/task/transfer.js';
 
-import { readTaskImportFile } from '../../../main/utils/task-bundle.js';
+import { readTaskImportFile, type TaskImportPreview } from '../../../main/utils/task-bundle.js';
 
 describe('task transfer persistence', () => {
     let directory: string;
+    let previews: TaskImportPreview[];
     beforeEach(() => {
+        previews = [];
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'od-transfer-'));
         setCustomOpendeskDirectory(directory);
         fs.mkdirSync(path.join(directory, 'tasks'), { recursive: true });
     });
-    afterEach(() => {
+    afterEach(async () => {
         jest.restoreAllMocks();
+        await Promise.all(previews.map((preview) => preview.dispose()));
         setCustomOpendeskDirectory(undefined);
         fs.rmSync(directory, { recursive: true, force: true });
     });
@@ -37,6 +40,12 @@ describe('task transfer persistence', () => {
         return manager;
     }
 
+    async function readEntries(file: string) {
+        const preview = await readTaskImportFile(file);
+        previews.push(preview);
+        return preview.entries;
+    }
+
     async function prepare(original = source()) {
         const file = path.join(directory, 'backup.zip');
         await exportTaskBundle(
@@ -45,7 +54,7 @@ describe('task transfer persistence', () => {
             file
         );
         const destination = new TaskManagerState();
-        return { file, destination, entries: await readTaskImportFile(file) };
+        return { file, destination, entries: await readEntries(file) };
     }
 
     test('commits all selected tasks with one index write and notification', async () => {
@@ -80,7 +89,7 @@ describe('task transfer persistence', () => {
         const file = path.join(directory, 'backup.zip');
         expect(await exportTaskBundle(original, ['parent'], file)).toBe(2);
         const destination = new TaskManagerState();
-        const entries = await readTaskImportFile(file);
+        const entries = await readEntries(file);
         const importedAt = Date.now();
         const result = await importTaskEntries(
             entries,
@@ -126,9 +135,9 @@ describe('task transfer persistence', () => {
                 return rename(from, to);
             });
         } else {
-            const write = fs.writeFileSync;
-            jest.spyOn(fs, 'writeFileSync').mockImplementation((...args: Parameters<typeof fs.writeFileSync>) => {
-                if (typeof args[0] === 'number' && JSON.parse(String(args[1])).task_name === 'child')
+            const write = fs.promises.writeFile;
+            jest.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args) => {
+                if (String(args[0]).includes('.import-') && JSON.parse(String(args[1])).task_name === 'child')
                     throw new Error('simulated task file failure');
                 return write(...args);
             });
@@ -319,6 +328,22 @@ describe('task transfer persistence', () => {
             expect(destination.tasks).toEqual([]);
         }
     );
+
+    test('batch transfer keeps cold task bodies unloaded on both sides', async () => {
+        const original = source();
+        for (const task of original.tasks) task._dirty = true;
+        original.saveSync();
+        const cold = TaskManagerState.load()!;
+        expect(cold.tasks.every((task) => !task._fullyLoaded)).toBe(true);
+        const { destination, entries } = await prepare(cold);
+        expect(cold.tasks.every((task) => !task._fullyLoaded)).toBe(true);
+        await importTaskEntries(entries, ['parent', 'child'], destination, '/new/work');
+        expect(destination.tasks.every((task) => !task._fullyLoaded)).toBe(true);
+        const parent = destination.tasks.find((task) => task.task_name === 'parent')!;
+        expect(destination.getTask(parent.task_id)?.chat_context.messages[0].content).toEqual(
+            original.tasks[0].chat_context.messages[0].content
+        );
+    });
 
     test('a corrupt lazy task cannot be exported as a successful empty backup', async () => {
         const manager = source();

@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { setImmediate } from 'node:timers/promises';
+import { readFile } from 'node:fs/promises';
 import type { TaskManagerState } from './manager.js';
 import type { TaskState } from '../states/tasks.js';
 import { deserializeTaskData } from './serializer.js';
@@ -20,9 +20,7 @@ import {
     normalizeImportedTask,
     writeTaskBundle,
     TaskTransferError,
-    TASK_BUNDLE_LIMITS,
-    type TaskImportEntry,
-    type TaskJson
+    type TaskImportEntry
 } from '../../utils/task-bundle.js';
 
 export async function importTaskEntries(
@@ -32,26 +30,26 @@ export async function importTaskEntries(
     workspace: string
 ): Promise<number> {
     const selected = new Set(selectedIds);
-    if (!selected.size || selectedIds.some((id) => !entries.some((entry) => entry.id === id)))
-        throw new TaskTransferError('invalidTask');
     const pending = entries.filter((entry) => selected.has(entry.id));
+    if (!selected.size || pending.length !== selected.size) throw new TaskTransferError('invalidTask');
     const ids = new Map(pending.map((entry) => [entry.id, randomUUID()]));
-    const tasks: TaskState[] = [];
-    try {
+    async function* prepareTasks(): AsyncGenerator<TaskState> {
         for (const entry of pending) {
-            const json = normalizeImportedTask(entry.json, ids, workspace);
-            if (json.model && !Setting.getInstance().getModelInstance(json.model, 'chat')) delete json.model;
-            if (json.agentId && !AgentRegistry.resolveAgentReference(json.agentId)) json.agentId = null;
-            tasks.push(deserializeTaskData(json, manager));
-            await setImmediate();
+            const source = await entry.readJson();
+            try {
+                const json = normalizeImportedTask(source, ids, workspace);
+                if (json.model && !Setting.getInstance().getModelInstance(json.model, 'chat')) delete json.model;
+                if (json.agentId && !AgentRegistry.resolveAgentReference(json.agentId)) json.agentId = null;
+                yield deserializeTaskData(json, manager);
+            } catch (error) {
+                throw new TaskTransferError('invalidTask', error, 'prepareTasks');
+            }
         }
-    } catch (error) {
-        throw new TaskTransferError('invalidTask', error, 'prepareTasks');
     }
     const maxAttempts = 6;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-            await manager.commitImportedTasks(tasks);
+            await manager.commitImportedTasks(prepareTasks());
             break;
         } catch (error) {
             if (!(error instanceof TaskTransferError)) throw new TaskTransferError('writeFailed', error);
@@ -61,7 +59,7 @@ export async function importTaskEntries(
             await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50 * 2 ** attempt, 400)));
         }
     }
-    return tasks.length;
+    return pending.length;
 }
 
 export async function exportTaskBundle(
@@ -69,33 +67,35 @@ export async function exportTaskBundle(
     selectedIds: string[],
     filePath: string
 ): Promise<number> {
-    if (
-        !Array.isArray(selectedIds) ||
-        !selectedIds.length ||
-        selectedIds.some((id) => !manager.tasks.some((task) => task.task_id === id))
-    ) {
+    const byId = new Map(manager.tasks.map((task) => [task.task_id, task]));
+    if (!Array.isArray(selectedIds) || !selectedIds.length || selectedIds.some((id) => !byId.has(id))) {
         throw new TaskTransferError('invalidTask');
     }
+    const children = new Map<string, string[]>();
+    for (const { task_id, parent_id } of manager.tasks) {
+        if (!parent_id) continue;
+        const siblings = children.get(parent_id) ?? [];
+        if (!children.has(parent_id)) children.set(parent_id, siblings);
+        siblings.push(task_id);
+    }
     const selected = new Set(selectedIds);
-    for (let changed = true; changed;) {
-        changed = false;
-        for (const task of manager.tasks) {
-            if (task.parent_id && selected.has(task.parent_id) && !selected.has(task.task_id)) {
-                selected.add(task.task_id);
-                changed = true;
+    // Set iteration visits children added during traversal, once per task.
+    for (const id of selected) {
+        for (const child of children.get(id) ?? []) selected.add(child);
+    }
+    await writeTaskBundle(filePath, selected, async (id) => {
+        const task = byId.get(id)!;
+        if (task._corrupted) throw new TaskTransferError('invalidTask');
+        if (!task._fullyLoaded && task._lazyFilePath) {
+            try {
+                const json = JSON.parse(await readFile(task._lazyFilePath, 'utf8'));
+                if (task._corrupted || json.task_id !== id) throw new TaskTransferError('invalidTask');
+                if (!task._fullyLoaded) return deserializeTaskData(json, manager).toJSON();
+            } catch (error) {
+                throw new TaskTransferError('invalidTask', error);
             }
         }
-    }
-    if (selected.size > TASK_BUNDLE_LIMITS.tasks) throw new TaskTransferError('tooLarge');
-    function* snapshots(): Generator<TaskJson> {
-        for (const id of selected) {
-            const task = manager.tasks.find((item) => item.task_id === id);
-            if (!task) throw new TaskTransferError('invalidTask');
-            task.ensureLoaded();
-            if (task._corrupted) throw new TaskTransferError('invalidTask');
-            yield task.toJSON();
-        }
-    }
-    await writeTaskBundle(filePath, snapshots());
+        return task.toJSON();
+    });
     return selected.size;
 }

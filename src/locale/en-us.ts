@@ -72,11 +72,12 @@ export const enUs: Record<string, string> = {
     'taskTransfer.importResult': 'Imported ${count} tasks.',
     'taskTransfer.exportResult': 'Exported ${count} tasks to one ZIP bundle.',
     'taskTransfer.openFolder': 'Show in folder',
-    'taskTransfer.error.invalidBundle': 'Cannot read the task bundle: invalid format, missing files, or corrupt data.',
+    'taskTransfer.error.invalidBundle': 'Cannot read the task bundle: invalid format or missing required files.',
     'taskTransfer.error.invalidTask': 'Task data is incomplete or uses an unsupported format.',
     'taskTransfer.error.unsupportedVersion': 'This task bundle uses a newer format. Update OpenDesk and try again.',
-    'taskTransfer.error.tooLarge':
-        'Bundle limit exceeded: 1,000 tasks, 16 MB per task, 128 MB uncompressed, 64 MB file size.',
+    'taskTransfer.error.corruptArchive':
+        'The ZIP task bundle is damaged or incomplete. Export it again or get a complete copy.',
+    'taskTransfer.error.taskExceedsRuntimeCapacity': 'The task data exceeds what this runtime can read.',
     'taskTransfer.error.writeFailed': 'Could not read or write task files. Check permissions and available disk space.',
     'taskTransfer.error.importWriteFailed':
         'Could not save the imported tasks right now. Please try again later. Your selections have been kept.',
