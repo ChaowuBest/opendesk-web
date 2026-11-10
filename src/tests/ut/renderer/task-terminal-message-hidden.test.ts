@@ -88,6 +88,12 @@ describe('task-terminal-panel 空消息遮罩 hidden 语义', () => {
             acknowledge: async () => undefined,
             write: async () => undefined
         };
+        (win as any).settingAPI = {
+            loadSettingObject: async () => ({
+                debug: { experimental_features: { builtin_terminal: true } }
+            }),
+            onSettingChanged: () => () => undefined
+        };
 
         await import('../../../renderer/components/taskTerminalPanel.js');
     });

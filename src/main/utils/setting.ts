@@ -336,7 +336,8 @@ const ExperimentalFeaturesSchema = z
     .object({
         applications: ExperimentalApplicationsSchema,
         account: z.boolean().default(false).describe('是否启用账号功能'),
-        immersive_desktop: z.boolean().default(false).describe('是否启用沉浸桌面')
+        immersive_desktop: z.boolean().default(false).describe('是否启用沉浸桌面'),
+        builtin_terminal: z.boolean().default(false).describe('是否启用内置终端')
     })
     .describe('实验性功能开关');
 

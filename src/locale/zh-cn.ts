@@ -3281,6 +3281,7 @@ export const zhCn: Record<string, string> = {
     'renderer.desktop.window.restore': '还原',
     'renderer.desktop.window.close': '关闭',
     'renderer.settings.experimentalImmersiveDesktop': '沉浸桌面',
+    'renderer.settings.experimentalBuiltinTerminal': '内置终端',
     'main.desktop.card.createTaskName': '生成卡片：${prompt}',
     'main.desktop.card.refreshTaskName': '刷新卡片：${prompt}',
     'main.desktop.card.invalidInput': '卡片生成参数无效',

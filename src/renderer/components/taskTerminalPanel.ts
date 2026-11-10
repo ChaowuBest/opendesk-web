@@ -102,6 +102,9 @@ export class TaskTerminalPanel extends HTMLElement {
     private dragStartY = 0;
     private dragStartHeight = 0;
     private dragMaxHeight = Number.POSITIVE_INFINITY;
+    /** 实验性功能（builtin_terminal）开关状态：设置读取完成前视为关闭。 */
+    private featureEnabled = false;
+    private settingUnsubscribe: (() => void) | null = null;
 
     // 拖拽监听挂在 window 上（指针可能移出面板甚至窗口），以 pointerId 过滤多指。
     private readonly onDragPointerMove = (event: PointerEvent): void => {
@@ -162,13 +165,10 @@ export class TaskTerminalPanel extends HTMLElement {
             this.openTerminal();
             this.resizeTerminal();
         });
-        // 延迟到宿主 setTaskId 同步完成后，首次启动即落在任务工作区。
-        // 用微任务而非 rAF：后台页面（窗口被遮挡/最小化，Electron
-        // backgroundThrottling）会冻结渲染帧，rAF 回调永不执行，
-        // profile 加载被卡死 → sessionId 恒为 null → 终端黑屏且无法输入。
-        queueMicrotask(() => {
-            if (this.isConnected) void this.loadProfiles();
-        });
+        // 实验性功能门禁（默认关闭）：设置读取完成前不加载 profile、不建立会话。
+        // 读取走 IPC、晚于宿主 setTaskContext 的同步调用，首次启动仍落在任务工作区；
+        // 后台页面（backgroundThrottling）冻结渲染帧不影响 IPC，原 rAF 卡死问题不会复发。
+        void this.setupBuiltinTerminalFeature();
         document.addEventListener('visibilitychange', this.onVisibilityChange);
     }
 
@@ -176,13 +176,60 @@ export class TaskTerminalPanel extends HTMLElement {
         this.stopDrag(false);
         this.dataUnsubscribe?.();
         this.exitUnsubscribe?.();
+        this.settingUnsubscribe?.();
         this.resizeObserver?.disconnect();
         document.removeEventListener('visibilitychange', this.onVisibilityChange);
         this.dataUnsubscribe = null;
         this.exitUnsubscribe = null;
+        this.settingUnsubscribe = null;
         this.resizeObserver = null;
         void this.closeSession();
         this.terminal.dispose();
+    }
+
+    /**
+     * 实验性功能门禁（debug.experimental_features.builtin_terminal，默认关闭）。
+     * 隔离必须用内联 style.display：宿主 taskartifacts 对本元素声明了
+     * display:block 作者样式，恒覆盖 hidden 属性的 UA 规则（黑屏 bug 同构陷阱）。
+     * 读取失败保持隐藏，与 homepage 的 immersive_desktop 消费模式一致。
+     */
+    private async setupBuiltinTerminalFeature(): Promise<void> {
+        try {
+            const setting = await window.settingAPI?.loadSettingObject?.();
+            if (!this.isConnected) return;
+            await this.applyExperimentalFeature(setting);
+        } catch {
+            // 读取设置失败时保持隐藏（默认关闭），不阻断面板其余初始化。
+        }
+        try {
+            this.settingUnsubscribe =
+                (await window.settingAPI?.onSettingChanged?.((setting) => {
+                    void this.applyExperimentalFeature(setting);
+                })) ?? null;
+        } catch {
+            // 订阅失败时忽略：仅失去动态切换能力，面板维持当前状态。
+        }
+    }
+
+    private async applyExperimentalFeature(setting: unknown): Promise<void> {
+        const enabled =
+            (setting as { debug?: { experimental_features?: { builtin_terminal?: boolean } } } | null | undefined)
+                ?.debug?.experimental_features?.builtin_terminal === true;
+        this.featureEnabled = enabled;
+        this.style.display = enabled ? '' : 'none';
+        if (!enabled) {
+            // 关闭时使在途 restartSession 失效并停掉已有会话，避免后台 PTY 进程泄漏。
+            this.generation++;
+            await this.closeSession();
+            return;
+        }
+        // 开启时按需补启动：profile 未加载（此前被门禁拦截）则加载；
+        // 已加载但无会话（关闭期间被清理）且当前可见则重启。
+        if (!this.profileId) {
+            await this.loadProfiles();
+        } else if (this.isTerminalVisible() && !this.sessionId) {
+            await this.restartSession();
+        }
     }
 
     setTaskContext(taskId: string, workspace?: string): void {
@@ -282,6 +329,8 @@ export class TaskTerminalPanel extends HTMLElement {
     }
 
     private async loadProfiles(): Promise<void> {
+        // 实验性功能未开启时不加载（面板保持隐藏，设置读取完成后由门禁补调）。
+        if (!this.featureEnabled) return;
         try {
             this.profiles = await window.terminalAPI.listProfiles();
             if (this.profiles.length === 0) {
@@ -326,6 +375,8 @@ export class TaskTerminalPanel extends HTMLElement {
     }
 
     private async restartSession(): Promise<void> {
+        // 实验性功能未开启时不建立会话（visibilitychange / resize / 任务切换兜底都被拦截）。
+        if (!this.featureEnabled) return;
         const generation = ++this.generation;
         await this.closeSession();
         if (generation !== this.generation || !this.profileId) return;

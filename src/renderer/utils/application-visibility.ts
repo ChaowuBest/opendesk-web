@@ -23,6 +23,7 @@ export interface ExperimentalFeatureSettings {
     applications?: Record<string, boolean>;
     account?: boolean;
     immersive_desktop?: boolean;
+    builtin_terminal?: boolean;
 }
 
 export function isExperimentalApplicationEnabled(

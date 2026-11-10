@@ -113,6 +113,12 @@ describe('task-terminal-panel 终端面板拖拽调整高度', () => {
             acknowledge: async () => undefined,
             write: async () => undefined
         };
+        (win as any).settingAPI = {
+            loadSettingObject: async () => ({
+                debug: { experimental_features: { builtin_terminal: true } }
+            }),
+            onSettingChanged: () => () => undefined
+        };
 
         await import('../../../renderer/components/taskTerminalPanel.js');
     });

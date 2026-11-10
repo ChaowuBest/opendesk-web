@@ -117,6 +117,12 @@ describe('task-terminal-panel 会话启动时序（页面后台 / rAF 冻结）'
             acknowledge: async () => undefined,
             write: async () => undefined
         };
+        (win as any).settingAPI = {
+            loadSettingObject: async () => ({
+                debug: { experimental_features: { builtin_terminal: true } }
+            }),
+            onSettingChanged: () => () => undefined
+        };
 
         await import('../../../renderer/components/taskTerminalPanel.js');
     });

@@ -3396,6 +3396,7 @@ export const enUs: Record<string, string> = {
     'renderer.desktop.window.restore': 'Restore',
     'renderer.desktop.window.close': 'Close',
     'renderer.settings.experimentalImmersiveDesktop': 'Immersive Desktop',
+    'renderer.settings.experimentalBuiltinTerminal': 'Built-in Terminal',
     'main.desktop.card.createTaskName': 'Generate card: ${prompt}',
     'main.desktop.card.refreshTaskName': 'Refresh card: ${prompt}',
     'main.desktop.card.invalidInput': 'Invalid card generation input',
