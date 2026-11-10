@@ -636,77 +636,45 @@ export class TaskManagerState {
         }
     }
 
-    /**
-     * Commit the selected batch. File or index failures roll back the whole batch.
-     */
-    async commitImportedTasks(imported: Iterable<TaskState> | AsyncIterable<TaskState>): Promise<void> {
-        let directory: string;
-        let staging: string;
-        try {
-            directory = getTaskDirectory();
-            staging = await fs.promises.mkdtemp(path.join(directory, '.import-'));
-        } catch (error) {
-            throw new TaskTransferError('writeFailed', error, 'taskDirectory');
-        }
+    private async publishImportedTasks(tasks: TaskState[], directory: string, staging: string): Promise<void> {
+        // Drain earlier index writes before publishing the new batch. The following
+        // synchronous commit cannot interleave with a scheduled save in this process.
+        let pendingWrite: Promise<void>;
+        do {
+            pendingWrite = this._lastWritePromise;
+            try {
+                // A newer timer can replace _lastWritePromise, and explicit flushes
+                // start writes directly. Drain every active write before importing.
+                while (this._pendingWrites.size) {
+                    const results = await Promise.allSettled([...this._pendingWrites]);
+                    const failed = results.find((result) => result.status === 'rejected');
+                    if (failed?.status === 'rejected') throw failed.reason;
+                }
+                await this.flushAllPendingSaves();
+            } catch (error) {
+                // No imported files have been promoted yet, so an index conflict here is safe to retry.
+                throw new TaskTransferError(
+                    'writeFailed',
+                    error,
+                    'flushPending',
+                    undefined,
+                    isTransientIndexRenameError(error)
+                );
+            }
+        } while (pendingWrite !== this._lastWritePromise || this._pendingWrites.size > 0);
 
-        const tasks: TaskState[] = [];
-        const staged = new Map<string, string>();
         const created: string[] = [];
-        let stage: TaskTransferStage = 'serializeTask';
+        let stage: TaskTransferStage = 'writeTask';
         let filePath: string | undefined;
         try {
-            const ids = new Set(this.tasks.map((task) => task.task_id));
-            for await (const task of imported) {
-                if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.task_id) || ids.has(task.task_id)) {
-                    throw new Error('duplicate import ID');
-                }
-                ids.add(task.task_id);
+            // Reserve each final name before moving a complete staged file into place.
+            for (const task of tasks) {
                 const basename = `${task.task_id}.json`;
                 filePath = path.join(directory, basename);
-                const temporary = path.join(staging, basename);
-                stage = 'serializeTask';
-                const content = JSON.stringify(task.toJSON(), null, 4);
-                const indexEntry = task.toSimplifiedJSON();
-                stage = 'writeTask';
-                await fs.promises.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-                staged.set(filePath, temporary);
-                tasks.push(deserializeTaskFromIndex(indexEntry, filePath, this));
-            }
-
-            // Drain earlier index writes before publishing the new batch. The following
-            // synchronous commit cannot interleave with a scheduled save in this process.
-            let pendingWrite: Promise<void>;
-            do {
-                pendingWrite = this._lastWritePromise;
-                try {
-                    // A newer timer can replace _lastWritePromise, and explicit flushes
-                    // start writes directly. Drain every active write before importing.
-                    while (this._pendingWrites.size) {
-                        const results = await Promise.allSettled([...this._pendingWrites]);
-                        const failed = results.find((result) => result.status === 'rejected');
-                        if (failed?.status === 'rejected') throw failed.reason;
-                    }
-                    await this.flushAllPendingSaves();
-                } catch (error) {
-                    // No imported files have been promoted yet, so an index conflict here is safe to retry.
-                    throw new TaskTransferError(
-                        'writeFailed',
-                        error,
-                        'flushPending',
-                        undefined,
-                        isTransientIndexRenameError(error)
-                    );
-                }
-            } while (pendingWrite !== this._lastWritePromise || this._pendingWrites.size > 0);
-
-            // Only promote complete files. Reserving the final names prevents replacing existing tasks.
-            stage = 'writeTask';
-            for (const [file, temporary] of staged) {
-                filePath = file;
-                const fd = fs.openSync(file, 'wx', 0o600);
-                created.push(file);
+                const fd = fs.openSync(filePath, 'wx', 0o600);
+                created.push(filePath);
                 fs.closeSync(fd);
-                fs.renameSync(temporary, file);
+                fs.renameSync(path.join(staging, basename), filePath);
             }
             this.tasks = this.tasks.concat(tasks);
             stage = 'writeIndex';
@@ -726,19 +694,56 @@ export class TaskManagerState {
                     logger.error('Failed to clean up imported task', cleanupError);
                 }
             }
-            if (error instanceof TaskTransferError) throw error;
-            const retryable = stage === 'writeIndex' && rollbackComplete && isTransientIndexRenameError(error);
+            const retryable = rollbackComplete && stage === 'writeIndex' && isTransientIndexRenameError(error);
             throw new TaskTransferError('writeFailed', error, stage, filePath, retryable);
-        } finally {
-            await fs.promises.rm(staging, { recursive: true, force: true }).catch((error) => {
-                logger.error('Failed to clean up staged task imports', error);
-            });
         }
         // Persistence succeeded: a notification failure must not invite a duplicate import.
         try {
             this.publishTaskListUpdate();
         } catch (error) {
             logger.error('Failed to publish imported tasks after commit', error);
+        }
+    }
+
+    /** Stage one task at a time, then publish the whole batch or roll it back. */
+    async commitImportedTasks(imported: Iterable<TaskState> | AsyncIterable<TaskState>): Promise<void> {
+        let directory: string;
+        let staging: string;
+        try {
+            directory = getTaskDirectory();
+            staging = await fs.promises.mkdtemp(path.join(directory, '.import-'));
+        } catch (error) {
+            throw new TaskTransferError('writeFailed', error, 'taskDirectory');
+        }
+
+        const tasks: TaskState[] = [];
+        let stage: TaskTransferStage = 'serializeTask';
+        let filePath: string | undefined;
+        try {
+            const ids = new Set(this.tasks.map((task) => task.task_id));
+            for await (const task of imported) {
+                if (!/^[a-zA-Z0-9_-]{1,128}$/.test(task.task_id) || ids.has(task.task_id)) {
+                    throw new Error('duplicate import ID');
+                }
+                ids.add(task.task_id);
+                const basename = `${task.task_id}.json`;
+                filePath = path.join(directory, basename);
+                const temporary = path.join(staging, basename);
+                stage = 'serializeTask';
+                const content = JSON.stringify(task.toJSON(), null, 4);
+                const indexEntry = task.toSimplifiedJSON();
+                stage = 'writeTask';
+                await fs.promises.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+                tasks.push(deserializeTaskFromIndex(indexEntry, filePath, this));
+            }
+            await this.publishImportedTasks(tasks, directory, staging);
+        } catch (error) {
+            if (error instanceof TaskTransferError) throw error;
+            throw new TaskTransferError('writeFailed', error, stage, filePath);
+        } finally {
+            await fs.promises.rm(staging, { recursive: true, force: true }).catch((error) => {
+                logger.error('Failed to clean up staged task imports', error);
+            });
         }
     }
 

@@ -104,36 +104,6 @@ describe('task bundle format', () => {
         expect((await readEntries(legacy))[0].messageCount).toBe(1);
     }, 30000);
 
-    test('reports damaged compressed data when the ZIP size headers lie', async () => {
-        const zip = new AdmZip();
-        zip.addFile(
-            'manifest.json',
-            Buffer.from(
-                JSON.stringify({
-                    format: 'opendesk-task-bundle',
-                    version: 1,
-                    tasks: [{ id: 'large', path: 'tasks/large.json' }]
-                })
-            )
-        );
-        zip.addFile('tasks/large.json', Buffer.from('x'.repeat(17 * 1024 * 1024)));
-        const bytes = zip.toBuffer();
-        for (let offset = 0; offset < bytes.length - 46; offset++) {
-            if (bytes.readUInt32LE(offset) === 0x02014b50) {
-                const length = bytes.readUInt16LE(offset + 28);
-                if (bytes.subarray(offset + 46, offset + 46 + length).toString() === 'tasks/large.json') {
-                    const local = bytes.readUInt32LE(offset + 42);
-                    bytes.writeUInt32LE(10, offset + 24);
-                    bytes.writeUInt32LE(10, local + 22);
-                    break;
-                }
-            }
-        }
-        const target = path.join(dir, 'forged.zip');
-        fs.writeFileSync(target, bytes);
-        await expect(readTaskImportFile(target)).rejects.toThrow('corruptArchive');
-    }, 30000);
-
     test('reads more than 1,000 tasks from the snapshot even after the source ZIP is removed', async () => {
         const target = path.join(dir, 'many.zip');
         const tasks = Array.from({ length: 1001 }, (_, index) => task(`task-${index}`));
@@ -144,35 +114,34 @@ describe('task bundle format', () => {
         expect(await entries.at(-1)!.readJson()).toEqual(tasks.at(-1));
     }, 30000);
 
-    test.each(['deflate', 'crc', 'truncated'] as const)('classifies %s damage as ZIP corruption', async (kind) => {
-        const zip = new AdmZip();
-        zip.addFile(
-            'manifest.json',
-            Buffer.from(
-                JSON.stringify({
-                    format: 'opendesk-task-bundle',
-                    version: 1,
-                    tasks: [{ id: 'a', path: 'tasks/a.json' }]
-                })
-            )
-        );
-        zip.addFile('tasks/a.json', Buffer.from(JSON.stringify(task('a'))));
-        const bytes = zip.toBuffer();
-        if (kind !== 'truncated') {
-            const name = Buffer.from('tasks/a.json');
-            const local = bytes.indexOf(name) - 30;
+    test.each(['deflate', 'crc', 'declared size', 'truncated'] as const)(
+        'classifies %s damage as ZIP corruption',
+        async (kind) => {
+            const target = path.join(dir, 'damaged.zip');
+            const entryPath = 'tasks/a.json';
+            const zip = new AdmZip();
+            const manifest = { format: 'opendesk-task-bundle', version: 1, tasks: [{ id: 'a', path: entryPath }] };
+            zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest)));
+            zip.addFile(entryPath, Buffer.from(JSON.stringify(task('a'))));
+
+            const bytes = zip.toBuffer();
+            const name = Buffer.from(entryPath);
             const central = bytes.lastIndexOf(name) - 46;
+            const local = bytes.readUInt32LE(central + 42);
             if (kind === 'deflate') {
                 const data = local + 30 + name.length + bytes.readUInt16LE(local + 28);
                 bytes[data] = (bytes[data] & 0xf8) | 0x07;
-            } else {
+            } else if (kind === 'crc') {
                 bytes.writeUInt32LE(0, central + 16);
+            } else if (kind === 'declared size') {
+                bytes.writeUInt32LE(10, central + 24);
+                bytes.writeUInt32LE(10, local + 22);
             }
+
+            fs.writeFileSync(target, kind === 'truncated' ? bytes.subarray(0, -20) : bytes);
+            await expect(readTaskImportFile(target)).rejects.toMatchObject({ code: 'corruptArchive' });
         }
-        const target = path.join(dir, 'damaged.zip');
-        fs.writeFileSync(target, kind === 'truncated' ? bytes.subarray(0, -20) : bytes);
-        await expect(readTaskImportFile(target)).rejects.toMatchObject({ code: 'corruptArchive' });
-    });
+    );
 
     test('rejects cyclic parent relationships', async () => {
         const target = path.join(dir, 'cycle.zip');

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -126,16 +127,12 @@ async function readArchiveEntry(zip: ZipFile, entry: Entry): Promise<string> {
         const decoder = new StringDecoder('utf8');
         let result = '';
         let checksum = 0;
-        let length = 0;
+        // yauzl validates the decoded size. It does not validate the CRC.
         for await (const chunk of stream) {
-            length += chunk.length;
-            if (length > entry.uncompressedSize) throw new Error('ZIP entry exceeded its declared size');
             checksum = crc32(chunk, checksum);
             result += decoder.write(chunk);
         }
-        if (length !== entry.uncompressedSize || checksum !== entry.crc32) {
-            throw new Error('ZIP entry size or CRC does not match');
-        }
+        if (checksum !== entry.crc32) throw new Error('ZIP entry CRC does not match');
         return result + decoder.end();
     } catch (error) {
         stream?.destroy();
@@ -159,20 +156,19 @@ async function previewArchive(zip: ZipFile): Promise<TaskImportEntry[]> {
     if (!Array.isArray(manifest.tasks) || !manifest.tasks.length) throw new TaskTransferError('invalidBundle');
     files.delete('manifest.json');
     files.delete('tasks/');
-    const tasks = new Map<string, Entry>();
-    for (const item of manifest.tasks) {
+    const tasks = manifest.tasks.map((item: unknown) => {
         if (!isObject(item) || !safeId(item.id) || item.path !== `tasks/${item.id}.json`) {
             throw new TaskTransferError('invalidBundle');
         }
-        const file = files.get(item.path);
-        if (!file) throw new TaskTransferError('invalidBundle');
+        const entry = files.get(item.path);
+        if (!entry) throw new TaskTransferError('invalidBundle');
         files.delete(item.path);
-        tasks.set(item.id, file);
-    }
+        return { id: item.id, entry };
+    });
     if (files.size) throw new TaskTransferError('invalidBundle');
 
     const result: TaskImportEntry[] = [];
-    for (const [id, entry] of tasks) {
+    for (const { id, entry } of tasks) {
         result.push(await previewEntry(async () => parseTask(await readArchiveEntry(zip, entry), id)));
     }
     const parentIds = new Map(result.map(({ id, parentId }) => [id, parentId]));
@@ -198,12 +194,9 @@ export async function readTaskImportFile(filePath: string): Promise<TaskImportPr
     const dispose = async () => {
         try {
             if (zip?.isOpen) {
-                const archive = zip;
-                await new Promise<void>((resolve, reject) => {
-                    archive.once('close', resolve);
-                    archive.once('error', reject);
-                    archive.close();
-                });
+                const closed = once(zip, 'close');
+                zip.close();
+                await closed;
             }
         } finally {
             await fs.promises.rm(directory, { recursive: true, force: true });
@@ -239,19 +232,16 @@ export async function writeTaskBundle(
     ids: Iterable<string>,
     snapshot: (id: string) => TaskJson | Promise<TaskJson>
 ): Promise<void> {
-    const tasks = new Map<string, string>();
+    const uniqueIds = new Set<string>();
+    const tasks: { id: string; path: string }[] = [];
     for (const id of ids) {
-        if (!safeId(id) || tasks.has(id)) throw new TaskTransferError('invalidTask');
-        tasks.set(id, `tasks/${id}.json`);
+        if (!safeId(id) || uniqueIds.has(id)) throw new TaskTransferError('invalidTask');
+        uniqueIds.add(id);
+        tasks.push({ id, path: `tasks/${id}.json` });
     }
-    if (!tasks.size) throw new TaskTransferError('invalidTask');
-    const manifest = {
-        format: 'opendesk-task-bundle',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        tasks: Array.from(tasks, ([id, path]) => ({ id, path }))
-    };
+    if (!tasks.length) throw new TaskTransferError('invalidTask');
 
+    const exportedAt = new Date().toISOString();
     const zip = new yazl.ZipFile();
     const temporary = buildAtomicWriteTmpPath(filePath);
     let active: Readable | undefined;
@@ -259,22 +249,34 @@ export async function writeTaskBundle(
     zip.on('error', (error) => stream.destroy(error));
     const output = fs.createWriteStream(temporary, { flags: 'wx', mode: 0o600 });
     const writing = pipeline(stream, output);
-    try {
-        for (const [id, entryPath] of tasks) {
-            zip.addReadStreamLazy(entryPath, {}, (callback) => {
-                void (async () => {
-                    const task = await snapshot(id);
-                    if (task.task_id !== id) throw new TaskTransferError('invalidTask');
+    // yazl calls this loader only when the previous ZIP entry has been written.
+    const addJson = (name: string, load: () => TaskJson | Promise<TaskJson>) => {
+        zip.addReadStreamLazy(name, (callback) => {
+            void Promise.resolve()
+                .then(load)
+                .then((json) => {
                     if (stream.destroyed) return;
-                    active = Readable.from([Buffer.from(JSON.stringify(task, null, 4))]);
+                    active = Readable.from([Buffer.from(JSON.stringify(json, null, 4))]);
                     callback(null, active);
-                })().catch((error) => zip.emit('error', error));
+                })
+                .catch((error) => stream.destroy(error));
+        });
+    };
+
+    try {
+        for (const task of tasks) {
+            addJson(task.path, async () => {
+                const json = await snapshot(task.id);
+                if (json.task_id !== task.id) throw new TaskTransferError('invalidTask');
+                return json;
             });
         }
-        zip.addReadStreamLazy('manifest.json', {}, (callback) => {
-            active = Readable.from([Buffer.from(JSON.stringify(manifest, null, 4))]);
-            callback(null, active);
-        });
+        addJson('manifest.json', () => ({
+            format: 'opendesk-task-bundle',
+            version: 1,
+            exportedAt,
+            tasks
+        }));
         zip.end();
         await writing;
         await fs.promises.rename(temporary, filePath);
