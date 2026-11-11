@@ -14,9 +14,12 @@ jest.unstable_mockModule('electron', () => ({
 jest.unstable_mockModule('../../../main/applications/terminal/scan.js', () => ({
     // The sandboxed bash must be filtered out before renderer sees profiles.
     // Real scanning never reports cmd on win32; the ComSpec entry is the only cmd source.
+    // Fixture paths must be POSIX-style: profile building filters candidates through the
+    // real path.isAbsolute, which rejects "C:/..." on the Linux CI runner while accepting
+    // "/shells/..." on both platforms (win32 treats a leading slash as the drive root).
     scanSupportedShells: () => [
-        { kind: 'powershell', path: 'C:/shells/pwsh.exe', sandboxed: false },
-        { kind: 'bash', path: 'C:/shells/bash.exe', sandboxed: true }
+        { kind: 'powershell', path: '/shells/pwsh.exe', sandboxed: false },
+        { kind: 'bash', path: '/shells/bash.exe', sandboxed: true }
     ]
 }));
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({
@@ -60,7 +63,7 @@ jest.unstable_mockModule('../../../main/applications/terminal/interactive/pty.js
 
 describe('interactive terminal IPC', () => {
     let register: () => void;
-    const profileId = 'powershell:C:/shells/pwsh.exe';
+    const profileId = 'powershell:/shells/pwsh.exe';
 
     beforeAll(async () => {
         ({ registerInteractiveTerminalHandlers: register } =
@@ -95,7 +98,7 @@ describe('interactive terminal IPC', () => {
 
     test('listProfiles returns scanned profiles instead of throwing', () => {
         const frame = connect();
-        const expected = [{ id: profileId, kind: 'powershell', path: 'C:/shells/pwsh.exe' }];
+        const expected = [{ id: profileId, kind: 'powershell', path: '/shells/pwsh.exe' }];
         // On Windows the ComSpec shell is appended from the real environment.
         if (process.platform === 'win32' && process.env.ComSpec) {
             expected.push({ id: `cmd:${process.env.ComSpec}`, kind: 'cmd', path: process.env.ComSpec });
@@ -112,7 +115,7 @@ describe('interactive terminal IPC', () => {
 
         frame.invoke('start', created.data.sessionId);
         expect(spawnCalls[0]).toMatchObject({
-            profile: { kind: 'powershell', path: 'C:/shells/pwsh.exe' },
+            profile: { kind: 'powershell', path: '/shells/pwsh.exe' },
             cwd: 'D:/tasks/task-1',
             cols: 120,
             rows: 30
