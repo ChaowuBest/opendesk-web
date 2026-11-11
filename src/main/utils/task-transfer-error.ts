@@ -23,7 +23,8 @@ export type TaskTransferErrorCode =
     | 'invalidBundle'
     | 'invalidTask'
     | 'unsupportedVersion'
-    | 'tooLarge'
+    | 'corruptArchive'
+    | 'taskExceedsRuntimeCapacity'
     | 'writeFailed'
     | 'expired'
     | 'invalidWorkspace';
