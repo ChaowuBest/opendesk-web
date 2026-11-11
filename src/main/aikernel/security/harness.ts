@@ -24,6 +24,7 @@ import {
     AllowEverythingPermissionEnforcer,
     GlobPermissionEnforcer,
     createDefaultPermissionRules,
+    createReadableDirectoryRules,
     ReadableDirectoryRegistry
 } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
@@ -174,6 +175,20 @@ export class HarnessContext {
         if (!this.permission) return;
 
         for (const rule of createTaskArtifactPermissionRules(artifactDirectory)) {
+            await this.permission.addRule(rule);
+        }
+    }
+
+    /**
+     * 授予当前任务对指定目录（含其子路径）的只读权限。
+     * 用于运行期才确定的可读目录——例如技能加载后其安装目录（scripts/references/assets
+     * 以及 test/ 等自定义子目录）需要可读。当前任务的权限引擎在任务创建时就已构建，
+     * 拿不到后续注册进 ReadableDirectoryRegistry 的规则，因此必须显式补一条。
+     */
+    async grantDirectoryReadAccess(directory: string): Promise<void> {
+        if (!this.permission) return;
+
+        for (const rule of createReadableDirectoryRules(directory)) {
             await this.permission.addRule(rule);
         }
     }

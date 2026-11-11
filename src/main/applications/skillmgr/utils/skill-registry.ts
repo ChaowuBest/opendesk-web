@@ -193,14 +193,6 @@ export class SkillRegistry {
         return uniqueResolvedDirs(this._getConfiguredSkillPathValues());
     }
 
-    getSkillSearchDirectories(): string[] {
-        return uniqueResolvedDirs([
-            this.getSkillsDirectory(),
-            ...this.getConfiguredSkillDirectories(),
-            ...this.mountedSkillDirs
-        ]);
-    }
-
     // ── 配置 ──────────────────────────────────────────────────────────────
 
     setRuntimeConfig(config: unknown): void {

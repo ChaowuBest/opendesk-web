@@ -42,6 +42,7 @@ import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { GlobalHooks, type Hooks, type SkillLoadContext } from './hooks.js';
+import { ReadableDirectoryRegistry } from './security/enforcer.js';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -76,6 +77,24 @@ function normalizeSkillDirectory(value?: string): string | undefined {
     }
     const normalized = path.normalize(trimmed);
     return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * 让技能安装目录对其所在任务可读。
+ *
+ * 技能正文会把「Skill 的安装路径是：<dir>」告诉模型，模型随后用文件工具读取目录内的
+ * scripts/references/assets 以及 test/ 等自定义子目录。但默认可读规则只覆盖技能中心
+ * 初始化时整根注册的内置技能根与用户技能根，其余来源（external_paths / --mount-skill
+ * 目录、自定义 Agent / Staff 私有技能）加载成功后仍按越界读处理——GUI 下弹权限确认，
+ * 子 Agent（没有交互提供者）直接被拒绝。因此技能加载成功时：
+ * - 把技能目录注册进可读目录注册表，之后新建任务的权限引擎自动带上只读规则；
+ * - 当前任务的权限引擎早于本次注册创建，显式补一条 read allow 规则。
+ */
+export async function makeSkillDirectoryReadable(task: TaskState | undefined, directory?: string): Promise<void> {
+    if (!directory) return;
+
+    ReadableDirectoryRegistry.getInstance().register(directory);
+    await task?.harnessContext.grantDirectoryReadAccess(directory);
 }
 
 function normalizeSkillExposureDirectories(values?: readonly string[]): Set<string> | undefined {
@@ -467,6 +486,10 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
             return '未找到该Skill';
         } else {
             const { skill, content } = loaded;
+
+            // 技能目录（含 test/ 等自定义子目录）随技能加载开放只读，避免模型读技能资源时被权限拦住
+            await makeSkillDirectoryReadable(taskState, skill.directory);
+
             // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
             if (taskState && skill.env && Object.keys(skill.env).length > 0) {
                 Object.assign(taskState.harnessContext.environ, skill.env);

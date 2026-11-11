@@ -20,8 +20,12 @@ import {
     createTaskArtifactPermissionRules,
     HarnessContext
 } from '../security/harness.js';
-import { GlobPermissionEnforcer, ReadableDirectoryRegistry } from '../security/enforcer.js';
-import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from '../security/permission.js';
+import {
+    createReadableDirectoryRules,
+    GlobPermissionEnforcer,
+    ReadableDirectoryRegistry
+} from '../security/enforcer.js';
+import type { PermissionEnforcer, PermissionPromptProvider } from '../security/permission.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
@@ -208,18 +212,18 @@ export class TaskManagerState {
 
         // 监听后续注册的可读目录，传播到当前 manager 创建过的所有共享基础 enforcer。
         // setupLazyHarnessInit() 重复调用时，旧任务仍继承旧基础 enforcer，因此监听器必须覆盖全部历史实例。
+        // 规则生成必须与 register 侧同一口径（createReadableDirectoryRules），否则含 glob
+        // 特殊字符的目录（如 `C++ (v2)`）两条 pattern 不一致，addRule 去重失效且监听器那条匹配不到。
         if (!this._disposeReadableDirectoryListener) {
             this._disposeReadableDirectoryListener = readableRegistry.onRegister((dirPath: string) => {
-                const rule: PermissionRule = {
-                    resourceType: 'file',
-                    action: 'read',
-                    pathPattern: `${dirPath}{,/**}`,
-                    effect: 'allow'
-                };
-                for (const enforcer of this._sharedHarnessBaseEnforcers) {
-                    enforcer
-                        .addRule(rule)
-                        .catch((err) => logger.warn(`Failed to propagate readable rule to shared enforcer: ${err}`));
+                for (const rule of createReadableDirectoryRules(dirPath)) {
+                    for (const enforcer of this._sharedHarnessBaseEnforcers) {
+                        enforcer
+                            .addRule(rule)
+                            .catch((err) =>
+                                logger.warn(`Failed to propagate readable rule to shared enforcer: ${err}`)
+                            );
+                    }
                 }
             });
         }

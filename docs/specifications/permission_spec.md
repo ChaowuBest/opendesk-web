@@ -155,6 +155,39 @@ OpenDesk 通过维护**三组独立的规则列表**实现四级判定（基于 
 
 扩展方式：在 `SENSITIVE_PATH_PATTERNS` 数组中添加新条目即可。
 
+### 3.6 可读目录注册表
+
+`ReadableDirectoryRegistry` 是进程级的只读目录白名单，用于放行框架自己管理、且位于工作空间之外的目录。
+应用层（如技能中心）在初始化时注册目录，`HarnessContext` 创建权限引擎时会自动追加这些目录的
+`file:read` allow 规则（pattern 为 `<dir>{,/**}`），因此不受工作空间范围限制。
+
+技能目录的开放时机取决于技能来源：
+
+| 技能来源                                                 | 可读时机                                       |
+| -------------------------------------------------------- | ---------------------------------------------- |
+| 内置技能根、用户技能根（`apps/skills/resources`）        | 技能中心初始化时整根注册                       |
+| `external_paths` 配置目录、`--mount-skill` 挂载目录      | 技能被加载时按该技能的目录注册并补授权当前任务 |
+| 自定义 Agent、Staff 私有技能等其它运行期才发现的技能目录 | 同上                                           |
+
+`external_paths` / `--mount-skill` 目录不整根放行的原因：它们可以指向任意大的用户目录（配置目录按
+递归扫描），整根设为全局可读属于过度授权；且它们运行期可变，而技能中心只在应用初始化时注册一次，
+改配置后注册结果与实际情况不一致。按技能目录精确放行既够用也不会过期。
+
+「加载时开放」由 `SkillRegistry.getToolset()` 暴露的 `LoadSkill` 工具与 `/skillname` 预加载
+（`TaskState.preloadSlashSkills`）共同完成：注册进可读目录注册表（影响后续新建任务），
+同时给当前任务的权限引擎追加一条 `file:read` allow 规则（当前引擎早于注册创建，拿不到注册表规则）。
+因此技能正文把「Skill 的安装路径」告知模型后，模型读取技能目录内的 `scripts/`、`references/`、
+`assets/` 以及 `test/` 等自定义子目录不会再触发权限询问。写入与执行不在放行范围内，仍按既有规则判定。
+
+技能目录名来自文件系统（`external_paths` 递归扫描、自定义 Agent / Staff 私有技能），`C++ (v2)`、
+`a[1]` 这类名字里的 glob 语法字符必须经 `escapeGlobLiteralPath` 转义后再拼 `{,/**}`，否则 pattern
+匹配不到目录自身，授权静默失效。所有生成可读目录规则的地方（注册表 `getReadRules`、任务管理器
+监听器、加载时补授权）统一走 `createReadableDirectoryRules`，保证口径一致。
+
+未加载的技能不一定可读：内置技能根与用户技能根下的源文件因整根注册而始终可读；`external_paths`、
+`--mount-skill`、自定义 Agent / Staff 私有技能等目录下的源文件，在技能被加载前读取会触发一次确认
+（可记住），子 Agent 等无确认 UI 的场景直接拒绝。
+
 ## 4. HarnessContext
 
 `HarnessContext` 是除了聊天信息之外，由宿主环境提供给 Agent 的信息与约束的集合。

@@ -29,6 +29,7 @@
 import picomatch from 'picomatch';
 import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
+import { escapeGlobLiteralPath } from './permission.js';
 import { logger } from '../../utils/logger.js';
 import {
     createSensitivePathRules,
@@ -47,6 +48,21 @@ interface CompiledRule {
 }
 
 const IS_WINDOWS = process.platform === 'win32';
+
+/**
+ * 目录（含其子路径）的只读放行规则。
+ * 技能目录等外部只读目录统一走这一口径，保证「注册到可读目录注册表」与
+ * 「技能加载后给当前任务补授权」两处生成的 pattern 完全一致（addRule 才能去重）。
+ *
+ * 目录名必须经 escapeGlobLiteralPath 转义：技能目录名来自文件系统任意目录
+ * （external_paths 递归扫描、自定义 Agent / Staff 私有技能），`C++ (v2)`、`a[1]`
+ * 这类名字里的 glob 语法字符若不转义，pattern 会匹配不到自身（授权静默失效）；
+ * 末尾的 `{,/**}` 在转义之后拼接， brace 展开语义不受影响。
+ */
+export function createReadableDirectoryRules(dirPath: string): PermissionRule[] {
+    const dirNorm = escapeGlobLiteralPath(normalizePath(path.resolve(dirPath)));
+    return [{ resourceType: 'file', action: 'read', pathPattern: `${dirNorm}{,/**}`, effect: 'allow' }];
+}
 
 const PICO_OPTIONS: picomatch.PicomatchOptions = {
     dot: true,
@@ -124,9 +140,13 @@ export class ReadableDirectoryRegistry {
 
     /**
      * 注册一个可读目录（自动规范化为正斜杠路径）
+     *
+     * 幂等：技能加载（LoadSkill / /skillname）会反复注册同一技能目录，
+     * 重复注册直接返回，避免无意义的日志与监听器广播。
      */
     register(dirPath: string): void {
         const norm = normalizePath(path.resolve(dirPath));
+        if (this.directories.has(norm)) return;
         this.directories.add(norm);
         logger.info(`readable directory registered: ${norm}`);
         for (const listener of this._registerListeners) {
@@ -153,7 +173,7 @@ export class ReadableDirectoryRegistry {
     getReadRules(): PermissionRule[] {
         const rules: PermissionRule[] = [];
         for (const dir of this.directories) {
-            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${dir}{,/**}`, effect: 'allow' });
+            rules.push(...createReadableDirectoryRules(dir));
         }
         return rules;
     }
