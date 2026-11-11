@@ -81,6 +81,11 @@ declare global {
             /** 是否运行在 Windows（process.platform === 'win32'）。 */
             isWindows?: boolean;
         };
+        /** preload 剪贴板桥：沙箱渲染器经主进程 IPC 读写剪贴板（自绘菜单粘贴等）。 */
+        childFrameClipboard?: {
+            readText: () => Promise<string>;
+            writeText: (text: string) => Promise<void>;
+        };
         terminalAPI: {
             listProfiles: () => Promise<
                 Array<{ id: string; kind: 'powershell' | 'bash' | 'zsh' | 'cmd'; path: string }>

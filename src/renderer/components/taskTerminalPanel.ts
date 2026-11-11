@@ -76,6 +76,95 @@ const PANEL_CSS = `
     .task-terminal-resizer[hidden] { display: none !important; }
 `;
 
+// ── 终端专属右键菜单 ─────────────────────────────────────────────
+// xterm 的选区在内部模型（非 DOM 选区），全局自绘编辑菜单（touchLongPressScript）
+// 判定不了；xterm 右键还会把隐藏 helper textarea 停靠到指针处（下一次右键会被
+// 误判为编辑区）。全局脚本已对 .xterm 表面放行，右键菜单由本面板自绘。
+// 菜单挂 document.body、样式注入 document.head：面板位于 taskartifacts 的
+// shadow 树内，面板内挂载会受 .task-terminal 的 overflow 裁剪且随 innerHTML
+// 重绘丢失；多面板实例共享同一份样式（按 id 幂等注入）。
+const TERMINAL_MENU_STYLE_ID = 'od-task-terminal-menu-style';
+
+const TERMINAL_MENU_ICONS: Record<string, string> = {
+    // 图标与 touchLongPressScript 自绘编辑菜单同风格（14px line 图标）
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    paste: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 2h6v4H9z"/></svg>',
+    selectAll:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/></svg>',
+    clear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.6 13.5 5-5a2 2 0 0 1 2.8 0l3.1 3.1a2 2 0 0 1 0 2.8l-5 5a2 2 0 0 1-2.8 0l-3.1-3.1a2 2 0 0 1 0-2.8z"/><path d="M7 21h12"/></svg>'
+};
+
+const TERMINAL_MENU_CSS = [
+    // 视觉对齐公共 ctx-menu 与自绘编辑菜单：同一套 --ctx-* 变量，
+    // 深浅色主题随 html[data-theme='dark'] 自动切换。
+    '.od-task-terminal-menu {',
+    '    position: fixed;',
+    '    inset: auto;',
+    '    margin: 0;',
+    '    z-index: 2147483646;',
+    '    min-width: 150px;',
+    '    padding: 5px;',
+    '    background: var(--ctx-bg, #ffffff);',
+    '    border: 1px solid var(--ctx-border, #e7e5e2);',
+    '    border-radius: 12px;',
+    '    box-shadow: var(--ctx-shadow, 0 1px 2px rgba(28, 25, 23, 0.04), 0 4px 14px rgba(28, 25, 23, 0.07));',
+    '    font-family: var(--font-sans, system-ui, -apple-system, sans-serif);',
+    '    animation: od-task-terminal-menu-fade-in 0.2s ease-out;',
+    '}',
+    '@keyframes od-task-terminal-menu-fade-in {',
+    '    from { opacity: 0; transform: scale(0.97) translateY(-3px); }',
+    '    to { opacity: 1; transform: scale(1) translateY(0); }',
+    '}',
+    '.od-task-terminal-menu .od-task-terminal-menu-item {',
+    '    display: flex;',
+    '    align-items: center;',
+    '    gap: 8px;',
+    '    padding: 6px 12px;',
+    '    font-size: 12.5px;',
+    '    cursor: pointer;',
+    '    white-space: nowrap;',
+    '    transition: background 0.12s ease, color 0.12s ease;',
+    '    border: 0;',
+    '    background: none;',
+    '    font-family: inherit;',
+    '    width: 100%;',
+    '    text-align: left;',
+    '    border-radius: 7px;',
+    '    color: var(--ctx-ink2, #4a4642);',
+    '}',
+    '.od-task-terminal-menu .od-task-terminal-menu-item:hover {',
+    '    background: var(--ctx-hover, #f0efec);',
+    '    color: var(--ctx-ink, #1c1917);',
+    '}',
+    '.od-task-terminal-menu .od-task-terminal-menu-icon {',
+    '    display: inline-flex;',
+    '    align-items: center;',
+    '    justify-content: center;',
+    '    width: 14px;',
+    '    height: 14px;',
+    '    flex: none;',
+    '    color: var(--ctx-ink3, #8a8580);',
+    '}',
+    // 无选区的复制 / 无会话的粘贴不适用，置灰
+    '.od-task-terminal-menu .od-task-terminal-menu-item.disabled {',
+    '    opacity: 0.45;',
+    '    pointer-events: none;',
+    '}',
+    '.od-task-terminal-menu .od-task-terminal-menu-divider {',
+    '    height: 1px;',
+    '    margin: 4px 6px;',
+    '    background: var(--ctx-sep, #efeeea);',
+    '}'
+].join('\n');
+
+function ensureTerminalMenuStyle(): void {
+    if (document.getElementById(TERMINAL_MENU_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = TERMINAL_MENU_STYLE_ID;
+    style.textContent = TERMINAL_MENU_CSS;
+    (document.head || document.documentElement).appendChild(style);
+}
+
 /**
  * 常驻于任务面板“工作空间”tab 底部的内置终端。
  * 默认收起：挂载后只显示标题栏、不建立会话，用户展开（toggle）才建联；收起不销毁会话。
@@ -120,6 +209,10 @@ export class TaskTerminalPanel extends HTMLElement {
     private sessionProfileId = '';
     private sessionTaskId = '';
     private sessionWorkspace = '';
+    /** 终端专属右键菜单（挂 document.body）：null 表示当前未显示。 */
+    private menuElement: HTMLElement | null = null;
+    private menuDismissPointerHandler: ((event: Event) => void) | null = null;
+    private menuDismissKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
     // 拖拽监听挂在 window 上（指针可能移出面板甚至窗口），以 pointerId 过滤多指。
     private readonly onDragPointerMove = (event: PointerEvent): void => {
@@ -172,6 +265,8 @@ export class TaskTerminalPanel extends HTMLElement {
         host.addEventListener('mousedown', () => {
             if (this.opened) this.terminal.focus();
         });
+        // 终端表面右键弹面板自绘菜单（全局 touchLongPressScript 已对 .xterm 放行）
+        host.addEventListener('contextmenu', (event) => this.handleContextMenu(event));
         this.resizeObserver = new ResizeObserver(() => this.handleHostResize());
         this.resizeObserver.observe(host);
         // 等宽字体加载完成后字符度量会变化：首次 open 与 fit 都要基于正确度量，
@@ -188,6 +283,7 @@ export class TaskTerminalPanel extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        this.closeMenu();
         this.stopDrag(false);
         this.dataUnsubscribe?.();
         this.exitUnsubscribe?.();
@@ -507,6 +603,160 @@ export class TaskTerminalPanel extends HTMLElement {
             void window.terminalAPI
                 .resize(this.sessionId, this.terminal.cols, this.terminal.rows)
                 .catch(() => undefined);
+        }
+    }
+
+    /** 终端表面右键：弹面板自绘菜单并抑制原生菜单；未 open（首次可见前的窗口期）放行默认行为。 */
+    private handleContextMenu(event: MouseEvent): void {
+        if (!this.opened) return;
+        if (event.cancelable) event.preventDefault();
+        this.openMenu(event.clientX, event.clientY);
+    }
+
+    private openMenu(x: number, y: number): void {
+        this.closeMenu();
+        ensureTerminalMenuStyle();
+        const menu = document.createElement('div');
+        menu.className = 'od-task-terminal-menu';
+        menu.setAttribute('role', 'menu');
+        // 复制随选区启停（xterm 选区在内部模型，只能经 hasSelection 判定）；
+        // 粘贴需有会话承接输入；全选/清屏恒可用。
+        const items: Array<{
+            action: string;
+            label: string;
+            disabled: boolean;
+            divider?: boolean;
+            run: () => void;
+        }> = [
+            {
+                action: 'copy',
+                label: this.t('renderer.taskTerminal.menu.copy'),
+                disabled: !this.terminal.hasSelection(),
+                run: () => void this.copySelection()
+            },
+            {
+                action: 'paste',
+                label: this.t('renderer.taskTerminal.menu.paste'),
+                disabled: !this.sessionId,
+                run: () => void this.pasteFromClipboard()
+            },
+            {
+                action: 'selectAll',
+                label: this.t('renderer.taskTerminal.menu.selectAll'),
+                disabled: false,
+                run: () => this.terminal.selectAll()
+            },
+            {
+                action: 'clear',
+                label: this.t('renderer.taskTerminal.menu.clear'),
+                disabled: false,
+                divider: true,
+                run: () => this.terminal.clear()
+            }
+        ];
+        for (const item of items) {
+            if (item.divider) {
+                const divider = document.createElement('div');
+                divider.className = 'od-task-terminal-menu-divider';
+                menu.appendChild(divider);
+            }
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'od-task-terminal-menu-item' + (item.disabled ? ' disabled' : '');
+            button.setAttribute('data-action', item.action);
+            button.setAttribute('role', 'menuitem');
+            const icon = document.createElement('span');
+            icon.className = 'od-task-terminal-menu-icon';
+            icon.innerHTML = TERMINAL_MENU_ICONS[item.action];
+            const label = document.createElement('span');
+            label.className = 'od-task-terminal-menu-label';
+            label.textContent = item.label;
+            button.appendChild(icon);
+            button.appendChild(label);
+            // 阻止焦点转移：保持 xterm helper textarea 的焦点与选区
+            button.addEventListener('pointerdown', (e) => e.preventDefault());
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (item.disabled) return;
+                this.closeMenu();
+                this.terminal.focus();
+                item.run();
+            });
+            menu.appendChild(button);
+        }
+        (document.body || document.documentElement).appendChild(menu);
+        // 放入浏览器 top layer：popover 层级高于任何 z-index 的浮层（任务视图内
+        // 的搜索浮层、模态等），保证菜单始终置顶。宿主不支持 popover 时退回固定 z-index。
+        try {
+            if (typeof (menu as unknown as { showPopover?: () => void }).showPopover === 'function') {
+                menu.setAttribute('popover', 'manual');
+                (menu as unknown as { showPopover: () => void }).showPopover();
+            }
+        } catch {
+            /* 降级为普通层 */
+        }
+        // 视口内定位（先挂载再量尺寸；测试/无 innerWidth 环境直接用触发点）
+        const menuWidth = menu.offsetWidth || 150;
+        const menuHeight = menu.offsetHeight || 120;
+        let left = x;
+        let top = y;
+        if (typeof window.innerWidth === 'number' && window.innerWidth > 0) {
+            left = Math.max(4, Math.min(x, window.innerWidth - menuWidth - 4));
+            top = Math.max(4, Math.min(y, window.innerHeight - menuHeight - 4));
+        }
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        this.menuElement = menu;
+        this.menuDismissPointerHandler = (event) => {
+            const target = event.target as HTMLElement | null;
+            if (target && typeof target.closest === 'function' && target.closest('.od-task-terminal-menu')) {
+                return;
+            }
+            this.closeMenu();
+        };
+        document.addEventListener('pointerdown', this.menuDismissPointerHandler, true);
+        this.menuDismissKeyHandler = (event) => {
+            if (event.key === 'Escape') this.closeMenu();
+        };
+        document.addEventListener('keydown', this.menuDismissKeyHandler, true);
+    }
+
+    private closeMenu(): void {
+        if (this.menuDismissPointerHandler) {
+            document.removeEventListener('pointerdown', this.menuDismissPointerHandler, true);
+            this.menuDismissPointerHandler = null;
+        }
+        if (this.menuDismissKeyHandler) {
+            document.removeEventListener('keydown', this.menuDismissKeyHandler, true);
+            this.menuDismissKeyHandler = null;
+        }
+        if (this.menuElement) {
+            this.menuElement.remove();
+            this.menuElement = null;
+        }
+    }
+
+    private async copySelection(): Promise<void> {
+        const text = this.terminal.getSelection();
+        if (!text) return;
+        try {
+            await navigator.clipboard?.writeText(text);
+        } catch {
+            // 剪贴板不可用时静默
+        }
+    }
+
+    private async pasteFromClipboard(): Promise<void> {
+        try {
+            // 读取优先走 preload 剪贴板桥（沙箱渲染器的 navigator.clipboard.readText
+            // 不可靠，主进程代执行 IPC 与自绘编辑菜单同一通道）
+            const bridge = window.childFrameClipboard;
+            const text = bridge ? await bridge.readText() : ((await navigator.clipboard?.readText?.()) ?? '');
+            // paste 由 xterm 处理括号粘贴模式等转义后写入会话
+            if (text) this.terminal.paste(text);
+        } catch {
+            // 剪贴板不可用时静默
         }
     }
 
