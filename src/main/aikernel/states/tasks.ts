@@ -73,7 +73,7 @@ import { logger } from '../../utils/logger.js';
 import { parseJsonWithRepair, repairJsonString } from '../../../utils/json.js';
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry } from '../skill.js';
+import { SkillRegistry, makeSkillDirectoryReadable } from '../skill.js';
 import { FileReadStateCache } from './read-state.js';
 import { GlobalHooks, type Hooks } from '../hooks.js';
 import type { Participant } from '../types/index.js';
@@ -2599,6 +2599,9 @@ export class TaskState {
                 const loaded = await registry.loadSkillForAgent(bundleName, name, this.agentId, this.hooks);
                 if (!loaded) continue;
                 const { skill: loadedSkill, content: fullContent } = loaded;
+
+                // 技能目录（含 test/ 等自定义子目录）随技能加载开放只读，避免模型读技能资源时被权限拦住
+                await makeSkillDirectoryReadable(this, loadedSkill.directory);
 
                 // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
                 if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {

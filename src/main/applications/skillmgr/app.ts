@@ -228,10 +228,17 @@ export class SkillMgrApplication extends BaseApplication {
 
     private registerReadableSkillDirectories(): void {
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
+        // 内置技能与用户技能目录是框架自管的固定根（体积可控、语义上就是“技能区”），
+        // 保留整根只读放行：未加载技能前直接探查 SKILL.md 也不需要额外确认。
         readableRegistry.register(skillRegistry.getBundledSkillsDirectory());
-        for (const dir of skillRegistry.getSkillSearchDirectories()) {
-            readableRegistry.register(dir);
-        }
+        readableRegistry.register(skillRegistry.getSkillsDirectory());
+        // external_paths / --mount-skill 目录不再整根放行：
+        // - 它们可以是任意大的用户目录（配置目录按递归扫描，用户可能直接指向 D:/work 甚至家目录），
+        //   整根设为全局可读属于过度授权；
+        // - 它们运行期可变，而本方法只在应用构造时执行一次，改了配置也不会重新注册，
+        //   注册结果与实际情况不一致。
+        // 其中的技能在被 LoadSkill 加载时会按 skill.directory 精确开放自身目录，
+        // 见 aikernel/skill.ts 的 makeSkillDirectoryReadable。
 
         // 注册 skill filter，按 status.json 过滤禁用的技能
         AISkillRegistry.registerSkillFilter((bundleName: string, skillName: string) =>

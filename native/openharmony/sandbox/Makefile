@@ -3,6 +3,10 @@ CC      ?= gcc
 # -Wno-nonnull-compare: the wrappers intentionally guard against NULL paths
 # before forwarding to glibc, whose headers declare those params nonnull.
 CFLAGS  ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-nonnull-compare -fPIC -Isrc
+# -Wno-comment: comments document glob semantics by quoting patterns such as
+# `/a/**`; the `/*` appearing inside those block comments is intentional text,
+# not a nested comment opener. 用 += 追加，即使外部覆盖 CFLAGS 也保持静默。
+CFLAGS  += -Wno-comment
 LDFLAGS ?=
 BUILD   ?= build
 
