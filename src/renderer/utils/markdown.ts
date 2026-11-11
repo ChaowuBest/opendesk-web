@@ -11,9 +11,45 @@
 
 import { Marked, Renderer, type Tokens } from 'marked';
 import markedKatex from 'marked-katex-extension';
+import { renderCodeBlockHtml } from '../../common/markdown/code-block-render.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
 import { doubleTildeStrikethrough } from '../../common/markdown/double-tilde-strikethrough.js';
+
+/** 前端预览和搜索共用的 DOM 标识，避免两处各写一份 class 名后发生偏差。 */
+export const MARKDOWN_DOM = {
+    codeBlock: 'code-block-wrapper',
+    codeHeader: 'code-block-header',
+    codeBody: 'code-block-body',
+    codeLine: 'code-line',
+    preview: 'code-preview-container',
+    previewHost: 'code-preview-shadow-host',
+    previewToggle: 'code-preview-toggle-input',
+    mermaid: 'mermaid-block',
+    mermaidHeader: 'mermaid-block-header',
+    mermaidSource: 'mermaid-source',
+    mermaidFallback: 'mermaid-fallback',
+    mermaidPreview: 'mermaid-rendered'
+} as const;
+
+export const PREVIEWABLE_CODE_LANGUAGES: ReadonlySet<string> = new Set(['html', 'htm', 'svg']);
+// 预览准备完成或切换显示模式后，通知搜索重新读取显示文字。
+export const PREVIEW_CONTENT_CHANGED = 'opendesk-preview-content-changed';
+// 只允许搜索遍历此标记的惰性模板；普通 template 不作为显示内容读取。
+export const SEARCH_PREVIEW_TEMPLATE = 'data-preview-search-projection';
+
+/** 检查 Markdown 代码围栏是否闭合，防止流式输出未完成时反复尝试渲染 Mermaid。 */
+function isFencedCodeComplete(raw: string): boolean {
+    const opening = /^(?: {0,3})(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)/.exec(raw);
+    if (!opening) return true;
+
+    const fence = opening[1];
+    const bodyLines = raw.slice(opening[0].length).split(/\r?\n/);
+    if (bodyLines.at(-1) === '') bodyLines.pop();
+    const lastLine = bodyLines.at(-1) ?? '';
+    const closing = new RegExp(`^ {0,3}${fence[0]}{${fence.length},}[\\t ]*$`);
+    return closing.test(lastLine);
+}
 
 const renderer = new Renderer();
 
@@ -35,6 +71,22 @@ renderer.image = function ({ href, title, text }: Tokens.Image): string {
     if (!safeHref) return escapeHtml(text);
     const titleAttribute = title ? ` title="${escapeHtml(title)}"` : '';
     return `<img src="${escapeHtml(safeHref)}" alt="${escapeHtml(text)}" loading="lazy"${titleAttribute}>`;
+};
+
+// 前端兜底渲染保持与已保存消息一致的代码块结构，供流式显示和历史搜索准备预览。
+renderer.code = ({ text, lang, raw }: Tokens.Code): string => {
+    if (lang?.toLowerCase() === 'mermaid') {
+        // 保存 UTF-8 源码的 Base64，后续由预览模块解码成图形；浏览器端不依赖 Node Buffer。
+        const bytes = new TextEncoder().encode(text);
+        const encoded = btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
+        const complete = isFencedCodeComplete(raw);
+        return `<div class="${MARKDOWN_DOM.mermaid}" data-mermaid-code="${encoded}" data-mermaid-complete="${complete}"></div>`;
+    }
+    return renderCodeBlockHtml(escapeHtml(text), {
+        lang,
+        withHeader: true,
+        preview: { langs: PREVIEWABLE_CODE_LANGUAGES, rawCode: text }
+    });
 };
 
 const safeMarked = new Marked({ renderer, gfm: true, breaks: true });

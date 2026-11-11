@@ -413,6 +413,8 @@
 
     <script type="module">
         import { guiShortcutManager } from './components/shortcutManager.ts';
+        import { registerChatFindShortcut } from './components/chatFind.js';
+        import { createRendererTranslator } from './locale.js';
         import { registerDisplayZoomShortcuts } from './scripts/display-zoom-shortcuts.ts';
         import { initRendererTheme } from './theme/theme-renderer.ts';
         import {
@@ -457,6 +459,16 @@
 
         guiShortcutManager.attach();
         window.__guiShortcutManager = guiShortcutManager;
+        // 注册聊天范围的 Ctrl/⌘+F；设置更新时同步刷新快捷键的本地化名称。
+        function registerConversationFind(setting) {
+            registerChatFindShortcut(guiShortcutManager, {
+                document,
+                isMac: /Mac|iPhone|iPad/.test(navigator.platform),
+                translate: createRendererTranslator(setting)
+            });
+        }
+        registerConversationFind();
+        window.settingAPI?.onSettingChanged?.(registerConversationFind);
 
         // ---- 浏览器应用快捷键 ----
         function isBrowserActive() {
@@ -507,6 +519,7 @@
         (async () => {
             try {
                 const settings = await window.settingAPI.loadSettingObject();
+                registerConversationFind(settings);
                 const fontPreset = settings?.gui_config?.font_preset || 'default';
                 document.documentElement.setAttribute('data-font-preset', fontPreset);
 

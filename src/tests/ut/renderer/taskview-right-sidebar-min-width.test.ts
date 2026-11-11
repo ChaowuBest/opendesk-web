@@ -63,7 +63,9 @@ describe('task-view right sidebar keeps the chat area at least 350px wide', () =
             enhanceCodeBlocks: jest.fn(),
             enhanceToolPreviewCards: jest.fn(),
             renderMermaidBlocks: jest.fn(),
-            untrackPreviewerContainers: jest.fn()
+            untrackPreviewerContainers: jest.fn(),
+            prepareSearchPreviews: async () => {},
+            revealSearchPreview: jest.fn()
         }));
 
         window.settingAPI = {

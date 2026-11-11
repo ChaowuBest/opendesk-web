@@ -1,0 +1,143 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+.od-chat-find {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    width: min(340px, calc(100% - 24px));
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 1px solid var(--od-border);
+    border-radius: 20px;
+    background: var(--od-bg-elevated);
+    color: var(--od-text);
+    box-shadow: 0 3px 12px rgb(0 0 0 / 15%);
+    font-size: var(--fs-base);
+}
+
+.od-chat-find[hidden] {
+    display: none;
+}
+
+.od-chat-find-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    box-sizing: border-box;
+    padding: 8px 14px;
+}
+
+.od-chat-find-icon {
+    flex-shrink: 0;
+    width: 14px;
+    font-size: var(--fs-lg);
+}
+
+.od-chat-find input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font-size: var(--fs-base);
+    line-height: 20px;
+}
+
+.od-chat-find:focus-within {
+    border-color: var(--od-border-strong);
+}
+
+.od-chat-find-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    box-sizing: border-box;
+    padding: 6px 14px;
+    border-top: 1px solid var(--od-border);
+}
+
+.od-chat-find-navigation {
+    display: flex;
+    flex-shrink: 0;
+    gap: 4px;
+}
+
+.od-chat-find-status {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: right;
+    text-overflow: ellipsis;
+    color: var(--od-text-muted);
+    font-size: var(--fs-md);
+    font-variant-numeric: tabular-nums;
+}
+
+.od-chat-find button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md, 6px);
+    background: transparent;
+    color: var(--od-text-muted);
+    cursor: pointer;
+    font-size: var(--fs-lg);
+}
+
+.od-chat-find-close {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8px;
+}
+
+.od-chat-find-close-separator {
+    flex-shrink: 0;
+    width: 1px;
+    height: 16px;
+    background: var(--od-border-strong);
+}
+
+.od-chat-find button[data-find-action='close'] {
+    border-radius: 50%;
+    color: var(--od-text);
+}
+
+.od-chat-find button:hover:not(:disabled) {
+    background: var(--od-bg-subtle);
+    color: var(--od-text);
+}
+
+.od-chat-find button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.od-chat-find button:focus-visible {
+    outline: 2px solid var(--od-text-muted);
+    outline-offset: 1px;
+}
