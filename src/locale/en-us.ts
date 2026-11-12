@@ -2897,6 +2897,7 @@ export const enUs: Record<string, string> = {
     'office.slides.error.programUnavailable': 'The current Office package does not support presentation programs',
     'office.slides.error.outputPathRequired': 'An output PPTX path is required when no PPT is open in the current task',
     'office.slides.error.currentFileMissing': 'The PPTX selected as the current document does not exist',
+    'office.slides.error.unsupportedAsset': 'Unsupported presentation asset format (${path})',
     'office.slides.error.invalidOutputPath': 'The presentation output path must end with .pptx',
     'office.slides.error.startRequired':
         "No current presentation exists. Use startFrom: 'blank' to create one, or open_presentation before reading or editing an existing PPTX",

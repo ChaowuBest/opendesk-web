@@ -111,6 +111,7 @@ export default defineConfig(({ mode }) => {
             }
         },
         preload: {
+            resolve: { alias: openDeskOfficeAliases },
             plugins: [tailwindcss()],
             build: {
                 outDir: 'dist/preload',

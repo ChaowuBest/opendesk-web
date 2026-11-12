@@ -14,9 +14,12 @@ import type { BrowserWindow, WebPreferences, WebContents } from 'electron';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { registerOpenDeskOfficePreferences } from '@bitclub.ai/opendesk-office/host-preferences';
 import { createTrustedRendererUrlMatcher } from '@bitclub.ai/opendesk-office/host-security';
-import { presentationRevisionFromBytes } from '@bitclub.ai/opendesk-office/presentation-automation';
+import {
+    PRESENTATION_ASSET_EXTENSIONS,
+    presentationRevisionFromBytes
+} from '@bitclub.ai/opendesk-office/presentation-automation';
 import { OfficeTaskSessionRegistry, type OfficeTaskSessionKind } from './officeTaskSessions.js';
 import { getLocale, t } from '../../locale/index.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
@@ -33,8 +36,6 @@ import {
 import { isOpenDeskOfficePartition, OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
 
 export type OpenDeskOfficeEditorKind = OfficeTaskSessionKind;
-
-const require = createRequire(import.meta.url);
 
 interface OpenDeskOfficeHost {
     register(): void;
@@ -59,6 +60,7 @@ interface OpenDeskOfficeHost {
         control?: PresentationProgramExecutionControl
     ): Promise<OfficePresentationProgramResult>;
     requestCloseAll(): Promise<boolean>;
+    refreshFile(contents: WebContents, filePath: string): Promise<void>;
     getPresentationSnapshot?(contents: WebContents): Promise<{
         bytes: Uint8Array;
         revision: string;
@@ -88,14 +90,6 @@ interface OfficeEditorDefinition {
     rendererPageName: string;
     preloadName: string;
     requestCloseChannel: string;
-    createHost(options: {
-        locale: string;
-        preloadPath: string;
-        rendererFilePath: string;
-        rendererDevUrl?: string;
-        requestCloseChannel: string;
-        ironCalcWasmPath?: string;
-    }): Promise<OpenDeskOfficeHost>;
 }
 
 interface OfficeEditorRuntime extends OfficeEditorDefinition {
@@ -112,45 +106,27 @@ function getRendererDevUrl(rendererPageName: string): string | undefined {
     return new URL(rendererPageName, rendererUrl.endsWith('/') ? rendererUrl : `${rendererUrl}/`).toString();
 }
 
-function getIronCalcWasmPath(): string {
-    const stagedPath = path.join(__dirname, 'assets', 'opendesk-office-ironcalc.wasm');
-    if (existsSync(stagedPath)) return stagedPath;
-    return require.resolve('@bitclub.ai/opendesk-office/ironcalc-wasm');
-}
-
 const editorDefinitions: readonly OfficeEditorDefinition[] = [
     {
         kind: 'slides',
         extension: '.pptx',
         rendererPageName: 'slides_editor.html',
         preloadName: 'slidesPreload.js',
-        requestCloseChannel: 'office-host:slides:request-close',
-        async createHost(options) {
-            const { createOpenDeskOfficeSlidesHost } = await import('@bitclub.ai/opendesk-office/main');
-            return createOpenDeskOfficeSlidesHost(options);
-        }
+        requestCloseChannel: 'office-host:slides:request-close'
     },
     {
         kind: 'word',
         extension: '.docx',
         rendererPageName: 'word_editor.html',
         preloadName: 'wordPreload.js',
-        requestCloseChannel: 'office-host:word:request-close',
-        async createHost(options) {
-            const { createOpenDeskOfficeWordHost } = await import('@bitclub.ai/opendesk-office/word-main');
-            return createOpenDeskOfficeWordHost(options);
-        }
+        requestCloseChannel: 'office-host:word:request-close'
     },
     {
         kind: 'sheets',
         extension: '.xlsx',
         rendererPageName: 'sheets_editor.html',
         preloadName: 'sheetsPreload.js',
-        requestCloseChannel: 'office-host:sheets:request-close',
-        async createHost(options) {
-            const { createOpenDeskOfficeSheetsHost } = await import('@bitclub.ai/opendesk-office/sheets-main');
-            return createOpenDeskOfficeSheetsHost(options);
-        }
+        requestCloseChannel: 'office-host:sheets:request-close'
     }
 ];
 
@@ -219,7 +195,7 @@ function getPresentationProgramRepository(): PresentationProgramRepository {
     return presentationProgramRepository;
 }
 
-const PRESENTATION_IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff']);
+const presentationAssetExtensions = new Set<string>(PRESENTATION_ASSET_EXTENSIONS);
 
 function safePresentationName(value: string): string {
     const printableValue = [...value.normalize('NFKC')]
@@ -253,8 +229,8 @@ function loadPresentationAssets(assets: Record<string, string> | undefined): {
     const recordAssets: Record<string, { sourcePath: string; bytes: Uint8Array; ext: string }> = {};
     for (const [id, sourcePath] of Object.entries(assets ?? {})) {
         const ext = path.extname(sourcePath).slice(1).toLowerCase();
-        if (!PRESENTATION_IMAGE_EXTENSIONS.has(ext)) {
-            throw new Error(`Unsupported presentation image asset: ${sourcePath}`);
+        if (!presentationAssetExtensions.has(ext)) {
+            throw new Error(t('office.slides.error.unsupportedAsset', { path: sourcePath }));
         }
         const bytes = new Uint8Array(readFileSync(sourcePath));
         officeAssets[id] = { bytes, ext };
@@ -376,15 +352,19 @@ function getEditorRuntime(kind: OpenDeskOfficeEditorKind): OfficeEditorRuntime {
 async function loadEditorHost(runtime: OfficeEditorRuntime): Promise<OpenDeskOfficeHost> {
     if (runtime.hostPromise) return runtime.hostPromise;
 
-    runtime.hostPromise = runtime
-        .createHost({
-            locale: getLocale(),
-            preloadPath: runtime.preloadPath,
-            rendererDevUrl: runtime.rendererDevUrl,
-            rendererFilePath: runtime.rendererFilePath,
-            requestCloseChannel: runtime.requestCloseChannel,
-            ...(runtime.kind === 'sheets' ? { ironCalcWasmPath: getIronCalcWasmPath() } : {})
-        })
+    runtime.hostPromise = import('@bitclub.ai/opendesk-office/office-host')
+        .then(
+            ({ createOpenDeskOfficeHost }): Promise<OpenDeskOfficeHost> =>
+                createOpenDeskOfficeHost(runtime.kind, {
+                    locale: getLocale(),
+                    preloadPath: runtime.preloadPath,
+                    rendererDevUrl: runtime.rendererDevUrl,
+                    rendererFilePath: runtime.rendererFilePath,
+                    requestCloseChannel: runtime.requestCloseChannel,
+                    mainOutputDir: __dirname,
+                    editorSession: session.fromPartition(OPENDESK_OFFICE_PARTITION)
+                })
+        )
         .then((host) => {
             host.register();
             if (attachedWindow && !attachedWindow.isDestroyed()) host.attachWindow(attachedWindow);
@@ -438,18 +418,18 @@ export function registerEmbeddedOpenDeskOffice(): void {
         await loadEditorHost(getEditorRuntime(kind));
         return true;
     });
-    ipcMain.handle('office-host:refresh-presentation', async (event, webContentsId: number) => {
-        if (!Number.isInteger(webContentsId)) return false;
+    registerOpenDeskOfficePreferences(ipcMain, (sender: WebContents) =>
+        Boolean(getEmbeddedOpenDeskOfficeContentsKind(sender))
+    );
+    ipcMain.handle('office-host:refresh-file', async (event, webContentsId: number, filePath: string) => {
+        if (!Number.isInteger(webContentsId) || typeof filePath !== 'string') return;
         const target = (await import('electron')).webContents.fromId(webContentsId);
-        if (!target || target.isDestroyed() || target.getType() !== 'webview') return false;
-        if (target.hostWebContents?.id !== event.sender.id) return false;
-        if (getEmbeddedOpenDeskOfficeContentsKind(target) !== 'slides') return false;
-        const host = await loadEditorHost(getEditorRuntime('slides'));
-        if (!host.getPresentationSnapshot) return false;
-        // The native snapshot synchronizes clean sessions from disk and preserves dirty sessions.
-        // Avoid requestClose here: Office autosave could overwrite the external replacement.
-        await host.getPresentationSnapshot(target);
-        return true;
+        if (!target || target.isDestroyed() || target.getType() !== 'webview') return;
+        if (target.hostWebContents?.id !== event.sender.id) return;
+        const kind = getEmbeddedOpenDeskOfficeContentsKind(target);
+        if (!kind) return;
+        const host = await loadEditorHost(getEditorRuntime(kind));
+        await host.refreshFile(target, filePath);
     });
     ipcMain.handle(
         'office-host:bind-task',

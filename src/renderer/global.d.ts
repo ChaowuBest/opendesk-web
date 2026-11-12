@@ -113,7 +113,7 @@ declare global {
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
             requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
-            refreshPresentation: (webContentsId: number) => Promise<boolean>;
+            refreshFile: (webContentsId: number, filePath: string) => Promise<void>;
             bindOfficeTask: (
                 kind: 'slides' | 'word' | 'sheets',
                 taskId: string,

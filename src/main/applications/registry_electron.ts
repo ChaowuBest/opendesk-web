@@ -14,6 +14,7 @@
  * 其他标准功能（可以在CLI版本中复用的仍然在registry.ts中实现）
  */
 
+import { openDeskOfficeMediaSchemes } from '@bitclub.ai/opendesk-office/host-security';
 import { ApplicationRegistry } from './registry.js';
 import { toErrorMessage } from '../../common/utils/error.js';
 import { app, BrowserWindow, protocol } from 'electron';
@@ -161,7 +162,7 @@ export function initializeRegistryProtocols() {
         privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true }
     });
 
-    protocol.registerSchemesAsPrivileged(schemes);
+    protocol.registerSchemesAsPrivileged([...schemes, ...openDeskOfficeMediaSchemes]);
 }
 
 /**

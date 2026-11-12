@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import AdmZip from 'adm-zip';
 
 interface MatcherOptions {
     rendererFilePath: string;
@@ -61,6 +62,7 @@ jest.unstable_mockModule('electron', () => ({
 
 const officeHost = {
     getPresentationSnapshot: jest.fn(),
+    refreshFile: jest.fn(async () => {}),
     register: jest.fn(),
     attachWindow: jest.fn(),
     activateContents: jest.fn(),
@@ -69,16 +71,9 @@ const officeHost = {
     runPresentationProgram: jest.fn()
 };
 
-jest.unstable_mockModule('@bitclub.ai/opendesk-office/main', () => ({
-    createOpenDeskOfficeSlidesHost: jest.fn(async () => officeHost)
-}));
-
-jest.unstable_mockModule('@bitclub.ai/opendesk-office/word-main', () => ({
-    createOpenDeskOfficeWordHost: jest.fn(async () => officeHost)
-}));
-
-jest.unstable_mockModule('@bitclub.ai/opendesk-office/sheets-main', () => ({
-    createOpenDeskOfficeSheetsHost: jest.fn(async () => officeHost)
+const createOpenDeskOfficeHost = jest.fn(async (_kind: string, _options: object) => officeHost);
+jest.unstable_mockModule('@bitclub.ai/opendesk-office/office-host', () => ({
+    createOpenDeskOfficeHost
 }));
 
 jest.unstable_mockModule('../../../locale/index.js', () => ({
@@ -101,7 +96,9 @@ const {
     registerEmbeddedOpenDeskOffice,
     runOpenDeskPresentationProgram
 } = await import('../../../main/office/openDeskOfficeHost.js');
-Reflect.deleteProperty(globalThis, '__dirname');
+afterAll(() => {
+    Reflect.deleteProperty(globalThis, '__dirname');
+});
 
 describe('OpenDesk Office webview ownership', () => {
     it('does not classify unattached or ordinary browser content as an Office editor', () => {
@@ -126,6 +123,42 @@ describe('OpenDesk Office webview ownership', () => {
         ).toBe('slides');
     });
 
+    it.each(['slides', 'word', 'sheets'])('passes the same host context when preparing %s', async (kind) => {
+        registerEmbeddedOpenDeskOffice();
+        const prepare = ipcHandlers.get('office-host:prepare')!;
+
+        await expect(prepare({}, kind)).resolves.toBe(true);
+        expect(createOpenDeskOfficeHost).toHaveBeenLastCalledWith(kind, {
+            locale: 'en-US',
+            preloadPath: expect.any(String),
+            rendererDevUrl: process.env.ELECTRON_RENDERER_URL ? expect.any(String) : undefined,
+            rendererFilePath: expect.any(String),
+            requestCloseChannel: `office-host:${kind}:request-close`,
+            mainOutputDir: fileURLToPath(new URL('../../../main/', import.meta.url)),
+            editorSession: officeSession
+        });
+    });
+
+    it('provides embedded editor defaults only to trusted Office guests', () => {
+        registerEmbeddedOpenDeskOffice();
+        const getURL = () => pathToFileURL(matcherOptions[0].rendererFilePath).href;
+        const office = { sender: { session: officeSession, getURL } };
+        const other = { sender: { session: browserSession, getURL } };
+        const autoSave = ipcHandlers.get('app:get-auto-save-default')!;
+        const aiPrefs = ipcHandlers.get('app:get-ai-panel-prefs')!;
+        const documentTheme = ipcHandlers.get('app:get-document-theme')!;
+        const authorName = ipcHandlers.get('app:get-author-name')!;
+
+        expect(autoSave(office)).toEqual({ on: false, updatedAt: 0 });
+        expect(aiPrefs(office)).toMatchObject({ showAiSidebar: false, openInNewDocs: false });
+        expect(documentTheme(office)).toBe('follow');
+        expect(authorName(office)).toBe('');
+        expect(autoSave(other)).toBeUndefined();
+        expect(aiPrefs(other)).toBeUndefined();
+        expect(documentTheme(other)).toBeUndefined();
+        expect(authorName(other)).toBeUndefined();
+    });
+
     it('rejects Office task binding from a non-Office session even when the URL is trusted', async () => {
         registerEmbeddedOpenDeskOffice();
         const bindTask = ipcHandlers.get('office-host:bind-task');
@@ -143,23 +176,29 @@ describe('OpenDesk Office webview ownership', () => {
         expect(officeHost.activateContents).not.toHaveBeenCalled();
     });
 
-    it('only synchronizes a presentation owned by the requesting window', async () => {
+    it.each([
+        ['pptx', 0],
+        ['docx', 1],
+        ['xlsx', 2]
+    ])('refreshes a %s only for a guest owned by the requester', async (ext, editorIndex) => {
         registerEmbeddedOpenDeskOffice();
-        const refresh = ipcHandlers.get('office-host:refresh-presentation');
+        const refresh = ipcHandlers.get('office-host:refresh-file')!;
+        const filePath = `/tmp/report.${ext}`;
         webContentsById = {
-            id: 45,
             session: officeSession,
             hostWebContents: { id: 7 },
             isDestroyed: () => false,
             getType: () => 'webview',
-            getURL: () => pathToFileURL(matcherOptions[0].rendererFilePath).href
+            getURL: () => pathToFileURL(matcherOptions[editorIndex].rendererFilePath).href
         };
-        officeHost.getPresentationSnapshot.mockResolvedValueOnce({ bytes: new Uint8Array(), revision: 'test' });
-        const calls = officeHost.getPresentationSnapshot.mock.calls.length;
-        await expect(refresh?.({ sender: { id: 99 } }, 45)).resolves.toBe(false);
-        expect(officeHost.getPresentationSnapshot.mock.calls.length).toBe(calls);
-        await expect(refresh?.({ sender: { id: 7 } }, 45)).resolves.toBe(true);
-        expect(officeHost.getPresentationSnapshot).toHaveBeenCalledWith(webContentsById);
+
+        const calls = officeHost.refreshFile.mock.calls.length;
+        await refresh({ sender: { id: 99 } }, 45, filePath);
+        expect(officeHost.refreshFile).toHaveBeenCalledTimes(calls);
+
+        await refresh({ sender: { id: 7 } }, 45, filePath);
+        expect(officeHost.refreshFile).toHaveBeenCalledTimes(calls + 1);
+        expect(officeHost.refreshFile).toHaveBeenLastCalledWith(webContentsById, filePath);
     });
 
     it('allows a trusted Office webview in the dedicated Office session to bind', async () => {
@@ -182,6 +221,54 @@ describe('OpenDesk Office webview ownership', () => {
 });
 
 describe('presentation generator recovery and revision protection', () => {
+    it('embeds media and models and imports a PPTX through the OpenDesk program entry point', async () => {
+        const fixtureDir = fs.mkdtempSync(path.join(programRoot, 'presentation-assets-'));
+        const source = await nativeAutomation.runPresentationProgram({
+            startFrom: 'blank',
+            program: "deck.slide(0).add({kind:'text',text:'Imported content',box:{x:20,y:20,w:200,h:40}});"
+        });
+        expect(source.ok).toBe(true);
+        const sources = {
+            video: { name: 'video.MP4', bytes: Buffer.from('00000018667479706d703432', 'hex') },
+            audio: { name: 'sound.mp3', bytes: Buffer.from('49443303000000000000', 'hex') },
+            model: { name: 'model.glb', bytes: Buffer.from('676c5446020000000c000000', 'hex') },
+            deck: { name: 'source.pptx', bytes: source.bytes! }
+        };
+        const assets = Object.fromEntries(
+            Object.entries(sources).map(([id, { name, bytes }]) => {
+                const filePath = path.join(fixtureDir, name);
+                fs.writeFileSync(filePath, bytes);
+                return [id, filePath];
+            })
+        );
+        const outputPath = path.join(fixtureDir, 'output.pptx');
+        const result = await runOpenDeskPresentationProgram('extended-assets', {
+            startFrom: 'blank',
+            workspace: fixtureDir,
+            outputPath,
+            assets,
+            program: [
+                'const slide = deck.slide(0);',
+                "slide.add({kind:'media',mediaKind:'video',asset:'video',box:{x:20,y:20,w:120,h:80}});",
+                "slide.add({kind:'media',mediaKind:'audio',asset:'audio',box:{x:160,y:20,w:40,h:40}});",
+                "slide.add({kind:'model3d',asset:'model',box:{x:220,y:20,w:120,h:80}});",
+                "deck.importSlide('deck');"
+            ].join('\n')
+        });
+
+        expect(result).toMatchObject({ ok: true, committed: true });
+        const pptx = new AdmZip(outputPath);
+        const entries = pptx.getEntries();
+        for (const id of ['video', 'audio', 'model'] as const) {
+            const extension = path.extname(sources[id].name).toLowerCase();
+            const media = entries.find(
+                (entry) => entry.entryName.startsWith('ppt/media/') && entry.entryName.endsWith(extension)
+            );
+            expect(media?.getData()).toEqual(sources[id].bytes);
+        }
+        expect(pptx.readAsText('ppt/slides/slide2.xml')).toContain('Imported content');
+    }, 30_000);
+
     it('recovers archived assets and preserves changes made after generation', async () => {
         const imagePath = path.join(programRoot, 'hero.png');
         const image = Buffer.from(

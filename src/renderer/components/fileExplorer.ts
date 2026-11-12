@@ -1339,20 +1339,14 @@ export class FileExplorer {
                         | null;
                     const id = webview?.getWebContentsId?.();
                     if (!id) return;
-                    if (config.kind === 'slides' && window.officeHostAPI?.refreshPresentation) {
-                        await window.officeHostAPI.refreshPresentation(id);
-                        const size = await window.fsAPI?.getFileSize?.(filePath);
-                        if (version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
-                        if (this._previewState.data && size !== undefined) {
-                            this._previewState.data.size = size;
-                            const label = this._rootNode?.querySelector('.ws-preview-size');
-                            if (label) label.textContent = formatBytes(size);
-                        }
+                    if (this._officeClosePending || webview?.classList.contains('ws-office-editor-frame--loading'))
                         return;
-                    }
-                    if (!window.officeHostAPI?.requestClose) return;
-                    const canClose = await window.officeHostAPI.requestClose(config.kind, id);
-                    if (!canClose || version !== this._fileWatchVersion || this._selectedFile !== filePath) return;
+                    const host = window.officeHostAPI;
+                    if (!host?.refreshFile) return;
+                    await host.refreshFile(id, filePath);
+                    await this._updatePreviewSize(filePath, version);
+                    if (version === this._fileWatchVersion) this.softRefresh();
+                    return;
                 }
                 await this._loadPreview(filePath);
             }
@@ -1704,6 +1698,8 @@ export class FileExplorer {
         const webview = this._rootNode?.querySelector<HTMLElement>('.ws-office-editor-frame') as
             | (HTMLElement & { getWebContentsId?: () => number })
             | null;
+        // A hidden guest cannot receive edits and may not have installed its close handler yet.
+        if (webview?.classList.contains('ws-office-editor-frame--loading')) return false;
         const webContentsId = webview?.getWebContentsId?.();
         if (!webContentsId || !window.officeHostAPI?.requestClose) return false;
 
@@ -1749,21 +1745,7 @@ export class FileExplorer {
                 this._renderPreview();
                 this._mountOfficeEditor(filePath, editorConfig);
                 // Update only the label: rerendering would replace the live Office webview.
-                void window.fsAPI
-                    ?.getFileSize?.(filePath)
-                    .then((size: number) => {
-                        if (
-                            this._selectedFile !== filePath ||
-                            version !== this._fileWatchVersion ||
-                            this._previewState.status !== 'idle' ||
-                            this._previewState.data !== previewData
-                        )
-                            return;
-                        previewData.size = size;
-                        const label = this._rootNode?.querySelector('.ws-preview-size');
-                        if (label) label.textContent = formatBytes(size);
-                    })
-                    .catch(() => undefined);
+                void this._updatePreviewSize(filePath, version).catch(() => undefined);
                 return;
             }
             const api = window.fsAPI;
@@ -1786,6 +1768,22 @@ export class FileExplorer {
         }
         this._renderPreview();
         this._applyFullscreenLayout();
+    }
+
+    private async _updatePreviewSize(filePath: string, version: number): Promise<void> {
+        const data = this._previewState.data;
+        if (!data) return;
+        const size = await window.fsAPI?.getFileSize?.(filePath);
+        if (
+            size === undefined ||
+            this._selectedFile !== filePath ||
+            version !== this._fileWatchVersion ||
+            this._previewState.data !== data
+        )
+            return;
+        data.size = size;
+        const label = this._rootNode?.querySelector('.ws-preview-size');
+        if (label) label.textContent = formatBytes(size);
     }
 
     // ----- context menu -----
