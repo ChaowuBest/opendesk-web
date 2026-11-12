@@ -27,6 +27,7 @@ import {
     GetEmailContentTool,
     SearchEmailsTool,
     SendEmailTool,
+    SaveDraftTool,
     ReplyEmailTool,
     MarkEmailReadTool,
     StarEmailTool,
@@ -105,6 +106,7 @@ class MailboxApplication extends BaseApplication {
         operateToolset.addTool(new GetEmailContentTool());
         operateToolset.addTool(new SearchEmailsTool());
         operateToolset.addTool(new SendEmailTool());
+        operateToolset.addTool(new SaveDraftTool());
         operateToolset.addTool(new ReplyEmailTool());
         operateToolset.addTool(new MarkEmailReadTool());
         operateToolset.addTool(new StarEmailTool());
