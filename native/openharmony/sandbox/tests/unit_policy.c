@@ -64,7 +64,7 @@ static void test_glob(void)
     CHECK(dbox_glob_match("/", "/") == 1, "glob root-root");
     CHECK(dbox_glob_match("/", "/x") == 0, "glob root not subdir");
     /* 尾部 ** 只覆盖子树，不匹配目录自身（四平台统一语义）。要让目录自身
-     * 命中须显式写 path="/docs"；策略生成侧对 allow 的 `X/**` 会自动补一条 X。 */
+     * 命中须显式写 path="/docs"；策略生成侧对 allow 的 `X/\**` 会自动补一条 X。 */
     CHECK(dbox_glob_match("/**", "/") == 0, "glob ** does not match root itself");
     CHECK(dbox_glob_match("/**", "/a/b/c") == 1, "glob ** deep");
     CHECK(dbox_glob_match("/docs/**", "/docs") == 0, "glob dir/** does not match dir itself");
@@ -169,7 +169,7 @@ static void test_eval_specificity_order(void)
           "order: legacy path agrees (allow)");
     dbox_policy_free(&p);
 
-    /* 目录自身不被 /dir/** 覆盖：`/**` read allow + `/docs/**` read deny 时，
+    /* 目录自身不被 /dir/\** 覆盖：`/\**` read allow + `/docs/\**` read deny 时，
      * /docs 本身仍 allow（只拒内部），/docs/a.txt 被拒。deny 侧不自动补 X——
      * 敏感目录清单要能继续列目录（只拦内容），这是预期特性。 */
     dbox_policy_init(&p);
@@ -221,7 +221,7 @@ static void test_glob_compiled(void)
         dbox_glob_free(g);
     }
     CHECK(pairs > 0 && mismatches == 0, "glob compiled == plain (every pair)");
-    /* specificity：尾部 "/**" 被剥离后取前缀长度（排序/提前结束依赖它） */
+    /* specificity：尾部 "/\**" 被剥离后取前缀长度（排序/提前结束依赖它） */
     dbox_glob_t *g1 = dbox_glob_compile("/docs/**");
     dbox_glob_t *g2 = dbox_glob_compile("/*.txt");
     dbox_glob_t *g3 = dbox_glob_compile("/a/b/c");
@@ -318,7 +318,7 @@ static void test_toml_and_eval(void)
 }
 
 /* 回归：catch-all 兜底规则不得遮蔽内建设备白名单。
- * OpenDesk 标准/受限模式以 `/** write = ask` 兜底，而 node / devecocli 启动即
+ * OpenDesk 标准/受限模式以 `/\** write = ask` 兜底，而 node / devecocli 启动即
  * open("/dev/tty", O_WRONLY)；若 /dev/tty 走到 ask，上游无人应答时命令会卡满
  * timeout_ms（330s），外部表现就是"devecocli 卡死且没有任何输出"。 */
 static void test_device_whitelist_vs_catchall(void)
@@ -730,8 +730,8 @@ static void test_ro_dirs(void)
     CHECK(rc == 0, "ro-dirs prepend ok");
     CHECK(p.nrules == 6, "ro-dirs prepend count (2 dirs x 2 rules + 2 base)");
 
-    /* 每个只读目录注入两条：精确 `X`（目录自身）与 `X/**`（子树）。glob 语义下
-     * `X/**` 不含 X 自身，只注入这一条会让只读目录本身的写落回兜底规则。
+    /* 每个只读目录注入两条：精确 `X`（目录自身）与 `X/\**`（子树）。glob 语义下
+     * `X/\**` 不含 X 自身，只注入这一条会让只读目录本身的写落回兜底规则。
      * 同 spec 的两条相对次序由 qsort 决定（不稳定），故按存在性断言而非下标。 */
     int sawExact = 0, sawDeep = 0, sawRo2 = 0, sawRo2Deep = 0;
     for (int i = 0; i < p.nrules; i++) {
