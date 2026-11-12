@@ -14,6 +14,7 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import { morphDomChildren } from '../utils/dom-morph.js';
 import { updateStreamingText } from '../utils/streaming-text.js';
 import { AssistantProgressBuffer } from '../utils/assistant-progress-buffer.js';
+import { BackgroundUpdateGate } from '../utils/background-update-gate.js';
 import { nestedScrollerConsumesWheel } from '../utils/history-scroll.js';
 import { ChatNavigation, buildConversationStops, mergeRenderedConversationStops } from './chatNavigation.js';
 import { ChatFind } from './chatFind.js';
@@ -436,11 +437,32 @@ class TaskView extends HTMLElement {
         this._messageContainerCache = new Map();
         this._assistantProgressBuffer = new AssistantProgressBuffer((progress) => {
             if (this._shouldSuppressIncrementalRender()) return;
+            // 兜底丢弃隐藏边界上的 50ms pending 快照（push 在隐藏前、定时器到期在
+            // 隐藏后）。丢弃必须登记补齐标记：窗口冻结期间被丢弃的一切渲染工作
+            // 都由恢复可见时的一次 reload 全量恢复
+            if (this._isWindowRenderFrozen()) {
+                this._backgroundUpdateGate.markPendingReload();
+                return;
+            }
             const historyContainer = this.getHistoryContainer();
             if (!historyContainer) return;
             this._renderAssistantProgress(progress, historyContainer);
             this.tryScrollToEnd();
         });
+        // 窗口隐藏（最小化/完全遮挡）但本视图仍活跃时冻结渲染工作：后台期间
+        // backgroundThrottling 只节流 timer/rAF，IPC 到达后的 DOM 工作照常执行，
+        // 持续积攒渲染债务；窗口置前时合成器恢复被积压债务阻塞，表现为回前台
+        // 数秒不响应。冻结期间跳过的更新由恢复可见时的一次 reload 全量补齐。
+        this._backgroundUpdateGate = new BackgroundUpdateGate(
+            () => !this._isWindowRenderFrozen(),
+            () => {
+                // reload 对非损坏错误会重抛，吞掉 rejection 避免 unhandled；
+                // 失败后标记已消费，等待下一个可见性周期自然补齐，不做无限重试
+                this.reload().catch((error) =>
+                    console.error('Failed to reload task view after window became visible:', error)
+                );
+            }
+        );
         /** @type {number | null} 滚动跟随的 rAF id（同一帧内多次更新合并为一次跟随） */
         this._scrollRafId = null;
         /** @type {number} 视图进入后台不可见的时间戳；0 表示可见。用于后台超时释放。 */
@@ -4359,6 +4381,11 @@ class TaskView extends HTMLElement {
         return this._reloading || this.style.display === 'none' || this.hasAttribute('data-background');
     }
 
+    /** 窗口是否处于渲染冻结状态（最小化 / 被完全遮挡，任一信号源报告 hidden 即冻结）。 */
+    _isWindowRenderFrozen() {
+        return window.__isWindowVisible === false || document.visibilityState === 'hidden';
+    }
+
     _deferTaskUpdateDuringReload(progress) {
         this._deferredTaskUpdates.push(progress);
     }
@@ -6475,6 +6502,19 @@ class TaskView extends HTMLElement {
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);
 
+        // 窗口恢复可见时消费后台冻结期间登记的补齐标记。两个信号源互补：
+        // openDesk:visibilityChanged（主进程 IPC）覆盖最小化/隐藏/恢复；
+        // document visibilitychange（Chromium 遮挡检测）覆盖主进程不感知的
+        // 窗口完全遮挡与重新露出。gate 标记一次性消费，重复事件自然去重。
+        // 拒绝判定复用 _isWindowRenderFrozen，与 shouldSkipRender 的可见性
+        // 判定互补由构造保证，规避事件到达顺序差异导致的提前补齐或漏补齐。
+        this._windowVisibilityHandler = () => {
+            if (this._isWindowRenderFrozen()) return;
+            this._backgroundUpdateGate.onWindowBecameVisible();
+        };
+        window.addEventListener('openDesk:visibilityChanged', this._windowVisibilityHandler);
+        document.addEventListener('visibilitychange', this._windowVisibilityHandler);
+
         void this.reload()
             .then(async () => {
                 if (!this.isConnected || connectionEpoch !== this._connectionEpoch) {
@@ -6514,7 +6554,16 @@ class TaskView extends HTMLElement {
                         }
                         return;
                     }
-                    if (this.style.display === 'none' || this.hasAttribute('data-background')) {
+                    // 视图不可见（display:none / data-background）或窗口隐藏（最小化 /
+                    // 完全遮挡）时走同一丢帧路径：仅同步轻量状态。补齐机制互不登记——
+                    // 视图不可见由 openTask() 的 reload 补齐；窗口隐藏由
+                    // _backgroundUpdateGate 在恢复可见时触发一次 reload 补齐
+                    // （短路求值保证视图不可见时不触发 gate 登记）。
+                    if (
+                        this.style.display === 'none' ||
+                        this.hasAttribute('data-background') ||
+                        this._backgroundUpdateGate.shouldSkipRender()
+                    ) {
                         this._assistantProgressBuffer.clear();
                         this._handleTaskStatusUpdate(progress.task_status);
                         if (progress.type === 'goal_eval') {
@@ -6719,6 +6768,11 @@ class TaskView extends HTMLElement {
         if (this._taskListUpdateHandler) {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
+        }
+        if (this._windowVisibilityHandler) {
+            window.removeEventListener('openDesk:visibilityChanged', this._windowVisibilityHandler);
+            document.removeEventListener('visibilitychange', this._windowVisibilityHandler);
+            this._windowVisibilityHandler = null;
         }
         if (this._historyScrollKeydownHandler) {
             document.removeEventListener('keydown', this._historyScrollKeydownHandler);
