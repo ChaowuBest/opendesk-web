@@ -273,16 +273,174 @@ test('fetchLatestRelease force-times-out a fetch implementation that never settl
     // 既不响应 signal，也永不返回
     const ignoringFetch = (async () => neverSettles) as unknown as typeof fetch;
 
-    await assert.rejects(
-        fetchLatestRelease('https://updates.example.test/news/', ignoringFetch, 100),
-        /Update feed request timed out/
+    // raceWithForceTimeout 的兜底定时器与 AbortSignal.timeout 都不会阻止事件循环退出，
+    // node:test 会以 "Promise resolution is still pending" 取消后续所有用例；
+    // 这里持有一个 ref 定时器模拟宿主进程的常驻活动，让超时兜底真正被验证。
+    const keepAlive = setTimeout(() => {}, 1_000);
+    try {
+        await assert.rejects(
+            fetchLatestRelease('https://updates.example.test/news/', ignoringFetch, 100),
+            /Update feed request timed out/
+        );
+    } finally {
+        clearTimeout(keepAlive);
+    }
+});
+
+test('parseNewsReleasePage selects the Apple Silicon DMG installer for darwin arm64 targets', () => {
+    const release = parseNewsReleasePage(
+        `<!doctype html><html><body><ol class="release-list">
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.3.10：macOS 更新测试</span>
+                <div class="release-downloads">
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-win-x86-0.3.10.exe">Windows x86 安装包</a>
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-win-arm64-0.3.10.exe">Windows ARM64 安装包</a>
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg">macOS 安装包 (Apple 芯片)</a>
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-darwin-x86-0.3.10.dmg">macOS 安装包 (Intel 芯片)</a>
+                </div>
+            </article></li>
+        </ol></body></html>`,
+        'https://opendesk.matrix.openharmony.cn/news/',
+        'strict',
+        'arm64',
+        'darwin'
     );
+
+    assert.equal(
+        release.installerUrl,
+        'https://opendesk.matrix.openharmony.cn/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg'
+    );
+    assert.equal(release.installerName, 'opendesk-darwin-arm64-0.3.10.dmg');
+});
+
+test('parseNewsReleasePage selects the Intel DMG installer for darwin x64 targets', () => {
+    const release = parseNewsReleasePage(
+        `<!doctype html><html><body><ol class="release-list">
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.3.10：macOS 更新测试</span>
+                <div class="release-downloads">
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg">macOS 安装包 (Apple 芯片)</a>
+                    <a href="/OpenDesk/releases/download/v0.3.10/opendesk-darwin-x86-0.3.10.dmg">macOS 安装包 (Intel 芯片)</a>
+                </div>
+            </article></li>
+        </ol></body></html>`,
+        'https://opendesk.matrix.openharmony.cn/news/',
+        'strict',
+        'x64',
+        'darwin'
+    );
+
+    assert.equal(
+        release.installerUrl,
+        'https://opendesk.matrix.openharmony.cn/OpenDesk/releases/download/v0.3.10/opendesk-darwin-x86-0.3.10.dmg'
+    );
+    assert.equal(release.installerName, 'opendesk-darwin-x86-0.3.10.dmg');
+});
+
+test('parseNewsReleasePage rejects a darwin target when the feed only contains Windows installers', () => {
+    assert.throws(
+        () =>
+            parseNewsReleasePage(
+                `<!doctype html><html><body><ol class="release-list">
+                    <li data-release-category="stable-release"><article class="release-item">
+                        <span class="release-item__title">OpenDesk 0.3.10</span>
+                        <div class="release-downloads">
+                            <a href="/OpenDesk/releases/download/v0.3.10/opendesk-win-x86-0.3.10.exe">Windows x86 安装包</a>
+                        </div>
+                    </article></li>
+                </ol></body></html>`,
+                'https://opendesk.matrix.openharmony.cn/news/',
+                'strict',
+                'arm64',
+                'darwin'
+            ),
+        /macOS arm64 release/
+    );
+});
+
+test('parseReleaseResponse selects architecture-specific darwin DMG assets', () => {
+    const assets = [
+        {
+            name: 'opendesk-darwin-arm64-0.3.10.dmg',
+            browser_download_url:
+                'https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg',
+            size: 201
+        },
+        {
+            name: 'opendesk-darwin-x86-0.3.10.dmg',
+            browser_download_url:
+                'https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.10/opendesk-darwin-x86-0.3.10.dmg',
+            size: 199
+        },
+        {
+            name: 'opendesk-win-x86-0.3.10.exe',
+            browser_download_url:
+                'https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.10/opendesk-win-x86-0.3.10.exe',
+            size: 123
+        }
+    ];
+
+    const arm64 = parseReleaseResponse({ tag_name: 'v0.3.10', prerelease: false, assets }, 'strict', 'arm64', 'darwin');
+    assert.equal(arm64.installerName, 'opendesk-darwin-arm64-0.3.10.dmg');
+    assert.equal(arm64.size, 201);
+
+    const x64 = parseReleaseResponse({ tag_name: 'v0.3.10', prerelease: false, assets }, 'strict', 'x64', 'darwin');
+    assert.equal(x64.installerName, 'opendesk-darwin-x86-0.3.10.dmg');
+    assert.equal(x64.size, 199);
+});
+
+test('parseReleaseResponse keeps ignoring macOS assets for Windows targets', () => {
+    assert.throws(
+        () =>
+            parseReleaseResponse(
+                {
+                    tag_name: 'v0.3.10',
+                    prerelease: false,
+                    assets: [
+                        {
+                            name: 'opendesk-darwin-arm64-0.3.10.dmg',
+                            browser_download_url:
+                                'https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg',
+                            size: 201
+                        }
+                    ]
+                },
+                'strict',
+                'x64',
+                'win32'
+            ),
+        /Windows EXE installer/
+    );
+});
+
+test('fetchLatestRelease passes the darwin platform through to the news page parser', async () => {
+    const fetchImpl = async () =>
+        new Response(
+            `<li data-release-category="stable-release"><article>
+                <span class="release-item__title">OpenDesk 0.3.10</span>
+                <div class="release-downloads">
+                    <a href="https://gitcode.com/openharmony-robot/OpenDesk/releases/download/v0.3.10/opendesk-darwin-arm64-0.3.10.dmg">macOS 安装包 (Apple 芯片)</a>
+                </div>
+            </article></li>`,
+            { headers: { 'content-type': 'text/html; charset=utf-8' } }
+        );
+
+    const release = await fetchLatestRelease(
+        'https://opendesk.matrix.openharmony.cn/news/',
+        fetchImpl as typeof fetch,
+        30_000,
+        'strict',
+        'arm64',
+        'darwin'
+    );
+
+    assert.equal(release.installerName, 'opendesk-darwin-arm64-0.3.10.dmg');
 });
 
 test('fetchLatestRelease still passes the abort signal to fetch implementations that honor it', async () => {
     let receivedSignal: AbortSignal | undefined;
     const capturingFetch = (async (_input: string | URL, init?: RequestInit) => {
-        receivedSignal = init?.signal;
+        receivedSignal = init?.signal ?? undefined;
         return new Response(
             '<li data-release-category="stable-release"><article>' +
                 '<span class="release-item__title">OpenDesk 0.3.7</span>' +
