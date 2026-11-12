@@ -152,8 +152,8 @@ declare global {
             >;
             check: () => Promise<unknown>;
             restart: () => Promise<boolean>;
-            /** macOS 手动安装模式：打开已下载校验的安装包（仅 ready 态有效） */
-            openInstaller: () => Promise<boolean>;
+            /** macOS 手动安装模式：本地安装已下载校验的安装包（仅 ready 态有效） */
+            applyManual: () => Promise<boolean>;
             onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
         };
         /** preload 注入的语言包 API：快照由 preload 缓存，供翻译器同步读取 */

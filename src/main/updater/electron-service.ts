@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, ipcMain, shell } from 'electron';
+import { app, ipcMain } from 'electron';
 import { GlobalState } from '../aikernel/states/global.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import { getPlatform } from '../../platforms/base.js';
@@ -24,11 +24,12 @@ import {
     resolveUpdateCacheDirectory
 } from './config.js';
 import { copyLocalInstaller, downloadInstaller } from './download.js';
+import { createMacInstallRunner, installFromDmg, resolveAppBundlePath } from './mac-install.js';
 import { fetchLatestRelease, type UpdaterTargetArch, type UpdaterTargetPlatform } from './release-feed.js';
 import { resolveUpdateRelaunchCommand } from './restart.js';
 import { reportUpdateHealthToService, submitUpdateToService } from './update-service-client.js';
 import { verifyUpdateInstaller } from './verification.js';
-import type { UpdateState } from './types.js';
+import type { ReadyUpdateRecord, UpdateState } from './types.js';
 
 export interface ElectronUpdateServiceOptions {
     getMainWindow: () => Electron.BrowserWindow | null;
@@ -59,6 +60,24 @@ function updaterTargetArch(): UpdaterTargetArch {
     return process.arch === 'arm64' ? 'arm64' : 'x64';
 }
 
+// macOS 二期：挂载已下载校验的 DMG，用 ditto 原位替换当前 .app bundle（失败自动回滚）
+function installReadyDmg(record: ReadyUpdateRecord): Promise<void> {
+    const appBundlePath = resolveAppBundlePath(process.execPath);
+    if (!appBundlePath) {
+        throw new Error('OpenDesk is not running from an application bundle');
+    }
+    // mkdtemp 生成唯一挂载点，避免与用户已挂载的同名卷冲突
+    const mountPoint = fs.mkdtempSync(path.join(app.getPath('temp'), 'opendesk-update-'));
+    return installFromDmg({
+        dmgPath: record.installerPath,
+        appBundlePath,
+        mountPoint,
+        runner: createMacInstallRunner()
+    }).finally(() => {
+        void fs.promises.rm(mountPoint, { recursive: true, force: true }).catch(() => undefined);
+    });
+}
+
 /**
  * Node 全局 fetch（undici）不读取 HTTP_PROXY/HTTPS_PROXY，也不经过 Chromium
  * 网络栈，内网代理环境下会直连失败。updater 的所有网络请求必须走平台
@@ -86,7 +105,7 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
             data: { status: 'unsupported' } satisfies UpdateState
         }));
         ipcMain.handle('updater:restart', () => ({ status: 'ok', data: false }));
-        ipcMain.handle('updater:openInstaller', () => ({ status: 'ok', data: false }));
+        ipcMain.handle('updater:applyManual', () => ({ status: 'ok', data: false }));
         return undefined;
     }
 
@@ -107,6 +126,7 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         stateDirectory,
         manualInstall,
         installerExtension,
+        installManually: manualInstall ? installReadyDmg : undefined,
         fetchRelease: async () => {
             if (!localTestInstaller)
                 return fetchLatestRelease(
@@ -158,7 +178,7 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         prepareWindowsForQuit: options.prepareWindowsForQuit,
         relaunch: () => {
             if (manualInstall) {
-                // macOS 一期为手动安装，restart 流程不会走到这里；保留兜底避免误用 Windows launcher 布局
+                // macOS 二期：.app 已原位替换，重启同一路径即新版本
                 app.relaunch();
                 return;
             }
@@ -195,15 +215,11 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         status: 'ok',
         data: await coordinator.restartToApplyUpdate()
     }));
-    // macOS 手动安装：ready 后由用户点击挂载 DMG；仅 ready 态且安装包仍在时放行
-    ipcMain.handle('updater:openInstaller', async () => {
-        const state = coordinator.getState();
-        if (state.status !== 'ready' || !fs.existsSync(state.installerPath)) {
-            return { status: 'ok', data: false };
-        }
-        const errorMessage = await shell.openPath(state.installerPath);
-        return { status: 'ok', data: errorMessage === '' };
-    });
+    // macOS 手动安装：ready 后由用户触发挂载 DMG 替换 .app，成功后进入 installed 等待重启
+    ipcMain.handle('updater:applyManual', async () => ({
+        status: 'ok',
+        data: await coordinator.applyManualUpdate()
+    }));
 
     const reportHealthy = () => {
         if (manualInstall) return; // macOS 无 Windows 更新系统服务可上报

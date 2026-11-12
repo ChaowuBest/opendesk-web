@@ -2832,17 +2832,20 @@ class SettingPanel extends HTMLElement {
             statusText = this._t('sp.update.status.downloading', { version: state.version, progress: percent });
             disabled = true;
         } else if (state.status === 'ready') {
-            // macOS 一期：安装包下载校验完成后停在 ready，由用户手动挂载 DMG 完成安装
+            // macOS：安装包下载校验完成后停在 ready，由用户触发本地安装（挂载 DMG 替换 .app）
             if (this._isManualUpdateInstall()) {
                 statusText = this._t('sp.update.status.manualReady', { version: state.version });
-                actionText = this._t('sp.update.openInstaller');
+                actionText = this._t('sp.update.installNow');
             } else {
                 statusText = this._t('sp.update.status.ready', { version: state.version });
                 actionText = this._t('sp.update.installing');
                 disabled = true;
             }
         } else if (state.status === 'installing') {
-            statusText = this._t('sp.update.status.installing', { version: state.version });
+            statusText = this._t(
+                this._isManualUpdateInstall() ? 'sp.update.status.manualInstalling' : 'sp.update.status.installing',
+                { version: state.version }
+            );
             actionText = this._t('sp.update.installing');
             disabled = true;
         } else if (state.status === 'installed') {
@@ -2922,8 +2925,8 @@ class SettingPanel extends HTMLElement {
                 return;
             }
             if (this.updateState?.status === 'ready' && this._isManualUpdateInstall()) {
-                // macOS 手动安装：打开已下载的 DMG，由用户完成安装
-                await window.updateAPI.openInstaller();
+                // macOS 手动安装：挂载已下载的 DMG 替换 .app，进度与结果经 onStateChanged 刷新
+                await window.updateAPI.applyManual();
                 return;
             }
             this.updateState = { status: 'checking' };

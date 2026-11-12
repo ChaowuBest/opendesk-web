@@ -1332,8 +1332,8 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
-        openInstaller: async () => {
-            const result = await ipcRenderer.invoke('updater:openInstaller');
+        applyManual: async () => {
+            const result = await ipcRenderer.invoke('updater:applyManual');
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },

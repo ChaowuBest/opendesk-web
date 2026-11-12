@@ -2,10 +2,11 @@ import { afterAll, beforeEach, expect, jest, test } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import type { InstallFromDmgOptions } from '../../../main/updater/mac-install.js';
 
-// macOS 一期：electron-service 在 darwin 上放开门禁并进入手动安装模式
-// （下载校验完成后停在 ready，等用户挂载 DMG），测试进程模拟 Apple 芯片 Mac；
-// arch 也一并固定，否则安装包架构选择在 x64/arm64 宿主机上结果不同
+// macOS 二期：electron-service 在 darwin 上放开门禁并进入手动安装模式
+// （下载校验完成后停在 ready，等用户触发本地安装：挂载 DMG 替换 .app 后重启），
+// 测试进程模拟 Apple 芯片 Mac；arch 也一并固定，否则安装包架构选择在 x64/arm64 宿主机上结果不同
 const realPlatform = process.platform;
 const realArch = process.arch;
 Object.defineProperty(process, 'platform', { value: 'darwin' });
@@ -18,8 +19,10 @@ afterAll(() => {
 const dmgBytes = new Uint8Array([0x78, 0x7a, 0x20, 0x64, 0x6d, 0x67]);
 
 const platformFetch = jest.fn<(input: string | URL) => Promise<Response>>();
-const ipcHandle = jest.fn();
-const shellOpenPath = jest.fn(async () => '');
+// 给 ipcHandle 标注 handler 参数，便于从 mock.calls 取出注册的 IPC 处理函数并直接调用
+type RegisteredIpcHandler = (...args: unknown[]) => unknown;
+const ipcHandle = jest.fn<(channel: string, handler: RegisteredIpcHandler) => void>();
+const installFromDmg = jest.fn<(options: InstallFromDmgOptions) => Promise<void>>(async () => undefined);
 
 const feedHtml = `<!doctype html><html><body><ol class="release-list">
     <li data-release-category="stable-release"><article class="release-item">
@@ -41,8 +44,15 @@ jest.unstable_mockModule('electron', () => ({
         getVersion: () => '0.3.7',
         getPath: () => userDataDir
     },
-    ipcMain: { handle: ipcHandle },
-    shell: { openPath: shellOpenPath }
+    ipcMain: { handle: ipcHandle }
+}));
+
+// 二期本地安装实际执行 hdiutil/ditto，这里 mock 掉 mac-install 模块，
+// 只验证 electron-service 把 dmg 路径、当前 .app bundle 与唯一挂载点接进编排层
+jest.unstable_mockModule('../../../main/updater/mac-install.js', () => ({
+    installFromDmg,
+    resolveAppBundlePath: () => '/Applications/OpenDesk.app',
+    createMacInstallRunner: () => ({ run: async () => undefined, listDir: async () => [], pathExists: () => false })
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({
@@ -108,7 +118,7 @@ beforeEach(() => {
     submitUpdateToService.mockClear();
     reportUpdateHealthToService.mockClear();
     ipcHandle.mockClear();
-    shellOpenPath.mockClear();
+    installFromDmg.mockClear();
     process.env.OPENDESK_UPDATE_FORCE_ENABLE = '1';
     process.env.OPENDESK_UPDATE_FEED_URL = 'https://updates.example.test/news/';
     delete process.env.OPENDESK_UPDATE_TEST_INSTALLER;
@@ -155,14 +165,14 @@ test('macOS updater downloads the apple-silicon dmg and keeps it ready for manua
     expect(submitUpdateToService).not.toHaveBeenCalled();
     expect(reportUpdateHealthToService).not.toHaveBeenCalled();
 
-    // 已下载校验的安装包与 ready 记录保留在缓存目录，等用户手动挂载 DMG
+    // 已下载校验的安装包与 ready 记录保留在缓存目录，等用户触发本地安装
     const installerPath = path.join(userDataDir, 'Cache', 'opendesk-darwin-arm64-0.3.8.dmg');
     expect(coordinator!.getState()).toMatchObject({ status: 'ready', version: '0.3.8', installerPath });
     expect(fs.existsSync(installerPath)).toBe(true);
     expect(fs.existsSync(path.join(userDataDir, 'Cache', 'ready.json'))).toBe(true);
 }, 15000);
 
-test('the updater:openInstaller channel mounts the ready dmg', async () => {
+test('the updater:applyManual channel installs the ready dmg and reaches the installed state', async () => {
     userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-darwin-'));
     mockHappyPath();
 
@@ -174,14 +184,56 @@ test('the updater:openInstaller channel mounts the ready dmg', async () => {
         logError: (message) => throwOnErrorLog(message)
     });
     await waitForStatus(coordinator!, 'ready');
+    installFromDmg.mockClear();
 
-    const openHandler = ipcHandle.mock.calls.filter(([channel]) => channel === 'updater:openInstaller').at(-1)?.[1];
-    expect(typeof openHandler).toBe('function');
-    await expect(openHandler!()).resolves.toEqual({ status: 'ok', data: true });
+    const applyHandler = ipcHandle.mock.calls.filter(([channel]) => channel === 'updater:applyManual').at(-1)?.[1];
+    expect(typeof applyHandler).toBe('function');
+    await expect(applyHandler!()).resolves.toEqual({ status: 'ok', data: true });
 
     const installerPath = path.join(userDataDir, 'Cache', 'opendesk-darwin-arm64-0.3.8.dmg');
-    expect(shellOpenPath).toHaveBeenCalledTimes(1);
-    expect(shellOpenPath).toHaveBeenCalledWith(installerPath);
+    expect(installFromDmg).toHaveBeenCalledTimes(1);
+    expect(installFromDmg.mock.calls[0][0]).toMatchObject({
+        dmgPath: installerPath,
+        appBundlePath: '/Applications/OpenDesk.app'
+    });
+    expect(String(installFromDmg.mock.calls[0][0].mountPoint)).toContain('opendesk-update');
+    expect(coordinator!.getState()).toMatchObject({ status: 'installed', version: '0.3.8' });
+    // 安装成功后清理缓存包与 ready 记录，之后只等用户重启
+    expect(fs.existsSync(installerPath)).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'Cache', 'ready.json'))).toBe(false);
+}, 15000);
+
+test('a failed local install keeps the dmg so the user can retry without redownloading', async () => {
+    userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-darwin-'));
+    mockHappyPath();
+    const errorLogs: string[] = [];
+
+    const coordinator = registerElectronUpdateService({
+        getMainWindow: () => fakeMainWindow as unknown as import('electron').BrowserWindow,
+        prepareWindowsForQuit: async () => true,
+        quitForRestart: () => undefined,
+        logInfo: () => undefined,
+        logError: (message) => errorLogs.push(message)
+    });
+    await waitForStatus(coordinator!, 'ready');
+
+    const applyHandler = ipcHandle.mock.calls.filter(([channel]) => channel === 'updater:applyManual').at(-1)?.[1];
+    installFromDmg.mockRejectedValueOnce(new Error('ditto exited with failure'));
+    await expect(applyHandler!()).resolves.toEqual({ status: 'ok', data: false });
+
+    const installerPath = path.join(userDataDir, 'Cache', 'opendesk-darwin-arm64-0.3.8.dmg');
+    expect(coordinator!.getState()).toMatchObject({ status: 'error', code: 'update_install_failed' });
+    expect(errorLogs.join('\n')).toContain('update_install_failed');
+    // 安装包与 ready 记录保留，重试不重新下载
+    expect(fs.existsSync(installerPath)).toBe(true);
+    expect(fs.existsSync(path.join(userDataDir, 'Cache', 'ready.json'))).toBe(true);
+
+    // 与 renderer 行为一致：check 恢复 ready 后再次安装成功
+    await coordinator!.checkForUpdates();
+    expect(coordinator!.getState().status).toBe('ready');
+    await expect(applyHandler!()).resolves.toEqual({ status: 'ok', data: true });
+    expect(coordinator!.getState()).toMatchObject({ status: 'installed', version: '0.3.8' });
+    expect(fs.existsSync(installerPath)).toBe(false);
 }, 15000);
 
 function throwOnErrorLog(message: string): void {
