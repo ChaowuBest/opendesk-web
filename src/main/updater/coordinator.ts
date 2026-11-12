@@ -32,6 +32,10 @@ export interface UpdateCoordinatorDependencies {
     prepareWindowsForQuit: () => Promise<boolean>;
     relaunch: () => void;
     quit: () => void;
+    // 手动安装模式（macOS 一期）：下载校验完成后停在 ready 等用户挂载 DMG，不经系统服务自动安装
+    manualInstall?: boolean;
+    // 安装包扩展名校验：Windows 为 .exe（默认），macOS 为 .dmg
+    installerExtension?: string;
     onStateChanged?: (state: UpdateState) => void;
 }
 
@@ -62,6 +66,10 @@ export class UpdateCoordinator {
         return path.join(this.dependencies.stateDirectory, 'ready.json');
     }
 
+    private get expectedInstallerExtension(): string {
+        return (this.dependencies.installerExtension ?? '.exe').toLowerCase();
+    }
+
     async restore(): Promise<UpdateState> {
         try {
             const raw = JSON.parse(await fs.promises.readFile(this.readyRecordPath, 'utf8')) as ReadyUpdateRecord;
@@ -78,7 +86,7 @@ export class UpdateCoordinator {
                 // 远端发布版本必须比本地更新（本地可能是预发布/开发构建，按 SemVer 优先级比较）
                 !isNewerVersion(raw.version, this.dependencies.currentVersion) ||
                 path.dirname(path.resolve(raw.installerPath)) !== path.resolve(this.dependencies.stateDirectory) ||
-                !raw.installerPath.toLowerCase().endsWith('.exe') ||
+                !raw.installerPath.toLowerCase().endsWith(this.expectedInstallerExtension) ||
                 !fs.existsSync(raw.installerPath)
             ) {
                 await this.discardRecord(raw);
@@ -104,6 +112,8 @@ export class UpdateCoordinator {
         }
         if (this.operation) return this.operation;
         if (this.pendingRecord) {
+            // macOS 一期：待安装包只等用户手动处理，定时重查不再自动提交系统服务
+            if (this.dependencies.manualInstall) return this.getState();
             this.operation = this.submitRecord(this.pendingRecord).finally(() => {
                 this.operation = undefined;
             });
@@ -123,7 +133,10 @@ export class UpdateCoordinator {
                 return this.setState({ status: 'upToDate', checkedAt: new Date().toISOString() });
             }
             const safeName = path.basename(release.installerName);
-            if (safeName !== release.installerName || !safeName.toLowerCase().endsWith('.exe')) {
+            if (
+                safeName !== release.installerName ||
+                !safeName.toLowerCase().endsWith(this.expectedInstallerExtension)
+            ) {
                 throw new Error('Release contains an invalid installer filename');
             }
             await fs.promises.mkdir(this.dependencies.stateDirectory, { recursive: true });
@@ -149,7 +162,9 @@ export class UpdateCoordinator {
             await fs.promises.rm(this.readyRecordPath, { force: true });
             await fs.promises.rename(`${this.readyRecordPath}.tmp`, this.readyRecordPath);
             this.pendingRecord = record;
-            this.setState({ ...record, status: 'ready', activeTaskCount: 0 });
+            const readyState = this.setState({ ...record, status: 'ready', activeTaskCount: 0 });
+            // macOS 一期：包就绪即停在 ready，由用户手动挂载 DMG 安装，不自动提交系统服务
+            if (this.dependencies.manualInstall) return readyState;
             return await this.submitRecord(record);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -158,6 +173,8 @@ export class UpdateCoordinator {
     }
 
     async submitPendingUpdate(): Promise<boolean> {
+        // 手动安装模式下安装由用户完成，协调器永远不会经系统服务走到 installed
+        if (this.dependencies.manualInstall) return false;
         if (!this.pendingRecord || this.state.status !== 'ready') return false;
         if (this.operation) {
             await this.operation;

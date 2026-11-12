@@ -37,8 +37,12 @@ function createCoordinator(overrides: Record<string, unknown> = {}) {
             };
         },
         getActiveTasks: () => [],
-        stopActiveTasks: async () => calls.push('stop'),
-        flushState: async () => calls.push('flush'),
+        stopActiveTasks: async () => {
+            calls.push('stop');
+        },
+        flushState: async () => {
+            calls.push('flush');
+        },
         prepareWindowsForQuit: async () => {
             calls.push('prepare');
             return true;
@@ -301,3 +305,117 @@ for (const approved of [true, false]) {
         );
     });
 }
+
+// macOS 一期手动安装模式：下载校验完成后停在 ready，等用户自己挂载 DMG 安装
+const darwinRelease = {
+    version: '0.3.7',
+    installerUrl: 'https://updates.example.test/opendesk-darwin-arm64-0.3.7.dmg',
+    installerName: 'opendesk-darwin-arm64-0.3.7.dmg',
+    sha256: 'a'.repeat(64)
+};
+
+function createManualInstallCoordinator(overrides: Record<string, unknown> = {}) {
+    return createCoordinator({
+        manualInstall: true,
+        installerExtension: '.dmg',
+        fetchRelease: async () => darwinRelease,
+        ...overrides
+    });
+}
+
+test('manual install mode keeps a verified dmg package ready without contacting the service', async (t) => {
+    const { coordinator, calls, root } = createManualInstallCoordinator();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const installerPath = path.join(root, darwinRelease.installerName);
+
+    const state = await coordinator.checkForUpdates();
+
+    assert.equal(state.status, 'ready');
+    assert.equal(state.version, '0.3.7');
+    // 不能碰 Windows 系统服务链路（含 stop/flush/prepare/relaunch/quit）
+    assert.deepEqual(calls, []);
+    // 安装包与 ready.json 都必须保留，交给用户手动挂载 DMG
+    assert.equal(fs.existsSync(installerPath), true);
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'ready.json'), 'utf8'));
+    assert.equal(saved.installerPath, installerPath);
+    assert.equal(saved.sha256, 'a'.repeat(64));
+});
+
+test('manual install mode rejects a release whose installer is not a dmg', async (t) => {
+    const { coordinator, calls, root } = createManualInstallCoordinator({
+        // 保留默认工厂里的 Windows 安装包，macOS 配置必须拦下它
+        fetchRelease: async () => ({
+            version: '0.3.7',
+            installerUrl: 'https://updates.example.test/OpenDesk-0.3.7-Setup.exe',
+            installerName: 'OpenDesk-0.3.7-Setup.exe'
+        })
+    });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const state = await coordinator.checkForUpdates();
+
+    assert.equal(state.status, 'error');
+    assert.equal(state.code, 'update_check_failed');
+    assert.equal(state.message, 'Release contains an invalid installer filename');
+    assert.deepEqual(calls, []);
+});
+
+test('manual install mode rechecks without resubmitting or redownloading while the package is pending', async (t) => {
+    let fetchCount = 0;
+    const { coordinator, calls, root } = createManualInstallCoordinator({
+        fetchRelease: async () => {
+            fetchCount += 1;
+            return darwinRelease;
+        }
+    });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    await coordinator.checkForUpdates();
+    const state = await coordinator.checkForUpdates();
+
+    assert.equal(state.status, 'ready');
+    assert.equal(fetchCount, 1);
+    assert.deepEqual(calls, []);
+});
+
+test('manual install mode restores a pending dmg package and never submits it to the service', async (t) => {
+    const first = createManualInstallCoordinator();
+    t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+    await first.coordinator.checkForUpdates();
+
+    const restored = new UpdateCoordinator({
+        ...(first.coordinator.dependenciesForTesting as any),
+        stateDirectory: first.root
+    });
+    const state = await restored.restore();
+
+    assert.equal(state.status, 'ready');
+    assert.equal(state.version, '0.3.7');
+    // 手动安装模式下协调器不可能经系统服务走到 installed
+    assert.equal(await restored.submitPendingUpdate(), false);
+    assert.equal(restored.getState().status, 'ready');
+    assert.equal(fs.existsSync(path.join(first.root, darwinRelease.installerName)), true);
+});
+
+test('restore discards a pending record whose installer extension does not match the platform', async (t) => {
+    const { coordinator, root } = createManualInstallCoordinator();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const installerPath = path.join(root, 'OpenDesk-0.3.7-Setup.exe');
+    fs.writeFileSync(installerPath, 'installer');
+    fs.writeFileSync(
+        path.join(root, 'ready.json'),
+        JSON.stringify({
+            requestId: '00000000-0000-4000-8000-000000000003',
+            version: '0.3.7',
+            // Windows 的 exe 记录在 macOS 配置下必须被拦下，避免恢复出错误平台的包
+            installerPath,
+            sha256: 'b'.repeat(64)
+        })
+    );
+
+    const state = await coordinator.restore();
+
+    assert.equal(state.status, 'idle');
+    assert.equal(fs.existsSync(path.join(root, 'ready.json')), false);
+    assert.equal(fs.existsSync(installerPath), false);
+});
