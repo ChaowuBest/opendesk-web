@@ -46,6 +46,8 @@ describe('installed update titlebar entry', () => {
         expect(settingPanel).toContain("state.status === 'installed'");
         expect(settingPanel).toContain('window.updateAPI.restart()');
         expect(settingPanel).not.toContain('window.updateAPI.install()');
-        expect(settingPanel).not.toContain("this.updateState?.status === 'ready'");
+        // ready 态只允许 macOS 手动安装分支出现（打开已下载的 DMG），禁止回到旧的后台安装入口
+        expect(settingPanel).toContain("this.updateState?.status === 'ready' && this._isManualUpdateInstall()");
+        expect(settingPanel).toContain('window.updateAPI.openInstaller()');
     });
 });

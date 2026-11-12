@@ -1332,6 +1332,11 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
+        openInstaller: async () => {
+            const result = await ipcRenderer.invoke('updater:openInstaller');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
         onStateChanged: (callback) => {
             const listener = (_event, state) => callback(state);
             ipcRenderer.on('updater:stateChanged', listener);

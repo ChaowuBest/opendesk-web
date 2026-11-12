@@ -2832,9 +2832,15 @@ class SettingPanel extends HTMLElement {
             statusText = this._t('sp.update.status.downloading', { version: state.version, progress: percent });
             disabled = true;
         } else if (state.status === 'ready') {
-            statusText = this._t('sp.update.status.ready', { version: state.version });
-            actionText = this._t('sp.update.installing');
-            disabled = true;
+            // macOS 一期：安装包下载校验完成后停在 ready，由用户手动挂载 DMG 完成安装
+            if (this._isManualUpdateInstall()) {
+                statusText = this._t('sp.update.status.manualReady', { version: state.version });
+                actionText = this._t('sp.update.openInstaller');
+            } else {
+                statusText = this._t('sp.update.status.ready', { version: state.version });
+                actionText = this._t('sp.update.installing');
+                disabled = true;
+            }
         } else if (state.status === 'installing') {
             statusText = this._t('sp.update.status.installing', { version: state.version });
             actionText = this._t('sp.update.installing');
@@ -2890,6 +2896,11 @@ class SettingPanel extends HTMLElement {
         this._bindUpdateEvent();
     }
 
+    _isManualUpdateInstall() {
+        // renderer 拿不到 process.platform，用 UA 判定 macOS（Electron UA 恒含 Macintosh）
+        return typeof navigator !== 'undefined' && !!navigator.userAgent?.includes('Macintosh');
+    }
+
     _bindUpdateEvent() {
         this.querySelector('#software-update-action')?.addEventListener('click', async () => {
             if (this.updateState?.status === 'installed') {
@@ -2908,6 +2919,11 @@ class SettingPanel extends HTMLElement {
                     mountTarget: this
                 });
                 if (confirmed) await window.updateAPI.restart();
+                return;
+            }
+            if (this.updateState?.status === 'ready' && this._isManualUpdateInstall()) {
+                // macOS 手动安装：打开已下载的 DMG，由用户完成安装
+                await window.updateAPI.openInstaller();
                 return;
             }
             this.updateState = { status: 'checking' };

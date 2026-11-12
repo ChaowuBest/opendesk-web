@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, shell } from 'electron';
 import { GlobalState } from '../aikernel/states/global.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import { getPlatform } from '../../platforms/base.js';
@@ -24,7 +24,7 @@ import {
     resolveUpdateCacheDirectory
 } from './config.js';
 import { copyLocalInstaller, downloadInstaller } from './download.js';
-import { fetchLatestRelease, type UpdaterTargetArch } from './release-feed.js';
+import { fetchLatestRelease, type UpdaterTargetArch, type UpdaterTargetPlatform } from './release-feed.js';
 import { resolveUpdateRelaunchCommand } from './restart.js';
 import { reportUpdateHealthToService, submitUpdateToService } from './update-service-client.js';
 import { verifyUpdateInstaller } from './verification.js';
@@ -45,7 +45,14 @@ function getActiveTaskIds(): string[] {
 }
 
 function updaterEnabled(): boolean {
-    return process.platform === 'win32' && (app.isPackaged || process.env.OPENDESK_UPDATE_FORCE_ENABLE === '1');
+    return (
+        (process.platform === 'win32' || process.platform === 'darwin') &&
+        (app.isPackaged || process.env.OPENDESK_UPDATE_FORCE_ENABLE === '1')
+    );
+}
+
+function updaterTargetPlatform(): UpdaterTargetPlatform {
+    return process.platform === 'darwin' ? 'darwin' : 'win32';
 }
 
 function updaterTargetArch(): UpdaterTargetArch {
@@ -79,9 +86,12 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
             data: { status: 'unsupported' } satisfies UpdateState
         }));
         ipcMain.handle('updater:restart', () => ({ status: 'ok', data: false }));
+        ipcMain.handle('updater:openInstaller', () => ({ status: 'ok', data: false }));
         return undefined;
     }
 
+    const manualInstall = process.platform === 'darwin';
+    const installerExtension = manualInstall ? '.dmg' : '.exe';
     const stateDirectory = resolveUpdateCacheDirectory(app.getPath('userData'));
     const feedUrl = process.env.OPENDESK_UPDATE_FEED_URL || DEFAULT_UPDATE_FEED_URL;
     const allowUnverified = process.env.OPENDESK_UPDATE_ALLOW_UNVERIFIED === '1';
@@ -95,6 +105,8 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
     const coordinator = new UpdateCoordinator({
         currentVersion: app.getVersion(),
         stateDirectory,
+        manualInstall,
+        installerExtension,
         fetchRelease: async () => {
             if (!localTestInstaller)
                 return fetchLatestRelease(
@@ -102,7 +114,8 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
                     platformProxyFetch,
                     30_000,
                     UPDATE_PACKAGE_TRUST_MODE,
-                    updaterTargetArch()
+                    updaterTargetArch(),
+                    updaterTargetPlatform()
                 );
             if (!allowUnverified || !localTestVersion) {
                 throw new Error(
@@ -119,7 +132,7 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         },
         download: (release, destination, onProgress) =>
             localTestInstaller
-                ? copyLocalInstaller(localTestInstaller, destination, onProgress)
+                ? copyLocalInstaller(localTestInstaller, destination, onProgress, installerExtension)
                 : downloadInstaller({
                       url: release.installerUrl,
                       destination,
@@ -144,6 +157,11 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         flushState: () => GlobalState.getInstance().taskManagerState.flushAllPendingSaves(),
         prepareWindowsForQuit: options.prepareWindowsForQuit,
         relaunch: () => {
+            if (manualInstall) {
+                // macOS 一期为手动安装，restart 流程不会走到这里；保留兜底避免误用 Windows launcher 布局
+                app.relaunch();
+                return;
+            }
             const command = resolveUpdateRelaunchCommand(process.execPath, process.pid);
             if (!command.usesStableLauncher) {
                 app.relaunch({ execPath: command.executablePath, args: [] });
@@ -177,8 +195,18 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
         status: 'ok',
         data: await coordinator.restartToApplyUpdate()
     }));
+    // macOS 手动安装：ready 后由用户点击挂载 DMG；仅 ready 态且安装包仍在时放行
+    ipcMain.handle('updater:openInstaller', async () => {
+        const state = coordinator.getState();
+        if (state.status !== 'ready' || !fs.existsSync(state.installerPath)) {
+            return { status: 'ok', data: false };
+        }
+        const errorMessage = await shell.openPath(state.installerPath);
+        return { status: 'ok', data: errorMessage === '' };
+    });
 
     const reportHealthy = () => {
+        if (manualInstall) return; // macOS 无 Windows 更新系统服务可上报
         void reportUpdateHealthToService(app.getVersion(), process.pid)
             .then((response) => {
                 if (response.code === 'health_recorded' || response.code === 'cleanup_completed') {
