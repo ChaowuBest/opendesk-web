@@ -35,6 +35,7 @@ import {
     isSidebarTaskVisible,
     normalizeWorkspace
 } from '../sidebarTaskGroups.js';
+import { BROWSER_ACTIVE_ICON_PRUNE_INTERVAL_MS, pruneBrowserActiveTasks } from '../browserActiveIndicators.ts';
 import { captureSidebarScrollState, restoreSidebarScrollState } from '../sidebarScrollState.js';
 import { attachSidebarSwipeDelete } from '../sidebarSwipeDelete.js';
 import { attachSidebarMultiSelect } from '../sidebarMultiSelectController.js';
@@ -90,6 +91,10 @@ class SideBar extends HTMLElement {
         this._waitingTaskIds = new Set();
         /** 浏览器处于活跃状态的任务 ID 集合 */
         this._browserActiveTaskIds = new Set();
+        /** taskId -> 最后一次确认浏览器活跃的时间戳，用于过期兜底清理 */
+        this._browserActiveAt = new Map();
+        /** 浏览器活跃图标过期扫描定时器 */
+        this._browserActivePruneTimer = null;
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
         this._appListUnsubscribe = null;
@@ -214,10 +219,14 @@ class SideBar extends HTMLElement {
 
         document.addEventListener('browser-visibility-changed', (e) => {
             const { taskId, visible } = e.detail;
+            // 记录最后活跃时间：事件可能在中途丢失，过期后由扫描兜底清理图标
+            if (visible) this._browserActiveAt.set(taskId, Date.now());
+            else this._browserActiveAt.delete(taskId);
             const changed = visible
                 ? !this._browserActiveTaskIds.has(taskId) && (this._browserActiveTaskIds.add(taskId), true)
                 : this._browserActiveTaskIds.delete(taskId);
             if (changed) this._refreshBrowserIcons();
+            this._syncBrowserActivePruneTimer();
         });
 
         // 当打开其他应用时，清除任务高亮
@@ -315,6 +324,10 @@ class SideBar extends HTMLElement {
         if (this._chatBadgeTimer) {
             clearTimeout(this._chatBadgeTimer);
             this._chatBadgeTimer = null;
+        }
+        if (this._browserActivePruneTimer !== null) {
+            clearInterval(this._browserActivePruneTimer);
+            this._browserActivePruneTimer = null;
         }
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
@@ -1341,6 +1354,42 @@ class SideBar extends HTMLElement {
 
     _refreshBrowserIcons() {
         this.reloadTaskList();
+    }
+
+    /**
+     * 浏览器活跃图标的时间兜底：集合非空时保持扫描定时器运行，空集合时停掉避免空转。
+     */
+    _syncBrowserActivePruneTimer() {
+        if (this._browserActiveTaskIds.size > 0) {
+            if (this._browserActivePruneTimer !== null) return;
+            this._browserActivePruneTimer = setInterval(
+                () => this._pruneBrowserActiveIcons(),
+                BROWSER_ACTIVE_ICON_PRUNE_INTERVAL_MS
+            );
+            return;
+        }
+        if (this._browserActivePruneTimer !== null) {
+            clearInterval(this._browserActivePruneTimer);
+            this._browserActivePruneTimer = null;
+        }
+    }
+
+    /**
+     * 丢弃过期的浏览器活跃记录：任务结束超过保有期仍未收到新的活跃确认时清理，
+     * 避免 browser-visibility-changed 事件丢失（task-view 被回收等）导致图标永久闪烁。
+     */
+    _pruneBrowserActiveIcons() {
+        if (this._browserActiveTaskIds.size === 0) {
+            this._syncBrowserActivePruneTimer();
+            return;
+        }
+        const { removed } = pruneBrowserActiveTasks(this._browserActiveAt, this.taskList, Date.now());
+        if (removed.length === 0) return;
+        for (const taskId of removed) {
+            this._browserActiveTaskIds.delete(taskId);
+        }
+        this._refreshBrowserIcons();
+        this._syncBrowserActivePruneTimer();
     }
 
     static buildWaitingTag(taskId, waitingSet, isCurrentTask) {

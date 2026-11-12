@@ -350,6 +350,16 @@ class TaskArtifacts extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        // 组件被移出文档（task-view 回收/销毁）后不会再派发可见性事件，补发一次
+        // visible=false，否则侧边栏任务列表会一直残留「浏览器活跃」绿球并持续闪烁。
+        // 用微任务确认是真正脱离文档：task-view 切换时存在 detach 后立刻 append 的复用路径。
+        if (this._browserVisible) {
+            queueMicrotask(() => {
+                if (this.isConnected || !this._browserVisible) return;
+                this._browserVisible = false;
+                this._dispatchBrowserVisibilityChanged();
+            });
+        }
         this._fileExplorer.stopWatchingFile();
         this._goalController.disconnect();
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
