@@ -233,7 +233,8 @@ function resolveRelevantEvidenceToolInvocation(toolCall: EvidenceToolCall): Rele
     }
     let innerArgs: Record<string, unknown>;
     try {
-        innerArgs = parseEvidenceObject(args.toolArgs);
+        // CallSkillTool 内层参数字段已由 toolArgs 改名为 arguments，历史任务记录仍为旧名，两者都要识别
+        innerArgs = parseEvidenceObject(args.arguments !== undefined ? args.arguments : args.toolArgs);
     } catch {
         return undefined;
     }

@@ -174,6 +174,17 @@ test('Skill wrappers are minimally unwrapped only for file and Shell evidence to
             })
         )
     );
+    // 改名后新记录使用 arguments 字段，与旧名 toolArgs 应得到等价的语义结果
+    const wrappedReadNewField = requireSemantics(
+        resolveEvidenceToolSemantics(
+            makeToolCall('skill-manager-CallSkillTool', {
+                bundleName: 'example',
+                skillName: 'coding',
+                toolName: 'readFile',
+                arguments: { file_path: '/repo/a.ts', offset: 10, limit: 5 }
+            })
+        )
+    );
     const wrappedGui = makeToolCall('skill-manager-CallSkillTool', {
         bundleName: 'builtin',
         skillName: 'use-harmony',
@@ -189,6 +200,8 @@ test('Skill wrappers are minimally unwrapped only for file and Shell evidence to
 
     assert.equal(wrappedRead.target, 'file:read:/repo/a.ts:lines=10..14');
     assert.equal(wrappedRead.phase, 'inspect');
+    assert.equal(wrappedReadNewField.target, wrappedRead.target);
+    assert.equal(wrappedReadNewField.phase, 'inspect');
     assert.equal(wrappedShell.phase, 'localize');
     assert.equal(resolveEvidenceToolSemantics(wrappedGui), undefined);
     assert.equal(resolveEvidenceToolSemantics(wrappedUnknownRead), undefined);
