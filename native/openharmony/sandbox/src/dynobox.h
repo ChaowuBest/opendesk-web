@@ -107,7 +107,7 @@ int dbox_system_allow(const char *path, int acc);
  * a two-star segment crosses directory levels, one-star stays within one
  * level, question-mark matches a single character. A TRAILING two-star
  * segment covers the subtree only and does NOT match the directory itself
- * (`/a/**` matches `/a/x` but not `/a`; `/**` does not match `/`) — write
+ * (`/a/\**` matches `/a/x` but not `/a`; `/\**` does not match `/`) — write
  * `path = "/a"` explicitly to cover the directory. A non-trailing two-star
  * still matches zero or more segments (e.g. `/a/` + two-star + `/b` matches
  * `/a/b`). Same semantics on every platform (core / macOS boxdylib / Windows

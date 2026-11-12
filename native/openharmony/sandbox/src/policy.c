@@ -108,10 +108,10 @@ static int match_list(char **pat, int np, char **pth, int nt)
 {
     if (np == 0) return nt == 0;
     if (strcmp(pat[0], "**") == 0) {
-        /* 尾部 ** 只覆盖子树，不匹配目录自身（np==1 && nt==0）：`/a/**` 命中
+        /* 尾部 ** 只覆盖子树，不匹配目录自身（np==1 && nt==0）：`/a/\**` 命中
          * /a 下的全部内容，但不命中 /a —— 要让目录自身也命中须显式写 path="/a"。
          * 四平台统一语义（core / macOS boxdylib / Windows Policy），策略生成侧
-         * 对 allow 的 `X/**` 会自动补一条 `X`，deny 侧不补（只拒内部是预期）。
+         * 对 allow 的 `X/\**` 会自动补一条 `X`，deny 侧不补（只拒内部是预期）。
          * 中间段双星（如 /a 与 /b 之间夹一段）仍匹配 0+ 组件（可命中
          * `/a/b`），故只有末段 np==1 走这个特判。 */
         if (np == 1) return nt > 0;
@@ -456,10 +456,10 @@ int dbox_policy_prepend_ro_dirs(dbox_policy_t *p, const char *spec)
             dbox_free(nr);
             return -1;
         }
-        /* 只读目录注入两条 deny：精确的 `{norm}`（目录自身）与 `{norm}/**`
-         * （子树）。glob 语义规定尾部 ** 不匹配目录自身，只写 `{norm}/**`
+        /* 只读目录注入两条 deny：精确的 `{norm}`（目录自身）与 `{norm}/\**`
+         * （子树）。glob 语义规定尾部 ** 不匹配目录自身，只写 `{norm}/\**`
          * 会让只读目录本身的写操作落回兜底规则（ask/allow）——只读暴露的
-         * "自身也不可改"语义失效。根目录 norm=="/" 时同样是 "/" + "/**" 两条。 */
+         * "自身也不可改"语义失效。根目录 norm=="/" 时同样是 "/" + "/\**" 两条。 */
         size_t plen = strlen(norm);
         char *pat = dbox_malloc(plen + 4);   /* slash + 双星号 + NUL */
         if (!pat) {
