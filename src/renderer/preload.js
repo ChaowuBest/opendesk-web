@@ -284,6 +284,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getContextDiagnostics: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getContextDiagnostics', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('getting context diagnostics failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         getTaskTodos: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getTaskTodos', taskId);
             if (result.status === 'ok') {
