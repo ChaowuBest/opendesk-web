@@ -419,3 +419,71 @@ test('restore discards a pending record whose installer extension does not match
     assert.equal(fs.existsSync(path.join(root, 'ready.json')), false);
     assert.equal(fs.existsSync(installerPath), false);
 });
+
+// macOS 二期自动安装：ready 后由用户触发的本地安装（挂载 DMG 替换 .app），
+// 成功后与 Windows 一样进入 installed，再由 restartToApplyUpdate 完成重启
+test('manual install mode applies the pending dmg on demand and completes the restart flow', async (t) => {
+    const installedRecords: unknown[] = [];
+    const { coordinator, calls, root } = createManualInstallCoordinator({
+        installManually: async (record) => {
+            calls.push('install');
+            installedRecords.push(record);
+        }
+    });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    await coordinator.checkForUpdates();
+    assert.equal(await coordinator.applyManualUpdate(), true);
+
+    assert.equal(coordinator.getState().status, 'installed');
+    assert.equal(coordinator.getState().version, '0.3.7');
+    assert.equal(
+        (installedRecords[0] as { installerPath: string }).installerPath,
+        path.join(root, darwinRelease.installerName)
+    );
+    // 安装成功后安装包与 ready 记录清理，与 Windows 服务安装成功后的行为一致
+    assert.equal(fs.existsSync(path.join(root, darwinRelease.installerName)), false);
+    assert.equal(fs.existsSync(path.join(root, 'ready.json')), false);
+
+    assert.equal(await coordinator.restartToApplyUpdate(), true);
+    assert.deepEqual(calls, ['install', 'stop', 'flush', 'prepare', 'relaunch', 'quit']);
+});
+
+test('manual install keeps the dmg for a retry when the local installation fails', async (t) => {
+    const { coordinator, calls, root } = createManualInstallCoordinator({
+        installManually: async () => {
+            calls.push('install');
+            throw new Error('ditto exited with failure');
+        }
+    });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    await coordinator.checkForUpdates();
+
+    assert.equal(await coordinator.applyManualUpdate(), false);
+    const state = coordinator.getState();
+    assert.equal(state.status, 'error');
+    assert.equal(state.code, 'update_install_failed');
+    // 安装包与 ready 记录保留，重试不需要重新下载
+    assert.equal(fs.existsSync(path.join(root, darwinRelease.installerName)), true);
+    assert.equal(fs.existsSync(path.join(root, 'ready.json')), true);
+
+    // 安装失败后的重试回到 ready，等用户再次触发安装
+    assert.equal((await coordinator.checkForUpdates()).status, 'ready');
+    assert.equal(await coordinator.applyManualUpdate(), false);
+    assert.equal(coordinator.getState().status, 'error');
+});
+
+test('manual apply is rejected outside the ready state or the manual install mode', async (t) => {
+    const { coordinator, root } = createCoordinator();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    // Windows 自动安装模式没有本地安装入口
+    assert.equal(await coordinator.applyManualUpdate(), false);
+
+    // ready 之前（idle/checking）不允许触发安装
+    const manual = createManualInstallCoordinator({
+        installManually: async () => undefined
+    });
+    t.after(() => fs.rmSync(manual.root, { recursive: true, force: true }));
+    assert.equal(await manual.coordinator.applyManualUpdate(), false);
+    assert.equal(manual.coordinator.getState().status, 'idle');
+});
