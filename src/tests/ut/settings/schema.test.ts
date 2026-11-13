@@ -155,7 +155,8 @@ describe('设置 schema', () => {
                 agentoffice: false
             },
             account: true,
-            immersive_desktop: false
+            immersive_desktop: false,
+            builtin_terminal: false
         });
     });
 

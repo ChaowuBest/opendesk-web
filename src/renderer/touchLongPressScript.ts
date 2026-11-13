@@ -37,7 +37,9 @@
  *    深浅色主题自动切换）。真实鼠标右键与触摸长按的合成事件统一走该菜单
  *    （原生菜单只能弹在系统光标处、位置不可控，已从主进程移除）；仅宿主
  *    标记 data-od-lp-edit-menu（OpenDesk 自家 frame）时启用，避免浏览器网页
- *    等第三方 frame 出现双菜单。文案随页面 <html lang>（回退 navigator.language）；
+ *    等第三方 frame 出现双菜单。xterm 终端表面（.xterm）例外放行：其选区在
+ *    内部模型而非 DOM，右键菜单由 taskTerminalPanel 自绘终端专属菜单；
+ *    文案随页面 <html lang>（回退 navigator.language）；
  *    关闭途径：菜单外 pointerdown、Escape、任意非修饰键 keydown 或 beforeinput
  *    （开始输入即视为放弃菜单，焦点本就在输入框时没有 pointerdown 可依赖）；
  *    剪贴板读写经隔离世界的 preload 桥（CustomEvent 'od-clipboard-write' /
@@ -760,6 +762,26 @@ export function createTouchLongPressController(): void {
         return null;
     }
 
+    // 终端表面（.xterm）：终端面板自绘专属右键菜单，全局编辑菜单一律放行——
+    // xterm 的选区在内部模型而非 DOM（hasVisibleSelection 判定不了），右键还会
+    // 把隐藏 helper textarea 停靠到指针处（会被误判成编辑区）。
+    function pickTerminalSurface(path: any[], fallback: any): any {
+        for (let i = 0; i < path.length; i++) {
+            const el = path[i];
+            if (el && el.nodeType === 1 && typeof el.matches === 'function' && el.matches('.xterm')) {
+                return el;
+            }
+        }
+        try {
+            if (fallback && typeof fallback.closest === 'function') {
+                return fallback.closest('.xterm');
+            }
+        } catch {
+            /* 忽略 */
+        }
+        return null;
+    }
+
     // Ace 的选区/剪贴板在编辑器内部模型里，直接读不到；用模拟快捷键让 Ace 自己执行
     function dispatchAceShortcut(aceEditor: any, key: string): void {
         try {
@@ -817,6 +839,10 @@ export function createTouchLongPressController(): void {
         if (!editMenuEnabled()) return;
         const path = pathOf(event);
         const realTarget = path.length ? path[0] : event.target;
+        // 终端表面放行：判定须先于编辑区检查——xterm 停靠的 helper textarea
+        // 会被 isEditableElement 误判成编辑区，窗口他处的 DOM 选区也会让
+        // hasVisibleSelection 为真，二者都会截胡终端面板的自绘菜单。
+        if (pickTerminalSurface(path, event.target)) return;
         const editable = isEditableElement(realTarget) || isEditableElement(event.target);
         const textContainer = editable ? null : pickTextContainer(path, realTarget);
         const aceEditor = editable ? null : pickAceEditor(path, realTarget);

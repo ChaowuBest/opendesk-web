@@ -500,6 +500,82 @@ describe('触摸长按右键：手势状态机', () => {
         expect(doc.getElementById('od-edit-menu')).toBeNull();
     });
 
+    // 终端表面（.xterm）：xterm 的选区在内部模型（非 DOM 选区，hasVisibleSelection
+    // 判定不了），右键还会把隐藏 helper textarea 停靠到指针处（会被误判成编辑区）。
+    // 全局编辑菜单一律放行，右键菜单由 taskTerminalPanel 自绘终端专属菜单。
+    test('xterm 终端表面右键放行：不 preventDefault、不弹全局编辑菜单', () => {
+        doc.documentElement.setAttribute('lang', 'zh-CN');
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        const xterm = doc.createElement('div');
+        xterm.className = 'xterm';
+        const screen = doc.createElement('div');
+        screen.className = 'xterm-screen';
+        xterm.appendChild(screen);
+        doc.body.appendChild(xterm);
+
+        const event = dispatchContextMenu(300, 200, screen);
+        expect(event.defaultPrevented).toBe(false);
+        expect(doc.getElementById('od-edit-menu')).toBeNull();
+    });
+
+    test('xterm 内停靠的 helper textarea 右键放行（不得被误判成编辑区弹全局菜单）', () => {
+        doc.documentElement.setAttribute('lang', 'zh-CN');
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        // xterm 右键后把透明 textarea 停靠到指针处（20x20、z-index:1000），
+        // 同一点再次右键时事件 target 即它：closest 会命中 textarea 编辑元素
+        const xterm = doc.createElement('div');
+        xterm.className = 'xterm';
+        const helpers = doc.createElement('div');
+        helpers.className = 'xterm-helpers';
+        const textarea = doc.createElement('textarea');
+        textarea.className = 'xterm-helper-textarea';
+        helpers.appendChild(textarea);
+        xterm.appendChild(helpers);
+        doc.body.appendChild(xterm);
+
+        const event = dispatchContextMenu(300, 200, textarea);
+        expect(event.defaultPrevented).toBe(false);
+        expect(doc.getElementById('od-edit-menu')).toBeNull();
+    });
+
+    test('窗口他处存在 DOM 选区时终端右键仍放行（终端选区非 DOM 选区，全局菜单不得截胡）', () => {
+        doc.documentElement.setAttribute('lang', 'zh-CN');
+        doc.documentElement.setAttribute('data-od-lp-edit-menu', '1');
+        createTouchLongPressController();
+
+        // 模拟用户刚在聊天区选中过文字（窗口级 DOM 选区非 collapsed）
+        Object.defineProperty(win, 'getSelection', {
+            value: () => ({
+                isCollapsed: false,
+                toString: () => '窗口他处的选中文本'
+            }),
+            configurable: true
+        });
+
+        // 面板在 taskartifacts 的 open shadow 树内：document 收到的 target 被重定向
+        // 为宿主，.xterm 只能经 composedPath 命中
+        const xterm = doc.createElement('div');
+        xterm.className = 'xterm';
+        const screen = doc.createElement('div');
+        screen.className = 'xterm-screen';
+        xterm.appendChild(screen);
+        const host = doc.createElement('task-terminal-panel');
+        host.appendChild(xterm);
+        doc.body.appendChild(host);
+
+        const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        Object.assign(event, { clientX: 260, clientY: 320 });
+        (event as any).composedPath = () => [screen, xterm, host, doc.body, doc.documentElement, doc];
+        screen.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(doc.getElementById('od-edit-menu')).toBeNull();
+    });
+
     test('无宿主标记（浏览器网页等 frame）不显示编辑菜单', () => {
         doc.documentElement.setAttribute('lang', 'zh-CN');
         createTouchLongPressController();

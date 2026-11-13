@@ -39,6 +39,7 @@ import { formatCompactDuration } from '../../common/goal/format.js';
 import { filePathToFileUrl } from '../../common/file-url.js';
 import { dispatchAgentInputRequest } from '../input/agentInputRequest.js';
 import { browserAutoRevealState } from '../browserAutoRevealState.js';
+import type { TaskTerminalPanel } from './taskTerminalPanel';
 
 // ============================================================================
 // Types
@@ -497,7 +498,9 @@ class TaskArtifacts extends HTMLElement {
      * @param workspace 可选的任务级工作空间路径
      */
     refreshWorkspace(workspace?: string): void {
+        if (workspace) this._workspace = workspace;
         this._fileExplorer.refresh(workspace);
+        this._syncTaskTerminal();
     }
 
     /**
@@ -563,10 +566,21 @@ class TaskArtifacts extends HTMLElement {
     setTaskId(taskId: string): void {
         this._taskId = taskId;
         this._fileExplorer.setTaskId(taskId);
+        this._syncTaskTerminal();
         this._startSessionMemoryRefresh();
     }
 
     private _taskId: string | null = null;
+    /** 最近一次 refreshWorkspace 同步过来的任务工作空间，供终端面板等子组件消费。 */
+    private _workspace: string | null = null;
+
+    /** 将当前任务/工作空间上下文同步给工作空间 tab 底部的内置终端。 */
+    private _syncTaskTerminal(): void {
+        const terminal = this.shadowRoot?.querySelector<TaskTerminalPanel>('task-terminal-panel');
+        // 测试或降级环境下终端面板可能未升级为自定义元素，此时静默跳过。
+        if (!terminal || typeof terminal.setTaskContext !== 'function') return;
+        terminal.setTaskContext(this._taskId || '', this._workspace ?? undefined);
+    }
 
     /**
      * 外部调用：刷新 session memory 内容。
@@ -934,7 +948,8 @@ class TaskArtifacts extends HTMLElement {
     private _mountFileExplorer(): void {
         const root = this.shadowRoot;
         if (!root) return;
-        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="workspace"]');
+        // 只挂载到 explorer 宿主，避免覆盖同 tab 底部的终端面板。
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="workspace"] .workspace-explorer-host');
         if (!panel) return;
         this._fileExplorer.mount(panel, root);
     }
@@ -1522,9 +1537,13 @@ class TaskArtifacts extends HTMLElement {
             .map((tab) => {
                 const isActive = tab.id === this._activeTab;
                 let inner = '';
-                if (
+                if (tab.id === 'workspace') {
+                    // FileExplorer 渲染时会整体覆盖宿主容器，终端面板必须放在宿主的兄弟位置，
+                    // 才能在工作空间 tab 底部常驻。
+                    inner =
+                        '<div class="workspace-explorer-host"></div>\n                <task-terminal-panel></task-terminal-panel>';
+                } else if (
                     tab.id === 'task-plan' ||
-                    tab.id === 'workspace' ||
                     tab.id === 'browser' ||
                     tab.id === 'changes' ||
                     tab.id === 'session-memory'
@@ -1715,6 +1734,28 @@ class TaskArtifacts extends HTMLElement {
             }
             .tab-content[data-tab="browser"] {
                 overflow: hidden;
+            }
+            /* workspace tab 必须是 flex 列布局：块级滚动容器里文件树会按内容自然撑高，
+               把常驻底部的终端面板顶出主窗口可视区（终端显示不全）。 */
+            .tab-content[data-tab="workspace"] {
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            .workspace-explorer-host {
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+            }
+            .tab-content[data-tab="workspace"] > task-terminal-panel {
+                /* 自定义元素默认 display:inline，显式块化；min-width:0 允许 flex 收缩，
+                   xterm fit 才能拿到正确宽度。面板自身是 light DOM，不能依赖 :host。 */
+                display: block;
+                flex: 0 0 auto;
+                min-width: 0;
+                padding: 0 8px 12px;
             }
 
             .placeholder-content {
@@ -2475,6 +2516,8 @@ class TaskArtifacts extends HTMLElement {
         if (this._activeTab === 'changes') {
             this._renderChangesPanel();
         }
+        // render() 重建了 DOM，底部终端面板需要重新接收任务/工作空间上下文。
+        this._syncTaskTerminal();
 
         // 注入暗色主题样式
         syncShadowHostTheme(this);

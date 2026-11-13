@@ -78,6 +78,7 @@ import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfi
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import { scanSupportedShells } from './applications/terminal/scan.js';
+import { registerInteractiveTerminalHandlers } from './applications/terminal/interactive/handlers.js';
 import {
     initializeRegistry,
     initializeRegistryWorker,
@@ -3900,6 +3901,7 @@ async function startApplication(): Promise<void> {
         // 先注册 renderer 首屏会调用的无状态 IPC，再立即启动 renderer 加载。
         // taskManager handler 会在本回调首次让出事件循环前完成注册。
         registerSettingAPIHandlers();
+        registerInteractiveTerminalHandlers();
         registerElectronAccountIntegration();
         registerApplicationRegistryHandlers(ipcMain, ensureElectronFullyLoaded, ensureElectronApplicationLoaded);
         registerNotificationAPIHandlers();

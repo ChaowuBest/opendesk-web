@@ -81,6 +81,35 @@ declare global {
             /** 是否运行在 Windows（process.platform === 'win32'）。 */
             isWindows?: boolean;
         };
+        /** preload 剪贴板桥：沙箱渲染器经主进程 IPC 读写剪贴板（自绘菜单粘贴等）。 */
+        childFrameClipboard?: {
+            readText: () => Promise<string>;
+            writeText: (text: string) => Promise<void>;
+        };
+        terminalAPI: {
+            listProfiles: () => Promise<
+                Array<{ id: string; kind: 'powershell' | 'bash' | 'zsh' | 'cmd'; path: string }>
+            >;
+            create: (options: {
+                profileId: string;
+                cwd?: string;
+                taskId?: string;
+                cols?: number;
+                rows?: number;
+            }) => Promise<{
+                sessionId: string;
+                profile: { id: string; kind: 'powershell' | 'bash' | 'zsh' | 'cmd'; path: string };
+                cwd: string;
+                backend: 'pty' | 'pipe';
+            }>;
+            write: (sessionId: string, data: string) => Promise<void>;
+            start: (sessionId: string) => Promise<void>;
+            acknowledge: (sessionId: string, count: number) => Promise<void>;
+            resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+            close: (sessionId: string) => Promise<void>;
+            onData: (callback: (event: { sessionId: string; data: string }) => void) => () => void;
+            onExit: (callback: (event: { sessionId: string; exitCode: number; signal?: number }) => void) => () => void;
+        };
         officeHostAPI: {
             prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
             requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
@@ -252,6 +281,7 @@ declare global {
         };
         workspaceAPI?: {
             getEffectiveWorkspace: () => Promise<string | null>;
+            pickDirectoryDialog?: () => Promise<string | null>;
             listDirectory: (
                 path: string,
                 options?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }

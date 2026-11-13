@@ -20,6 +20,7 @@ import '../components/exitPlanModePrompt.ts';
 import '../components/splitter.js';
 import '../components/toolbar.ts';
 import '../components/taskview.js';
+import '../components/taskTerminalPanel.ts';
 import '../components/sidebar.js';
 import '../components/setting.js';
 import '../components/settingpanel.js';

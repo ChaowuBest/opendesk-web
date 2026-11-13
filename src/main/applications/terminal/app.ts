@@ -25,6 +25,7 @@ export class TerminalApplication extends BaseApplication {
     readonly shells = scanSupportedShells();
 
     constructor() {
+        // 交互式终端挂载在 task-view 内，不作为独立应用展示。
         super('terminal', false);
     }
 
