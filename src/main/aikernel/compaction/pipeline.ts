@@ -353,7 +353,8 @@ export async function prepareContextForModel(
                 toolResultOverrides: lightweightResult.toolResultOverrides,
                 systemPrompt: chatContext.system_prompt
             },
-            model
+            model,
+            { contextWindow: options.resolvedContextWindow }
         ));
     const autoCompactStateTarget = options.autoCompactState;
     let autoCompactState: AutoCompactState | undefined = autoCompactStateTarget

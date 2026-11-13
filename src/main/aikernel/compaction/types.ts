@@ -126,6 +126,7 @@ export type MicrocompactTaskRole = 'main' | 'subtask';
 
 export interface PrepareContextOptions {
     forceCompact?: boolean;
+    resolvedContextWindow?: number;
     compactStateManaged?: boolean;
     readonlyOnly?: boolean;
     beforeCompact?: () => void;
