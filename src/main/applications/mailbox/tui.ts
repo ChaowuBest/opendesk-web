@@ -54,6 +54,7 @@ import {
     GetEmailContentTool,
     SearchEmailsTool,
     SendEmailTool,
+    SaveDraftTool,
     ReplyEmailTool,
     MarkEmailReadTool,
     StarEmailTool,
@@ -163,6 +164,7 @@ const getEmailListTool = new GetEmailListTool();
 const getEmailContentTool = new GetEmailContentTool();
 const searchEmailsTool = new SearchEmailsTool();
 const sendEmailTool = new SendEmailTool();
+const saveDraftTool = new SaveDraftTool();
 const replyEmailTool = new ReplyEmailTool();
 const markEmailReadTool = new MarkEmailReadTool();
 const starEmailTool = new StarEmailTool();
@@ -174,6 +176,7 @@ mailAssistantToolset.addTools(
     getEmailContentTool,
     searchEmailsTool,
     sendEmailTool,
+    saveDraftTool,
     replyEmailTool,
     markEmailReadTool,
     starEmailTool,
@@ -281,6 +284,19 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- 当用户已明确给出收件人、主题、正文时，可直接调用发送。\n' +
     '- 若缺少必要信息，先补齐信息再发送。\n' +
     '- 若正文由你生成/改写，先展示完整正文并确认，确认后再发送。\n\n' +
+    '### mailbox-saveDraft\n' +
+    '**用途**：把邮件保存到草稿箱（不会发送）。\n' +
+    '**参数**：\n' +
+    '- **uid**（可选）：草稿 uid，传入时更新已有的该份草稿\n' +
+    '- **to**（可选）：收件人列表，每个收件人包含 name（可选）和 address（必需）\n' +
+    '- **cc**（可选）：抄送列表，格式同 to\n' +
+    '- **bcc**（可选）：密送列表，格式同 to\n' +
+    '- **subject**（可选）：邮件主题\n' +
+    '- **content**（可选）：邮件正文\n' +
+    '- **attachments**（可选）：附件文件路径列表，每个元素是本地文件的绝对路径，例如 ["/home/user/report.pdf"]\n' +
+    '**使用场景**：\n' +
+    '- 用户要求"先存草稿 / 保存到草稿箱 / 先别发送"时使用，草稿允许信息不完整。\n' +
+    '- 保存后会返回草稿 uid，后续再次保存时传入该 uid 即可更新同一份草稿。\n\n' +
     '### mailbox-replyEmail\n' +
     '**用途**：回复邮件（调用后会立即发送）。\n' +
     '**参数**：\n' +
@@ -321,6 +337,7 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **邮件操作**：\n' +
     '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 信息齐全，直接调用 sendEmail\n' +
     '  - 用户说"给张三发邮件，附件是 /home/user/report.pdf"（但未给主题或正文）→ 先补齐缺失信息，再调用 sendEmail\n' +
+    '  - 用户说"先帮我写封邮件存到草稿箱，稍后再发"→ 调用 saveDraft 保存草稿（不要调用 sendEmail）\n' +
     '  - 用户说"回复刚才的邮件，你帮我组织一下措辞再发"→ 先生成完整回复正文并展示给用户确认；用户明确确认后再调用 replyEmail\n' +
     '  - 用户说"把这段回复润色后发出去"→ 先给出润色后的完整正文并确认；确认后调用 replyEmail\n' +
     '  - 用户说"标记这封邮件为已读"→ 调用 markEmailReadStatus，设置 read: true\n' +
@@ -344,7 +361,7 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- cross-app-deleteCalendarItem: 删除指定日程（需提供 uid，可通过 getCalendarItems 获取）\n' +
     '## 使用策略\n' +
     '1. 邮件操作：根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
-    '2. 发送/回复策略：信息齐全（收件人、主题、正文明确且无歧义）可直接调用 sendEmail/replyEmail；信息不全先补齐。若正文由你生成或改写，必须先向用户展示完整正文并等待明确确认，再调用发送工具。\n' +
+    '2. 发送/回复策略：信息齐全（收件人、主题、正文明确且无歧义）可直接调用 sendEmail/replyEmail；信息不全先补齐。若正文由你生成或改写，必须先向用户展示完整正文并等待明确确认，再调用发送工具。若用户要求先保存草稿，直接调用 saveDraft（草稿允许信息不完整），不要调用发送工具。\n' +
     '3. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
     '4. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
     '5. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +

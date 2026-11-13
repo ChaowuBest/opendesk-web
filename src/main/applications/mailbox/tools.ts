@@ -1011,6 +1011,61 @@ const SendEmailSchema = z.object({
     attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径')
 });
 
+const SaveDraftSchema = z.object({
+    uid: z
+        .string()
+        .optional()
+        .describe('草稿 uid。传入时更新该草稿，不传则新建草稿；可从草稿箱中的已有草稿获取'),
+    to: z
+        .union([
+            z.string().describe('收件人邮箱地址'),
+            z.array(z.string()).describe('多个收件人邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('收件人姓名'),
+                        address: z.string().describe('收件人邮箱地址')
+                    })
+                )
+                .describe('收件人对象列表')
+        ])
+        .optional()
+        .describe('收件人，草稿可以暂时不填写'),
+    cc: z
+        .union([
+            z.string().describe('抄送邮箱地址'),
+            z.array(z.string()).describe('多个抄送邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('抄送收件人姓名'),
+                        address: z.string().describe('抄送收件人邮箱地址')
+                    })
+                )
+                .describe('抄送对象列表')
+        ])
+        .optional()
+        .describe('抄送，草稿可以暂时不填写'),
+    bcc: z
+        .union([
+            z.string().describe('密送邮箱地址'),
+            z.array(z.string()).describe('多个密送邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('密送收件人姓名'),
+                        address: z.string().describe('密送收件人邮箱地址')
+                    })
+                )
+                .describe('密送对象列表')
+        ])
+        .optional()
+        .describe('密送，草稿可以暂时不填写'),
+    subject: z.string().optional().describe('邮件主题，草稿可以暂时不填写'),
+    content: z.string().optional().describe('邮件正文，草稿可以暂时不填写'),
+    attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径')
+});
+
 const ReplyEmailSchema = z.object({
     uid: z.string().describe('要回复的邮件唯一标识 uid'),
     content: z.string().describe('回复内容'),
@@ -1322,6 +1377,83 @@ export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
         if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在发送邮件…'));
         else if (toolcall.status === 'success') lines.push(chalk.green('  ✓ 邮件已发送'));
         else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '发送失败')));
+        return lines.length > 0 ? lines : undefined;
+    }
+}
+
+export class SaveDraftTool extends BaseTool<typeof SaveDraftSchema> {
+    constructor() {
+        super(
+            'saveDraft',
+            '把邮件保存到草稿箱，可选提供收件人、抄送、密送、主题、正文和附件。草稿允许信息不完整，可先保存稍后继续编辑；传入 uid 时更新已有草稿。',
+            SaveDraftSchema,
+            undefined,
+            { 'zh-CN': '保存草稿', 'en-US': 'Save Draft' }
+        );
+        this.setExecutor(async (args) => {
+            try {
+                const to = normalizeRecipients(args.to);
+                const cc = normalizeRecipients(args.cc);
+                const bcc = normalizeRecipients(args.bcc);
+                const attachments: Array<{ filename: string; path: string }> = [];
+                if (args.attachments?.length) {
+                    for (const fp of args.attachments) {
+                        const resolved = nodePath.resolve(fp);
+                        if (!fs.existsSync(resolved))
+                            return JSON.stringify({
+                                success: false,
+                                error: `附件文件不存在: ${fp}`
+                            });
+                        attachments.push({ filename: nodePath.basename(resolved), path: resolved });
+                    }
+                }
+                const content = args.content ?? '';
+                const uid = await callMailWorker('saveDraft', {
+                    uid: args.uid,
+                    to,
+                    cc: cc.length > 0 ? cc : undefined,
+                    bcc: bcc.length > 0 ? bcc : undefined,
+                    subject: args.subject ?? '',
+                    text: content,
+                    html: content.replace(/\n/g, '<br>'),
+                    attachments
+                });
+                return JSON.stringify({ success: true, uid, message: '草稿已保存到草稿箱' });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '保存草稿失败' });
+            }
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const detailParts: string[] = [];
+        const recipients = [args?.to, args?.cc].filter(Boolean).join(', ');
+        if (args?.uid) detailParts.push(`草稿 ID: ${args.uid}`);
+        if (recipients) detailParts.push(`收件人: ${recipients}`);
+        if (args?.subject) detailParts.push(`主题: ${args.subject}`);
+        if (toolcall.status === 'success') {
+            const r = parseMailboxResult(toolcall.result);
+            detailParts.push(r.success ? '保存成功' : '保存失败');
+        }
+        return renderMailboxInlineTool({
+            icon: 'fas fa-file-pen',
+            title: '保存草稿',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const lines: string[] = [];
+        const recipients = [args?.to, args?.cc].filter(Boolean).join(', ');
+        if (args?.uid) lines.push(chalk.dim('草稿 ID: ') + chalk.cyan(String(args.uid)));
+        if (recipients) lines.push(chalk.dim('收件人: ') + chalk.cyan(recipients));
+        if (args?.subject) lines.push(chalk.dim('主题: ') + chalk.cyan(args.subject));
+        if (toolcall.status === 'running') lines.push(chalk.dim('  ⏳ 正在保存草稿…'));
+        else if (toolcall.status === 'success') lines.push(chalk.green('  ✓ 草稿已保存'));
+        else if (toolcall.status === 'error') lines.push(chalk.red(String(toolcall.result || '保存失败')));
         return lines.length > 0 ? lines : undefined;
     }
 }
