@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { isRecoverableMainProcessError } from './recoverable-errors.js';
+
 type WorkerErrorLogger = {
     warn(message: string): void;
     error(message: string): void;
@@ -19,8 +21,10 @@ export function handleWorkerUncaughtException(
     origin: NodeJS.UncaughtExceptionOrigin,
     errorLogger: WorkerErrorLogger
 ): void {
-    if ((error as NodeJS.ErrnoException).code === 'EPIPE') {
-        errorLogger.warn('EPIPE error in worker thread (IPC channel), ignoring');
+    // 与主进程共用同一套可恢复判定，避免 worker / 主进程的崩溃行为各自漂移
+    const recoverableReason = isRecoverableMainProcessError(error);
+    if (recoverableReason !== null) {
+        errorLogger.warn(`[RECOVERABLE] ${recoverableReason} in worker thread (${origin}), ignoring`);
         return;
     }
     errorLogger.error(`[FATAL] uncaughtException (${origin}) in worker: ${error.stack || error.message}`);
@@ -28,8 +32,9 @@ export function handleWorkerUncaughtException(
 }
 
 export function handleWorkerUnhandledRejection(reason: unknown, errorLogger: WorkerErrorLogger): void {
-    if (reason instanceof Error && (reason as NodeJS.ErrnoException).code === 'EPIPE') {
-        errorLogger.warn('EPIPE rejection in worker thread (IPC channel), ignoring');
+    const recoverableReason = isRecoverableMainProcessError(reason);
+    if (recoverableReason !== null) {
+        errorLogger.warn(`[RECOVERABLE] ${recoverableReason} rejection in worker thread, ignoring`);
         return;
     }
     const details = reason instanceof Error ? reason.stack || reason.message : String(reason);
