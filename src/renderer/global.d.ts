@@ -171,6 +171,7 @@ declare global {
             setSystemPrompt: (taskId: string, prompt: unknown) => Promise<any>;
             getTaskList: () => Promise<any[]>;
             getFullTask: (taskId: string) => Promise<any>;
+            getContextDiagnostics: (taskId: string) => Promise<any>;
             subscribeTaskUpdate: (taskId: string, callback: (progress: unknown) => void) => Promise<any>;
             unsubscribeTaskUpdate: (taskId: string, callback: (progress: unknown) => void) => Promise<any>;
         };

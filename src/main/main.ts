@@ -145,6 +145,7 @@ import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult } from './aikernel/goal/state.js';
 import { parseGoalEditIfMatch } from '../common/goal/command.js';
 import { parseMarkdownSafe } from './aikernel/messages.js';
+import { buildTaskContextDiagnostics } from './aikernel/context/task-diagnostics.js';
 import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
@@ -1743,6 +1744,21 @@ const registerTaskManagerAPIHandlers = () => {
         await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
+    });
+    ipcMain.handle('taskManager:getContextDiagnostics', async (_event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            // 复用 TUI /context 命令同款诊断管线，只读不写回任务状态
+            const data = await buildTaskContextDiagnostics(task);
+            return { status: 'ok', data };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`Context diagnostics failed for task ${taskId}: ${msg}`);
+            return { status: 'error', message: msg };
+        }
     });
     ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
         try {

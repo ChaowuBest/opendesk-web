@@ -21,6 +21,7 @@ import {
     MODAL_ANIM_DURATION_OUT
 } from './confirmModal.ts';
 import { showFeedbackModal } from './feedbackModal.ts';
+import { showContextUsageModal } from './contextUsageModal.ts';
 import { createRendererTranslator } from '../locale.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { CHEVRON_DOWN_SVG, CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
@@ -56,6 +57,7 @@ function generateChallengeCode() {
     }
     return code;
 }
+
 const CHEVRON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 /** 多选形态下任务名左侧的圆形选择框选中态对勾 */
 const CHECK_SVG = `<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -2267,6 +2269,8 @@ class SideBar extends HTMLElement {
                         `<span class="ctx-icon-sm"><i class="fa-solid fa-clipboard-check"></i></span><span class="ctx-label">${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
                         `<button class="ctx-item" data-action="view-task-info">` +
                         `<span class="ctx-icon-sm"><i class="fa-solid fa-circle-info"></i></span><span class="ctx-label">${this._t('renderer.developer.viewTaskInfo')}</span></button>` +
+                        `<button class="ctx-item" data-action="view-context-usage">` +
+                        `<span class="ctx-icon-sm"><i class="fa-solid fa-chart-pie"></i></span><span class="ctx-label">${this._t('renderer.developer.viewContextUsage')}</span></button>` +
                         '</div></div>'
                     );
                 }
@@ -2388,6 +2392,10 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="view-task-info"]')?.addEventListener('click', () => {
             this._dismissContextMenu();
             this._showTaskInfoModal(taskId);
+        });
+        menu.querySelector('[data-action="view-context-usage"]')?.addEventListener('click', () => {
+            this._dismissContextMenu();
+            showContextUsageModal(taskId, (key) => this._t(key));
         });
 
         // 子菜单（如"开发者"）：触摸/点击显式展开——桌面 Chromium 触摸不产生

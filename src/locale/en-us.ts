@@ -2275,6 +2275,27 @@ export const enUs: Record<string, string> = {
     'renderer.sidebar.taskInfoLoadFailed': 'Failed to load: ',
     'renderer.sidebar.taskInfoCopy': 'Copy',
     'renderer.sidebar.taskInfoClose': 'Close',
+    'renderer.sidebar.contextUsageTitle': 'Context Usage',
+    'renderer.sidebar.contextUsageCircleGranularity': 'Each circle represents about 1% of the context window',
+    'renderer.sidebar.contextUsageSuggestions': 'Suggestions',
+    'renderer.sidebar.contextUsageNoSuggestions': 'No issues detected at the moment',
+    'renderer.sidebar.contextUsageEstimateNote': 'Token counts are estimates and for reference only',
+    'renderer.sidebar.contextUsageCategorySystemPrompt': 'System Prompt',
+    'renderer.sidebar.contextUsageCategoryTools': 'Tools',
+    'renderer.sidebar.contextUsageCategoryMessages': 'Messages',
+    'renderer.sidebar.contextUsageCategoryFreeSpace': 'Free Space',
+    'renderer.sidebar.contextUsageSuggestNearCompact': 'Near auto-compact threshold',
+    'renderer.sidebar.contextUsageSuggestNearCompactDetail':
+        'The context is close to the auto-compact threshold; tidy up recent messages soon.',
+    'renderer.sidebar.contextUsageSuggestToolResults': 'Oversized tool results',
+    'renderer.sidebar.contextUsageSuggestToolResultsDetail':
+        'Tool results take up a large share of the message budget; shorten tool output or use summaries first.',
+    'renderer.sidebar.contextUsageSuggestSystemPrompt': 'Oversized system prompt',
+    'renderer.sidebar.contextUsageSuggestSystemPromptDetail':
+        'The system prompt takes up a high share; check whether too much dynamic content is embedded.',
+    'renderer.sidebar.contextUsageSuggestCompactSummary': 'Oversized compact summary',
+    'renderer.sidebar.contextUsageSuggestCompactSummaryDetail':
+        'The compact summary itself takes up a high share; consider improving its quality.',
     'renderer.sidebar.today': 'Today',
     'renderer.sidebar.thisWeek': 'Last 7 days',
     'renderer.sidebar.earlier': 'Earlier',
@@ -2967,6 +2988,7 @@ export const enUs: Record<string, string> = {
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
     'renderer.developer.viewTaskInfo': 'View Task Info',
+    'renderer.developer.viewContextUsage': 'View Context Usage',
     'renderer.developer.triggerTaskReview': 'Trigger Task Review',
     'renderer.developer.reviewTriggered': 'Task Review Triggered',
     'renderer.developer.reviewTriggeredDetail': 'Task review has started or been queued in the background',
