@@ -44,6 +44,18 @@ export function getCDPLogger(): CDPLogger {
 export interface NestedJSResult {
     mainResult: unknown;
     frameResults: Record<string, NestedJSResult>;
+    /** 该 frame 的脚本执行失败（如加载失败、执行上下文销毁）时的错误信息 */
+    error?: string;
+}
+
+/** 一次 JS 对话框（alert/confirm/prompt/beforeunload）的信息，供操作结果回显。 */
+export interface JavaScriptDialogInfo {
+    /** 对话框类型：alert / confirm / prompt / beforeunload */
+    type: string;
+    /** 对话框文本 */
+    message: string;
+    /** 触发对话框的页面 URL */
+    url?: string;
 }
 
 /**
@@ -72,6 +84,10 @@ export class CDPSession {
     private _eventHandlers = new Map<string, Set<(params: any) => void>>();
     /** Guard: only one set of native listeners per webContents */
     private _nativeListenersBound = false;
+    /** JS 对话框事件处理器是否已注册（按会话生命周期一次，重连只重新 enable Page 域） */
+    private _dialogHandlerInstalled = false;
+    /** 最近一次被自动处理的 JS 对话框（takeLastDialog 消费后清空） */
+    private _lastDialog: JavaScriptDialogInfo | null = null;
     /** Bound references for removal */
     private _onMessage: ((event: any, method: string, params: any) => void) | null = null;
     private _onDetach: ((event: any, reason: string) => void) | null = null;
@@ -246,6 +262,58 @@ export class CDPSession {
         this._attached = true;
         // Domain enables are lost after detach; clear so they get re-enabled on demand
         this._enabledDomains.clear();
+    }
+
+    /**
+     * Enable Page domain and auto-handle JS dialogs on the current connection.
+     *
+     * 为什么不由 attach 自动 enable：CDP 域的 enable 与具体连接绑定，导航后重连
+     * 的时机不可控，而对话框只可能由 click/type/evaluate 等操作触发——在动作
+     * 入口显式调用本方法（幂等）即可保证对话框接管先于动作生效，也不会拖慢
+     * 每次重连。
+     *
+     * 未接管时的历史行为：alert 由 Electron 自动关闭；confirm()/prompt() 会把
+     * 在途的 frame.executeJavaScript 永久挂起，直到独占锁看门狗超时并重置会话。
+     * 自动 accept 与 alert 的既有自动行为一致，并记录对话框信息供结果回显。
+     *
+     * 平台限制：Electron 的 JS dialog manager 不实现 prompt —— 页面调用
+     * window.prompt() 会直接抛 "prompt() is not supported."，既不会产生
+     * Page.javascriptDialogOpening，也不会有 dialog 回显或挂起。判断"有没有弹框"
+     * 时不要期待 prompt 的相关信息。
+     */
+    async ensureDialogHandling(): Promise<void> {
+        if (!this._dialogHandlerInstalled) {
+            this._dialogHandlerInstalled = true;
+            this.on('Page.javascriptDialogOpening', (params: any) => {
+                this._lastDialog = {
+                    type: String(params?.type ?? 'unknown'),
+                    message: String(params?.message ?? ''),
+                    url: typeof params?.url === 'string' ? params.url : undefined
+                };
+                // 必须应答，否则 renderer 会一直等对话框关闭；accept 让
+                // confirm 流程能继续走完（与超时看门狗重置后的历史结局一致）。
+                this._sendCommandWithTimeout('Page.handleJavaScriptDialog', { accept: true }, 5000).catch(() => {
+                    /* 对话框可能已被页面/用户关闭 */
+                });
+            });
+        }
+        if (this._enabledDomains.has('Page')) return;
+        try {
+            await this.enableDomain('Page');
+        } catch {
+            // Page 域不可用（target 刚销毁等）：退回无对话框接管的历史行为。
+        }
+    }
+
+    /**
+     * 取出并清空最近一次自动处理的 JS 对话框信息。
+     * 操作（click/type/evaluate 等）完成后调用，用于在结果中提示 agent
+     * "页面弹了对话框、已被自动接受"。
+     */
+    takeLastDialog(): JavaScriptDialogInfo | null {
+        const dialog = this._lastDialog;
+        this._lastDialog = null;
+        return dialog;
     }
 
     get attached(): boolean {
@@ -544,8 +612,16 @@ export class CDPSession {
         for (const frame of root.frames) {
             try {
                 result.frameResults[frame.frameToken] = await this.executeJavaScriptOnAllFrames(code, frame);
-            } catch (err) {
+            } catch (err: any) {
+                // 失败的 frame 不能静默丢弃（会渲染成与"空内容"无法区分的一行
+                // 摘要，BUG-26）：记录错误标记，合并侧在 iframe 节点上输出
+                // load-failed 状态。
                 _logger.error(`failed to execute javascript on frame ${frame.frameTreeNodeId}`);
+                result.frameResults[frame.frameToken] = {
+                    mainResult: null,
+                    frameResults: {},
+                    error: String(err?.message || err)
+                };
             }
         }
         return result;

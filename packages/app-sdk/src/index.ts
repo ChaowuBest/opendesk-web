@@ -216,6 +216,20 @@ export class BaseWorker {
     }
 }
 
+/**
+ * 订阅者（通常是 Electron 的 WebFrameMain）是否已销毁。
+ * 判定本身也可能抛错（对已释放的原生对象取属性），此时按"已销毁"处理：
+ * 保留一个连判定都会失败的订阅者，只会让后续每次广播都继续抛错。
+ */
+function isDestroyedSubscriber(subscriber: any): boolean {
+    if (typeof subscriber?.isDestroyed !== 'function') return false;
+    try {
+        return subscriber.isDestroyed() === true;
+    } catch {
+        return true;
+    }
+}
+
 export abstract class BaseApplication {
     bundleName: string;
     showIcon: boolean;
@@ -281,6 +295,14 @@ export abstract class BaseApplication {
     }
 
     addSubscriber(eventName: string, senderFrame: any): void {
+        // IpcMainInvokeEvent.senderFrame 在对应 frame 已销毁时可能为 null。
+        // 存进订阅表只会在广播时变成 "Cannot read properties of null (reading 'send')"
+        if (!senderFrame) {
+            host?.logWarn?.(
+                `Ignoring subscriber for event "${eventName}" in application "${this.bundleName}": senderFrame is not available.`
+            );
+            return;
+        }
         if (!this.eventSubscribers.has(eventName)) {
             this.eventSubscribers.set(eventName, new Map());
         }
@@ -312,11 +334,31 @@ export abstract class BaseApplication {
         if (!subscribers) return;
 
         for (const subscriber of [...subscribers.keys()]) {
-            if (typeof subscriber.isDestroyed === 'function' && subscriber.isDestroyed()) {
+            // 已销毁的 frame 视为整体失效：无论订阅过几次都直接摘除
+            if (!subscriber || typeof subscriber.send !== 'function' || isDestroyedSubscriber(subscriber)) {
                 subscribers.delete(subscriber);
                 continue;
             }
-            subscriber.send(`applicationRegistry:event:${eventName}`, ...args);
+            try {
+                subscriber.send(`applicationRegistry:event:${eventName}`, ...args);
+            } catch (err) {
+                // 订阅者可能在 isDestroyed 检查后、发送前被销毁（如浏览器宿主窗口关闭）。
+                // 这里按订阅计数递减，与 removeSubscriber 语义保持一致；计数归零后彻底摘除，
+                // 绝不让单个订阅者中断其余订阅者的事件广播
+                const remaining = (subscribers.get(subscriber) ?? 1) - 1;
+                if (remaining > 0) {
+                    subscribers.set(subscriber, remaining);
+                    continue;
+                }
+                subscribers.delete(subscriber);
+                host?.logWarn?.(
+                    `Failed to send event "${eventName}" to a subscriber in application "${this.bundleName}": ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
+
+        if (subscribers.size === 0) {
+            this.eventSubscribers.delete(eventName);
         }
     }
 

@@ -1085,6 +1085,23 @@ export class TaskState {
     }
 
     /**
+     * 最后一条 assistant 消息是否以错误 part 收尾（模型服务错误等不可恢复错误的
+     * 终止特征，见 completion 错误路径的 appendError）。hook 拒绝后 turn 继续时
+     * 会追加新的 assistant 消息，因此该判断只反映最终一轮的结局。
+     */
+    private lastAssistantMessageEndsWithError(): boolean {
+        const messages = this.chat_context.messages;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (!(message instanceof AssistantMessage)) continue;
+            const content = message.content;
+            const last = content.length > 0 ? content[content.length - 1] : undefined;
+            return last?.type === 'error';
+        }
+        return false;
+    }
+
+    /**
      * 从 chat_context 实时反推本会话已加载的 skill 列表（供安全网关拦截归因）。
      *
      * 取代原先持久化的 loadedSkills 字段。每条 LoadSkill 工具调用（含 LLM 主动调用
@@ -3630,7 +3647,10 @@ export class TaskState {
                     if (this._turnGeneration !== myGeneration) return;
 
                     if (this.task_status !== 'stopped') {
-                        this.task_status = 'stopped';
+                        // turn 自然终止：以错误 part 收尾（模型服务错误等不可恢复错误）时标记
+                        // failed，供侧栏/任务列表区分失败与正常完成。用户停止与压缩暂停已
+                        // 先行置 stopped，不会进入此分支。
+                        this.task_status = this.lastAssistantMessageEndsWithError() ? 'failed' : 'stopped';
                     }
                     if (!skipInterruptedTurnHooks) {
                         try {

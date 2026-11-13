@@ -167,7 +167,9 @@ describe('embedBrowserUse/main', () => {
                     focus: jest.fn()
                 },
                 send: jest.fn(async () => ({})),
-                isHealthy: jest.fn(async () => true)
+                isHealthy: jest.fn(async () => true),
+                // pressKey 现在会先启用 JS 对话框接管（BUG-02 修复）
+                ensureDialogHandling: jest.fn(async () => {})
             };
             const ctrl = new BrowserController('my-task', mockWindow as any, mockScriptGen);
             (ctrl as any).requireCDP = jest.fn(async () => session);
@@ -203,7 +205,9 @@ describe('embedBrowserUse/main', () => {
                     focus: jest.fn()
                 },
                 send: jest.fn(async () => ({})),
-                isHealthy: jest.fn(async () => true)
+                isHealthy: jest.fn(async () => true),
+                // pressKey 现在会先启用 JS 对话框接管（BUG-02 修复）
+                ensureDialogHandling: jest.fn(async () => {})
             };
             const ctrl = new BrowserController('background-task', mockWindow as any, mockScriptGen);
             (ctrl as any).requireCDP = jest.fn(async () => session);

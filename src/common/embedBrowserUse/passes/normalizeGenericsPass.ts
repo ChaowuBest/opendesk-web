@@ -32,6 +32,10 @@ export const normalizeGenericsPass: AriaPass = (node: AriaNode): AriaNode => {
             children.push(child);
             continue;
         }
+        // 交互容器不折叠（BUG-30/09）：cursor:pointer 的容器与可滚动容器是
+        // 真实的交互/定位目标（hover 触发区、overflow:auto 滚动区域），折叠会
+        // 连同自己的 ref 一起丢掉，让元素既无 ref 也无 CSS 定位入口。
+        const interactive = child.box?.cursor === 'pointer' || child.box?.scrollable;
         const meaningful = child.children.filter((c) => typeof c !== 'string' && !!(c as AriaNode).ref);
         const hasText = child.children.some((c) => typeof c === 'string');
         // Ref-bearing: fold only when a ref-bearing child is promoted (the
@@ -41,6 +45,7 @@ export const normalizeGenericsPass: AriaPass = (node: AriaNode): AriaNode => {
             child.role === 'generic' &&
             !child.name &&
             !hasText &&
+            !interactive &&
             (child.ref ? meaningful.length >= 1 : meaningful.length <= 1);
         if (canCollapse) {
             for (const grand of child.children) children.push(grand);

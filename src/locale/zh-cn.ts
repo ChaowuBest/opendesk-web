@@ -2228,6 +2228,7 @@ export const zhCn: Record<string, string> = {
     'renderer.sidebar.completedCount': '${completed}/${total} 完成',
     'renderer.sidebar.running': '运行中',
     'renderer.sidebar.justCompleted': '刚刚完成',
+    'renderer.sidebar.justFailed': '刚刚失败',
     'renderer.sidebar.waiting': '等待',
     'renderer.sidebar.loadMore': '加载更多',
     'renderer.sidebar.viewMoreTasks': '查看更多任务',

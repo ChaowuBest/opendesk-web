@@ -27,7 +27,12 @@ import { initializeTrash, startTrashPreviewCleanupScheduler } from './utils/tras
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
-import { Setting, getDefaultOpendeskDirectory, setCustomOpendeskDirectory } from './utils/setting';
+import { Setting, getDefaultOpendeskDirectory, setCustomOpendeskDirectory, isOpendeskDebugMode } from './utils/setting';
+import {
+    isRecoverableMainProcessError,
+    logRecoverableMainProcessError,
+    shouldDowngradeRecoverableError
+} from './utils/recoverable-errors.js';
 import { program as prog, Option } from 'commander';
 import {
     PluginToolsetProvider,
@@ -88,6 +93,11 @@ function outputFatalError(title: string, details: string): void {
     process.stderr.write(message + '\n');
 }
 
+// 可恢复错误只提示不退出：此时 logger 可能尚未初始化，直接写 stderr
+function warnToStderr(message: string): void {
+    process.stderr.write(message + '\n');
+}
+
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
 // 当终端管道断开或系统休眠后恢复时，写入操作可能触发 EPIPE
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
@@ -103,8 +113,11 @@ process.stderr.on('error', (err: NodeJS.ErrnoException) => {
 process.on('uncaughtException', (err, origin) => {
     const errDetails = err instanceof Error ? err.stack || err.message : String(err);
 
-    // EPIPE 是可恢复的网络/管道断开错误，不应导致应用崩溃
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
+    // 与桌面主进程共用同一套可恢复判定（EPIPE、窗口/renderer 销毁竞态等）。
+    // 判据散落在两个入口就一定会漂移，崩溃行为会随运行模式不同
+    const recoverableReason = isRecoverableMainProcessError(err);
+    if (recoverableReason !== null && shouldDowngradeRecoverableError(recoverableReason, isOpendeskDebugMode())) {
+        logRecoverableMainProcessError(warnToStderr, recoverableReason, `(${origin}) ${errDetails}`);
         return;
     }
 
@@ -114,6 +127,13 @@ process.on('uncaughtException', (err, origin) => {
 
 process.on('unhandledRejection', (reason, promise) => {
     const reasonDetails = reason instanceof Error ? reason.stack || reason.message : String(reason);
+
+    const recoverableReason = isRecoverableMainProcessError(reason);
+    if (recoverableReason !== null && shouldDowngradeRecoverableError(recoverableReason, isOpendeskDebugMode())) {
+        logRecoverableMainProcessError(warnToStderr, recoverableReason, `unhandledRejection: ${reasonDetails}`);
+        return;
+    }
+
     outputFatalError('unhandledRejection', `${reasonDetails}\n\nPromise: ${promise}`);
     process.exit(1);
 });

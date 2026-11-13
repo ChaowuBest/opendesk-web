@@ -114,7 +114,8 @@ function getController(app: BrowserApplication, taskId: string) {
 async function withSnapshot(
     ctrl: BrowserController,
     doSnapshot: boolean,
-    result: Record<string, any>
+    result: Record<string, any>,
+    options: { trackUrlChange?: boolean } = {}
 ): Promise<string> {
     const lines: string[] = [];
     // 渲染操作结果的结构化字段为 YAML 行（简单标量直出，嵌套值单行 JSON）
@@ -127,10 +128,17 @@ async function withSnapshot(
     // 即便未请求自动快照也告知 agent 新 URL，避免对旧 ref 产生误解
     // （SPA 路由 / 表单提交等场景下页面已导航但 agent 看不到任何变化）。
     let urlChanged = false;
+    // click/type 打开新标签页时，活动标签页已切到新页：URL 前后差异来自标签
+    // 切换而非原页面导航，此时输出 Page Changed 会与 newTab 语义冲突（BUG-14），
+    // 让 agent 误判原页面已被跳转。
+    const openedNewTab = result.newTab != null;
+    // tabs 工具的 switch/close/new 只改变活动标签页，不代表当前页面发生跳转：
+    // 基线 URL 属于上一个标签，照常对比只会输出误导性的 Page Changed。
+    const trackUrlChange = options.trackUrlChange !== false;
     try {
         const urlBefore = ctrl.getLastUrl();
         const info = await ctrl.getPageInfo();
-        if (urlBefore !== undefined && urlBefore !== info.url) {
+        if (trackUrlChange && !openedNewTab && urlBefore !== undefined && urlBefore !== info.url) {
             lines.push(`- Page Changed: yes (${urlBefore} → ${info.url})`);
             urlChanged = true;
         }
@@ -144,7 +152,13 @@ async function withSnapshot(
             // （如延迟跳转），在此补充；已检测到则避免重复输出。
             const urlBefore = ctrl.getLastUrl();
             const snapshot = await ctrl.snapshot({ mode: 'diff' });
-            if (!urlChanged && urlBefore !== undefined && urlBefore !== snapshot.url) {
+            if (
+                trackUrlChange &&
+                !urlChanged &&
+                !openedNewTab &&
+                urlBefore !== undefined &&
+                urlBefore !== snapshot.url
+            ) {
                 lines.push(`- Page Changed: yes (${urlBefore} → ${snapshot.url})`);
             }
             // 插件贡献的页面提示放在快照正文之前，让 agent 先看到可用动作与约束
@@ -212,7 +226,11 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.navigate(args.url, args.newTab);
             if (result.error) return fail(result.error);
-            return withSnapshot(ctrl, args.snapshot, { url: result.url, title: result.title });
+            return withSnapshot(ctrl, args.snapshot, {
+                url: result.url,
+                title: result.title,
+                ...(result.note && { note: result.note })
+            });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -909,7 +927,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
     }
 
     private async handleExecute(
-        _args: z.output<typeof BrowserGoForwardArgsSchema>,
+        args: z.output<typeof BrowserGoForwardArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
@@ -919,7 +937,8 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.goForward();
             if (info.error) return fail(t('cli.goForward.fail', { error: info.error }));
-            return ok(info);
+            // 与 goBack/navigate 对齐：snapshot 参数生效（BUG-07 同族）
+            return withSnapshot(ctrl, args.snapshot, { url: info.url, title: info.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -958,7 +977,7 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
     }
 
     private async handleExecute(
-        _args: z.output<typeof BrowserReloadArgsSchema>,
+        args: z.output<typeof BrowserReloadArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
@@ -968,7 +987,8 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.reload();
             if (info.error) return fail(t('cli.reload.fail', { error: info.error }));
-            return ok(info);
+            // schema 声明的 snapshot 参数此前被整体丢弃（BUG-07），与 navigate 对齐
+            return withSnapshot(ctrl, args.snapshot, { url: info.url, title: info.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1027,8 +1047,11 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.evaluate(args.expression, args.iframeRef);
-            return ok({ result });
+            // 对话框已被自动接受（BUG-02），表达式触发的 confirm/prompt 需要在
+            // 结果中回显 dialog 提示（与 click/type 一致），否则 agent 只能靠
+            // 返回值猜测发生了接管
+            const { value, dialog } = await ctrl.evaluateWithDialog(args.expression, args.iframeRef);
+            return ok({ result: value, ...(dialog && { dialog }) });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1101,8 +1124,9 @@ export class BrowserTriggerTool extends BaseTool<typeof BrowserTriggerArgsSchema
                         : t('cli.trigger.noHints', { action: args.action })
                 );
             }
-            const result = await ctrl.evaluate(makeActionInvokeExpression(hint, args.args));
-            return withSnapshot(ctrl, args.snapshot, { action: hint.name, result });
+            const { value, dialog } = await ctrl.evaluateWithDialog(makeActionInvokeExpression(hint, args.args));
+            // 动作脚本同样可能弹对话框：与 evaluate/click 一致回显 dialog
+            return withSnapshot(ctrl, args.snapshot, { action: hint.name, result: value, ...(dialog && { dialog }) });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1173,7 +1197,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         try {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.tabs(args.action, args.tabId, args.url);
-            return withSnapshot(ctrl, args.snapshot, result);
+            return withSnapshot(ctrl, args.snapshot, result, { trackUrlChange: false });
         } catch (err: any) {
             return fail(err.message || String(err));
         }

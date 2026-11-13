@@ -33,6 +33,7 @@ import {
     countSidebarVisibleRootTasks,
     getSidebarRecentRootTasks,
     getSidebarRunningTasks,
+    isSidebarTaskFailed,
     isSidebarTaskVisible,
     normalizeWorkspace
 } from '../sidebarTaskGroups.js';
@@ -980,7 +981,7 @@ class SideBar extends HTMLElement {
     /**
      * 更新对话图标右上角角标状态：
      * - 有运行中的顶层任务：显示任务数
-     * - 任务刚结束、仍在最近完成窗口内：显示 ✓，避免结束后失去视觉反馈
+     * - 任务刚结束、仍在最近完成窗口内：显示 ✓（失败任务显示 ×），避免结束后失去视觉反馈
      * - 最近任务也消失后：隐藏角标
      */
     _updateChatBadge() {
@@ -993,7 +994,7 @@ class SideBar extends HTMLElement {
         if (runningCount > 0) {
             this._setChatBadge(badge, runningCount > 99 ? '99+' : String(runningCount));
         } else if (recentCompleted.length > 0) {
-            this._setChatBadge(badge, '✓');
+            this._setChatBadge(badge, recentCompleted.some((item) => isSidebarTaskFailed(item.task)) ? '×' : '✓');
         } else {
             this._hideChatBadge(badge);
         }
@@ -1002,6 +1003,7 @@ class SideBar extends HTMLElement {
 
     _setChatBadge(badge, text) {
         badge.classList.toggle('sb-chat-badge-check', text === '✓');
+        badge.classList.toggle('sb-chat-badge-failed', text === '×');
         const wasVisible = badge.classList.contains('sb-chat-badge-show');
         const contentChanged = badge.textContent !== text;
         badge.textContent = text;
@@ -1334,6 +1336,10 @@ class SideBar extends HTMLElement {
         }
         if (task.task_status === 'waiting') {
             return { key: 'waiting', label: '等待中', dotClass: 'bg-[#cbd5e1]', terminal: false };
+        }
+        // task_status 'failed' 表示最后一次 turn 以模型错误终止（或崩溃恢复），优先于旧 turn 的 attempt_completion
+        if (task.task_status === 'failed') {
+            return { key: 'fail', label: '失败', dotClass: 'bg-[#f87171]', terminal: true };
         }
         if (task.completion_status === 'fail') {
             return { key: 'fail', label: '失败', dotClass: 'bg-[#f87171]', terminal: true };
@@ -2694,7 +2700,7 @@ class SideBar extends HTMLElement {
         const task = item.task;
         const isCurrentTask = task.task_id === this.currentTaskId;
         const isRunning = task.task_status === 'running';
-        const failed = task.task_status === 'failed' || ['fail', 'ask'].includes(task.completion_status);
+        const failed = isSidebarTaskFailed(task);
         const taskName = escapeHtml(task.task_name || this._t('renderer.sidebar.unnamedTask'));
         const time = escapeHtml(this._formatTaskTime(task));
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
@@ -2739,6 +2745,7 @@ class SideBar extends HTMLElement {
         const task = item.task;
         const isCurrentTask = task.task_id === this.currentTaskId;
         const recentlyCompleted = item.recentlyCompleted === true;
+        const recentlyFailed = recentlyCompleted && isSidebarTaskFailed(task);
         const children = item.children;
         const completed = children.filter((child) => SideBar.getSubTaskStatusMeta(child).terminal).length;
         const childRows = children.map((child) => this._buildRunningSubtaskRow(child)).join('');
@@ -2763,7 +2770,11 @@ class SideBar extends HTMLElement {
             recentlyCompleted ? ' is-recently-completed' : ''
         }">
             <div class="task-item sb-running-header" data-task_id="${escapeHtml(task.task_id)}" data-depth="0">
-                ${recentlyCompleted ? '<i class="sb-completed-dot" aria-hidden="true"></i>' : ''}
+                ${
+                    recentlyCompleted
+                        ? `<i class="sb-completed-dot${recentlyFailed ? ' is-failed' : ''}" aria-hidden="true"></i>`
+                        : ''
+                }
                 <span class="sb-running-title">${escapeHtml(
                     task.task_name || this._t('renderer.sidebar.unnamedTask')
                 )}</span>
@@ -2771,8 +2782,8 @@ class SideBar extends HTMLElement {
                 ${this._browserActiveTaskIds.has(task.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
                 ${
                     recentlyCompleted
-                        ? `<span class="sb-running-completed-status">${this._t(
-                              'renderer.sidebar.justCompleted'
+                        ? `<span class="sb-running-completed-status${recentlyFailed ? ' is-failed' : ''}">${this._t(
+                              recentlyFailed ? 'renderer.sidebar.justFailed' : 'renderer.sidebar.justCompleted'
                           )}</span>`
                         : `<span class="sb-running-spinner" aria-label="${this._t('renderer.sidebar.running')}"></span>`
                 }

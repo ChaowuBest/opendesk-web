@@ -33,6 +33,9 @@ function isTextLeaf(node: AriaNode): boolean {
     if (node.role !== 'generic') return false;
     if (node.children.length !== 1 || typeof node.children[0] !== 'string') return false;
     if (Object.keys(node.props).length > 0) return false;
+    // 交互叶不合并（BUG-30）：cursor:pointer 的纯文本 div（如 hover 触发区）
+    // 是真实交互目标，合并成字符串会丢掉唯一的 ref 定位入口。
+    if (node.box?.cursor === 'pointer' || node.box?.scrollable) return false;
     if (
         node.checked !== undefined ||
         node.disabled ||

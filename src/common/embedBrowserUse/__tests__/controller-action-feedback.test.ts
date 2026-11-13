@@ -42,6 +42,9 @@ function makeSession(opts: SessionOpts = {}) {
         isHealthy: jest.fn(async () => true),
         waitForPageReady: jest.fn(async () => {}),
         waitForDOMStable: jest.fn(async () => {}),
+        // 对话框接管（BUG-02 修复后 click/type 会先启用 Page 域）
+        ensureDialogHandling: jest.fn(async () => {}),
+        takeLastDialog: jest.fn(() => null),
         send: jest.fn(async (method: string, params: any) => {
             if (
                 method === 'Input.dispatchMouseEvent' ||
@@ -259,7 +262,7 @@ describe('input focus isolation', () => {
         expect(session.send).not.toHaveBeenCalledWith('Input.insertText', expect.anything());
         expect(session.send).toHaveBeenCalledWith(
             'Runtime.evaluate',
-            expect.objectContaining({ expression: expect.stringContaining('data-od-ref="e1"') })
+            expect.objectContaining({ expression: expect.stringContaining("__odFindRef('e1')") })
         );
     });
 
@@ -424,5 +427,222 @@ describe('type submit feedback (P0-1)', () => {
 
         expect(result.warning).toBeUndefined();
         expect(result.page).toMatchObject({ url: 'https://example.com/search?q=%E6%9C%BA%E6%A2%B0%E9%94%AE%E7%9B%98' });
+    });
+});
+
+describe('evaluate dialog echo (BUG-02 同族)', () => {
+    test('evaluate 保持裸值契约：表达式值原样返回，不包 dialog 结构', async () => {
+        const session = makeSession({});
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            if ((params?.expression || '') === '1 + 1') return { result: { value: 2 } };
+            return { result: { value: undefined } };
+        });
+        const { ctrl } = makeCtrl(session, () => null);
+
+        await expect(ctrl.evaluate('1 + 1')).resolves.toBe(2);
+    });
+
+    test('evaluateWithDialog 回显表达式触发的对话框（对话框已被自动接受）', async () => {
+        const session = makeSession({});
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            if ((params?.expression || '').includes('DIALOG-MARKER')) return { result: { value: true } };
+            return { result: { value: undefined } };
+        });
+        session.takeLastDialog.mockReturnValueOnce({
+            type: 'confirm',
+            message: 'DIALOG-MARKER',
+            url: 'https://example.com/page'
+        });
+        const { ctrl } = makeCtrl(session, () => null);
+
+        const { value, dialog } = await ctrl.evaluateWithDialog('confirm("DIALOG-MARKER")');
+        expect(value).toBe(true);
+        expect(dialog).toContain('DIALOG-MARKER');
+        expect(session.takeLastDialog).toHaveBeenCalled();
+    });
+
+    test('无对话框时 evaluateWithDialog 不带 dialog 字段', async () => {
+        const session = makeSession({});
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            if ((params?.expression || '') === '1 + 1') return { result: { value: 42 } };
+            return { result: { value: undefined } };
+        });
+        const { ctrl } = makeCtrl(session, () => null);
+
+        const { value, dialog } = await ctrl.evaluateWithDialog('1 + 1');
+        expect(value).toBe(42);
+        expect(dialog).toBeUndefined();
+    });
+});
+
+describe('navigation dialog echo (BUG-02 收尾)', () => {
+    // 导航是 beforeunload 对话框的主要触发源：若 navigate/goBack/goForward/reload
+    // 不消费 takeLastDialog，对话框信息会滞留到下一个无关动作的结果里错挂。
+    const DIALOG = { type: 'beforeunload', message: 'LEAVE-PAGE?', url: 'https://example.com/form' };
+
+    function makeNavSession() {
+        const session = makeSession({});
+        session.send.mockImplementation(async (_method: string, params: any) => {
+            const expr: string = params?.expression || '';
+            // readPageInfo
+            if (expr.includes('document.title')) {
+                return { result: { value: JSON.stringify({ url: 'https://example.com/next', title: 'Next' }) } };
+            }
+            return { result: { value: undefined } };
+        });
+        return session;
+    }
+
+    test('goBack 回显导航过程触发的对话框（beforeunload 已自动接受）', async () => {
+        const session = makeNavSession();
+        session.takeLastDialog.mockReturnValueOnce(DIALOG);
+        const { ctrl } = makeCtrl(session, () => ({ result: null }));
+
+        const info = await ctrl.goBack();
+        expect(info.url).toBe('https://example.com/next');
+        expect(info.dialog).toContain('beforeunload');
+        expect(info.dialog).toContain('LEAVE-PAGE?');
+        // 只在本次结果消费一次，不残留到下一个动作
+        expect(session.takeLastDialog).toHaveBeenCalledTimes(1);
+    });
+
+    test('goForward / reload 同样回显', async () => {
+        const sessionF = makeNavSession();
+        sessionF.takeLastDialog.mockReturnValueOnce(DIALOG);
+        const { ctrl: ctrlF } = makeCtrl(sessionF, () => ({ result: null }));
+        expect((await ctrlF.goForward()).dialog).toContain('beforeunload');
+
+        const sessionR = makeNavSession();
+        sessionR.takeLastDialog.mockReturnValueOnce(DIALOG);
+        const { ctrl: ctrlR } = makeCtrl(sessionR, () => ({ result: null }));
+        expect((await ctrlR.reload()).dialog).toContain('beforeunload');
+    });
+
+    test('navigate 同样回显', async () => {
+        const session = makeNavSession();
+        session.takeLastDialog.mockReturnValueOnce(DIALOG);
+        const { ctrl } = makeCtrl(session, () => ({ result: null }));
+
+        const info = await ctrl.navigate('https://example.com/next');
+        expect(info.url).toBe('https://example.com/next');
+        expect(info.dialog).toContain('beforeunload');
+    });
+
+    test('无对话框时不带 dialog 字段', async () => {
+        const session = makeNavSession();
+        const { ctrl } = makeCtrl(session, () => ({ result: null }));
+
+        const info = await ctrl.goBack();
+        expect(info.dialog).toBeUndefined();
+    });
+});
+
+describe('历史导航静默失败检测（压测发现）', () => {
+    // goBack 在部分状态下会"什么也没发生"：工具照旧返回旧页面的 url/title，
+    // agent 完全看不出没后退。这里锁定"URL 未变化 → 明确 error"的语义。
+    function makeHistoryCtrl(urls: string[]) {
+        let call = 0;
+        const session: any = {
+            webContentsId: 5,
+            webContents: { focus: jest.fn() },
+            isHealthy: jest.fn(async () => true),
+            waitForPageReady: jest.fn(async () => {}),
+            waitForDOMStable: jest.fn(async () => {}),
+            ensureDialogHandling: jest.fn(async () => {}),
+            takeLastDialog: jest.fn(() => null),
+            send: jest.fn(async (_method: string, params: any) => {
+                const expr: string = params?.expression || '';
+                if (expr.includes('location.href') && expr.includes('document.title')) {
+                    const url = urls[Math.min(call, urls.length - 1)];
+                    call += 1;
+                    return { result: { value: JSON.stringify({ url, title: 'T' }) } };
+                }
+                return { result: { value: undefined } };
+            })
+        };
+        const ctrl = new BrowserController('t-history', makeWindow(() => ({ result: null })) as any, mockScriptGen);
+        (ctrl as any).getCDPSession = jest.fn(async () => session);
+        (ctrl as any).requireCDP = jest.fn(async () => session);
+        (ctrl as any).callRendererBrowser = jest.fn(async () => ({ ok: true }));
+        return ctrl;
+    }
+
+    test('goBack 后 URL 未变化时返回 error，不再静默回显旧页面', async () => {
+        const ctrl = makeHistoryCtrl(['https://example.com/same', 'https://example.com/same']);
+
+        const info = await ctrl.goBack();
+        expect(info.url).toBe('https://example.com/same');
+        expect(info.error).toContain('页面 URL 未变化');
+    });
+
+    test('goBack 正常回退时不带 error', async () => {
+        const ctrl = makeHistoryCtrl(['https://example.com/before', 'https://example.com/after']);
+
+        const info = await ctrl.goBack();
+        expect(info.url).toBe('https://example.com/after');
+        expect(info.error).toBeUndefined();
+    });
+
+    test('goForward 后 URL 未变化时返回 error', async () => {
+        const ctrl = makeHistoryCtrl(['https://example.com/same', 'https://example.com/same']);
+
+        const info = await ctrl.goForward();
+        expect(info.error).toContain('页面 URL 未变化');
+    });
+});
+
+describe('navigate 未发生时的提示（压测发现）', () => {
+    // navigate 到会触发下载的资源时，Chromium 只下载、不导航：结果里应出现
+    // note 说明，而不是让 agent 以为"URL 没变但也许成功了"。
+    function makeNavCtrl(urls: string[]) {
+        let call = 0;
+        const session: any = {
+            webContentsId: 5,
+            webContents: { focus: jest.fn(), isDestroyed: () => false, isLoading: () => false },
+            isHealthy: jest.fn(async () => true),
+            waitForPageReady: jest.fn(async () => {}),
+            waitForDOMStable: jest.fn(async () => {}),
+            ensureDialogHandling: jest.fn(async () => {}),
+            takeLastDialog: jest.fn(() => null),
+            send: jest.fn(async (_method: string, params: any) => {
+                const expr: string = params?.expression || '';
+                if (expr.includes('location.href') && expr.includes('document.title')) {
+                    const url = urls[Math.min(call, urls.length - 1)];
+                    call += 1;
+                    return { result: { value: JSON.stringify({ url, title: 'T' }) } };
+                }
+                return { result: { value: undefined } };
+            })
+        };
+        const ctrl = new BrowserController('t-nav-note', makeWindow(() => ({ result: null })) as any, mockScriptGen);
+        (ctrl as any).getCDPSession = jest.fn(async () => session);
+        (ctrl as any).requireCDP = jest.fn(async () => session);
+        (ctrl as any).callRendererBrowser = jest.fn(async () => ({ ok: true }));
+        return ctrl;
+    }
+
+    test('导航后 URL 未变化时返回 note，指向可能的下载/拦截', async () => {
+        // 第一次 readPageInfo 是"导航前"，之后都还是同一个页面
+        const ctrl = makeNavCtrl(['https://example.com/current']);
+        const info = await ctrl.navigate('https://example.com/file.zip');
+
+        expect(info.url).toBe('https://example.com/current');
+        expect(info.note).toContain('导航未发生');
+        expect(info.note).toContain('文件下载');
+    });
+
+    test('正常导航不产生 note', async () => {
+        const ctrl = makeNavCtrl(['https://example.com/current', 'https://example.com/next']);
+
+        const info = await ctrl.navigate('https://example.com/next');
+        expect(info.url).toBe('https://example.com/next');
+        expect(info.note).toBeUndefined();
+    });
+
+    test('同址导航（等价 reload）不产生 note', async () => {
+        const ctrl = makeNavCtrl(['https://example.com/same']);
+
+        const info = await ctrl.navigate('https://example.com/same');
+        expect(info.note).toBeUndefined();
     });
 });

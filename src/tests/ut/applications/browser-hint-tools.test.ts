@@ -41,6 +41,11 @@ function fakeController(options: {
             evaluate: async (expression: string) => {
                 evaluated.push(expression);
                 return options.evaluate ? options.evaluate(expression) : null;
+            },
+            // trigger 工具经 evaluateWithDialog 取值并回显 dialog（无对话框场景）
+            evaluateWithDialog: async (expression: string) => {
+                evaluated.push(expression);
+                return { value: options.evaluate ? options.evaluate(expression) : null };
             }
         } as any
     };

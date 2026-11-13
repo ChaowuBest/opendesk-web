@@ -42,4 +42,15 @@ describe('worker fatal error handling', () => {
         expect(logger.warn).toHaveBeenCalledTimes(1);
         expect(logger.error).not.toHaveBeenCalled();
     });
+
+    test('与主进程共用可恢复判定：已销毁对象错误不再杀死 worker', () => {
+        const logger = createLogger();
+
+        expect(() =>
+            handleWorkerUncaughtException(new TypeError('Object has been destroyed'), 'uncaughtException', logger)
+        ).not.toThrow();
+        expect(() => handleWorkerUnhandledRejection(new TypeError('Object has been destroyed'), logger)).not.toThrow();
+        expect(logger.warn).toHaveBeenCalledTimes(2);
+        expect(logger.error).not.toHaveBeenCalled();
+    });
 });

@@ -66,12 +66,15 @@ import {
     getLogFilename
 } from './utils/logger.js';
 import { broadcastToAllWindows, safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
+import {
+    isRecoverableMainProcessError,
+    logRecoverableMainProcessError,
+    shouldDowngradeRecoverableError
+} from './utils/recoverable-errors.js';
 import { createMainWindowCloseHandler } from './utils/window-close.js';
 import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfile } from './utils/window-recovery.js';
-import { NAV_INTERCEPT_SCRIPT } from '../renderer/webviewScripts.js';
-import { injectScriptIntoFrames } from './utils/webview-frame-inject.js';
 import { skillRegistry } from './applications/skillmgr/utils/skill-registry.js';
 import { SkillMgrApplication } from './applications/skillmgr/app.js';
 import { scanSupportedShells } from './applications/terminal/scan.js';
@@ -279,23 +282,21 @@ process.stderr.on('error', (err: NodeJS.ErrnoException) => {
 // 全局异常兜底：记录日志并向用户展示错误对话框
 process.on('uncaughtException', (err, origin) => {
     const errDetails = err instanceof Error ? err.stack || err.message : String(err);
+    const debugMode = isOpendeskDebugMode();
 
-    // EPIPE 是可恢复的网络/管道断开错误，不应导致应用崩溃
-    // 常见于系统休眠后网络连接恢复时，或终端管道断开
-    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
-        logger.warn(`[RECOVERABLE] EPIPE error (${origin}): ${errDetails}`);
+    // 可恢复错误（窗口/renderer 已销毁的竞态、管道断开等）：进程健康，降级为告警，
+    // 不弹 FATAL 对话框也不退出进程
+    const recoverableReason = isRecoverableMainProcessError(err);
+    if (recoverableReason !== null && shouldDowngradeRecoverableError(recoverableReason, debugMode)) {
+        logRecoverableMainProcessError(logger.warn.bind(logger), recoverableReason, `(${origin}) ${errDetails}`);
         return;
     }
 
-    // Electron net.fetch() 遇到越界 HTTP 状态码（如 LinkedIn 返回 999）。
-    // 降级为 warning，不弹出 FATAL 对话框，不退出进程。
-    if (err instanceof RangeError && err.stack?.includes('initializeResponse')) {
-        logger.warn(`[RECOVERABLE] Out-of-range HTTP status code: ${err.message}`);
-        return;
-    }
-
-    logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}`);
-    if (!isOpendeskDebugMode()) {
+    // 命中可恢复判定但被 debug 模式拦下时，日志要说明原因，否则看着和未知崩溃一样
+    const downgradeHint =
+        recoverableReason !== null ? ` (可恢复类别: ${recoverableReason}，debug 模式下按致命处理)` : '';
+    logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}${downgradeHint}`);
+    if (!debugMode) {
         try {
             dialog.showErrorBox(
                 'OpenDesk 发生不可恢复的错误',
@@ -310,8 +311,23 @@ process.on('uncaughtException', (err, origin) => {
 
 process.on('unhandledRejection', (reason, _promise) => {
     const reasonDetails = reason instanceof Error ? reason.stack || reason.message : String(reason);
-    logger.error(`[FATAL] unhandledRejection: ${reasonDetails}`);
-    if (!isOpendeskDebugMode()) {
+    const debugMode = isOpendeskDebugMode();
+
+    // 与 uncaughtException 同一套可恢复判定：销毁竞态经 Promise 链冒泡时同样只降级告警
+    const recoverableReason = isRecoverableMainProcessError(reason);
+    if (recoverableReason !== null && shouldDowngradeRecoverableError(recoverableReason, debugMode)) {
+        logRecoverableMainProcessError(
+            logger.warn.bind(logger),
+            recoverableReason,
+            `unhandledRejection: ${reasonDetails}`
+        );
+        return;
+    }
+
+    const downgradeHint =
+        recoverableReason !== null ? ` (可恢复类别: ${recoverableReason}，debug 模式下按致命处理)` : '';
+    logger.error(`[FATAL] unhandledRejection: ${reasonDetails}${downgradeHint}`);
+    if (!debugMode) {
         try {
             dialog.showErrorBox(
                 'OpenDesk 发生不可恢复的错误',
@@ -669,13 +685,10 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
 
         installBrowserCredentials(hostWindow, webContents);
 
-        // 导航拦截 workaround：guest 的 renderer 自发起跨文档导航会被框架层静默取消，
-        // preload 仅注入主 frame；搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）
-        // 需要把 NAV_INTERCEPT_SCRIPT 注入每个 frame。注入脚本自带幂等标记，重复执行无害。
-        injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
-        webContents.on('did-frame-navigate', () => {
-            injectScriptIntoFrames(webContents, NAV_INTERCEPT_SCRIPT);
-        });
+        // 导航拦截 workaround（NAV_INTERCEPT_SCRIPT）由 renderer 侧按 tab 注入：
+        // 脚本只安装在顶层文档（iframe 导航走原生通道，避免 sandbox 绕过），
+        // 且 console 信令需要 renderer 生成的 tab 级一次性 token —— 主进程注入
+        // 无法共享该 token，且会因幂等标记抢先占用而让 token 注入失效。
         installEmbeddedBrowserLifecycleHandlers(hostWindow, webContents);
         installWebviewKeyboardForwarding(hostWindow, webContents, true);
     });

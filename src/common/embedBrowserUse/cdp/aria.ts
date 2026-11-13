@@ -15,6 +15,8 @@
  */
 
 import type { NestedJSResult } from './session.js';
+import { OD_REF_QUERY_HELPER } from './refQueryScript.js';
+import { describeRefMiss } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // JSON-based Aria tree types
@@ -52,6 +54,14 @@ export interface AriaNode {
     /** For iframe nodes: index among sibling iframes (used for matching) */
     frameIndex?: number;
     /**
+     * For iframe nodes: the content frame's REAL url at snapshot time.
+     * el.src goes stale after a JS-initiated iframe navigation, so op-side
+     * frame resolution validates against this instead (refs inside a frame
+     * whose url changed are dead — surface that instead of silently hitting
+     * the old document).
+     */
+    frameUrl?: string;
+    /**
      * When true, the node's children are omitted from the rendered snapshot
      * (collapsed into a one-line summary) but remain present in the in-memory
      * tree so the `explore(ref)` tool can expand them on demand. This keeps the
@@ -81,7 +91,20 @@ export interface AriaNode {
      * can prune offscreen noise (see pruneOffscreenPass). Present only for
      * elements that passed the visibility gate.
      */
-    box?: { width: number; height: number; visible: boolean; inViewport: boolean; cursor?: string };
+    box?: {
+        width: number;
+        height: number;
+        visible: boolean;
+        inViewport: boolean;
+        cursor?: string;
+        scrollable?: boolean;
+    };
+    /**
+     * For iframe nodes: the content frame failed to execute the snapshot script
+     * (load failure, destroyed execution context). Rendered as a load-failed
+     * marker so "加载失败" is distinguishable from "内容为空" (BUG-26).
+     */
+    loadFailed?: string;
 }
 
 /** The JSON result returned by each frame's snapshot injection script. */
@@ -176,8 +199,33 @@ function walkAndMerge(node: AriaNode, availableFrames: Array<[string, NestedJSRe
             const idx = child.frameIndex;
             const frameResult = selectFrameResult(availableFrames, idx, child.frameSrc);
             if (frameResult) {
+                if (frameResult.error && !frameResult.mainResult) {
+                    // 内容 frame 执行失败（加载失败/上下文销毁）：在 iframe 节点上
+                    // 标记失败状态，而不是静默留空与"空内容"无法区分（BUG-26）
+                    child.loadFailed = frameResult.error.slice(0, 80);
+                    continue;
+                }
                 try {
                     const parsed = parseFrameResult(frameResult.mainResult);
+
+                    // 加载失败的 frame（连接拒绝/DNS 失败等）会落在 chrome-error
+                    // 错误页上：该文档仍可执行快照脚本并返回空树（不抛错，上面的
+                    // 执行失败路径覆盖不到），压测实测确认这一常见失败模式。按
+                    // URL 识别错误页：打 load-failed 标记并丢弃错误页噪音内容。
+                    if (parsed.url && /^chrome-error:/i.test(parsed.url)) {
+                        child.loadFailed = `页面加载失败（${parsed.url.slice(0, 60)}）`;
+                        child.children = [];
+                        continue;
+                    }
+
+                    // Record the content frame's real URL at snapshot time so
+                    // op-side frame resolution can detect "iframe navigated
+                    // since snapshot" (el.src alone goes stale after JS navs).
+                    // 注意错误页不记录 frameUrl：帧内 location.href 是
+                    // chrome-error://，而父侧 WebFrameMain.url 仍是原始目标 URL，
+                    // 两者不一致会让操作端的帧 URL 校验对所有失败 iframe 误报
+                    // "已在快照后导航"（压测实测）。
+                    if (parsed.url) child.frameUrl = parsed.url;
 
                     // Prepend prefix to all child refs.
                     // Use iframe's ref if available; otherwise generate from frameIndex.
@@ -359,8 +407,16 @@ function createKey(node: AriaNode, compactImages: boolean): string {
     if (node.pressed === 'mixed') key += ' [pressed=mixed]';
     else if (node.pressed === true) key += ' [pressed]';
     if (node.selected === true) key += ' [selected]';
+    // 可滚动容器（BUG-09）：让 agent 看见"这里是可滚动区域"，可配合 scrollTo
+    if (node.box?.scrollable) key += ' [scrollable]';
+    // 内容 frame 加载失败（BUG-26）：与"空内容"明确区分
+    if (node.loadFailed) key += ` [load-failed: ${JSON.stringify(node.loadFailed)}]`;
 
-    if (node.collapsed) {
+    if (node.collapsed && compactImages) {
+        // [collapsed...] 折叠标记只在紧凑快照（collapse=true）里输出：
+        // explore()/diff 以 collapse=false 渲染全量子树时，子树已完整展开，
+        // 再带 [collapsed, N descendants] 会自相矛盾（此前 viewportOnly 的
+        // 折叠状态正是这样泄漏进 explore 输出的）。
         const n = node.collapsedCount ?? countDescendants(node);
         // 折叠摘要带上子树首个文本预览，agent 无需盲猜被折叠的内容
         // （如"该不该滚动/展开"）。无文本子树（纯图片等）不追加预览。
@@ -376,7 +432,13 @@ function createKey(node: AriaNode, compactImages: boolean): string {
         }
     }
     if (node.repeatCount && node.repeatCount > 1) {
-        key += ` [repeated x${node.repeatCount}]`;
+        // 被折叠的重复兄弟仍在内存树中、可按 ref 定位（findNodeByRef 可达），
+        // 把它们的 ref 列进标记，agent 无需全量 explore 即可精准定位某一项。
+        const sibRefs = (node.collapsedSiblings ?? []).map((s) => s.ref).filter((r): r is string => !!r);
+        const shown = sibRefs.slice(0, 8);
+        const more = sibRefs.length - shown.length;
+        const refSuffix = shown.length ? ` | refs: ${shown.join(', ')}${more > 0 ? `, +${more} more` : ''}` : '';
+        key += ` [repeated x${node.repeatCount}${refSuffix}]`;
     }
 
     // option value attribute
@@ -796,10 +858,30 @@ export function diffTrees(before: AriaNode, after: AriaNode): SnapshotDiff {
 
     const lines: string[] = [];
     if (removed.length) lines.push(`- removed: ${removed.join(', ')}`);
+    // iframe 内容锚点（BUG-27）：diff 片段的 ref 形如 "e8-e3" 时，输出中只有
+    // 嵌套 ref 自身，看不出这些节点属于哪个 iframe。为每个出现的外层 iframe
+    // 补一行锚点，agent 才能把 ref 与 iframe 对上。
+    const anchoredFrames = new Set<string>();
+    const frameAnchorLine = (node: AriaNode): string | null => {
+        const ref = node.ref || '';
+        if (ref.indexOf('-') === -1) return null;
+        const outer = ref.split('-')[0];
+        if (anchoredFrames.has(outer)) return null;
+        const anchorNode = afterMap.get(outer);
+        if (!anchorNode || anchorNode === node) return null;
+        anchoredFrames.add(outer);
+        const desc = anchorNode.name ? ` "${anchorNode.name}"` : '';
+        const src = anchorNode.frameSrc ? ` src=${anchorNode.frameSrc}` : '';
+        return `- inside iframe [ref=${outer}]${desc}${src}:`;
+    };
     for (const node of addedTop) {
+        const anchor = frameAnchorLine(node);
+        if (anchor) lines.push(anchor);
         lines.push(renderAriaTreeToYaml({ role: 'fragment', name: '', children: [node], props: {} }, false));
     }
     for (const node of changedDeepest) {
+        const anchor = frameAnchorLine(node);
+        if (anchor) lines.push(anchor);
         lines.push(renderAriaTreeToYaml({ role: 'fragment', name: '', children: [node], props: {} }, false));
     }
     return {
@@ -881,26 +963,66 @@ export function selectChildFrame<T extends { url: string }>(
 async function findChildFrame(parentFrame: Electron.WebFrameMain, iframeRef: string): Promise<Electron.WebFrameMain> {
     const descriptorResult = await parentFrame.executeJavaScript(
         `(() => {
-            var el = document.querySelector('[data-od-ref="${iframeRef}"]');
-            if (!el || el.tagName !== 'IFRAME') return { index: -1, src: '' };
+            ${OD_REF_QUERY_HELPER}
+            var el = __odFindRef('${iframeRef}');
+            if (!el || el.tagName !== 'IFRAME') return { found: false, index: -1, src: '' };
             var all = document.querySelectorAll('iframe');
             for (var i = 0; i < all.length; i++) {
-                if (all[i] === el) return { index: i, src: el.src || '' };
+                if (all[i] === el) return { found: true, index: i, src: el.src || '' };
             }
-            return { index: -1, src: el.src || '' };
+            return { found: true, index: -1, src: el.src || '' };
         })()`
     );
-    const descriptor = descriptorResult as { index?: number; src?: string };
+    const descriptor = descriptorResult as { found?: boolean; index?: number; src?: string };
     const iframeIndex = Number.isInteger(descriptor?.index) ? descriptor.index! : -1;
     const src = typeof descriptor?.src === 'string' ? descriptor.src : '';
     const match = selectChildFrame(parentFrame.frames, iframeIndex, src);
     if (!match) {
+        if (descriptor?.found === false) {
+            // iframe 元素都没了（被页面移除）——与跨域无关，给出准确指引
+            throw new Error(
+                `Element ref "${iframeRef}" not found — the iframe may have been removed. ` +
+                    'Page may have changed — call snapshot to refresh.'
+            );
+        }
         throw new Error(
             `Cannot access iframe "${iframeRef}" (src: ${src}). ` +
                 'The iframe may be cross-origin and not tracked by Electron.'
         );
     }
     return match;
+}
+
+/**
+ * 校验解析到的子 frame 仍是快照时的那个文档（BUG-04）。
+ *
+ * iframe 元素的 src 属性在 JS 导航后保持陈旧，仅靠 src/index 匹配会把操作
+ * 打到旧 frame 或兄弟 frame 上并静默返回旧 document 数据。快照合并时已把每个
+ * iframe 的真实内容 URL 记录到树节点（frameUrl），这里比对当前 URL：
+ * 不一致 ⇒ 该 iframe 在快照后发生过导航，子 frame 内的 ref 全部失效，
+ * 显式报错让 agent 重新 snapshot，而不是静默返回旧数据。
+ */
+function validateChildFrameUrl(
+    match: Electron.WebFrameMain,
+    iframeRef: string,
+    expectedFrameUrl: string | undefined
+): void {
+    if (!expectedFrameUrl) return;
+    // 错误页不参与校验：帧内 location.href（chrome-error://）与父侧
+    // WebFrameMain.url（原始目标 URL）天然不一致，比对必然误报"已导航"
+    if (/^chrome-error:/i.test(expectedFrameUrl)) return;
+    let currentUrl: string;
+    try {
+        currentUrl = match.url;
+    } catch {
+        return; // frame 已销毁：交给后续 executeJavaScript 报错
+    }
+    if (normalizeFrameUrl(currentUrl) !== normalizeFrameUrl(expectedFrameUrl)) {
+        throw new Error(
+            `iframe "${iframeRef}" 已在快照后导航（${expectedFrameUrl} → ${currentUrl}），` +
+                '该 iframe 内的旧 ref 已全部失效 — 请重新 snapshot 获取新 ref'
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -917,13 +1039,16 @@ async function findChildFrame(parentFrame: Electron.WebFrameMain, iframeRef: str
  */
 export async function navigateToFrame(
     mainFrame: Electron.WebFrameMain,
-    ref: string
+    ref: string,
+    expectedFrameUrls?: Map<string, string>
 ): Promise<{ frame: Electron.WebFrameMain; elementRef: string }> {
     const parts = ref.split('-');
     let currentFrame = mainFrame;
 
     for (let i = 0; i < parts.length - 1; i++) {
         currentFrame = await findChildFrame(currentFrame, parts[i]);
+        const chainRef = parts.slice(0, i + 1).join('-');
+        validateChildFrameUrl(currentFrame, parts[i], expectedFrameUrls?.get(chainRef));
     }
 
     return { frame: currentFrame, elementRef: parts[parts.length - 1] };
@@ -942,13 +1067,16 @@ export async function navigateToFrame(
  */
 export async function navigateIntoFrame(
     mainFrame: Electron.WebFrameMain,
-    iframeRef: string
+    iframeRef: string,
+    expectedFrameUrls?: Map<string, string>
 ): Promise<Electron.WebFrameMain> {
     const parts = iframeRef.split('-');
     let currentFrame = mainFrame;
 
-    for (const part of parts) {
-        currentFrame = await findChildFrame(currentFrame, part);
+    for (let i = 0; i < parts.length; i++) {
+        currentFrame = await findChildFrame(currentFrame, parts[i]);
+        const chainRef = parts.slice(0, i + 1).join('-');
+        validateChildFrameUrl(currentFrame, parts[i], expectedFrameUrls?.get(chainRef));
     }
 
     return currentFrame;
@@ -970,7 +1098,8 @@ export async function navigateIntoFrame(
  */
 export async function resolveNestedRefCoords(
     mainFrame: Electron.WebFrameMain,
-    ref: string
+    ref: string,
+    expectedFrameUrls?: Map<string, string>
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
     const parts = ref.split('-');
 
@@ -986,8 +1115,9 @@ export async function resolveNestedRefCoords(
         // For target element: get center coordinates
         const jsExpr = isLast
             ? `(async () => {
-                var el = document.querySelector('[data-od-ref="${currentRef}"]');
-                if (!el) return JSON.stringify({ error: 'Element ref "${currentRef}" not found. Page may have changed — call snapshot to refresh.' });
+                ${OD_REF_QUERY_HELPER}
+                var el = __odFindRef('${currentRef}');
+                if (!el) return JSON.stringify({ error: ${JSON.stringify(describeRefMiss(currentRef))} });
                 el.scrollIntoView({ block: 'center', behavior: 'instant' });
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
                 var rect = el.getBoundingClientRect();
@@ -1000,7 +1130,8 @@ export async function resolveNestedRefCoords(
                 });
             })()`
             : `(async () => {
-                var el = document.querySelector('[data-od-ref="${currentRef}"]');
+                ${OD_REF_QUERY_HELPER}
+                var el = __odFindRef('${currentRef}');
                 if (!el) return JSON.stringify({ error: 'Iframe ref "${currentRef}" not found. Page may have changed — call snapshot to refresh.' });
                 el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -1023,6 +1154,8 @@ export async function resolveNestedRefCoords(
         if (!isLast) {
             // Navigate using the same URL-validated/index-fallback policy as snapshot merging.
             currentFrame = await findChildFrame(currentFrame, currentRef);
+            const chainRef = parts.slice(0, i + 1).join('-');
+            validateChildFrameUrl(currentFrame, currentRef, expectedFrameUrls?.get(chainRef));
         } else {
             return { x: totalX, y: totalY, tag: info.tag, text: info.text };
         }

@@ -12,10 +12,11 @@
 /**
  * 向 webview guest 的 frame 树注入脚本。
  *
- * preload 只在主 frame 执行，而搜索框位于 OOPIF iframe 的站点（如 Bing 搜索框）
- * 不会运行主 frame 的 preload，导致 iframe 内的 renderer 自发起导航缺少拦截。
- * 此处通过 WebFrameMain.executeJavaScript 把脚本注入主 frame 及其所有子 frame；
- * 脚本自身应具备幂等安装标记（如 NAV_INTERCEPT_SCRIPT 的 __odNavInterceptInstalled）。
+ * 通过 WebFrameMain.executeJavaScript 把脚本注入主 frame 及其所有子 frame；
+ * 脚本自身应具备幂等安装标记（如各注入脚本的 __openDesk*Installed 标记）。
+ * 注意：导航拦截（makeNavInterceptScript）不再走此通道——它只安装在顶层文档
+ * 且信令需要 renderer 生成的 tab 级 token，由 renderer 侧按 tab 注入主 frame。
+ * 当前仅触摸长按等与信令 token 无关的脚本使用本工具。
  */
 
 /** 可执行脚本的最小接口（WebFrameMain 的子集）。 */

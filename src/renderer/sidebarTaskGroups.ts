@@ -46,6 +46,15 @@ export function isSidebarTaskVisible(task: SidebarTask | null | undefined): task
 }
 
 /**
+ * 侧栏任务的失败判定：覆盖两条失败路径——
+ * 1. task_status 'failed'（运行期模型错误终止，或应用崩溃恢复时由 running 改写）；
+ * 2. attempt_completion 的 fail / ask 完成态。
+ */
+export function isSidebarTaskFailed(task: SidebarTask): boolean {
+    return task.task_status === 'failed' || task.completion_status === 'fail' || task.completion_status === 'ask';
+}
+
+/**
  * 判断任务是否为根任务：无 parent_id，或 parent_id 指向的任务不在当前列表中（孤儿任务）。
  * 类型取宽松结构，供主进程侧（如任务状态浮窗）与渲染进程侧共用。
  */

@@ -5,6 +5,7 @@ import {
     getSidebarRecentRootTasks,
     getSidebarRunningTasks,
     isRootTask,
+    isSidebarTaskFailed,
     isSidebarTaskVisible,
     type SidebarTask
 } from '../../../renderer/sidebarTaskGroups.js';
@@ -390,6 +391,26 @@ describe('sidebar recent root tasks (chat quick menu)', () => {
             .flatMap((group) => group.items.map((item) => item.task.task_id));
 
         expect(getSidebarRecentRootTasks(tasks, 10).map((t) => t.task_id)).toEqual(flattened);
+    });
+});
+
+describe('isSidebarTaskFailed', () => {
+    test('failed 状态视为失败（运行期模型错误终止，或崩溃恢复改写）', () => {
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00', { task_status: 'failed' }))).toBe(true);
+    });
+
+    test('attempt_completion 的 fail / ask 完成态视为失败', () => {
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00', { completion_status: 'fail' }))).toBe(true);
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00', { completion_status: 'ask' }))).toBe(true);
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00', { completion_status: 'success' }))).toBe(false);
+    });
+
+    test('正常完成且无错误标记的任务不视为失败', () => {
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00'))).toBe(false);
+    });
+
+    test('运行中的任务不视为失败（用户尚未停止、错误尚未发生）', () => {
+        expect(isSidebarTaskFailed(task('t', '2026-07-29T10:00:00', { task_status: 'running' }))).toBe(false);
     });
 });
 

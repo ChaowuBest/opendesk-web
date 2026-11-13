@@ -1921,6 +1921,11 @@ html[data-theme='dark'] .sb-chat-badge {
     background: #fff;
     color: #1c1917;
 }
+/* 失败态叉号：浅色模式沿用基础红底无需覆盖；深色模式白底需改红底白字以传达失败语义 */
+html[data-theme='dark'] .sb-chat-badge-failed {
+    background: #dc2626;
+    color: #fff;
+}
 
 .sb-collapsed-top {
     padding-top: 12px;
@@ -2229,6 +2234,10 @@ html[data-theme='dark'] .sb-chat-badge {
     background: #4ade80;
     border-radius: 50%;
 }
+/* 最近完成卡片内的失败变体：模型错误等终止的任务显示红点 */
+.sb-completed-dot.is-failed {
+    background: #f87171;
+}
 .sb-running-title {
     flex: 1;
     min-width: 0;
@@ -2253,6 +2262,10 @@ html[data-theme='dark'] .sb-chat-badge {
     color: #15803d;
     font-size: var(--fs-2xs);
     font-weight: 500;
+}
+/* 最近完成卡片内的失败变体：文案"刚刚失败"用红色 */
+.sb-running-completed-status.is-failed {
+    color: #ef4444;
 }
 .sb-running-subtasks > summary {
     display: flex;

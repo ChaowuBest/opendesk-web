@@ -20,6 +20,8 @@
 
 import type { CDPSession } from './session.js';
 import type { PageSnapshot } from '../protocol.js';
+import { describeRuntimeException } from './utils.js';
+import { OD_REF_QUERY_HELPER, OD_COMPOSED_ANCESTOR_HELPER, OD_VISIBLE_TEXT_HELPER } from './refQueryScript.js';
 import {
     type FrameAriaResult,
     type AriaNode,
@@ -52,17 +54,36 @@ export const IMAGE_DETAIL_MIN_RENDERED_AREA = 10_000;
  * - Returns JSON tree directly (NOT YAML)
  */
 export const SNAPSHOT_INJECTION = `(() => {
+    ${OD_VISIBLE_TEXT_HELPER}
     // Stable ref scheme: we PRESERVE existing data-od-ref attributes across
     // snapshots so the same DOM node keeps the same ref between calls. This
     // enables ref-based diffing and the explore() tool. We only assign a fresh
     // ref to elements that don't already have one, continuing the index from
     // the highest existing value.
     var refIdx = 0;
-    var existingRefs = document.querySelectorAll('[data-od-ref]');
-    for (var i = 0; i < existingRefs.length; i++) {
-        var m = /(?:^|[-])e(\\d+)$/.exec(existingRefs[i].getAttribute('data-od-ref') || '');
+    function noteExistingRef(value) {
+        var m = /(?:^|[-])e(\\d+)$/.exec(value || '');
         if (m) refIdx = Math.max(refIdx, parseInt(m[1], 10) + 1);
     }
+    var existingRefs = document.querySelectorAll('[data-od-ref]');
+    for (var i = 0; i < existingRefs.length; i++) {
+        noteExistingRef(existingRefs[i].getAttribute('data-od-ref'));
+    }
+    // shadow root 内的 ref 也要计入续号扫描（BUG-33：shadow 元素同样持有 ref），
+    // 否则新元素会被铸出与 shadow 内已有 ref 相同的编号，findNodeByRef/click 会
+    // 解析到错误的元素。快照 walk 对 shadow 的下钻是递归的（嵌套 shadow 内的
+    // 元素同样持有 ref），续号扫描必须同深度递归，漏一层就会出现 ref 重号。
+    function scanShadowRefs(root) {
+        var shadowRefs = root.querySelectorAll('[data-od-ref]');
+        for (var j = 0; j < shadowRefs.length; j++) {
+            noteExistingRef(shadowRefs[j].getAttribute('data-od-ref'));
+        }
+        var nestedHosts = root.querySelectorAll('*');
+        for (var k = 0; k < nestedHosts.length; k++) {
+            if (nestedHosts[k].shadowRoot) scanShadowRefs(nestedHosts[k].shadowRoot);
+        }
+    }
+    scanShadowRefs(document);
 
     var iframeIdx = 0;
     var iframeUrls = [];
@@ -220,7 +241,10 @@ export const SNAPSHOT_INJECTION = `(() => {
     }
 
     function textOf(el) {
-        return (el.innerText || el.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
+        // 用 __odVisibleText 而不是 innerText||textContent：后者在只有
+        // <style>/<script> 子节点的容器上会把样式/脚本文本当成名称（真实站点上
+        // 表现为 listitem 名称是整段 CSS）。
+        return __odVisibleText(el).replace(/[\\s\\u00A0]+/g, ' ').trim();
     }
 
     function getAccessibleName(el) {
@@ -254,7 +278,7 @@ export const SNAPSHOT_INJECTION = `(() => {
                 var clone = parentLabel.cloneNode(true);
                 var inputs = clone.querySelectorAll('input,select,textarea');
                 for (var i = 0; i < inputs.length; i++) inputs[i].remove();
-                var lt = (clone.innerText || clone.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
+                var lt = __odVisibleText(clone).replace(/[\\s\\u00A0]+/g, ' ').trim();
                 if (lt) return lt;
             }
         }
@@ -354,13 +378,27 @@ export const SNAPSHOT_INJECTION = `(() => {
         var height = Math.round(rect.height);
         var visible = width > 0 && height > 0;
         var display = '';
-        try { display = getComputedStyle(el).display || ''; } catch(e) {}
-        var isInline = display === 'inline';
         var cursor = '';
-        try { cursor = getComputedStyle(el).cursor || ''; } catch(e) {}
+        var overflowY = '';
+        var overflowX = '';
+        try {
+            var style = getComputedStyle(el);
+            display = style.display || '';
+            cursor = style.cursor || '';
+            overflowY = style.overflowY || '';
+            overflowX = style.overflowX || '';
+        } catch(e) {}
+        var isInline = display === 'inline';
         var inViewport = visible && rect.bottom > 0 && rect.top < (window.innerHeight || 0)
             && rect.right > 0 && rect.left < (window.innerWidth || 0);
-        return { visible: visible, inline: isInline, cursor: cursor, width: width, height: height, inViewport: inViewport };
+        // 可滚动容器检测（BUG-09）：overflow:auto/scroll 且内容溢出的容器
+        // 是"可滚动区域"，需要保留节点与 ref（否则 scrollTo 无法定位）。
+        var scrollableY = height > 0 && (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay')
+            && el.scrollHeight > el.clientHeight + 1;
+        var scrollableX = width > 0 && (overflowX === 'auto' || overflowX === 'scroll' || overflowX === 'overlay')
+            && el.scrollWidth > el.clientWidth + 1;
+        var scrollable = !!(scrollableY || scrollableX);
+        return { visible: visible, inline: isInline, cursor: cursor, width: width, height: height, inViewport: inViewport, scrollable: scrollable };
     }
 
     function getImageUrl(el) {
@@ -817,7 +855,9 @@ export async function resolveRefCoords(
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
     const result = await session.send('Runtime.evaluate', {
         expression: `(async () => {
-            var el = document.querySelector('[data-od-ref="${ref}"]');
+            ${OD_REF_QUERY_HELPER}
+            ${OD_COMPOSED_ANCESTOR_HELPER}
+            var el = __odFindRef('${ref}');
             if (!el) return JSON.stringify({ error: 'Element ref "${ref}" not found. Page may have changed — call snapshot to refresh.' });
             el.scrollIntoView({ block: 'center', behavior: 'instant' });
             await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -825,7 +865,9 @@ export async function resolveRefCoords(
             var cx = Math.round(rect.left + rect.width / 2);
             var cy = Math.round(rect.top + rect.height / 2);
             var hitEl = document.elementFromPoint(cx, cy);
-            var obscured = hitEl && hitEl !== el && !el.contains(hitEl) && !hitEl.contains(el);
+            // elementFromPoint 对 shadow 内元素会 retarget 成宿主：组合树祖先关系
+            // （跨越 shadow 边界）不算遮挡，否则 shadow 内元素必然误报 obscured
+            var obscured = hitEl && hitEl !== el && !isComposedAncestor(el, hitEl) && !isComposedAncestor(hitEl, el);
             return JSON.stringify({
                 x: cx,
                 y: cy,
@@ -839,7 +881,7 @@ export async function resolveRefCoords(
     });
 
     if (result.exceptionDetails) {
-        throw new Error(`Failed to resolve ref ${ref}: ${result.exceptionDetails.text || 'unknown error'}`);
+        throw new Error(`Failed to resolve ref ${ref}: ${describeRuntimeException(result.exceptionDetails)}`);
     }
 
     const info = JSON.parse(result.result.value);
@@ -857,6 +899,7 @@ export async function resolveSelectorCoords(
     const selectorEscaped = JSON.stringify(selector);
     const result = await session.send('Runtime.evaluate', {
         expression: `(async () => {
+            ${OD_COMPOSED_ANCESTOR_HELPER}
             var sel = ${selectorEscaped};
             var el = document.querySelector(sel);
             if (!el) return JSON.stringify({ error: 'Selector ' + sel + ' did not match any element' });
@@ -866,7 +909,8 @@ export async function resolveSelectorCoords(
             var cx = Math.round(rect.left + rect.width / 2);
             var cy = Math.round(rect.top + rect.height / 2);
             var hitEl = document.elementFromPoint(cx, cy);
-            var obscured = hitEl && hitEl !== el && !el.contains(hitEl) && !hitEl.contains(el);
+            // 同 resolveRefCoords：shadow 内元素被 retarget 成宿主不算遮挡
+            var obscured = hitEl && hitEl !== el && !isComposedAncestor(el, hitEl) && !isComposedAncestor(hitEl, el);
             return JSON.stringify({
                 x: cx,
                 y: cy,
@@ -880,7 +924,7 @@ export async function resolveSelectorCoords(
     });
 
     if (result.exceptionDetails) {
-        throw new Error(`Failed to resolve selector: ${result.exceptionDetails.text || 'unknown error'}`);
+        throw new Error(`Failed to resolve selector: ${describeRuntimeException(result.exceptionDetails)}`);
     }
 
     const info = JSON.parse(result.result.value);
@@ -895,16 +939,20 @@ export async function resolveSelectorCoords(
  * - Nested refs (e5-e3-e1): resolved by walking the WebFrameMain tree using
  *   WebFrameMain.executeJavaScript() — works cross-origin
  * - CSS selectors: resolved via CDP Runtime.evaluate
+ *
+ * @param expectedFrameUrls 嵌套 ref 链段 → 快照时记录的内容 frame URL（可选，
+ *                          用于检测 iframe 已导航导致的 ref 失效）
  */
 export async function resolveTargetCoords(
     session: CDPSession,
-    target: string
+    target: string,
+    expectedFrameUrls?: Map<string, string>
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
     // If target looks like an element ref (e0, e1, e5-e3, etc.)
     if (/^e\d+/.test(target)) {
         if (isNestedRef(target)) {
             // Nested iframe ref: use WebFrameMain tree walking
-            return resolveNestedRefCoords(session.webContents.mainFrame, target);
+            return resolveNestedRefCoords(session.webContents.mainFrame, target, expectedFrameUrls);
         }
         return resolveRefCoords(session, target);
     }
