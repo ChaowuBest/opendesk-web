@@ -27,6 +27,7 @@ import {
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import { Setting, getTaskArtifactDirectory } from '../../utils/setting.js';
+import { normalizeGeneratedTaskName } from '../../utils/task-name.js';
 import { logger } from '../../utils/logger.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
@@ -115,7 +116,10 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     // 创建子任务
     const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
     subTask.model = parentTask.model;
-    subTask.task_name = config.title || '未命名子任务';
+    // 模型走 createSubTask 工具时标题已在参数校验阶段判定过，这里的兜底留给直接调用
+    // startSubTask 的内部调用方（如池任务常量标题）：统一按任务名规则清洗与截断，
+    // 避免占位符、超长文本或不可见字符直接落库成子任务名
+    subTask.task_name = normalizeGeneratedTaskName(config.title) ?? '未命名子任务';
 
     // explore agent 优先使用快速对话模型，未配置则回退到默认对话模型
     if (config.agentName === 'explore') {
@@ -756,6 +760,12 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
     ): Promise<void> {
         if (!taskState) {
             throw new Error('createSubTask requires task state');
+        }
+
+        // 标题不可用时不能静默落成"未命名子任务"（多个子任务会同名、侧栏无法区分），
+        // 而是把可纠正的错误回给模型：指明是哪个参数、原值是什么、该怎么改
+        if (!normalizeGeneratedTaskName(args.title)) {
+            throw new Error(t('tools.createSubTask.invalidTitle', { title: args.title }));
         }
 
         const config: SubTaskConfig = {

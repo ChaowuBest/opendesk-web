@@ -1318,6 +1318,8 @@ export const enUs: Record<string, string> = {
         'The sub-task continues in the background because the parent received a new message. Use planning-waitSubTask to retrieve its result.',
     'tools.createSubTask.endedWithoutResult': 'The sub-task finished without returning a result.',
     'tools.createSubTask.executionFailed': 'Sub-task execution failed: ${error}',
+    'tools.createSubTask.invalidTitle':
+        'Invalid title: "${title}". A sub-task title must be a short readable description; format placeholders (such as {subtask_title} or task name labels), symbols only, invisible characters only, or empty text are not accepted. Rewrite title and call createSubTask again with the same objective and criteria.',
     'tools.waitSubTask.name': 'Await Sub-task',
     'tools.attachToSubTask.name': 'Append to Sub-task',
     'tools.askUser.name': 'Ask User',
