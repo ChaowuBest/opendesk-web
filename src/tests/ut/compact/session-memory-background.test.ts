@@ -237,6 +237,25 @@ describe('session memory background update', () => {
         expect(await readTaskSessionMemory(task.task_id)).toContain('Concurrent update resolved.');
     });
 
+    test('后台抽取只提交生成提示所覆盖的消息锚点', async () => {
+        createTempAppDirectory();
+        const { task, assistant } = createTaskWithConversation(12_000);
+        const later = new AssistantMessage();
+        later.appendText('Reply added while memory generation is in flight.');
+        const generateMemory = jest.fn(async ({ prompt }: SessionMemoryUpdateRequest) => {
+            expect(prompt).toContain(assistant.message_id);
+            expect(prompt).not.toContain(later.message_id);
+            task.chat_context.appendMessage(new UserMessage('A new turn starts during memory extraction.'));
+            task.chat_context.appendMessage(later);
+            return validSessionMemory();
+        });
+
+        const result = await task.maybeUpdateSessionMemoryAfterCompletion({ force: true, generateMemory });
+
+        expect(result.updated).toBe(true);
+        expect(result.state.lastSummarizedMessageId).toBe(assistant.message_id);
+    });
+
     test('processTaskTurn 自然结束后会调度更新，但不等待后台 promise', async () => {
         createTempAppDirectory();
         const manager = createManager();
