@@ -34,6 +34,7 @@ import {
     FSStorage,
     NORMAL_SCAN_INTERVAL_MS,
     RebuildRequiredError,
+    PerRootCountsInvalidatedError,
     WARNINGS,
     WORKSPACE_SCAN_INTERVAL_MS,
     WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS,
@@ -260,9 +261,9 @@ const MAX_RECENT_FAILURES = 20;
 const FILEMGR_SCANNING_ENABLED = true;
 const UNAVAILABLE_THRESHOLD = 50;
 
-function invalidIndexedSearchScopeResult(query) {
+function invalidIndexedSearchScopeResult(query, extras) {
     const normalizedQuery = typeof query === 'string' ? query.trim() : '';
-    return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE);
+    return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.INVALID_SCOPE, CODES.INVALID_SCOPE, extras);
 }
 
 class FSScanner {
@@ -697,7 +698,7 @@ class FSScanner {
                     `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
             );
 
-            this._workerRef?._enqueueEmbeddingQueue();
+            this._workerRef?._enqueueBuildWork();
             return true;
         } catch (error) {
             scanError = error;
@@ -762,6 +763,8 @@ class FileManagerWorker extends BaseWorker {
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
         this._embeddingQueueActive = false;
         this._embeddingQueueScheduled = false;
+        this._fullTextQueueActive = false;
+        this._fullTextQueueScheduled = false;
         this._pendingSourceControls = new Set();
         this._sourceControlSequence = 0;
     }
@@ -827,8 +830,11 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _isEmbeddingBusy() {
-        if (this.storage?.mode !== 'full') return false;
-        return this._embeddingQueueActive || this._embeddingQueueScheduled;
+        return (
+            this._fullTextQueueActive ||
+            this._fullTextQueueScheduled ||
+            (this.storage?.mode === 'full' && (this._embeddingQueueActive || this._embeddingQueueScheduled))
+        );
     }
 
     _getScanIntervalForRoot(root) {
@@ -875,6 +881,57 @@ class FileManagerWorker extends BaseWorker {
             });
     }
 
+    _enqueueBuildWork(options = {}) {
+        if (this.storage?.getFullTextState?.().available) this._enqueueFullTextQueue(options);
+        else this._enqueueEmbeddingQueue(options);
+    }
+
+    _enqueueFullTextQueue({ allowPendingControl = false } = {}) {
+        const storage = this.storage;
+        if (this.status === 'error' || this._readonlyMode || !storage?.getFullTextState?.().available) return;
+        if (this._getRunnableRoots().length === 0) return;
+        if (!allowPendingControl && this._hasPendingControlChange()) return;
+        if (this._fullTextQueueScheduled || this._fullTextQueueActive) return;
+        this._fullTextQueueScheduled = true;
+        this.taskQueue
+            .add(async () => {
+                let next = null;
+                try {
+                    if (this.storage !== storage || this.status === 'error' || this._readonlyMode) return;
+                    if (!storage.getFullTextState().available) {
+                        next = 'build';
+                        return;
+                    }
+                    const runnableRoots = this._getRunnableRoots();
+                    if (runnableRoots.length === 0) return;
+                    this._fullTextQueueScheduled = false;
+                    this._fullTextQueueActive = true;
+                    const result = await storage.processFullTextQueue(() => this._shouldYieldEmbeddingQueue(), {
+                        activeRoots: runnableRoots,
+                        currentWorkspace: this._findWorkspaceRoot(this._currentWorkspace, runnableRoots)
+                    });
+                    if (result.outcome === 'completed' || result.outcome === 'stopped') next = 'embedding';
+                    else if (result.outcome === 'stale') next = 'build';
+                } catch (error) {
+                    logger.warn(`[filemgr] full text queue failed: ${error?.message ?? error}`, error);
+                    next = 'embedding';
+                } finally {
+                    this._fullTextQueueScheduled = false;
+                    this._fullTextQueueActive = false;
+                    if (this.storage === storage) {
+                        if (next === 'build') this._enqueueBuildWork();
+                        else if (next === 'embedding') this._enqueueEmbeddingQueue();
+                    }
+                }
+            })
+            .catch((error) => {
+                this._fullTextQueueScheduled = false;
+                this._fullTextQueueActive = false;
+                logger.warn(`[filemgr] full text queue scheduling failed: ${error?.message ?? error}`, error);
+                void this._emitStatusChanged('full-text-queue-error');
+            });
+    }
+
     _setStatus(next, reason = next) {
         if (this.status === next) return;
         const prev = this.status;
@@ -886,6 +943,8 @@ class FileManagerWorker extends BaseWorker {
     async _emitStatusChanged(reason) {
         try {
             const snapshot = await this.getFileSystemStatus();
+            const context = this._statusCountsContexts?.get(snapshot);
+            if (context && !this._isStatusCountsContextCurrent(context)) return;
             this.callApp('publishStatusChanged', { reason, snapshot });
         } catch (error) {
             logger.warn(`[filemgr] emit status changed failed (${reason}): ${error.message}`);
@@ -1203,7 +1262,7 @@ class FileManagerWorker extends BaseWorker {
                 scanner.requestImmediateScan(this.taskQueue, { allowPendingControl });
             }
         }
-        this._enqueueEmbeddingQueue({ allowPendingControl });
+        this._enqueueBuildWork({ allowPendingControl });
     }
 
     async _restartScanners({ isCurrent = () => true } = {}) {
@@ -1489,7 +1548,7 @@ class FileManagerWorker extends BaseWorker {
             await this._restartScanners({ isCurrent });
             if (!isCurrent()) return;
             this._lastConfig = target;
-            this._enqueueEmbeddingQueue();
+            this._enqueueBuildWork();
         } catch (error) {
             if (
                 this.storage === storage &&
@@ -1569,9 +1628,9 @@ class FileManagerWorker extends BaseWorker {
 
     async embeddingConfigChanged() {
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
-        if (this._readonlyMode) return { status: 'ok', data: await this.getFileSystemStatus() };
+        if (this._readonlyMode) return { status: 'ok', data: await this._getSourceControlSnapshot() };
         if (!this._initializing && (!this.storage || this.status === 'error'))
-            return { status: 'ok', data: await this.getFileSystemStatus() };
+            return { status: 'ok', data: await this._getSourceControlSnapshot() };
 
         const seq = this._nextInitSeq();
         const configOperation = this._configChangeOperation;
@@ -1588,12 +1647,12 @@ class FileManagerWorker extends BaseWorker {
 
         if (this._initializing) {
             this._scheduleInitializeContinuation(seq, 'embedding config changed', { embeddingConfigToken: token });
-            return { status: 'ok', data: await this.getFileSystemStatus() };
+            return { status: 'ok', data: await this._getSourceControlSnapshot() };
         }
 
         if (!this.storage || this.status === 'error') {
             clearPendingEmbeddingConfig();
-            return { status: 'ok', data: await this.getFileSystemStatus() };
+            return { status: 'ok', data: await this._getSourceControlSnapshot() };
         }
 
         const completion = this.runSequentially(async () => {
@@ -1642,7 +1701,7 @@ class FileManagerWorker extends BaseWorker {
             this._trackConfigChange(this.config, completion);
         await completion;
 
-        return { status: 'ok', data: await this.getFileSystemStatus() };
+        return { status: 'ok', data: await this._getSourceControlSnapshot() };
     }
 
     async _detachRemovedRoots(oldConfig, config, { storage = this.storage, isCurrent = () => true, roots } = {}) {
@@ -1732,6 +1791,11 @@ class FileManagerWorker extends BaseWorker {
         if (this._getEffectiveUnavailableRoots()[root]) return 'unavailable';
         if (this.storage?.scannerState?.roots?.[root]?.metadata_write_pending === true) return 'pending';
         if (counts.total_files === 0) return counts.last_scan_at === null ? 'pending' : 'completed';
+        if (
+            counts.full_text?.pending > 0 &&
+            !['unsupported', 'open_failed', 'tokenizer_unavailable'].includes(this.storage?.getFullTextState?.().reason)
+        )
+            return 'scanning';
         if (mode === 'full') return counts.pending_count > 0 ? 'scanning' : 'completed';
         if (mode === 'base-only') return counts.last_scan_at === null ? 'pending' : 'completed';
         return 'pending';
@@ -1792,30 +1856,83 @@ class FileManagerWorker extends BaseWorker {
         };
     }
 
+    _captureStatusCountsContext() {
+        const entries = this._getVisibleConfigEntries();
+        return {
+            owner: this.storage,
+            holder: this.storage?.storage,
+            readable: this.storage?.isStatusReadAvailable?.(),
+            seq: this._initSeq,
+            status: this._getEffectiveStatus(),
+            mode: this._computeMode(this._getEffectiveStatus()),
+            readonly: this._readonlyMode,
+            entries,
+            entriesKey: JSON.stringify(entries),
+            counts:
+                process.platform === 'openharmony'
+                    ? this.storage?.capturePerRootCountsSnapshot?.(entries.map((entry) => entry.root))
+                    : null
+        };
+    }
+
+    _isStatusCountsContextCurrent(context) {
+        return (
+            this.storage === context.owner &&
+            this.storage?.storage === context.holder &&
+            this.storage?.isStatusReadAvailable?.() === context.readable &&
+            this._initSeq === context.seq &&
+            this._getEffectiveStatus() === context.status &&
+            this._computeMode(context.status) === context.mode &&
+            this._readonlyMode === context.readonly &&
+            JSON.stringify(this._getVisibleConfigEntries()) === context.entriesKey &&
+            (!context.counts || this.storage.isPerRootCountsSnapshotCurrent(context.counts))
+        );
+    }
+
     async getFileSystemStatus() {
-        const status = this._getEffectiveStatus();
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const context = this._captureStatusCountsContext();
+            try {
+                const snapshot = await this._readFileSystemStatus(context);
+                if (!this._isStatusCountsContextCurrent(context)) throw new PerRootCountsInvalidatedError();
+                this._statusCountsContexts ??= new WeakMap();
+                this._statusCountsContexts.set(snapshot, context);
+                return snapshot;
+            } catch (error) {
+                const failure = this._isStatusCountsContextCurrent(context)
+                    ? error
+                    : new PerRootCountsInvalidatedError();
+                if (!(failure instanceof PerRootCountsInvalidatedError) || attempt === 1) throw failure;
+            }
+        }
+    }
+
+    async _readFileSystemStatus(context = null) {
+        const owner = context ? context.owner : this.storage;
+        const status = context ? context.status : this._getEffectiveStatus();
         const mode = this._computeMode(status);
 
         const platform = process.platform;
         const isOpenHarmony = platform === 'openharmony';
         const homePath = getHomeDir();
 
-        if (status !== 'running' && status !== 'readonly') {
+        if ((status !== 'running' && status !== 'readonly') || owner?.isStatusReadAvailable?.() === false) {
             return this._buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath });
         }
 
-        const storageStatus = this.storage ? await this.storage.getStatus() : null;
+        const storageStatus = owner ? await owner.getStatus() : null;
+        if (context && !this._isStatusCountsContextCurrent(context)) throw new PerRootCountsInvalidatedError();
 
-        // Degraded snapshot when the store is unavailable: this.storage null (pre-init), or
+        // Degraded snapshot when the store is unavailable: owner null (pre-init), or
         // readonly-deferred (open_failed / missing_base_index) where FSStorage exists but its
         // inner store is null so getStatus() returns null. Without this guard, building
         // storage_stats below dereferences null ("Cannot read properties of null (db_size)").
-        if (!this.storage || !storageStatus) {
+        if (!owner || !storageStatus) {
             return this._buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath });
         }
-        const entries = this._getVisibleConfigEntries();
+        const entries = context ? context.entries : this._getVisibleConfigEntries();
         const roots = entries.map((entry) => entry.root);
-        const perRootCounts = await this.storage.getPerRootCounts(roots);
+        const perRootCounts = await owner.getPerRootCounts(roots);
         const defaultWorkspace = this._getDefaultWorkspace();
         const workspaceRoot = this._findWorkspaceRoot(
             defaultWorkspace,
@@ -1831,7 +1948,7 @@ class FileManagerWorker extends BaseWorker {
         }));
 
         const sources = entries.map((entry) => {
-            const rootState = this.storage?.scannerState?.roots?.[entry.root];
+            const rootState = owner?.scannerState?.roots?.[entry.root];
             const counts = perRootCounts.get(entry.root) ?? {
                 total_files: 0,
                 embedded_count: 0,
@@ -1850,6 +1967,17 @@ class FileManagerWorker extends BaseWorker {
                 embedded_count: counts.embedded_count,
                 pending_count: counts.pending_count,
                 failed_count: counts.failed_count ?? 0,
+                ...(counts.full_text
+                    ? {
+                          full_text: {
+                              total: counts.total_files,
+                              done: counts.full_text.done,
+                              pending: counts.full_text.pending,
+                              failed: counts.full_text.failed,
+                              excluded: Math.max(0, counts.total_files - counts.full_text.indexable)
+                          }
+                      }
+                    : {}),
                 is_workspace: entry.root === workspaceRoot
             };
         });
@@ -1861,7 +1989,7 @@ class FileManagerWorker extends BaseWorker {
                       total_files: sources.reduce((sum, source) => sum + source.total_files, 0),
                       embedded_count: sources.reduce((sum, source) => sum + source.embedded_count, 0),
                       pending_count: sources.reduce((sum, source) => sum + source.pending_count, 0),
-                      last_embedding_task_at: this.storage.scannerState.last_embedding_task_at
+                      last_embedding_task_at: owner.scannerState.last_embedding_task_at
                   };
         const storageStats =
             mode === null
@@ -1880,12 +2008,18 @@ class FileManagerWorker extends BaseWorker {
             sources,
             totals,
             storage_stats: storageStats,
-            last_rebuild_event: this.storage.scannerState.last_rebuild_event,
+            full_text: {
+                ...(owner.getFullTextState?.() ?? { available: false }),
+                done: sources.reduce((sum, source) => sum + (source.full_text?.done ?? 0), 0),
+                pending: sources.reduce((sum, source) => sum + (source.full_text?.pending ?? 0), 0),
+                failed: sources.reduce((sum, source) => sum + (source.full_text?.failed ?? 0), 0)
+            },
+            last_rebuild_event: owner.scannerState.last_rebuild_event,
             scanners: scannerList,
             storage: storageStatus,
-            isDeferred: this.storage.isDeferred(),
-            deferredReason: this.storage.deferredReason ?? null,
-            probe_error: this.storage.retrieval.getRuntimeState().probeError,
+            isDeferred: owner.isDeferred(),
+            deferredReason: owner.deferredReason ?? null,
+            probe_error: owner.retrieval.getRuntimeState().probeError,
             unavailable_roots: this._getEffectiveUnavailableRoots(),
             readonly: this._readonlyMode ?? false,
             platform,
@@ -2028,7 +2162,7 @@ class FileManagerWorker extends BaseWorker {
             status: 'error',
             warning: WARNINGS.READONLY_MODE,
             message: '查询模式不支持手动刷新',
-            data: await this.getFileSystemStatus()
+            data: await this._getSourceControlSnapshot()
         });
         if (this._readonlyMode) return readonlyResult();
         const rebuild = this._currentRebuildPromise;
@@ -2090,7 +2224,7 @@ class FileManagerWorker extends BaseWorker {
                         if (this.storage !== refreshStorage || refreshStorage.isDeferred())
                             throw new Error(WARNINGS.DEFERRED);
                         const snapshotSeq = this._initSeq;
-                        const data = await this.getFileSystemStatus();
+                        const data = await this._getSourceControlSnapshot();
                         if (
                             this._initializationAttempt !== attempt ||
                             this.storage !== refreshStorage ||
@@ -2139,7 +2273,7 @@ class FileManagerWorker extends BaseWorker {
         });
         if (this._readonlyMode) return readonlyResult();
         if (unavailable) return { status: 'error', message: '文件系统尚未就绪' };
-        return { status: 'ok', data: await this.getFileSystemStatus() };
+        return { status: 'ok', data: await this._getSourceControlSnapshot() };
     }
 
     async workspaceChanged(defaultWorkspace) {
@@ -2186,7 +2320,7 @@ class FileManagerWorker extends BaseWorker {
         }
 
         await this._emitStatusChanged('workspace');
-        return { status: 'ok', data: await this.getFileSystemStatus() };
+        return { status: 'ok', data: await this._getSourceControlSnapshot() };
     }
 
     async searchFilesByKeyword(keyword) {
@@ -2201,11 +2335,23 @@ class FileManagerWorker extends BaseWorker {
         return stat?.isFile?.() ? stat : null;
     }
 
+    _fullTextSearchExtras() {
+        return { fullTextAvailable: Boolean(this.storage?.getFullTextState?.().available) };
+    }
+
     _checkIndexedSearchPreconditions(context) {
         if (!this.storage || this.storage.isDeferred()) {
-            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+            return toIndexedFileSearchResult(
+                context.query,
+                [],
+                0,
+                WARNINGS.DEFERRED,
+                CODES.INDEX_NOT_READY,
+                this._fullTextSearchExtras()
+            );
         }
-        if (!context.query) return toIndexedFileSearchResult(context.query, [], 0);
+        if (!context.query)
+            return toIndexedFileSearchResult(context.query, [], 0, undefined, undefined, this._fullTextSearchExtras());
         return null;
     }
 
@@ -2221,6 +2367,19 @@ class FileManagerWorker extends BaseWorker {
         } catch (error) {
             logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
             return { route: 'keyword', success: false, results: [], error };
+        }
+    }
+
+    async _runBm25Route(context) {
+        try {
+            const results = await context.fullTextContext.owner.searchFullText(context.query, {
+                topK: context.topK,
+                scope: context.scope
+            });
+            return { route: 'bm25', success: true, results };
+        } catch (error) {
+            logger.warn(`[filemgr] searchIndexedFiles BM25 failed: ${error.message}`);
+            return { route: 'bm25', success: false, results: [], error };
         }
     }
 
@@ -2264,6 +2423,10 @@ class FileManagerWorker extends BaseWorker {
         const currentOutcomes = () =>
             outcomes.map((outcome) => {
                 if (outcome.route === 'keyword') return outcome;
+                if (outcome.route === 'bm25')
+                    return this.storage?.isFullTextContextCurrent?.(context.fullTextContext)
+                        ? outcome
+                        : { ...outcome, success: false, results: [] };
                 if (
                     this.storage &&
                     this.storage === context.semanticOwner &&
@@ -2277,6 +2440,7 @@ class FileManagerWorker extends BaseWorker {
             const byRoute = Object.fromEntries(routes.map((outcome) => [outcome.route, outcome.results]));
             return mergeSearchRoutes({
                 keyword: byRoute.keyword ?? [],
+                bm25: byRoute.bm25 ?? [],
                 nameSemantic: byRoute.name_semantic ?? [],
                 contentSemantic: byRoute.content_semantic ?? []
             });
@@ -2303,15 +2467,37 @@ class FileManagerWorker extends BaseWorker {
         const currentFiltered = merge(outcomes).filter((item) => keptPaths.has(item.path));
         const failed = outcomes.filter((outcome) => !outcome.success);
         const succeeded = outcomes.filter((outcome) => outcome.success);
+        const bm25TimedOut = failed.some(
+            (outcome) => outcome.route === 'bm25' && outcome.error?.code === 'bm25_search_timeout'
+        );
         if (failed.length > 0 && succeeded.length === 0) {
-            return toIndexedFileSearchResult(context.query, [], 0, WARNINGS.SEARCH_FAILED, CODES.SEARCH_FAILED);
+            return toIndexedFileSearchResult(
+                context.query,
+                [],
+                0,
+                bm25TimedOut ? WARNINGS.BM25_SEARCH_TIMEOUT : WARNINGS.SEARCH_FAILED,
+                bm25TimedOut ? CODES.BM25_SEARCH_TIMEOUT : CODES.SEARCH_FAILED,
+                this._fullTextSearchExtras()
+            );
         }
         let warning = initialWarning;
         let code = initialCode;
-        if (failed.length > 0) {
+        if (bm25TimedOut) {
+            warning = WARNINGS.BM25_SEARCH_TIMEOUT;
+            code = CODES.BM25_SEARCH_TIMEOUT;
+        } else if (failed.length > 0) {
             const keywordFailed = failed.some((outcome) => outcome.route === 'keyword');
-            warning = keywordFailed ? WARNINGS.SEARCH_PARTIAL : WARNINGS.SEMANTIC_PARTIAL;
-            code = keywordFailed ? CODES.SEARCH_PARTIAL : CODES.SEMANTIC_PARTIAL;
+            // The homepage fast stage does not request semantic routes, so a
+            // base-only search has no EMBED_UNAVAILABLE code yet.
+            if (
+                (initialCode === CODES.EMBED_UNAVAILABLE || this.storage?.mode === 'base-only') &&
+                failed.every((outcome) => outcome.route === 'bm25')
+            ) {
+                logger.warn('[filemgr] BM25 search failed while embedding is unavailable');
+            } else {
+                warning = keywordFailed ? WARNINGS.SEARCH_PARTIAL : WARNINGS.SEMANTIC_PARTIAL;
+                code = keywordFailed ? CODES.SEARCH_PARTIAL : CODES.SEMANTIC_PARTIAL;
+            }
         }
         const latestEntries = this._getVisibleConfigEntries();
         const latestUnavailableRoots = unavailableRoots();
@@ -2322,7 +2508,7 @@ class FileManagerWorker extends BaseWorker {
             });
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
-                return invalidIndexedSearchScopeResult(context.query);
+                return invalidIndexedSearchScopeResult(context.query, this._fullTextSearchExtras());
             }
             throw error;
         }
@@ -2335,7 +2521,14 @@ class FileManagerWorker extends BaseWorker {
             0,
             context.topK
         );
-        return toIndexedFileSearchResult(context.query, ranked, finalFiltered.length, warning, code);
+        return toIndexedFileSearchResult(
+            context.query,
+            ranked,
+            finalFiltered.length,
+            warning,
+            code,
+            this._fullTextSearchExtras()
+        );
     }
 
     async searchIndexedFiles(query, options = {}) {
@@ -2344,7 +2537,7 @@ class FileManagerWorker extends BaseWorker {
             context = createIndexedSearchContext(query, options);
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
-                return invalidIndexedSearchScopeResult(query);
+                return invalidIndexedSearchScopeResult(query, this._fullTextSearchExtras());
             }
             throw error;
         }
@@ -2362,7 +2555,7 @@ class FileManagerWorker extends BaseWorker {
             };
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
-                return invalidIndexedSearchScopeResult(query);
+                return invalidIndexedSearchScopeResult(query, this._fullTextSearchExtras());
             }
             throw error;
         }
@@ -2381,6 +2574,10 @@ class FileManagerWorker extends BaseWorker {
             semanticGuarded: typeof this.storage?.retrieval?.captureSearchContext === 'function',
             semanticContext: this.storage?.retrieval?.captureSearchContext?.()
         };
+        context.fullTextContext = this.storage?.captureFullTextContext?.();
+        if (context.routes.bm25 && this.storage?.getFullTextState?.().available) {
+            outcomes.push(await this._runBm25Route(context));
+        }
         let warning;
         let code;
         if (context.routes.needsSemantic) {
@@ -2400,7 +2597,7 @@ class FileManagerWorker extends BaseWorker {
             });
         } catch (error) {
             if (error instanceof InvalidFilemgrSearchScopeError) {
-                return invalidIndexedSearchScopeResult(query);
+                return invalidIndexedSearchScopeResult(query, this._fullTextSearchExtras());
             }
             throw error;
         }

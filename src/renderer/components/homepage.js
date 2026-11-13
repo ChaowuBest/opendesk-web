@@ -15,7 +15,7 @@ import { initFeatureState, isApplicationDisabledByFeature, isFeatureDisabled } f
 
 const HOME_SEARCH_DEBOUNCE_MS = 800;
 const HOME_SEARCH_TOP_K = 50;
-const HOME_SEARCH_FAST_ROUTES = ['keyword'];
+const HOME_SEARCH_FAST_ROUTES = ['keyword', 'bm25'];
 const HOME_SEARCH_SLOW_ROUTES = ['name_semantic', 'content_semantic'];
 const HOME_RECOMMENDATION_MAX_HEIGHT_PX = 280;
 const HOME_RECOMMENDATION_FIT_BUFFER_PX = 100;
@@ -27,7 +27,6 @@ const SEARCH_CODES = {
 };
 const SEARCH_WARNING_TEXT = {
     [SEARCH_CODES.INDEX_NOT_READY]: '文件搜索正在准备中',
-    [SEARCH_CODES.EMBED_UNAVAILABLE]: '智能内容搜索未开启，当前只搜索文件名',
     [SEARCH_CODES.SEMANTIC_PARTIAL]: '部分智能内容搜索暂不可用，已显示可用结果',
     [SEARCH_CODES.SEARCH_FAILED]: '文件搜索暂不可用，请稍后重试'
 };
@@ -52,7 +51,7 @@ function normalizeSearchResultPath(item) {
 }
 
 function mergeMatchTypes(primary = [], supplement = []) {
-    const order = ['keyword', 'name_semantic', 'content_semantic'];
+    const order = ['keyword', 'bm25', 'name_semantic', 'content_semantic'];
     const existing = new Set([...(primary ?? []), ...(supplement ?? [])]);
     return order.filter((type) => existing.has(type));
 }
@@ -68,7 +67,7 @@ function mergeSearchResultItem(primary, supplement) {
     };
 }
 
-function mergeHomepageSearchStages(fastResults, slowResults, limit) {
+export function mergeHomepageSearchStages(fastResults, slowResults, limit) {
     const fast = Array.isArray(fastResults) ? fastResults : [];
     const slow = Array.isArray(slowResults) ? slowResults : [];
     const slowByPath = new Map(slow.map((item) => [normalizeSearchResultPath(item), item]));
@@ -478,6 +477,12 @@ class HomePage extends HTMLElement {
 
     _mapSearchWarning(result) {
         const code = result?.code;
+        if (code === SEARCH_CODES.EMBED_UNAVAILABLE)
+            return this._t(
+                result.fullTextAvailable === true
+                    ? 'renderer.homepage.search.embedUnavailableFullText'
+                    : 'renderer.homepage.search.embedUnavailable'
+            );
         if (code && SEARCH_WARNING_TEXT[code]) return SEARCH_WARNING_TEXT[code];
         return null;
     }

@@ -174,6 +174,16 @@ async function filesystemOwner(t: any, backend: 'native' | 'wasm') {
     const arkdata = process.env.ARKDATA_AVAILABLE;
     Object.defineProperty(process, 'platform', { value: backend === 'wasm' ? 'openharmony' : 'darwin' });
     delete process.env.ARKDATA_AVAILABLE;
+    if (backend === 'wasm') {
+        // These constructor cases exercise SQLite ownership without a Harmony host.
+        const create = FSStorage.prototype._newStorageHolder;
+        t.mock.method(FSStorage.prototype, '_newStorageHolder', function (options) {
+            return create.call(this, { ...options, fullText: 'off' });
+        });
+        t.mock.method(FSStorage.prototype, '_dropFullTextStore', async function () {
+            assert.equal(this._fullTextStoreOwned(), false);
+        });
+    }
     t.after(() => {
         Object.defineProperty(process, 'platform', platform);
         if (arkdata === undefined) delete process.env.ARKDATA_AVAILABLE;

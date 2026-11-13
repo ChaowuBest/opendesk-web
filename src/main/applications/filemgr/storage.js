@@ -10,11 +10,31 @@
  */
 
 import { createRetrieval } from './document-retrieval/create-retrieval.js';
-import { recordStorageCleanupFailure } from '../../services/storage/platform.js';
+import { recordStorageCleanupFailure, recordStorageInitializationFailure } from '../../services/storage/platform.js';
 import { assertWasmStoresUnlocked } from '../../services/storage/drop-utils.js';
 import { dropBaseIndexStore } from '../../services/storage/base-index-db-factory.js';
 import { dropVectorIndexStore } from '../../services/storage/vector-index-db-factory.js';
 import { dropChunkIndexStore } from '../../services/storage/chunk-index-db-factory.js';
+import { dropBM25IndexStore } from '../../services/storage/bm25-index-db-factory.js';
+import { classifyBM25Failure } from '../../services/storage/bm25-indexer.js';
+import {
+    FULL_TEXT_RULE_VERSION,
+    FULL_TEXT_INDEXABLE_EXTENSIONS,
+    classifyFullTextOpenFailure,
+    defaultFullTextState,
+    fullTextColumns as createFullTextColumns,
+    fullTextPendingConditions,
+    fullTextResetRequired,
+    fullTextScanPatch,
+    isFullTextPlatformSupported,
+    normalizeFullTextState
+} from './document-retrieval/common/full-text-state.js';
+import {
+    searchFullText,
+    captureFullTextContext,
+    isFullTextContextCurrent
+} from './document-retrieval/common/full-text-search.js';
+import { buildFullTextBatch, FULL_TEXT_BATCH_LIMIT } from './document-retrieval/common/full-text-build.js';
 import { CODES } from './document-retrieval/contract.js';
 import { resolveDriveRootPath } from './utils.js';
 import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
@@ -30,6 +50,9 @@ const NORMAL_SCAN_INTERVAL_MS = 5 * 60 * 1000;
 const WORKSPACE_SCAN_INTERVAL_MS = 60 * 1000;
 const WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS = 180 * 1000;
 const QUERY_LIMIT = 50;
+// Each algorithm shares one candidate cache across all sources.
+const BM25_BUILD_PREFETCH_LIMIT = 10000;
+const EMBEDDING_BUILD_PREFETCH_LIMIT = 500;
 const WORKSPACE_EMBEDDING_PRIORITY_WEIGHT = 2;
 const HARMONY_PER_ROOT_COUNT_CACHE_TTL_MS = 10_000;
 
@@ -47,6 +70,9 @@ const WARNINGS = {
     },
     get SEARCH_FAILED() {
         return t('filemgr.search.failed');
+    },
+    get BM25_SEARCH_TIMEOUT() {
+        return t('filemgr.search.bm25_timeout');
     },
     get INVALID_SCOPE() {
         return t('filemgr.search.invalid_scope');
@@ -138,13 +164,20 @@ class RebuildRequiredError extends Error {
     }
 }
 
+class PerRootCountsInvalidatedError extends Error {
+    constructor() {
+        super(t('renderer.filemgr.source.error.notReady'));
+        this.code = 'filemgr_counts_invalidated';
+    }
+}
+
 // ── Schema factory ─────────────────────────────────────────────────
 /**
  * @param {number} dim - embedding dimension from runtime probe
- * @param {{mode?: 'full' | 'base-only'}} [options]
+ * @param {{mode?: 'full' | 'base-only', fullTextColumns?: boolean, fullText?: boolean}} [options]
  * @returns {import('../../services/storage/abstract-storage.js').ColumnSchema}
  */
-function makeSchema(dim, { mode = 'full' } = {}) {
+function makeSchema(dim, { mode = 'full', fullTextColumns = isFullTextPlatformSupported(), fullText = false } = {}) {
     const columns = {
         item_id: { type: 'TEXT', nullable: false },
         item_type: { type: 'TEXT', nullable: false },
@@ -159,18 +192,20 @@ function makeSchema(dim, { mode = 'full' } = {}) {
         root_refs: { type: 'TEXT', nullable: false, defaultValue: '[]' },
         ref_count: { type: 'INTEGER', nullable: false, defaultValue: 0 },
         embedded: { type: 'INTEGER', nullable: false, defaultValue: 0 },
-        embedding_generation: { type: 'INTEGER', nullable: false, defaultValue: 0 }
+        embedding_generation: { type: 'INTEGER', nullable: false, defaultValue: 0 },
+        ...(fullTextColumns ? createFullTextColumns() : {})
     };
-
-    if (mode === 'base-only') {
-        return { columns, needIndexers: {} };
-    }
 
     return {
         columns,
         needIndexers: {
-            filename: [{ indexer: 'VectorIndexer', options: { dim } }],
-            chunk_text: [{ indexer: 'ChunkIndexer', options: { dim } }]
+            ...(mode === 'full'
+                ? {
+                      filename: [{ indexer: 'VectorIndexer', options: { dim } }],
+                      chunk_text: [{ indexer: 'ChunkIndexer', options: { dim } }]
+                  }
+                : {}),
+            ...(fullTextColumns && fullText ? { full_text: [{ indexer: 'BM25Indexer' }] } : {})
         }
     };
 }
@@ -180,6 +215,7 @@ function defaultScannerState(embeddingState) {
     return {
         version: 1,
         ...embeddingState,
+        ...(isFullTextPlatformSupported() ? defaultFullTextState() : {}),
         _migratedRefCount: false,
         roots: {},
         unavailable_roots: {}
@@ -196,6 +232,10 @@ class FSStorage {
         // Storage.close() may reject without releasing its connection. Keep every
         // failed holder (including temporary candidates) reachable until retry succeeds.
         this._pendingStorageClosures = new Set();
+        this._fullTextByHolder = new WeakMap();
+        // An unfinished automatic BM25 reset blocks further drops until the next initialization.
+        this._fullTextResetAttempted = false;
+        this._fullTextPlatformSupported = isFullTextPlatformSupported();
         this._appDataDirectory = appDataDirectory;
         this._storageDir = path.join(appDataDirectory, 'storage');
         this._stateWriteChain = Promise.resolve();
@@ -206,11 +246,189 @@ class FSStorage {
         this.deferredReason = null;
         this._perRootCountsCache = new Map();
         this._perRootCountsCacheGeneration = 0;
+        this._statusReadsByHolder = new WeakMap();
     }
 
     get retrieval() {
         this._retrieval ??= createRetrieval(this._getRetrievalHost());
         return this._retrieval;
+    }
+    getFullTextState() {
+        if (!this._fullTextPlatformSupported) return { available: false, reason: 'unsupported' };
+        const info = this.storage && this._fullTextByHolder.get(this.storage);
+        if (info?.failure) return { available: false, reason: 'open_failed' };
+        if (fullTextResetRequired(this.scannerState)) return { available: false, reason: 'resetting' };
+        if (!this.storage) return { available: false };
+        if (info?.runtimeFailure?.generation === this.scannerState.bm25_generation) {
+            return {
+                available: false,
+                reason: 'tokenizer_unavailable',
+                availability: info.runtimeFailure.classification.availability
+            };
+        }
+        return info?.bound ? { available: true } : { available: false, reason: 'open_failed' };
+    }
+    _recordFullTextFailure(error, holder, generation) {
+        if (
+            this.storage !== holder ||
+            this.scannerState.bm25_generation !== generation ||
+            !this.getFullTextState().available
+        )
+            return;
+        const classification = classifyBM25Failure(error);
+        if (
+            classification.reason !== 'tokenizer_unavailable' ||
+            !['terminal', 'unsupported'].includes(classification.availability)
+        )
+            return;
+        this._fullTextByHolder.get(holder).runtimeFailure = { error, generation, classification };
+        this.onStateChanged?.();
+    }
+    _fullTextStoreOwned() {
+        return [this.storage, ...this._pendingStorageClosures].some(
+            (holder) => holder && this._fullTextByHolder.get(holder)?.bound
+        );
+    }
+    async _beginFullTextReset() {
+        if (!isFullTextPlatformSupported()) return;
+        if (this.scannerState.bm25_reset_pending) return;
+        const patch = {
+            bm25_generation: this.scannerState.bm25_generation === null ? null : this.scannerState.bm25_generation + 1,
+            bm25_reset_pending: true
+        };
+        await this._writeScannerStateSnapshot({ ...this.scannerState, ...patch }, () =>
+            Object.assign(this.scannerState, patch)
+        );
+        logger.info(
+            `[filemgr] full text reset pending generation=${patch.bm25_generation} rule=${FULL_TEXT_RULE_VERSION}`
+        );
+    }
+    async _dropFullTextStore() {
+        try {
+            await dropBM25IndexStore(path.join(this._storageDir, 'bm25-index.db'));
+            logger.info('[filemgr] full text store removed');
+        } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', operation: 'delete' });
+            throw error;
+        }
+    }
+    async _completeFullTextReset(holder, { required = false } = {}) {
+        if (!isFullTextPlatformSupported()) return;
+        if (!this._fullTextByHolder.get(holder)?.bound) return;
+        let generation = this.scannerState.bm25_generation;
+        if (generation === null) {
+            const groups = await holder.countGrouped(
+                ['bm25_generation'],
+                [{ indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }]
+            );
+            generation = groups.reduce((max, group) => Math.max(max, Number(group.values.bm25_generation) || 0), 0) + 1;
+        }
+        const patch = {
+            bm25_generation: generation,
+            bm25_rule_version: FULL_TEXT_RULE_VERSION,
+            bm25_reset_pending: false
+        };
+        try {
+            await this._writeScannerStateSnapshot({ ...this.scannerState, ...patch }, () =>
+                Object.assign(this.scannerState, patch)
+            );
+        } catch (error) {
+            if (required) throw error;
+            logger.warn(`[filemgr] full text reset completion failed: ${error.message}`);
+            return;
+        }
+        logger.info(`[filemgr] full text reset complete generation=${generation} rule=${FULL_TEXT_RULE_VERSION}`);
+    }
+    async _newStorageHolder({ dim, mode, fullText = 'optional', role = 'write', resetCompleted = false }) {
+        let bound = isFullTextPlatformSupported() && fullText !== 'off';
+        let failure;
+        if (bound && fullTextResetRequired(this.scannerState)) {
+            if (role === 'read') {
+                if (fullText === 'required') throw new Error('Full text index requires reset before readonly use');
+                bound = false;
+            } else if (!resetCompleted && this._fullTextResetAttempted) {
+                // The reset already ran during this initialization and did not complete; do not drop again.
+                if (fullText === 'required') throw new Error('Full text reset already attempted');
+                bound = false;
+                failure = 'open_failed';
+            } else if (!resetCompleted) {
+                try {
+                    await this._beginFullTextReset();
+                } catch (error) {
+                    if (fullText === 'required') throw error;
+                    logger.warn(`[filemgr] full text invalidation failed: ${error.message}`);
+                    bound = false;
+                }
+                if (bound && this._fullTextStoreOwned()) {
+                    if (fullText === 'required') throw new Error('Full text store is still owned');
+                    logger.info('[filemgr] full text reset deferred: store still owned');
+                    bound = false;
+                }
+                if (bound) {
+                    await this._dropFullTextStore();
+                    resetCompleted = true;
+                }
+            }
+        }
+        const holder = new BaseStorage(
+            'filemgr',
+            makeSchema(dim, { mode, fullTextColumns: isFullTextPlatformSupported(), fullText: bound }),
+            this._storageDir
+        );
+        this._fullTextByHolder.set(holder, failure ? { bound, failure } : { bound });
+        return { holder, fullTextBound: bound, fullText, resetCompleted };
+    }
+    async _openStorageHolder(created, { dim, mode, role = 'write' }) {
+        let current = created;
+        while (true) {
+            try {
+                await current.holder.initialize();
+            } catch (error) {
+                const action = classifyFullTextOpenFailure(error);
+                try {
+                    await this._closeBaseStorage(current.holder);
+                } catch (cleanupError) {
+                    recordStorageCleanupFailure(error, cleanupError);
+                    throw error;
+                }
+                if (!current.fullTextBound || action === 'not_bm25' || action === 'retain') throw error;
+                // BM25 still fails on a freshly dropped store: no further drops until the next initialization.
+                if (current.resetCompleted) this._fullTextResetAttempted = true;
+                logger.warn(`[filemgr] full text open failed action=${action}: ${error.message}`);
+                if (role === 'write' && action === 'reset' && !this._fullTextResetAttempted) {
+                    try {
+                        await this._beginFullTextReset();
+                    } catch (writeError) {
+                        if (current.fullText === 'required') throw writeError;
+                        logger.warn(`[filemgr] full text invalidation failed: ${writeError.message}`);
+                        const fallback = await this._newStorageHolder({ dim, mode, role, fullText: 'off' });
+                        this._fullTextByHolder.set(fallback.holder, { bound: false, failure: 'open_failed' });
+                        current = fallback;
+                        continue;
+                    }
+                    current = await this._newStorageHolder({ dim, mode, role, fullText: current.fullText });
+                    continue;
+                }
+                if (current.fullText === 'required') throw error;
+                current = await this._newStorageHolder({ dim, mode, role, fullText: 'off' });
+                this._fullTextByHolder.set(current.holder, { bound: false, failure: 'open_failed' });
+                continue;
+            }
+            if (role === 'write' && current.fullTextBound && current.resetCompleted) {
+                try {
+                    await this._completeFullTextReset(current.holder, { required: current.fullText === 'required' });
+                    // A completed reset made progress; only an unfinished one blocks another drop.
+                    this._fullTextResetAttempted = false;
+                } catch (error) {
+                    await this._closeBaseStorage(current.holder).catch((cleanup) =>
+                        recordStorageCleanupFailure(error, cleanup)
+                    );
+                    throw error;
+                }
+            }
+            logger.info(`[filemgr] storage opened mode=${mode} fullText=${current.fullTextBound} role=${role}`);
+            return current.holder;
+        }
     }
     _getRetrievalHost() {
         return {
@@ -225,9 +443,12 @@ class FSStorage {
         };
     }
     async _replaceRetrievalStorage({ dim, mode }, prepare) {
-        const candidate = new BaseStorage('filemgr', makeSchema(dim, { mode }), this._storageDir);
+        let candidate = null;
         try {
-            await candidate.initialize();
+            candidate = await this._openStorageHolder(
+                await this._newStorageHolder({ dim, mode, fullText: 'optional', role: 'write' }),
+                { dim, mode, role: 'write' }
+            );
             const decision = await prepare?.(this._createRetrievalDataView(candidate));
             if (decision?.publish === false) {
                 await this._closeBaseStorage(candidate);
@@ -246,12 +467,21 @@ class FSStorage {
         this.mode = mode;
         this._clearPerRootCountsCacheForModeTransition();
     }
-    async _dropFilemgrStores({ includeBase = false } = {}) {
+    async _dropFilemgrStores({ includeBase = false, includeFullText = false } = {}) {
         const stores = [
             ['vector-index.db', dropVectorIndexStore],
             ['chunk-index.db', dropChunkIndexStore]
         ];
+        if (includeFullText) stores.push(['bm25-index.db', () => this._dropFullTextStore()]);
         if (includeBase) stores.push(['base-index.db', dropBaseIndexStore]);
+        // BM25's factory records deletion failures; preserve the same attribution
+        // when the all-store preflight rejects before any file has been deleted.
+        try {
+            if (includeFullText) assertWasmStoresUnlocked([path.join(this._storageDir, 'bm25-index.db')]);
+        } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', operation: 'delete' });
+            throw error;
+        }
         assertWasmStoresUnlocked(stores.map(([file]) => path.join(this._storageDir, file)));
         for (const [file, drop] of stores) await drop(path.join(this._storageDir, file));
     }
@@ -263,8 +493,10 @@ class FSStorage {
             // holders must release their target connections before raw deletion.
             if (this.mode !== 'base-only') await this._closeBaseStorage(this.storage);
             await this._dropFilemgrStores();
-            nextStorage = new BaseStorage('filemgr', makeSchema(dim, { mode }), this._storageDir);
-            await nextStorage.initialize();
+            nextStorage = await this._openStorageHolder(
+                await this._newStorageHolder({ dim, mode, fullText: 'optional', role: 'write' }),
+                { dim, mode, role: 'write' }
+            );
             await reconcile(this._createRetrievalDataView(nextStorage));
             await this._closeBaseStorage(this.storage);
             await complete(this._createRetrievalDataView(nextStorage));
@@ -281,34 +513,80 @@ class FSStorage {
     }
     async _openReadonlyRetrievalStorage(dim, select, compatible) {
         this.deferredReason = null;
-        const base = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
+        let base = null;
         let full = null;
-        const selection = await select(this._createRetrievalDataView(base), async () => {
-            full = new BaseStorage('filemgr', makeSchema(dim, { mode: 'full' }), this._storageDir);
-            return full.probeIndexers(['VectorIndexer', 'ChunkIndexer']);
-        });
-        if (selection.deferredReason) {
-            await this._closeBaseStorage(base);
-            this.storage = null;
-            this.deferredReason = selection.deferredReason;
-            return;
-        }
-        let mode = selection.mode;
-        let candidate = mode === 'full' ? full : base;
+        let candidate = null;
+        let mode = 'base-only';
+        let selection;
         try {
-            await candidate.initialize();
+            base = (await this._newStorageHolder({ dim, mode, fullText: 'off', role: 'read' })).holder;
+            selection = await select(this._createRetrievalDataView(base), async () => {
+                full = (await this._newStorageHolder({ dim, mode: 'full', fullText: 'off', role: 'read' })).holder;
+                return full.probeIndexers(['VectorIndexer', 'ChunkIndexer']);
+            });
+        } catch (error) {
+            // Selection failures retain the pre-existing initialization error path.
+            for (const holder of new Set([base, full])) {
+                await this._closeBaseStorage(holder).catch((cleanupError) => {
+                    recordStorageCleanupFailure(error, cleanupError);
+                    logger.warn(`[filemgr] readonly probe close failed: ${cleanupError.message}`);
+                });
+            }
+            throw error;
+        }
+        try {
+            await this._closeBaseStorage(base);
+            base = null;
+            await this._closeBaseStorage(full);
+            full = null;
+            if (selection.deferredReason) {
+                this.storage = null;
+                this.deferredReason = selection.deferredReason;
+                return;
+            }
+            mode = selection.mode;
+            let created = await this._newStorageHolder({ dim, mode, fullText: 'optional', role: 'read' });
+            candidate = created.holder;
+            if (created.fullTextBound) {
+                const probe = (await candidate.probeIndexers(['BM25Indexer'])).BM25Indexer;
+                logger.info(`[filemgr] readonly full text probe=${probe.status}`);
+                if (probe.status !== 'exists') {
+                    await this._closeBaseStorage(candidate);
+                    candidate = null;
+                    created = await this._newStorageHolder({ dim, mode, fullText: 'off', role: 'read' });
+                    candidate = created.holder;
+                    this._fullTextByHolder.set(candidate, { bound: false, failure: 'open_failed' });
+                }
+            } else {
+                logger.info('[filemgr] readonly full text disabled by state');
+            }
+            candidate = await this._openStorageHolder(created, { dim, mode, role: 'read' });
             if (mode === 'full' && !compatible(this._createRetrievalDataView(candidate))) {
                 // Readonly retains the existing fallback/open lifecycle.
+                const info = this._fullTextByHolder.get(candidate);
                 await this._closeBaseStorage(candidate);
-                candidate = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
+                candidate = null;
                 mode = 'base-only';
-                await candidate.initialize();
+                created = await this._newStorageHolder({
+                    dim,
+                    mode,
+                    fullText: info.bound ? 'optional' : 'off',
+                    role: 'read'
+                });
+                candidate = created.holder;
+                this._fullTextByHolder.set(candidate, info);
+                candidate = await this._openStorageHolder(created, { dim, mode, role: 'read' });
             }
             this.storage = candidate;
             this.mode = mode;
             logger.info(`[filemgr] readonly initialized mode=${mode}`);
         } catch (error) {
-            await this._closeBaseStorage(candidate);
+            for (const holder of new Set([base, full, candidate])) {
+                await this._closeBaseStorage(holder).catch((cleanupError) => {
+                    recordStorageCleanupFailure(error, cleanupError);
+                    logger.warn(`[filemgr] readonly candidate close failed: ${cleanupError.message}`);
+                });
+            }
             this.storage = null;
             this.deferredReason = 'open_failed';
             logger.warn(`[filemgr] readonly initialize failed mode=${mode}: ${error?.message ?? String(error)}`);
@@ -363,12 +641,48 @@ class FSStorage {
         };
     }
 
+    _getStatusReadState(holder) {
+        this._statusReadsByHolder ??= new WeakMap();
+        let state = this._statusReadsByHolder.get(holder);
+        if (!state) {
+            state = { closing: false, pending: new Set() };
+            this._statusReadsByHolder.set(holder, state);
+        }
+        return state;
+    }
+
+    isStatusReadAvailable(holder = this.storage) {
+        return Boolean(holder && !this._getStatusReadState(holder).closing);
+    }
+
+    async _trackStatusRead(holder, read) {
+        if (!holder) return await read(holder);
+        const state = this._getStatusReadState(holder);
+        if (state.closing) throw new PerRootCountsInvalidatedError();
+        let finished;
+        const pending = new Promise((resolve) => {
+            finished = resolve;
+        });
+        state.pending.add(pending);
+        try {
+            return await read(holder);
+        } finally {
+            state.pending.delete(pending);
+            finished();
+        }
+    }
+
     async _closeBaseStorage(storage) {
         if (!storage) return;
         this._pendingStorageClosures.add(storage);
+        const reads = this._getStatusReadState(storage);
+        reads.closing = true;
         // Ownership stays in the pending set; a closing holder is no longer
         // available for FileMgr queries or the already-full fast path.
         if (this.storage === storage) this.storage = null;
+        // Cached status can return while its refresh is still running. Track
+        // these reads independently of cache entries, which may be invalidated.
+        await Promise.all([...reads.pending]);
         // The generic storage contract requires awaiting release before discarding
         // a holder. Retry once for a transient failure; retain it on repeated failure.
         try {
@@ -421,6 +735,12 @@ class FSStorage {
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 const state = { ...defaultScannerState(this.retrieval.getFileRules().defaultState()), ...parsed };
                 this.retrieval.getFileRules().normalizeState(state, parsed);
+                if (isFullTextPlatformSupported()) normalizeFullTextState(state, parsed);
+                else {
+                    delete state.bm25_generation;
+                    delete state.bm25_rule_version;
+                    delete state.bm25_reset_pending;
+                }
                 // Validate critical fields to catch structurally invalid data
                 // roots must be a plain object (spec §3.2)
                 if (typeof state.roots !== 'object' || state.roots === null || Array.isArray(state.roots)) {
@@ -576,23 +896,66 @@ class FSStorage {
         return this._parseRootRefs(rawRefs).some((ref) => this._canonicalRootRef(ref) === canonicalRoot);
     }
 
+    _capturePerRootCountsContext(root) {
+        const state = this.scannerState;
+        const fullText = this.getFullTextState();
+        const unavailable = state.unavailable_roots?.[root];
+        return [
+            this.storage,
+            this.mode,
+            state.embedding_generation,
+            state.semantic_reset_pending,
+            state.bm25_generation,
+            state.bm25_rule_version,
+            state.bm25_reset_pending,
+            fullText.available,
+            fullText.reason,
+            fullText.availability,
+            Boolean(state.roots?.[root]),
+            Boolean(unavailable),
+            unavailable?.last_count
+        ];
+    }
+
+    _isPerRootCountsContextCurrent(root, context) {
+        const current = this._capturePerRootCountsContext(root);
+        return Boolean(context && current.every((value, index) => Object.is(value, context[index])));
+    }
+
+    capturePerRootCountsSnapshot(roots) {
+        return {
+            generation: this._perRootCountsCacheGeneration ?? 0,
+            contexts: roots.map((root) => [root, this._capturePerRootCountsContext(root)])
+        };
+    }
+
+    isPerRootCountsSnapshotCurrent(snapshot) {
+        return (
+            snapshot.generation === (this._perRootCountsCacheGeneration ?? 0) &&
+            snapshot.contexts.every(([root, context]) => this._isPerRootCountsContextCurrent(root, context))
+        );
+    }
+
     _getFreshCachedPerRootCount(root) {
         const entry = this._perRootCountsCache?.get(root);
-        if (!entry?.counts) return null;
+        if (!entry?.counts || !this._isPerRootCountsContextCurrent(root, entry.context)) return null;
         if (Date.now() - entry.computedAt > HARMONY_PER_ROOT_COUNT_CACHE_TTL_MS) return null;
         return entry.counts;
     }
 
     _getAnyCachedPerRootCount(root) {
-        return this._perRootCountsCache?.get(root)?.counts ?? null;
+        const entry = this._perRootCountsCache?.get(root);
+        return this._isPerRootCountsContextCurrent(root, entry?.context) ? (entry.counts ?? null) : null;
     }
 
-    _setCachedPerRootCount(root, counts) {
+    _setCachedPerRootCount(root, counts, context = this._capturePerRootCountsContext(root)) {
         if (!this._perRootCountsCache) this._perRootCountsCache = new Map();
         const existing = this._perRootCountsCache.get(root);
         this._perRootCountsCache.set(root, {
             computedAt: Date.now(),
+            context,
             counts,
+            generation: existing?.generation,
             inFlight: existing?.inFlight ?? null
         });
     }
@@ -619,10 +982,10 @@ class FSStorage {
         };
     }
 
-    async _aggregatePerRootCounts(root) {
+    async _aggregatePerRootCounts(root, holder = this.storage) {
         const normalizedRoot = normalizeRootPath(root);
         const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
-        const groups = await this.storage.countGrouped(
+        const groups = await holder.countGrouped(
             ['root_refs', 'embedded', 'embedding_generation'],
             [
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
@@ -651,69 +1014,104 @@ class FSStorage {
         };
     }
 
+    async _aggregateFullTextRootCounts(root, holder = this.storage) {
+        const normalized = normalizeRootPath(root);
+        const prefix = normalized === '/' ? '/' : `${normalized}/`;
+        const groups = await holder.countGrouped(
+            ['root_refs', 'bm25', 'bm25_generation'],
+            [
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '>=', value: prefix },
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '<', value: nextLexicographicPrefix(prefix) },
+                { indexer: 'BaseIndexer', field: 'ext', operator: 'in', value: FULL_TEXT_INDEXABLE_EXTENSIONS }
+            ]
+        );
+        let indexable = 0,
+            done = 0,
+            failed = 0;
+        const resetting = fullTextResetRequired(this.scannerState);
+        for (const { values, count } of groups) {
+            if (!this._rootRefsIncludeRoot(values.root_refs, root)) continue;
+            indexable += count;
+            if (resetting || values.bm25_generation !== this.scannerState.bm25_generation) continue;
+            if (values.bm25 === 1) done += count;
+            if (values.bm25 === -2) failed += count;
+        }
+        return { indexable, done, pending: indexable - done - failed, failed };
+    }
+
+    async _aggregateRootCounts(root, holder = this.storage) {
+        const counts = await this._aggregatePerRootCounts(root, holder);
+        if (!['unsupported', 'open_failed', 'tokenizer_unavailable'].includes(this.getFullTextState().reason))
+            counts.full_text = await this._aggregateFullTextRootCounts(root, holder);
+        return counts;
+    }
+
     async _getHarmonyPerRootCount(root) {
         const fresh = this._getFreshCachedPerRootCount(root);
         if (fresh) return fresh;
-
-        if (!this._perRootCountsCache) this._perRootCountsCache = new Map();
-        const existing = this._perRootCountsCache.get(root);
+        this._perRootCountsCache ??= new Map();
+        const context = this._capturePerRootCountsContext(root);
         const generation = this._perRootCountsCacheGeneration ?? 0;
-        if (existing?.inFlight) {
-            if (existing.counts) return existing.counts;
-            try {
-                return await existing.inFlight;
-            } catch (err) {
-                logger.warn(`[filemgr] harmony per-root count failed root=${root}: ${err.message}`);
-                return this._scannerStatePerRootCountFallback(root);
-            }
-        }
-
-        const refresh = (async () => {
-            const counts = await this._aggregatePerRootCounts(root);
-            if ((this._perRootCountsCacheGeneration ?? 0) === generation) {
-                this._setCachedPerRootCount(root, counts);
-            }
-            return counts;
-        })();
-        const trackedRefresh = refresh.finally(() => {
-            const latest = this._perRootCountsCache.get(root);
-            if (latest?.inFlight === trackedRefresh) {
-                this._perRootCountsCache.set(root, {
-                    computedAt: latest.computedAt,
-                    counts: latest.counts,
-                    inFlight: null,
-                    generation: latest.generation
+        const current = () =>
+            generation === (this._perRootCountsCacheGeneration ?? 0) &&
+            this._isPerRootCountsContextCurrent(root, context);
+        const existing = this._perRootCountsCache.get(root);
+        const counts = this._getAnyCachedPerRootCount(root);
+        let refresh = existing?.inFlight;
+        if (
+            !refresh ||
+            existing.generation !== generation ||
+            !this._isPerRootCountsContextCurrent(root, existing.context)
+        ) {
+            const operation = this._trackStatusRead(context[0], async () => {
+                try {
+                    const result = await this._aggregateRootCounts(root, context[0]);
+                    if (!current()) throw new PerRootCountsInvalidatedError();
+                    this._setCachedPerRootCount(root, result, context);
+                    return result;
+                } catch (error) {
+                    if (!current()) throw new PerRootCountsInvalidatedError();
+                    throw error;
+                }
+            });
+            refresh = operation.finally(() => {
+                const latest = this._perRootCountsCache.get(root);
+                if (latest?.inFlight === refresh) latest.inFlight = null;
+            });
+            this._perRootCountsCache.set(root, {
+                computedAt: counts ? existing.computedAt : 0,
+                context,
+                counts,
+                inFlight: refresh,
+                generation
+            });
+            if (counts) {
+                void refresh.catch((error) => {
+                    if (error instanceof PerRootCountsInvalidatedError) return;
+                    logger.warn(`[filemgr] harmony per-root count refresh failed root=${root}: ${error.message}`);
                 });
             }
-        });
-
-        this._perRootCountsCache.set(root, {
-            computedAt: existing?.computedAt ?? 0,
-            counts: existing?.counts ?? null,
-            inFlight: trackedRefresh,
-            generation
-        });
-
-        if (existing?.counts) {
-            trackedRefresh.catch((err) =>
-                logger.warn(`[filemgr] harmony per-root count refresh failed root=${root}: ${err.message}`)
-            );
-            return existing.counts;
         }
-
+        if (counts) return counts;
         try {
-            return await trackedRefresh;
-        } catch (err) {
-            const stale = this._getAnyCachedPerRootCount(root);
-            if (stale) return stale;
-            logger.warn(`[filemgr] harmony per-root count failed root=${root}: ${err.message}`);
+            const result = await refresh;
+            if (!current()) throw new PerRootCountsInvalidatedError();
+            return result;
+        } catch (error) {
+            if (!current() || error instanceof PerRootCountsInvalidatedError) throw new PerRootCountsInvalidatedError();
+            const fallback = this._getAnyCachedPerRootCount(root);
+            if (fallback) return fallback;
+            if (!['unsupported', 'open_failed', 'tokenizer_unavailable'].includes(this.getFullTextState().reason))
+                throw error;
+            logger.warn(`[filemgr] harmony per-root count failed root=${root}: ${error.message}`);
             return this._scannerStatePerRootCountFallback(root);
         }
     }
 
     _selectPendingEmbeddingCandidates(
         pendingItems,
-        { activeRoots = [], currentWorkspace = null, limit = QUERY_LIMIT } = {}
+        { activeRoots = [], currentWorkspace = null, limit = QUERY_LIMIT, batchLimit = limit } = {}
     ) {
         const buckets = new Map();
         const orderedRoots = [];
@@ -745,11 +1143,12 @@ class FSStorage {
         const selected = [];
         const seen = new Set();
         while (selected.length < limit) {
+            const batchEnd = Math.min(limit, (Math.floor(selected.length / batchLimit) + 1) * batchLimit);
             let progressed = false;
             for (const root of orderedRoots) {
                 const weight = root === normalizedWorkspace ? WORKSPACE_EMBEDDING_PRIORITY_WEIGHT : 1;
                 const bucket = buckets.get(root) ?? [];
-                for (let i = 0; i < weight && selected.length < limit; i++) {
+                for (let i = 0; i < weight && selected.length < batchEnd; i++) {
                     const next = bucket.shift();
                     if (!next) break;
                     if (seen.has(next.item_id)) continue;
@@ -761,6 +1160,48 @@ class FSStorage {
             if (!progressed) break;
         }
         return selected;
+    }
+
+    _createBuildCandidateQueue(holder, groups, { activeRoots, currentWorkspace, limit, prefetchLimit }, current) {
+        if (!Number.isSafeInteger(prefetchLimit) || prefetchLimit <= 0)
+            throw new RangeError('Invalid build prefetch capacity');
+        const seen = new Set();
+        const queue = { buffer: [], next: null };
+        const batchLimit = Math.min(QUERY_LIMIT, Math.max(0, Math.floor(limit)));
+        let group = 0;
+        const discard = () => {
+            queue.buffer.length = 0;
+            return [];
+        };
+        queue.next = async () => {
+            if (!batchLimit || !current()) return discard();
+            while (queue.buffer.length === 0 && group < groups.length && current()) {
+                // R01 is withdrawn: fetch the complete priority group once per cache refill.
+                const { items } = await holder.search(groups[group]);
+                if (!current()) return discard();
+                const pending = items.map(({ item }) => item).filter((item) => !seen.has(item.item_id));
+                // Apply root_refs ownership, deduplication and the original per-batch schedule before retaining.
+                queue.buffer = this._selectPendingEmbeddingCandidates(pending, {
+                    activeRoots,
+                    currentWorkspace,
+                    limit: prefetchLimit,
+                    batchLimit
+                });
+                if (queue.buffer.length) break;
+                group++;
+            }
+            if (!current()) return discard();
+            const selected = this._selectPendingEmbeddingCandidates(queue.buffer, {
+                activeRoots,
+                currentWorkspace,
+                limit: batchLimit
+            });
+            const selectedIds = new Set(selected.map((item) => item.item_id));
+            queue.buffer = queue.buffer.filter((item) => !selectedIds.has(item.item_id));
+            for (const item of selected) seen.add(item.item_id);
+            return selected;
+        };
+        return queue;
     }
 
     _serializeRootRefs(rootRefs) {
@@ -817,6 +1258,7 @@ class FSStorage {
     // ── Initialization ──────────────────────────────────────────────
 
     async initialize({ syncEmbedding = true } = {}) {
+        this._fullTextResetAttempted = false;
         await this._retryStorageClosures();
         fs.mkdirSync(this._appDataDirectory, { recursive: true });
         this._cleanupLegacyFiles();
@@ -831,8 +1273,10 @@ class FSStorage {
 
         const { dim } = this.retrieval.getFileRules().baseAssembly();
         try {
-            this.storage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
-            await this.storage.initialize();
+            this.storage = await this._openStorageHolder(
+                await this._newStorageHolder({ dim, mode: 'base-only', fullText: 'optional', role: 'write' }),
+                { dim, mode: 'base-only', role: 'write' }
+            );
             this.mode = 'base-only';
         } catch (err) {
             logger.warn(`[filemgr] base storage init failed: ${err.message}`);
@@ -937,12 +1381,21 @@ class FSStorage {
                 this._stateCorrupt = false;
             }
             await this.retrieval.rebuildProducts({ kind: 'full-invalidation' });
+            await this._beginFullTextReset();
             await this._closeBaseStorage(this.storage);
-            await this._dropFilemgrStores({ includeBase: true });
+            await this._dropFilemgrStores({ includeBase: true, includeFullText: isFullTextPlatformSupported() });
 
             try {
-                this.storage = new BaseStorage('filemgr', makeSchema(1024, { mode: 'base-only' }), this._storageDir);
-                await this.storage.initialize();
+                this.storage = await this._openStorageHolder(
+                    await this._newStorageHolder({
+                        dim: 1024,
+                        mode: 'base-only',
+                        fullText: 'optional',
+                        role: 'write',
+                        resetCompleted: true
+                    }),
+                    { dim: 1024, mode: 'base-only', role: 'write' }
+                );
             } catch (err) {
                 await this._closeBaseStorage(this.storage).catch((cleanupError) => {
                     logger.warn(`[filemgr] close rebuilt storage failed: ${cleanupError.message}`);
@@ -1013,6 +1466,7 @@ class FSStorage {
     async saveFiles(files, scannerRoot) {
         if (files.length === 0) return { saved: 0, failed: 0, failures: [] };
 
+        const fullTextSupported = isFullTextPlatformSupported();
         const paths = files.map((f) => f.path);
         const existing = await this.storage.search([
             { indexer: 'BaseIndexer', field: 'item_id', operator: 'in', value: paths }
@@ -1030,8 +1484,10 @@ class FSStorage {
             const modifiedChanged = toStorageTimestamp(ex.modified) !== f.modified;
             const existingRefs = this._parseRootRefs(ex.root_refs);
             const needsRefAdd = !existingRefs.includes(scannerRoot);
+            const fullTextPatch = fullTextSupported ? fullTextScanPatch(ex, f.modified) : {};
             if (modifiedChanged) toFullProcess.push(f);
-            else if (needsRefAdd) toRefUpdateOnly.push({ file: f, existingRefs });
+            else if (needsRefAdd || fullTextPatch.bm25 === 0)
+                toRefUpdateOnly.push({ file: f, existingRefs, fullTextPatch });
         }
 
         let saved = 0,
@@ -1054,6 +1510,7 @@ class FSStorage {
                     accessed: f.accessed,
                     type: f.type,
                     chunk_text: null,
+                    ...(fullTextSupported ? { bm25: 0 } : {}),
                     root_refs: this._serializeRootRefs(rootRefs),
                     ref_count: this._refCountForRootRefs(rootRefs),
                     ...this.retrieval.getFilePatch('content-changed')
@@ -1070,13 +1527,14 @@ class FSStorage {
         }
 
         if (toRefUpdateOnly.length > 0) {
-            const updates = toRefUpdateOnly.map(({ file, existingRefs }) => {
+            const updates = toRefUpdateOnly.map(({ file, existingRefs, fullTextPatch }) => {
                 const rootRefs = this._withRootRef(existingRefs, scannerRoot);
                 return {
                     item_id: file.path,
                     item_type: 'file',
                     root_refs: this._serializeRootRefs(rootRefs),
-                    ref_count: this._refCountForRootRefs(rootRefs)
+                    ref_count: this._refCountForRootRefs(rootRefs),
+                    ...fullTextPatch
                     // intentionally omit `embedded` — preserves prior value
                 };
             });
@@ -1085,6 +1543,76 @@ class FSStorage {
         }
 
         return { saved, failed, failures };
+    }
+
+    async processFullTextQueue(
+        shouldYield,
+        { activeRoots = [], currentWorkspace = null, limit = FULL_TEXT_BATCH_LIMIT } = {}
+    ) {
+        const holder = this.storage;
+        const generation = this.scannerState.bm25_generation;
+        const started = Date.now();
+        const skippedFiles = new Set();
+        const counts = { completed: 0, failed: 0, skipped: 0 };
+        let outcome = 'completed';
+        const current = () =>
+            this.storage === holder &&
+            this.scannerState.bm25_generation === generation &&
+            this.getFullTextState().available;
+        const selection = { activeRoots, currentWorkspace, limit, prefetchLimit: BM25_BUILD_PREFETCH_LIMIT };
+        const queue = this._createBuildCandidateQueue(
+            holder,
+            ['new', 'old', 'retry'].map((group) => fullTextPendingConditions(generation, group)),
+            selection,
+            () => current() && !shouldYield()
+        );
+        logger.info(`[filemgr] full text build started generation=${generation}`);
+        try {
+            work: while (true) {
+                if (!current()) {
+                    outcome = 'stale';
+                    break;
+                }
+                if (shouldYield()) {
+                    outcome = 'yielded';
+                    break;
+                }
+                const candidates = await queue.next();
+                if (!current()) {
+                    outcome = 'stale';
+                    break;
+                }
+                if (shouldYield()) {
+                    outcome = 'yielded';
+                    break;
+                }
+                if (candidates.length === 0) break;
+                for (const file of candidates) skippedFiles.add(file.item_id);
+                const results = await buildFullTextBatch(holder, candidates, generation, current);
+                if (!current()) {
+                    outcome = 'stale';
+                    break;
+                }
+                for (const result of results) {
+                    if (result.kind === 'storage_error') {
+                        this._recordFullTextFailure(result.error, holder, generation);
+                        outcome = 'stopped';
+                        break work;
+                    }
+                    counts[result.kind]++;
+                }
+            }
+        } catch (error) {
+            outcome = current() ? 'stopped' : 'stale';
+            this._recordFullTextFailure(error, holder, generation);
+            logger.warn(`[filemgr] full text queue storage failure: ${error.message}`);
+        } finally {
+            if (counts.completed > 0 || counts.failed > 0) this._clearPerRootCountsCache();
+            logger.info(
+                `[filemgr] full text build ended outcome=${outcome} files=${skippedFiles.size} completed=${counts.completed} failed=${counts.failed} skipped=${counts.skipped} elapsedMs=${Date.now() - started}`
+            );
+        }
+        return { outcome, processed: counts.completed };
     }
 
     /**
@@ -1105,41 +1633,42 @@ class FSStorage {
 
         let totalProcessed = 0;
         let consecutiveFailures = 0;
+        let demoted = false;
         const skippedFiles = new Set();
-        const searchPendingItems = async (embeddedState) => {
-            const { items } = await this.storage.search([
+        const holder = this.storage;
+        const generation = this.scannerState.embedding_generation;
+        const current = () => this.storage === holder && this.scannerState.embedding_generation === generation;
+        const queue = this._createBuildCandidateQueue(
+            holder,
+            [0, -1].map((embeddedState) => [
                 ...fileRules.pendingConditions(embeddedState),
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
                 { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
-            ]);
-            return items.map((r) => r.item).filter((r) => !skippedFiles.has(r.item_id));
-        };
+            ]),
+            { activeRoots, currentWorkspace, limit, prefetchLimit: EMBEDDING_BUILD_PREFETCH_LIMIT },
+            () => current() && !isScanPending()
+        );
 
         while (true) {
-            if (isScanPending()) break;
-
-            const selection = {
-                activeRoots,
-                currentWorkspace,
-                limit
-            };
-            let candidates = this._selectPendingEmbeddingCandidates(await searchPendingItems(0), selection);
-            if (candidates.length === 0) {
-                candidates = this._selectPendingEmbeddingCandidates(await searchPendingItems(-1), selection);
-            }
+            if (!current() || isScanPending()) break;
+            const candidates = await queue.next();
+            if (!current() || isScanPending()) break;
             if (candidates.length === 0) break;
 
             for (const file of candidates) {
-                if (isScanPending()) break;
+                if (!current() || isScanPending()) break;
                 const result = await this.retrieval.buildStep(file);
+                // Checked first: demotion itself replaces the holder.
+                if (result.kind === 'unavailable') {
+                    demoted = true;
+                    consecutiveFailures = 3;
+                    break;
+                }
+                if (!current()) break;
                 if (result.kind === 'skipped') {
                     skippedFiles.add(file.item_id);
                     consecutiveFailures = 0;
                     continue;
-                }
-                if (result.kind === 'unavailable') {
-                    consecutiveFailures = 3;
-                    break;
                 }
                 if (result.kind === 'failed') {
                     skippedFiles.add(file.item_id);
@@ -1154,11 +1683,14 @@ class FSStorage {
                 totalProcessed++;
                 consecutiveFailures = 0;
             }
-            if (consecutiveFailures >= 3 || isScanPending()) break;
+            if (!current() || consecutiveFailures >= 3 || isScanPending()) break;
         }
 
-        Object.assign(this.scannerState, fileRules.taskFinishedPatch(Date.now()));
-        await this.saveScannerState();
+        // Demotion replaces the holder; the finished task is still recorded.
+        if (current() || demoted) {
+            Object.assign(this.scannerState, fileRules.taskFinishedPatch(Date.now()));
+            await this.saveScannerState();
+        }
         return totalProcessed;
     }
 
@@ -1166,6 +1698,28 @@ class FSStorage {
      * Internal keyword route for aggregated indexed search. Includes storage metadata
      * needed by worker-side final filtering; do not expose directly to renderer callers.
      */
+    async searchFullText(query, { topK = 50, scope } = {}) {
+        if (!this.getFullTextState().available) return [];
+        const holder = this.storage;
+        const generation = this.scannerState.bm25_generation;
+        try {
+            return await searchFullText(holder, query, {
+                topK,
+                scope: normalizeFilemgrSearchScope(scope),
+                generation
+            });
+        } catch (error) {
+            this._recordFullTextFailure(error, holder, generation);
+            throw error;
+        }
+    }
+    captureFullTextContext() {
+        return captureFullTextContext(this);
+    }
+    isFullTextContextCurrent(context) {
+        return isFullTextContextCurrent(this, context);
+    }
+
     async searchIndexedFilesByKeyword(keyword, { limit = 150, scope, terms } = {}) {
         scope = normalizeFilemgrSearchScope(scope);
         // Explicit terms belong to aggregated search; legacy callers retain LIKE matching.
@@ -1181,7 +1735,7 @@ class FSStorage {
               }
             : { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` };
         const conditions = scope
-            ? [...buildIndexedFilePreconditions({ scope, requireEmbedded: false }), filenameFilter]
+            ? [...buildIndexedFilePreconditions({ scope }), filenameFilter]
             : [{ indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }, filenameFilter];
         const result = await this.storage.search(conditions, {
             limit,
@@ -1364,7 +1918,12 @@ class FSStorage {
     }
 
     async getPerRootCounts(roots) {
+        return await this._trackStatusRead(this.storage, (holder) => this._readPerRootCounts(roots, holder));
+    }
+
+    async _readPerRootCounts(roots, holder) {
         const counts = new Map();
+        const snapshot = process.platform === 'openharmony' ? this.capturePerRootCountsSnapshot(roots) : null;
 
         for (const root of roots) {
             const rootState = this.scannerState.roots[root];
@@ -1391,7 +1950,7 @@ class FSStorage {
                 continue;
             }
 
-            const rootCounts = await this._aggregatePerRootCounts(root);
+            const rootCounts = await this._aggregateRootCounts(root, holder);
 
             counts.set(root, {
                 ...rootCounts,
@@ -1399,6 +1958,7 @@ class FSStorage {
             });
         }
 
+        if (snapshot && !this.isPerRootCountsSnapshotCurrent(snapshot)) throw new PerRootCountsInvalidatedError();
         return counts;
     }
 
@@ -1442,19 +2002,21 @@ class FSStorage {
     }
 
     async getStatus() {
-        if (!this.storage) return null;
-        const status = await this.storage.getStatus();
-        const semanticWriteState =
-            this.mode === 'full' ? await this.retrieval.getFileRules().semanticWriteState() : null;
+        if (!this.isStatusReadAvailable()) return null;
+        return await this._trackStatusRead(this.storage, async (holder) => {
+            const status = await holder.getStatus();
+            const semanticWriteState =
+                this.mode === 'full' ? await this.retrieval.getFileRules().semanticWriteState() : null;
 
-        return {
-            mode: this.mode,
-            last_embedding_task_at: this.retrieval.getRuntimeState().lastEmbeddingTaskAt,
-            db_size: status.BaseIndexer?.size ?? 0,
-            vecdb_size: status.VectorIndexer?.size ?? 0,
-            chunk_size: status.ChunkIndexer?.size ?? 0,
-            semantic_write_state: semanticWriteState
-        };
+            return {
+                mode: this.mode,
+                last_embedding_task_at: this.retrieval.getRuntimeState().lastEmbeddingTaskAt,
+                db_size: status.BaseIndexer?.size ?? 0,
+                vecdb_size: status.VectorIndexer?.size ?? 0,
+                chunk_size: status.ChunkIndexer?.size ?? 0,
+                semantic_write_state: semanticWriteState
+            };
+        });
     }
 }
 
@@ -1464,6 +2026,7 @@ export {
     FSStorage,
     NORMAL_SCAN_INTERVAL_MS,
     RebuildRequiredError,
+    PerRootCountsInvalidatedError,
     WARNINGS,
     WORKSPACE_SCAN_INTERVAL_MS,
     WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS,

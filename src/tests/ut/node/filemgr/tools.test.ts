@@ -1032,3 +1032,23 @@ test('grepFiles stops walking the tree when the time budget is exhausted', async
         cleanup(root);
     }
 });
+
+test('semanticSearch maps BM25 and semantic content to one existing content label', () => {
+    for (const [locale, label] of [
+        ['en-US', 'Content'],
+        ['zh-CN', '内容']
+    ]) {
+        setRuntimeLocale(locale);
+        for (const matchTypes of [['bm25'], ['bm25', 'content_semantic']]) {
+            const result = formatSemanticSearchMarkdown({
+                query: 'q',
+                results: [{ path: '/docs/a.txt', filename: 'a.txt', matchTypes }],
+                totalHits: 1
+            });
+            const firstLine = result.split('\n')[0].toLowerCase();
+            assert.ok(firstLine.includes(label.toLowerCase()));
+            assert.equal(firstLine.split(label.toLowerCase()).length - 1, 1);
+        }
+    }
+    setRuntimeLocale('en-US');
+});

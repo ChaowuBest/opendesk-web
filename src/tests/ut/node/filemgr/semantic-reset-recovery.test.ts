@@ -18,6 +18,79 @@ after(() => fs.rmSync(profile, { recursive: true, force: true }));
 const SQLite = createRequire(import.meta.url)('better-sqlite3');
 new SQLite(':memory:').close();
 
+test('WF2 full semantic reset releases its holder while preserving BM25 products and state', async (t) => {
+    t.mock.method(Setting, 'getInstance', () => ({
+        getDefaultEmbeddingModelInstance: () => ({ model_name: 'wf2-semantic-preservation', getTimeoutMs: () => 1000 }),
+        getData: () => ({})
+    }));
+    t.mock.method(LLM, 'embed', async () => [1, 0]);
+    const directory = fs.mkdtempSync(path.join(profile, 'wf2-preserve-'));
+    const fss = new FSStorage(directory);
+    t.after(() => fss.close());
+    await fss.initialize();
+    assert.equal(fss.mode, 'full');
+    const file = path.join(directory, 'preserved.txt');
+    const generation = fss.scannerState.bm25_generation;
+    await fss.storage.upsert([
+        {
+            item_id: file,
+            item_type: 'file',
+            type: 'file',
+            modified: 12,
+            bm25: 1,
+            bm25_generation: generation,
+            bm25_modified: 12,
+            indexer_columns: { BM25Indexer: [{ column: 'full_text', content: 'wf2preservedtoken' }] }
+        }
+    ]);
+    const previous = {
+        generation,
+        rule: fss.scannerState.bm25_rule_version,
+        pending: fss.scannerState.bm25_reset_pending
+    };
+    const drop = fss._dropFilemgrStores.bind(fss);
+    let observed = false;
+    t.mock.method(fss, '_dropFilemgrStores', async (options) => {
+        observed = true;
+        assert.equal(fss.storage, null);
+        assert.deepEqual(fss.getFullTextState(), { available: false });
+        assert.equal(options?.includeFullText, undefined);
+        assert.equal(fs.existsSync(path.join(fss._storageDir, 'bm25-index.db')), true);
+        return drop(options);
+    });
+    await fss.retrieval.rebuildProducts({ kind: 'semantic-reset', reason: 'WF2 preserve', dim: 2, mode: 'full' });
+    assert.equal(observed, true);
+    assert.deepEqual(fss.getFullTextState(), { available: true });
+    assert.deepEqual(
+        {
+            generation: fss.scannerState.bm25_generation,
+            rule: fss.scannerState.bm25_rule_version,
+            pending: fss.scannerState.bm25_reset_pending
+        },
+        previous
+    );
+    assert.deepEqual(
+        (await fss.storage.searchBM25('wf2preservedtoken', { field: 'full_text', topK: 5 })).map((hit) => hit.item_id),
+        [file]
+    );
+    const row = (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+        .items[0].item;
+    assert.equal(row.bm25, 1);
+    assert.equal(row.bm25_generation, generation);
+    assert.equal(row.bm25_modified, 12);
+});
+
+// Cases that simulate Harmony without a host kit isolate BM25; native-only cases keep it enabled.
+function semanticOnlyOwner(directory: string) {
+    const fss = new FSStorage(directory);
+    const create = fss._newStorageHolder.bind(fss);
+    fss._newStorageHolder = (options: any) => create({ ...options, fullText: 'off' });
+    fss._dropFullTextStore = async () => {
+        assert.equal(fss._fullTextStoreOwned(), false);
+    };
+    return fss;
+}
+
 const baseOnlyResetPhases = [
     'lock',
     'chunk-drop',
@@ -45,7 +118,7 @@ for (const backend of ['native', 'wasm'] as const) {
             const embed = t.mock.method(LLM, 'embed', async () => [1, 0]);
             const batch = t.mock.method(LLM, 'batchEmbed', async (texts: string[]) => texts.map(() => [1, 0]));
             const directory = fs.mkdtempSync(path.join(profile, `base-only-${backend}-${phase}-`));
-            const fss = new FSStorage(directory);
+            const fss = backend === 'wasm' ? semanticOnlyOwner(directory) : new FSStorage(directory);
             const old = new BaseStorage('filemgr', makeSchema(2, { mode: 'base-only' }), fss._storageDir);
             fss.storage = old;
             fss.mode = 'base-only';
@@ -160,6 +233,7 @@ for (const backend of ['native', 'wasm'] as const) {
                 assert.equal(fss.scannerState.embedding_generation, 1);
                 assert.equal(fss.scannerState.semantic_reset_pending, false);
                 assert.equal(fss._pendingStorageClosures.size, 0);
+                if (backend === 'native') assert.equal(fss.getFullTextState().available, true);
                 assert.deepEqual(
                     (await fss.searchFilesByKeyword('old')).map((row) => row.path),
                     [file]
@@ -221,7 +295,11 @@ for (const backend of ['native', 'wasm'] as const) {
                 fs.mkdirSync(root);
                 const files = [path.join(root, 'old.md'), path.join(root, 'other.md')];
                 for (const file of files) fs.writeFileSync(file, '');
-                let fss = new FSStorage(directory);
+                const createOwner = () =>
+                    backend === 'wasm' || phase === 'backend-switch'
+                        ? semanticOnlyOwner(directory)
+                        : new FSStorage(directory);
+                let fss = createOwner();
                 const old = new BaseStorage('filemgr', makeSchema(2), fss._storageDir);
                 fss.storage = old;
                 fss.mode = 'full';
@@ -352,7 +430,7 @@ for (const backend of ['native', 'wasm'] as const) {
                     if (pending) {
                         assert.equal((await fss.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
                         assert.equal(await fss.processEmbeddingQueue(() => false, { activeRoots: [root] }), 0);
-                        const reader = new FSStorage(directory);
+                        const reader = createOwner();
                         await reader.initializeReadonly();
                         try {
                             assert.equal(reader.mode, 'base-only');
@@ -396,7 +474,7 @@ for (const backend of ['native', 'wasm'] as const) {
                     failing = false;
                     if (recovery === 'restart') {
                         await fss.close();
-                        fss = new FSStorage(directory);
+                        fss = createOwner();
                         fss.retrieval._probeEmbedding = probe;
                         await fss.initialize();
                     } else {
@@ -405,6 +483,8 @@ for (const backend of ['native', 'wasm'] as const) {
                     assert.equal(fss.scannerState.embedding_generation, expectedGeneration);
                     assert.equal(fss.scannerState.semantic_reset_pending, false);
                     assert.equal(fss.mode, 'full');
+                    if (backend === 'native' && phase !== 'backend-switch')
+                        assert.equal(fss.getFullTextState().available, true);
                     const before = (await fss.storage!.search([])).items;
                     assert.equal(before.length, ['full-reset', 'backend-switch'].includes(phase) ? 0 : 2);
                     if (before.length === 0) {
@@ -445,7 +525,7 @@ for (const backend of ['native', 'wasm'] as const) {
                         if (backend === 'native') Object.defineProperty(process, 'platform', platform);
                         else Object.defineProperty(process, 'platform', { value: 'openharmony' });
                         await fss.close();
-                        fss = new FSStorage(directory);
+                        fss = createOwner();
                         fss.retrieval._probeEmbedding = probe;
                         await fss.initialize();
                         assert.equal(fss.scannerState.embedding_generation, 2);

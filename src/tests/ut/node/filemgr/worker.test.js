@@ -249,6 +249,16 @@ if (!OPENROUTER_API_KEY) {
         testEmptyScannedSourceStateIsCompleted,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testFullTextQueueHolderChanges,
+        testFullTextReadonlyStatusWindows,
+        testFullTextStatusAndSnapshots,
+        testFullTextSearchRoutesAndOutcomes,
+        testFullTextSearchFastStageWarnings,
+        testFullTextSearchTimeoutWarnings,
+        testFullTextSearchContextChanges,
+        testFullTextSearchEndToEnd,
+        testFullTextQueueHandoff,
+        testFullTextRuntimeFailureHandoff,
         testEmbeddingQueueFailureIsHandled,
         testEmbeddingQueueYieldsToPendingConfigChange,
         testScanYieldsToPendingConfigChangeBeforeNextBatch,
@@ -1323,7 +1333,8 @@ async function testPublicSearchNormalizesAndShortCircuits() {
             assert.deepEqual(await worker.searchIndexedFiles(query, { routes: ['name_semantic'] }), {
                 query: '',
                 results: [],
-                totalHits: 0
+                totalHits: 0,
+                fullTextAvailable: false
             });
         }
         assert.equal(calls.length, 0, 'empty or invalid queries never reach a semantic route');
@@ -5198,6 +5209,16 @@ async function main() {
         testEmptyScannedSourceStateIsCompleted,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testFullTextQueueHolderChanges,
+        testFullTextReadonlyStatusWindows,
+        testFullTextStatusAndSnapshots,
+        testFullTextSearchRoutesAndOutcomes,
+        testFullTextSearchFastStageWarnings,
+        testFullTextSearchTimeoutWarnings,
+        testFullTextSearchContextChanges,
+        testFullTextSearchEndToEnd,
+        testFullTextQueueHandoff,
+        testFullTextRuntimeFailureHandoff,
         testEmbeddingQueueFailureIsHandled,
         testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
         testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
@@ -5289,5 +5310,590 @@ async function testExtractFileTextEncodings() {
         }
     } finally {
         cleanup(dir);
+    }
+}
+
+async function testFullTextQueueHandoff() {
+    for (const outcome of ['completed', 'stopped', 'yielded', 'throw']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-handoff-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const calls = [];
+        worker.storage = withMemoryStateWriter({
+            mode: 'full',
+            getFullTextState: () => ({ available: true }),
+            processFullTextQueue: async () => {
+                calls.push('bm25');
+                if (outcome === 'throw') throw new Error('unexpected build error');
+                return { outcome, processed: 1 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        try {
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(calls, outcome === 'yielded' ? ['bm25'] : ['bm25', 'embedding']);
+            assert.equal(worker._fullTextQueueActive, false);
+            assert.equal(worker._fullTextQueueScheduled, false);
+            if (outcome === 'yielded') {
+                worker.storage.processFullTextQueue = async () => {
+                    calls.push('bm25-again');
+                    return { outcome: 'completed', processed: 0 };
+                };
+                worker._enqueueBuildWork();
+                await worker.taskQueue.onIdle();
+                assert.deepEqual(calls, ['bm25', 'bm25-again', 'embedding']);
+            }
+        } finally {
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+    for (const gate of ['readonly', 'error', 'base-only', 'unavailable']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-gate-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const calls = [];
+        worker.storage = withMemoryStateWriter({
+            mode: gate === 'base-only' ? 'base-only' : 'full',
+            getFullTextState: () => ({
+                available: gate !== 'unavailable',
+                reason: gate === 'unavailable' ? 'resetting' : undefined
+            }),
+            processFullTextQueue: async () => {
+                calls.push('bm25');
+                return { outcome: 'completed', processed: 0 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        if (gate === 'readonly') worker._readonlyMode = true;
+        if (gate === 'error') worker.status = 'error';
+        try {
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(calls, gate === 'base-only' ? ['bm25'] : gate === 'unavailable' ? ['embedding'] : []);
+        } finally {
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+}
+
+async function testFullTextQueueHolderChanges() {
+    for (const change of ['queued-holder', 'unavailable', 'running-holder', 'owner']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-owner-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const first = {},
+            second = {},
+            calls = [];
+        let available = true;
+        const storage = withMemoryStateWriter({
+            mode: 'full',
+            storage: first,
+            getFullTextState: () => ({ available }),
+            processFullTextQueue: async () => {
+                calls.push(storage.storage);
+                if (change === 'running-holder' && storage.storage === first) {
+                    storage.storage = second;
+                    return { outcome: 'stale', processed: 0 };
+                }
+                return { outcome: 'completed', processed: 0 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        worker.storage = storage;
+        worker.taskQueue.pause();
+        try {
+            worker._enqueueBuildWork();
+            assert.equal(worker._fullTextQueueScheduled, true);
+            worker._currentWorkspace = appDir;
+            storage.mode = 'base-only';
+            assert.equal(worker._getScanIntervalForRoot(appDir), 180_000);
+            storage.mode = 'full';
+            if (change === 'queued-holder') storage.storage = second;
+            if (change === 'unavailable') available = false;
+            if (change === 'owner') worker.storage = withMemoryStateWriter({ mode: 'base-only' });
+            worker._enqueueBuildWork();
+            worker.taskQueue.start();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(
+                calls,
+                change === 'queued-holder'
+                    ? [second, 'embedding']
+                    : change === 'unavailable'
+                      ? ['embedding']
+                      : change === 'running-holder'
+                        ? [first, second, 'embedding']
+                        : []
+            );
+            assert.equal(worker._fullTextQueueScheduled, false);
+            assert.equal(worker._fullTextQueueActive, false);
+        } finally {
+            worker.taskQueue.start();
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+}
+
+function makeFullTextSearchWorker() {
+    const worker = makeSearchWorker();
+    const storage = worker.storage;
+    storage.storage = {};
+    storage.scannerState.bm25_generation = 1;
+    storage.getFullTextState = () => ({ available: true });
+    storage.captureFullTextContext = FSStorage.prototype.captureFullTextContext;
+    storage.isFullTextContextCurrent = FSStorage.prototype.isFullTextContextCurrent;
+    const row = { path: '/workspace/fulltext.txt', filename: 'fulltext.txt', ref_count: 1, bm25Rank: 1 };
+    storage.searchFullText = async () => [row];
+    storage.retrieval.searchNames = async () => ({ results: [] });
+    storage.retrieval.searchContent = async () => ({ results: [] });
+    return worker;
+}
+async function testFullTextSearchRoutesAndOutcomes() {
+    const worker = makeFullTextSearchWorker();
+    const calls = [];
+    const storage = worker.storage;
+    try {
+        storage.mode = 'full';
+        storage.searchFilesByKeyword = async (q, o) => {
+            calls.push(['keyword', q, o]);
+            return [];
+        };
+        const bm25 = storage.searchFullText;
+        storage.searchFullText = async (q, o) => {
+            calls.push(['bm25', q, o]);
+            return bm25();
+        };
+        storage.retrieval.searchNames = async (q) => {
+            calls.push(['name', q]);
+            return { results: [] };
+        };
+        storage.retrieval.searchContent = async (q) => {
+            calls.push(['content', q]);
+            return { results: [] };
+        };
+        const result = await worker.searchIndexedFiles('鸿蒙 操作系统');
+        assert.deepEqual(
+            calls.map((x) => x[0]),
+            ['keyword', 'bm25', 'name', 'content']
+        );
+        assert.ok(calls.every((x) => x[1] === '鸿蒙 操作系统'));
+        assert.deepEqual(calls[0][2].terms, ['鸿蒙', '操作系统']);
+        for (const [query, terms] of [
+            ['a 1', ['a', '1']],
+            ['系统；系统', ['系统']]
+        ]) {
+            calls.length = 0;
+            await worker.searchIndexedFiles(query);
+            assert.deepEqual(
+                calls.map((call) => call[0]),
+                ['keyword', 'bm25', 'name', 'content']
+            );
+            assert.ok(calls.every((call) => call[1] === query));
+            assert.deepEqual(calls[0][2].terms, terms);
+        }
+        assert.deepEqual(result.results[0].matchTypes, ['bm25']);
+        assert.equal(result.fullTextAvailable, true);
+        for (const reason of ['open_failed', 'resetting']) {
+            storage.getFullTextState = () => ({ available: false, reason });
+            calls.length = 0;
+            const unavailable = await worker.searchIndexedFiles('q');
+            assert.ok(!calls.some((x) => x[0] === 'bm25'));
+            assert.equal(unavailable.code, undefined);
+            assert.equal(unavailable.fullTextAvailable, false);
+        }
+        storage.getFullTextState = () => ({ available: true });
+        storage.searchFullText = async () => {
+            throw new Error('bm25 down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEMANTIC_PARTIAL);
+        storage.mode = 'base-only';
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.EMBED_UNAVAILABLE);
+        storage.searchFullText = bm25;
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.EMBED_UNAVAILABLE);
+        storage.searchFilesByKeyword = async () => {
+            throw new Error('keyword down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEARCH_PARTIAL);
+        storage.searchFullText = async () => {
+            throw new Error('bm25 down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEARCH_FAILED);
+        for (const [q, o] of [
+            ['', {}],
+            [' ;，、', {}],
+            ['q', { scope: { type: 'path', path: 'relative' } }],
+            ['q', { routes: [] }]
+        ])
+            assert.equal((await worker.searchIndexedFiles(q, o)).fullTextAvailable, true);
+        storage.isDeferred = () => true;
+        assert.equal((await worker.searchIndexedFiles('q')).fullTextAvailable, true);
+        worker.storage = null;
+        assert.equal((await worker.searchIndexedFiles('q')).fullTextAvailable, false);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+}
+async function testFullTextSearchFastStageWarnings() {
+    for (const mode of ['base-only', 'full']) {
+        for (const failure of ['query', 'generation']) {
+            const worker = makeFullTextSearchWorker();
+            const storage = worker.storage;
+            let bm25Calls = 0;
+            try {
+                storage.mode = mode;
+                storage.searchFilesByKeyword = async () => [{ path: '/workspace/keyword.txt', ref_count: 1 }];
+                storage.searchFullText = async () => {
+                    bm25Calls++;
+                    if (failure === 'query') throw new Error('bm25 down');
+                    return [{ path: '/workspace/body.txt', ref_count: 1, bm25Rank: 1 }];
+                };
+                if (failure === 'generation') {
+                    worker._statFileForSearch = async () => {
+                        storage.scannerState.bm25_generation++;
+                        return { isFile: () => true };
+                    };
+                }
+                const fast = await worker.searchIndexedFiles('q', { routes: ['keyword', 'bm25'] });
+                assert.equal(bm25Calls, 1);
+                assert.deepEqual(
+                    fast.results.map((item) => item.path),
+                    ['/workspace/keyword.txt']
+                );
+                assert.equal(fast.code, mode === 'base-only' ? undefined : CODES.SEMANTIC_PARTIAL);
+                assert.equal(fast.warning, mode === 'base-only' ? undefined : WARNINGS.SEMANTIC_PARTIAL);
+                const slow = await worker.searchIndexedFiles('q', {
+                    routes: ['name_semantic', 'content_semantic']
+                });
+                assert.equal(slow.code, mode === 'base-only' ? CODES.EMBED_UNAVAILABLE : undefined);
+                assert.equal(slow.warning, mode === 'base-only' ? WARNINGS.NO_EMBEDDING_MODEL : undefined);
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+        const worker = makeFullTextSearchWorker();
+        try {
+            worker.storage.mode = mode;
+            worker.storage.searchFilesByKeyword = async () => {
+                throw new Error('keyword down');
+            };
+            const options = { routes: ['keyword', 'bm25'] };
+            assert.equal((await worker.searchIndexedFiles('q', options)).code, CODES.SEARCH_PARTIAL);
+            worker.storage.searchFullText = async () => {
+                throw new Error('bm25 down');
+            };
+            assert.equal((await worker.searchIndexedFiles('q', options)).code, CODES.SEARCH_FAILED);
+        } finally {
+            cleanup(worker.appDataDirectory);
+        }
+    }
+}
+async function testFullTextSearchTimeoutWarnings() {
+    for (const mode of ['base-only', 'full'])
+        for (const keyword of ['empty', 'hits', 'failed']) {
+            const worker = makeFullTextSearchWorker();
+            try {
+                worker.storage.mode = mode;
+                worker.storage.searchFilesByKeyword = async () => {
+                    if (keyword === 'failed') throw new Error('isolated keyword failure');
+                    return keyword === 'hits' ? [{ path: '/workspace/keyword.txt', ref_count: 1 }] : [];
+                };
+                worker.storage.searchFullText = async () => {
+                    throw Object.assign(new Error('isolated BM25 timeout'), { code: 'bm25_search_timeout' });
+                };
+                for (const routes of [
+                    ['bm25'],
+                    ['keyword', 'bm25'],
+                    ['keyword', 'bm25', 'name_semantic', 'content_semantic']
+                ]) {
+                    const result = await worker.searchIndexedFiles('q', { routes });
+                    assert.equal(result.code, CODES.BM25_SEARCH_TIMEOUT);
+                    assert.equal(result.warning, WARNINGS.BM25_SEARCH_TIMEOUT);
+                    assert.ok(result.warning && !result.warning.includes('filemgr.search.'));
+                    assert.equal(result.results.length, keyword === 'hits' && routes.includes('keyword') ? 1 : 0);
+                }
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+}
+async function testFullTextSearchContextChanges() {
+    for (const atStat of [false, true])
+        for (const change of ['holder', 'generation', 'owner', 'availability', 'embedding']) {
+            const worker = makeFullTextSearchWorker();
+            const storage = worker.storage;
+            try {
+                storage.mode = 'full';
+                storage.searchFilesByKeyword = async () => [{ path: '/workspace/keyword.txt', ref_count: 1 }];
+                storage.retrieval.captureSearchContext = () => 1;
+                let semanticCurrent = true;
+                storage.retrieval.isSearchContextCurrent = () => semanticCurrent;
+                const mutate = () => {
+                    if (change === 'holder') storage.storage = {};
+                    if (change === 'generation') storage.scannerState.bm25_generation++;
+                    if (change === 'owner') worker.storage = { ...storage };
+                    if (change === 'availability')
+                        storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+                    if (change === 'embedding') semanticCurrent = false;
+                };
+                let changed = false;
+                if (atStat)
+                    worker._statFileForSearch = async () => {
+                        if (!changed) {
+                            changed = true;
+                            mutate();
+                        }
+                        return { isFile: () => true };
+                    };
+                else
+                    storage.retrieval.searchNames = async () => {
+                        mutate();
+                        return { results: [] };
+                    };
+                const result = await worker.searchIndexedFiles('q');
+                assert.equal(
+                    result.results.some((x) => x.matchTypes.includes('bm25')),
+                    change === 'embedding',
+                    `${atStat}/${change}`
+                );
+                assert.ok(result.results.some((x) => x.matchTypes.includes('keyword')));
+                assert.equal(result.code, CODES.SEMANTIC_PARTIAL);
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+}
+async function testFullTextSearchEndToEnd() {
+    const appDir = tmpDir('fulltext-e2e-app'),
+        docs = tmpDir('fulltext-e2e-docs');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        worker.config = { entries: [makeEntry(docs, ['excluded/**'])] };
+        worker._lastConfig = worker.config;
+        worker.storage = new FSStorage(appDir);
+        await worker.storage.initialize({ syncEmbedding: false });
+        const names = ['tail.txt', 'excluded/tail.txt', 'sub/tail.txt'];
+        for (const name of names) {
+            const file = path.join(docs, name);
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, 'x'.repeat(70000) + ' wf2tailtoken');
+        }
+        await worker.storage.saveFiles(
+            names.map((name) => makeFileEntry(path.join(docs, name))),
+            docs
+        );
+        await worker.storage.processFullTextQueue(() => false, { activeRoots: [docs] });
+        const holder = worker.storage.storage,
+            calls = [];
+        const raw = holder.searchBM25.bind(holder),
+            scoped = holder.searchScope.bind(holder);
+        holder.searchBM25 = async (...args) => {
+            calls.push('raw');
+            return raw(...args);
+        };
+        holder.searchScope = async (...args) => {
+            calls.push('scope');
+            return scoped(...args);
+        };
+        const result = await worker.searchIndexedFiles('wf2tailtoken', { scope: { type: 'paths', paths: [docs] } });
+        assert.equal(result.results.length, 2);
+        assert.deepEqual(calls, ['raw']);
+        assert.ok(result.results.every((x) => x.matchTypes.includes('bm25')));
+        const narrow = await worker.searchIndexedFiles('wf2tailtoken', {
+            scope: { type: 'path', path: path.join(docs, 'sub') }
+        });
+        assert.equal(narrow.results.length, 1);
+        assert.equal(calls.at(-1), 'scope');
+        fs.unlinkSync(path.join(docs, 'tail.txt'));
+        assert.equal((await worker.searchIndexedFiles('wf2tailtoken')).results.length, 1);
+        worker.config = { entries: [] };
+        worker._lastConfig = worker.config;
+        assert.equal((await worker.searchIndexedFiles('wf2tailtoken')).results.length, 0);
+    } finally {
+        if (worker.storage) await worker.storage.close();
+        cleanup(appDir);
+        cleanup(docs);
+    }
+}
+
+async function testFullTextStatusAndSnapshots() {
+    const worker = makeFullTextSearchWorker();
+    const storage = worker.storage;
+    try {
+        const counts = {
+            total_files: 10,
+            embedded_count: 10,
+            pending_count: 0,
+            failed_count: 0,
+            last_scan_at: 1,
+            full_text: { indexable: 9, done: 2, pending: 6, failed: 1 }
+        };
+        for (const mode of ['full', 'base-only']) {
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'scanning');
+            counts.full_text.pending = 0;
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'completed');
+            counts.pending_count = 2;
+            assert.equal(
+                worker._deriveSourceState('/workspace', counts, mode),
+                mode === 'full' ? 'scanning' : 'completed'
+            );
+            counts.pending_count = 0;
+            counts.full_text.pending = 6;
+            for (const reason of ['unsupported', 'open_failed', 'tokenizer_unavailable']) {
+                storage.getFullTextState = () => ({ available: false, reason });
+                assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'completed');
+            }
+            storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'scanning');
+            storage.scannerState.roots['/workspace'] = { paused: true, metadata_write_pending: true };
+            storage.scannerState.unavailable_roots['/workspace'] = {};
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'paused');
+            storage.scannerState.roots['/workspace'].paused = false;
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'unavailable');
+            delete storage.scannerState.unavailable_roots['/workspace'];
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'pending');
+            delete storage.scannerState.roots['/workspace'];
+        }
+        worker.config = { entries: [makeEntry('/workspace')] };
+        worker._lastConfig = worker.config;
+        storage.getStatus = async () => ({ db_size: 1 });
+        storage.getPerRootCounts = async () => new Map([['/workspace', counts]]);
+        storage.retrieval.getRuntimeState = () => ({ probeError: null });
+        storage.getFullTextState = () => ({ available: true });
+        const first = await worker.getFileSystemStatus();
+        assert.deepEqual(first.full_text, { available: true, done: 2, pending: 6, failed: 1 });
+        assert.deepEqual(first.sources[0].full_text, { total: 10, done: 2, pending: 6, failed: 1, excluded: 1 });
+        let pushed;
+        worker.callApp = (_method, payload) => {
+            pushed = payload.snapshot;
+        };
+        counts.full_text.done = 4;
+        counts.full_text.pending = 4;
+        await worker._emitStatusChanged('task-done');
+        assert.equal(pushed.full_text.done, 4);
+        const holder = storage.storage;
+        storage.storage = null;
+        storage.getStatus = async () => null;
+        storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        storage.storage = holder;
+        storage.getStatus = async () => ({ db_size: 1 });
+        storage.getFullTextState = () => ({ available: true });
+        assert.equal((await worker.getFileSystemStatus()).full_text.done, 4);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+}
+
+async function testFullTextReadonlyStatusWindows() {
+    const dir = tmpDir('fulltext-status-windows');
+    const worker = new FileManagerWorker('test.wf2', dir);
+    const root = path.join(dir, 'docs');
+    fs.mkdirSync(root);
+    worker.config = { entries: [makeEntry(root)] };
+    worker._lastConfig = worker.config;
+    worker.status = 'running';
+    let owner = new FSStorage(dir);
+    worker.storage = owner;
+    try {
+        await owner.initialize({ syncEmbedding: false });
+        const file = path.join(root, 'a.txt');
+        fs.writeFileSync(file, 'hello');
+        await owner.saveFiles([makeFileEntry(file)], root);
+        await owner.processFullTextQueue(() => false, { activeRoots: [root] });
+        await owner._beginFullTextReset();
+        await owner.close();
+        assert.deepEqual(owner.getFullTextState(), { available: false, reason: 'resetting' });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        owner = new FSStorage(dir);
+        worker.storage = owner;
+        await owner.initialize({ syncEmbedding: false });
+        await owner.close();
+        assert.deepEqual(owner.getFullTextState(), { available: false });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        for (const name of ['bm25-index.db', 'bm25-index.wasm.db'])
+            fs.rmSync(path.join(owner._storageDir, name), { force: true });
+        owner = new FSStorage(dir);
+        worker.storage = owner;
+        await owner.initializeReadonly();
+        worker._readonlyMode = true;
+        worker.status = 'readonly';
+        const snapshot = await worker.getFileSystemStatus();
+        assert.equal(snapshot.full_text.available, false);
+        assert.equal(snapshot.full_text.reason, 'open_failed');
+        assert.equal(snapshot.sources[0].full_text, undefined);
+    } finally {
+        await owner.close();
+        cleanup(dir);
+    }
+}
+
+async function testFullTextRuntimeFailureHandoff() {
+    for (const availability of ['terminal', 'unsupported']) {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-runtime-handoff-'));
+        const owner = new FSStorage(directory);
+        const worker = new FileManagerWorker('com.test.filemgr', directory);
+        try {
+            await owner.initialize({ syncEmbedding: false });
+            const file = path.join(directory, 'document.txt');
+            fs.writeFileSync(file, 'wf2 runtime content');
+            const stat = fs.statSync(file);
+            await owner.saveFiles(
+                [
+                    {
+                        path: file,
+                        filename: 'document.txt',
+                        type: 'file',
+                        modified: Math.floor(stat.mtimeMs),
+                        size: stat.size
+                    }
+                ],
+                directory
+            );
+            const failure = Object.assign(new Error('isolated public tokenizer failure'), {
+                code: 'bm25_tokenizer_unavailable',
+                details: { availability }
+            });
+            owner.storage.upsert = async () => {
+                throw failure;
+            };
+            let embeddings = 0;
+            owner.mode = 'full';
+            owner.processEmbeddingQueue = async () => {
+                embeddings++;
+                return 0;
+            };
+            worker.storage = owner;
+            worker.config = { entries: [makeEntry(directory)] };
+            worker.status = 'running';
+            worker.callApp = () => {};
+            owner.onStateChanged = () => {
+                void worker._emitStatusChanged('runtime-failure');
+            };
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.equal(owner.getFullTextState().availability, availability);
+            assert.equal(embeddings, 1);
+            assert.equal(worker._fullTextQueueActive, false);
+            assert.equal(worker._fullTextQueueScheduled, false);
+        } finally {
+            await worker.finalize();
+            await owner.close();
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
     }
 }

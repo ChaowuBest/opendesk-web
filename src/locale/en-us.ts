@@ -1289,6 +1289,8 @@ export const enUs: Record<string, string> = {
     'filemgr.semanticSearch.result.found': 'Found ${count} results',
     'filemgr.search.partial': 'Some file search routes are unavailable. Available results are shown.',
     'filemgr.search.failed': 'File search is temporarily unavailable. Try again later.',
+    'filemgr.search.bm25_timeout':
+        'Full-text search timed out. Any available results from other routes are shown. Try again later.',
     'filemgr.search.invalid_scope': 'The file search scope is invalid. Choose an indexed file or folder.',
     'filemgr.writeFile.name': 'Write File',
     'filemgr.writeFile.append': ' (Append)',
@@ -2203,6 +2205,18 @@ export const enUs: Record<string, string> = {
         'Some file scan results previously failed to save; awaiting a later scan to confirm recovery.',
     'renderer.filemgr.source.unavailable': 'Path unavailable',
     'renderer.filemgr.source.unavailableWithCount': 'Path unavailable · Previously ${count} files',
+    'renderer.filemgr.source.progress.body': 'Keyword index · ${done}/${total}',
+    'renderer.filemgr.source.progress.semantic': 'Semantic index · ${done}/${total}',
+    'renderer.filemgr.source.progress.completed': 'Index complete',
+    'renderer.filemgr.source.fullText.withCounts': 'Full-text index · ${done} / ${total} files',
+    'renderer.filemgr.source.ring.fullText': 'Full-text index ${done}/${total}',
+    'renderer.filemgr.source.ring.vector': 'Vector index ${done}/${total}',
+    'filemgr.status.fullText.summary':
+        'Full-text index: ${done} / ${total} done · ${pending} pending · ${failed} failed',
+    'filemgr.status.fullText.resetting': 'Full-text index: rebuilding · ${done} / ${total} done',
+    'renderer.homepage.search.embedUnavailable': 'Smart content search is off. Only file names are searched.',
+    'renderer.homepage.search.embedUnavailableFullText':
+        'Smart content search is off. Searching file names and content keywords.',
     'renderer.filemgr.source.scan.withCounts': 'Scanning · ${embedded} / ${total} files',
     'renderer.filemgr.source.empty': 'No scannable files found',
     'renderer.filemgr.source.fileCount': ' · ${count} files',

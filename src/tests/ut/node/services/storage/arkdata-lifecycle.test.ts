@@ -15,6 +15,7 @@ import type { ColumnSchema } from '../../../../../main/services/storage/abstract
 import { ArkDataBridgeError, type DatabaseKit } from '../../../../../platforms/bridges/common.js';
 import { getStorageInitializationFailure } from '../../../../../main/services/storage/platform.js';
 import { initializationRecovery } from '../../../../../main/applications/filemgr/document-retrieval/embedding/state.js';
+import { FSStorage } from '../../../../../main/applications/filemgr/storage.js';
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'arkdata-lifecycle-'));
 setCustomOpendeskDirectory(profile);
@@ -292,6 +293,15 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
         adapter
             ? [...adapter.stores.values()].reduce((n, record: any) => n + record.refCount, 0)
             : [...stores.values()].reduce((n, record) => n + record.references, 0);
+    // This legacy fixture covers Base/Vector/Chunk; BM25 object transactions has its own host fixture.
+    const create = FSStorage.prototype._newStorageHolder;
+    const dropFullText = FSStorage.prototype._dropFullTextStore;
+    FSStorage.prototype._newStorageHolder = function (options) {
+        return create.call(this, { ...options, fullText: 'off' });
+    };
+    FSStorage.prototype._dropFullTextStore = async function () {
+        assert.equal(this._fullTextStoreOwned(), false);
+    };
     try {
         await run({
             db,
@@ -318,6 +328,8 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
             }
         });
     } finally {
+        FSStorage.prototype._newStorageHolder = create;
+        FSStorage.prototype._dropFullTextStore = dropFullText;
         control.openGate?.resolve();
         control.tableGate?.resolve();
         control.closeGate?.resolve();

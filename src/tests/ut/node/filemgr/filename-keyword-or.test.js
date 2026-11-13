@@ -15,7 +15,11 @@ import {
 
 test('native: filename matching skips files outside the scope or visibility filters', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'filename-filter-cost-'));
-    const storage = new BaseStorage('filename-filter-cost', makeSchema(2, { mode: 'base-only' }), directory);
+    const storage = new BaseStorage(
+        'filename-filter-cost',
+        makeSchema(2, { mode: 'base-only', fullTextColumns: false }),
+        directory
+    );
     const matcher = new Database(':memory:');
     try {
         await storage.initialize();
@@ -52,7 +56,7 @@ test('native: filename matching skips files outside the scope or visibility filt
 for (const backend of ['native', 'wasm']) {
     test(`${backend}: filename OR treats percent, underscore and backslash as literal characters`, async () => {
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'filename-literal-'));
-        const schema = makeSchema(2, { mode: 'base-only' });
+        const schema = makeSchema(2, { mode: 'base-only', fullTextColumns: false });
         const storage = new BaseStorage('filename-literal', schema, directory);
         try {
             await storage.initialize();
@@ -128,7 +132,7 @@ for (const backend of ['native', 'wasm']) {
     });
     test(`${backend}: filename OR search preserves scope, limit, rank and single-character terms`, async () => {
         const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'filename-or-'));
-        const schema = makeSchema(2, { mode: 'base-only' });
+        const schema = makeSchema(2, { mode: 'base-only', fullTextColumns: false });
         const storage = new BaseStorage('filename', schema, directory);
         try {
             await storage.initialize();
@@ -226,14 +230,14 @@ for (const backend of ['native', 'wasm']) {
             const ranked = rankSearchResults(
                 mergeSearchRoutes({
                     keyword,
-                    nameSemantic: [
-                        { path: '/docs/其他.txt', filename: '其他.txt', semanticScore: 0.9 },
-                        { ...keyword[0], semanticScore: 0.8 }
+                    bm25: [
+                        { path: '/docs/其他.txt', filename: '其他.txt', bm25Rank: 1 },
+                        { ...keyword[0], bm25Rank: 3 }
                     ]
                 })
             );
             assert.equal(ranked[0].filename, '文件系统设计.txt');
-            assert.deepEqual(ranked[0].matchTypes, ['keyword', 'name_semantic']);
+            assert.deepEqual(ranked[0].matchTypes, ['keyword', 'bm25']);
             assert.equal(ranked.at(-1).filename, '其他.txt');
         } finally {
             await storage.close();

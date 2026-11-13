@@ -11,6 +11,8 @@ import { VectorIndexDB } from '../../../../main/services/storage/vector-index-db
 import { ChunkIndexDB } from '../../../../main/services/storage/chunk-index-db.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
+import { BM25Indexer } from '../../../../main/services/storage/bm25-indexer.js';
+import { recordStorageInitializationFailure } from '../../../../main/services/storage/platform.js';
 import { toWasmDbPath } from '../../../../main/services/storage/wasm-path.js';
 import { VectorIndexDBWasm } from '../../../../main/services/storage/vector-index-db-wasm.js';
 import { LLM } from '../../../../main/aikernel/llm.js';
@@ -34,10 +36,14 @@ beforeEach((t) => {
     t.mock.method(LLM, 'rerank', async (_query: string, rows: any[]) => rows);
 });
 
-async function owner(t: TestContext) {
+async function owner(t: TestContext, { fullText = true } = {}) {
     const directory = fs.mkdtempSync(path.join(profile, 'case-'));
     const fss = new FSStorage(directory);
     t.after(() => fss.close());
+    if (!fullText) {
+        const create = fss._newStorageHolder.bind(fss);
+        t.mock.method(fss, '_newStorageHolder', (options) => create({ ...options, fullText: 'off' }));
+    }
     await fss.initialize({ syncEmbedding: false });
     const file = path.join(directory, 'retained.md');
     fs.writeFileSync(file, 'retained isolated base record');
@@ -81,7 +87,110 @@ function constructorFault(t: TestContext, Database: any, failure: Error, once = 
     });
 }
 
+test('WF2 readonly selection exceptions close both probes and preserve the original failure', async (t) => {
+    const { fss } = await owner(t);
+    Object.assign(fss.scannerState, { embedding_model: 'wf1-fixture', vec_dim: 2 });
+    await fss.saveScannerState();
+    await fss.close();
+    const reader = new FSStorage(fss._appDataDirectory);
+    t.after(() => reader.close());
+    const primary = new Error('readonly semantic selection failed');
+    const created: BaseStorage[] = [];
+    const closed: BaseStorage[] = [];
+    const create = reader._newStorageHolder.bind(reader);
+    t.mock.method(reader, '_newStorageHolder', async (options) => {
+        const result = await create(options);
+        created.push(result.holder);
+        return result;
+    });
+    const close = BaseStorage.prototype.close;
+    t.mock.method(BaseStorage.prototype, 'close', async function () {
+        closed.push(this);
+        return close.call(this);
+    });
+    t.mock.method(BaseStorage.prototype, 'probeIndexers', async () => {
+        throw primary;
+    });
+    await assert.rejects(reader.initializeReadonly(), (error: unknown) => error === primary);
+    assert.equal(created.length, 2, 'base and full selection probes were both constructed');
+    assert.deepEqual(closed, created, 'every selection probe is closed before rejecting');
+    assert.equal(reader.storage, null);
+    assert.equal(reader.deferredReason, null);
+});
+
 const ordinaryCodes = ['EACCES', 'SQLITE_BUSY', 'EIO', 'SQLITE_NOTADB', undefined];
+for (const phase of ['initialize', 'replace', 'reset', 'readonly', 'rebuild'] as const) {
+    test(`WF2 optional BM25 failure preserves ${phase} publication and mode`, async (t) => {
+        const { fss, file } = await owner(t);
+        await fss.close();
+        const database = path.join(fss._storageDir, 'bm25-index.db');
+        if (phase !== 'rebuild') {
+            fs.rmSync(database);
+            fs.mkdirSync(database);
+        }
+        let injected = 0;
+        if (phase === 'rebuild') {
+            t.mock.method(BM25Indexer.prototype, 'initialize', async () => {
+                injected++;
+                const error = new Error('WF2 isolated BM25 dependency failure');
+                recordStorageInitializationFailure(error, { indexer: 'BM25Indexer' });
+                throw error;
+            });
+        }
+        if (phase === 'readonly') {
+            await fss.initializeReadonly();
+        } else {
+            await fss.initialize({ syncEmbedding: false });
+            if (phase === 'replace') await fss.retrieval.prepare({ context: {}, reason: 'WF2 replace', role: 'write' });
+            if (phase === 'reset') {
+                await fss.retrieval.rebuildProducts({
+                    kind: 'semantic-reset',
+                    reason: 'WF2 reset',
+                    dim: 2,
+                    mode: 'full'
+                });
+            }
+            if (phase === 'rebuild') {
+                modelConfigured = false;
+                await fss.rebuildAll('WF2 optional failure');
+                assert.ok(injected > 0);
+                assert.equal(fss.scannerState.bm25_reset_pending, true);
+            }
+        }
+        assert.deepEqual(fss.getFullTextState(), { available: false, reason: 'open_failed' });
+        assert.equal(fss.mode, ['replace', 'reset'].includes(phase) ? 'full' : 'base-only');
+        assert.equal(fss.deferredReason, null);
+        assert.equal((await fss.searchFilesByKeyword('retained')).length, phase === 'rebuild' ? 0 : 1);
+        if (phase !== 'rebuild')
+            assert.equal(fs.statSync(database).isDirectory(), true, 'ordinary errors do not delete the failed store');
+        assert.equal(fss._pendingStorageClosures.size, 0);
+        assert.ok(file);
+    });
+}
+
+for (const bind of [false, true]) {
+    for (const indexer of ['BaseIndexer', 'VectorIndexer', 'ChunkIndexer'] as const) {
+        test(`WF2 non-BM25 ${indexer} recovery retains its policy with binding=${bind}`, async (t) => {
+            const { fss } = await owner(t);
+            await fss.close();
+            const construct = fss._newStorageHolder.bind(fss);
+            t.mock.method(fss, '_newStorageHolder', (request) =>
+                construct({ ...request, fullText: bind ? 'optional' : 'off' })
+            );
+            const Database = { BaseIndexer: BaseIndexDB, VectorIndexer: VectorIndexDB, ChunkIndexer: ChunkIndexDB }[
+                indexer
+            ];
+            const failure = Object.assign(new Error(`isolated ${indexer} corrupt`), { code: 'SQLITE_CORRUPT' });
+            constructorFault(t, Database, failure, true);
+            await fss.initialize();
+            assert.equal(fss.mode, 'full');
+            assert.equal(fss.scannerState.semantic_reset_pending, false);
+            assert.equal(fss.scannerState.last_rebuild_event.type, indexer === 'BaseIndexer' ? 'full' : 'vector');
+            assert.equal(fss._pendingStorageClosures.size, 0);
+        });
+    }
+}
+
 for (const code of ordinaryCodes) {
     test(`P3a ordinary base initialization ${code ?? 'unknown'} preserves generation and original failure`, async (t) => {
         modelConfigured = false;
@@ -104,34 +213,78 @@ for (const code of ordinaryCodes) {
 
 for (const metadata of ['consistent', 'missing']) {
     for (const code of ordinaryCodes) {
-        test(`P3a ordinary semantic opening ${metadata}/${code ?? 'unknown'} never drops products`, async (t) => {
-            const { fss } = await owner(t);
-            if (metadata === 'consistent') {
-                Object.assign(fss.scannerState, {
-                    vec_dim: 2,
-                    embedding_model: 'wf1-fixture',
-                    chunk_level: 'structured',
-                    vector_backend: 'native',
-                    chunk_backend: 'native',
-                    embedded_migrated: true
-                });
-                await fss.saveScannerState();
-            }
-            const previous = fss.storage;
-            const failure = Object.assign(new Error('isolated ordinary vector opening failure'), { code });
-            constructorFault(t, VectorIndexDB, failure);
-            const drops = spyDrops(t);
-            await assert.rejects(
-                fss.retrieval.prepare({ context: {}, reason: 'P3a ordinary error', role: 'write' }),
-                (error: unknown) => error === failure
-            );
-            assert.equal(drops.length, 0, 'ordinary or NOTADB errors never authorize a semantic reset');
-            assert.equal(fss.scannerState.embedding_generation, 0);
-            assert.equal(fss.scannerState.semantic_reset_pending, false);
-            assert.equal(fss.storage, previous, 'a healthy pre-swap base remains owned by FSStorage');
-            assert.equal(fss._pendingStorageClosures.size, 0);
-        });
+        for (const fullText of [false, true]) {
+            test(`P3a ordinary semantic opening ${metadata}/${code ?? 'unknown'}/bm25=${fullText} never drops products`, async (t) => {
+                const { fss } = await owner(t, { fullText });
+                assert.equal(Boolean(fss.storage.schema.needIndexers.full_text), fullText);
+                if (metadata === 'consistent') {
+                    Object.assign(fss.scannerState, {
+                        vec_dim: 2,
+                        embedding_model: 'wf1-fixture',
+                        chunk_level: 'structured',
+                        vector_backend: 'native',
+                        chunk_backend: 'native',
+                        embedded_migrated: true
+                    });
+                    await fss.saveScannerState();
+                }
+                const previous = fss.storage;
+                const failure = Object.assign(new Error('isolated ordinary vector opening failure'), { code });
+                constructorFault(t, VectorIndexDB, failure);
+                const drops = spyDrops(t);
+                await assert.rejects(
+                    fss.retrieval.prepare({ context: {}, reason: 'P3a ordinary error', role: 'write' }),
+                    (error: unknown) => error === failure
+                );
+                assert.equal(drops.length, 0, 'ordinary or NOTADB errors never authorize a semantic reset');
+                assert.equal(fss.scannerState.embedding_generation, 0);
+                assert.equal(fss.scannerState.semantic_reset_pending, false);
+                assert.equal(fss.storage, previous, 'a healthy pre-swap base remains owned by FSStorage');
+                assert.equal(fss._pendingStorageClosures.size, 0);
+            });
+        }
     }
+}
+
+for (const selection of ['full', 'semantic-missing', 'backend-mismatch']) {
+    test(`WF2 readonly ${selection} closes every discarded probe and holder`, async (t) => {
+        const { fss } = await owner(t);
+        await fss.retrieval.prepare({ context: {}, reason: 'readonly fixture', role: 'write' });
+        assert.equal(fss.mode, 'full');
+        if (selection === 'backend-mismatch') {
+            fss.scannerState.vector_backend = 'wasm';
+            await fss.saveScannerState();
+        }
+        await fss.close();
+        const reader = new FSStorage(fss._appDataDirectory);
+        t.after(() => reader.close());
+        const created: BaseStorage[] = [];
+        const closed = new Set<BaseStorage>();
+        const create = reader._newStorageHolder.bind(reader);
+        t.mock.method(reader, '_newStorageHolder', async (options) => {
+            const result = await create(options);
+            created.push(result.holder);
+            const close = result.holder.close.bind(result.holder);
+            t.mock.method(result.holder, 'close', async () => {
+                await close();
+                closed.add(result.holder);
+            });
+            return result;
+        });
+        if (selection === 'semantic-missing') {
+            const probe = BaseStorage.prototype.probeIndexers;
+            t.mock.method(BaseStorage.prototype, 'probeIndexers', function (names) {
+                return names.includes('VectorIndexer')
+                    ? Promise.resolve({ VectorIndexer: 'missing', ChunkIndexer: 'missing' })
+                    : probe.call(this, names);
+            });
+        }
+        await reader.initializeReadonly();
+        assert.equal(reader.mode, selection === 'full' ? 'full' : 'base-only');
+        assert.equal(created.length, selection === 'backend-mismatch' ? 4 : 3);
+        assert.ok(created.filter((holder) => holder !== reader.storage).every((holder) => closed.has(holder)));
+        assert.equal(closed.has(reader.storage), false, 'the published holder remains open');
+    });
 }
 
 test('P3a base CORRUPT discovered while opening full uses full recovery, not a semantic-only reset', async (t) => {
@@ -198,7 +351,7 @@ for (const code of [undefined, 'SQLITE_CORRUPT']) {
             if (arkdata === undefined) delete process.env.ARKDATA_AVAILABLE;
             else process.env.ARKDATA_AVAILABLE = arkdata;
         });
-        const { fss } = await owner(t);
+        const { fss } = await owner(t, { fullText: false });
         const failure = Object.assign(new Error('isolated WASM initialization failure'), { code });
         t.mock.method(VectorIndexDBWasm.prototype as any, 'initializeInternal', async () => {
             throw failure;
@@ -1273,7 +1426,7 @@ test('P3d refresh preserves base after deletion failed before its main file and 
     const initialize = BaseStorage.prototype.initialize;
     let once = true;
     t.mock.method(BaseStorage.prototype, 'initialize', async function (...args) {
-        if (once && Object.keys(this.schema.needIndexers).length > 0) {
+        if (once && this.schema.needIndexers.filename?.some((binding) => binding.indexer === 'VectorIndexer')) {
             once = false;
             entered.resolve();
             await gate.promise;
@@ -1597,3 +1750,108 @@ test('P3d a first-phase configuration validation rejection replaces the previous
     assert.equal(initialize.mock.callCount(), 0);
     assert.equal(worker.status, 'error');
 });
+
+for (const control of ['embedding', 'refresh', 'readonly-refresh', 'recovery-refresh', 'reset-refresh', 'workspace']) {
+    test(`filemgr control ${control} keeps successful action separate from failed attached statistics`, async (t) => {
+        modelConfigured = false;
+        const { worker, fss, root } = ['recovery-refresh', 'reset-refresh'].includes(control)
+            ? await failedWorker(t)
+            : await workerOwner(t);
+        if (!['recovery-refresh', 'reset-refresh'].includes(control)) worker.status = 'running';
+        if (control === 'readonly-refresh') worker._readonlyMode = true;
+        const snapshot = t.mock.method(worker, 'getFileSystemStatus', async () => {
+            throw new Error('isolated attached statistics failure');
+        });
+        const fail = t.mock.method(worker, '_failRuntime', async () => {
+            assert.fail('statistics must not fail runtime');
+        });
+        let result: any;
+        if (control === 'embedding') result = await worker.embeddingConfigChanged();
+        if (control === 'refresh' || control === 'readonly-refresh' || control === 'recovery-refresh')
+            result = await worker.forceRefreshScan();
+        if (control === 'reset-refresh') {
+            worker.taskQueue.pause();
+            const reset = worker.resetFileSystemStorage();
+            const refresh = worker.forceRefreshScan();
+            worker.taskQueue.start();
+            assert.equal((await reset).status, 'ok');
+            result = await refresh;
+        }
+        if (control === 'workspace') result = await worker.workspaceChanged(root);
+        await worker.taskQueue.onIdle();
+        assert.ok(snapshot.mock.callCount() > 0);
+        assert.equal(fail.mock.callCount(), 0);
+        assert.equal(result.status, control === 'readonly-refresh' ? 'error' : 'ok');
+        if (control === 'readonly-refresh') assert.equal(result.warning, WARNINGS.READONLY_MODE);
+        assert.equal(result.data.mode, null);
+        assert.equal(result.data.totals, null);
+        assert.equal(result.data.storage_stats, null);
+        assert.ok(result.data.sources.every((source: any) => source.full_text === undefined));
+        if (!['recovery-refresh', 'reset-refresh'].includes(control)) assert.equal(worker.storage, fss);
+    });
+}
+
+for (const state of ['readonly', 'initializing', 'error', 'no-storage']) {
+    test(`filemgr embedding control ${state} retains its lifecycle when attached statistics fail`, async (t) => {
+        modelConfigured = false;
+        const { worker, fss } = await workerOwner(t);
+        worker.status = 'running';
+        worker._lastConfig = worker.config;
+        const primary = new Error('retained runtime failure');
+        if (state === 'readonly') worker._readonlyMode = true;
+        if (state === 'error') {
+            worker.status = 'error';
+            worker._initError = primary;
+        }
+        if (state === 'no-storage') {
+            await fss.close();
+            worker.storage = null;
+            worker.status = 'idle';
+        }
+        if (state === 'initializing') {
+            worker.status = 'initializing';
+            worker._initializing = true;
+            worker.taskQueue.pause();
+        }
+        const snapshot = t.mock.method(worker, 'getFileSystemStatus', async () => {
+            throw new Error('isolated attached statistics failure');
+        });
+        const fail = t.mock.method(worker, '_failRuntime', async () => assert.fail('statistics must not fail runtime'));
+        const prepare = t.mock.method(fss.retrieval, 'prepare', fss.retrieval.prepare);
+        const continuation = t.mock.method(
+            worker,
+            '_continueInitializeAfterProbe',
+            worker._continueInitializeAfterProbe
+        );
+        const seq = worker._initSeq;
+        try {
+            const result = await worker.embeddingConfigChanged();
+            assert.equal(result.status, 'ok');
+            assert.equal(snapshot.mock.callCount(), 1);
+            assert.equal(prepare.mock.callCount(), 0);
+            assert.equal(fail.mock.callCount(), 0);
+            assert.equal(result.data.mode, null);
+            assert.equal(result.data.totals, null);
+            assert.equal(result.data.storage_stats, null);
+            assert.ok(result.data.sources.every((source: any) => source.full_text === undefined));
+            assert.equal(worker.storage, state === 'no-storage' ? null : fss);
+            assert.equal(worker._initSeq, state === 'initializing' ? seq + 1 : seq);
+            assert.equal(continuation.mock.callCount(), 0);
+            if (state === 'error') assert.equal(worker._initError, primary);
+            if (state === 'initializing') {
+                assert.equal(worker._initializing, true);
+                assert.equal(worker._pendingEmbeddingConfigChange, true);
+            }
+        } finally {
+            worker.taskQueue.start();
+            await worker.taskQueue.onIdle();
+        }
+        if (state === 'initializing') {
+            assert.equal(continuation.mock.callCount(), 1);
+            assert.equal(worker._initializing, false);
+            assert.equal(worker._pendingEmbeddingConfigChange, false);
+            assert.equal(worker.status, 'running');
+            assert.equal(fail.mock.callCount(), 0);
+        }
+    });
+}

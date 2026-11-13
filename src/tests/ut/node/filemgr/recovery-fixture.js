@@ -122,6 +122,8 @@ export async function fixture(t, names = ['A', 'B'], { start = true, files = ['o
         }
     };
     storage.storage = db;
+    // This in-memory metadata fixture has no BM25 store or build queue.
+    storage._fullTextByHolder.set(db, { bound: false, failure: 'open_failed' });
     for (const root of roots)
         storage.scannerState.roots[root] = {
             last_full_scan: 100,

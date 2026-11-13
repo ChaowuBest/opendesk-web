@@ -70,6 +70,14 @@ assert.deepEqual(
     ]
 );
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
+import { BM25Indexer } from '../../../../main/services/storage/bm25-indexer.js';
+import { recordStorageInitializationFailure } from '../../../../main/services/storage/platform.js';
+import {
+    FULL_TEXT_RULE_VERSION,
+    isFullTextReady
+} from '../../../../main/applications/filemgr/document-retrieval/common/full-text-state.js';
+import Database from 'better-sqlite3';
+import { probeBM25IndexStore } from '../../../../main/services/storage/bm25-index-db-factory.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
 import { setArkdataDatabaseKit } from '../../../../main/services/storage/arkdata-bridge.js';
@@ -197,6 +205,7 @@ if (!OPENROUTER_API_KEY) {
     LLM.batchEmbed = unavailable;
     LLM.rerank = unavailable;
     const deterministicTests = new Set([
+        testFullTextVersionLifecycle,
         testEmbedWithRetry429,
         testSearchFileByName,
         testSearchFileByContent,
@@ -239,6 +248,17 @@ if (!OPENROUTER_API_KEY) {
         testInitializeSyncEmbeddingGate,
         testProbeEmbeddingBudgetOptions,
         testMakeSchemaModes,
+        testFullTextVersionLifecycle,
+        testFullTextSearchReadinessAndScope,
+        testFullTextQueueSelectionAndOutcomes,
+        testFullTextRebuildAndFilePatches,
+        testFullTextReadonlyCleanup,
+        testFullTextOwnershipAndDeletion,
+        testFullTextReadonly,
+        testFullTextOpenFailures,
+        testFullTextResetRecovery,
+        testFullTextResetRetryFailures,
+        testFullTextAssemblyAndUpgrade,
         testMigrateRefCountBackfillsLegacyRowsOnce,
         testSearchItemsUnderRootUsesSubtreeBounds,
         testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren,
@@ -1263,14 +1283,16 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             embedded_count: 1,
             pending_count: 0,
             failed_count: 0,
-            last_scan_at: 2100
+            last_scan_at: 2100,
+            full_text: { indexable: 1, done: 0, pending: 1, failed: 0 }
         });
         assert.deepEqual(counts.get(rootA), {
             total_files: 3,
             embedded_count: 1,
             pending_count: 1,
             failed_count: 1,
-            last_scan_at: 1100
+            last_scan_at: 1100,
+            full_text: { indexable: 3, done: 0, pending: 3, failed: 0 }
         });
 
         await fss.close();
@@ -1316,7 +1338,8 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             embedded_count: 0,
             pending_count: 2,
             failed_count: 0,
-            last_scan_at: 1200
+            last_scan_at: 1200,
+            full_text: { indexable: 2, done: 0, pending: 2, failed: 0 }
         });
         assert.deepEqual(baseOnlyCounts.get(unavailableRoot), {
             total_files: 42,
@@ -1335,6 +1358,8 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
 async function testPerRootCountsUseRootRefsForOverlappingRoots() {
     console.log('  testPerRootCountsUseRootRefsForOverlappingRoots...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'full';
     fss.scannerState = { roots: { '/Documents': {}, '/Documents/sub': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1385,6 +1410,8 @@ async function testPerRootCountsUseRootRefsForOverlappingRoots() {
 async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
     console.log('  testPerRootCountsNormalizeRootRefsBeforeCompare...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'base-only';
     fss.scannerState = { roots: { '/Documents': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1425,6 +1452,8 @@ async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
 async function testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare() {
     console.log('  testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'base-only';
     fss.scannerState = { roots: { 'C:/Users/Stella/Docs': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1565,6 +1594,8 @@ async function testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight() {
             return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
+        fss._perRootCountsCache.get('/Documents').context = fss._capturePerRootCountsContext('/Documents');
+
         const timeout = Symbol('timeout');
         let result;
         try {
@@ -1701,6 +1732,8 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
             return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
+        fss._perRootCountsCache.get('/Documents').context = fss._capturePerRootCountsContext('/Documents');
+
         const counts = await fss.getPerRootCounts(['/Documents']);
         assert.equal(counts.get('/Documents').total_files, 7);
         const oldInFlight = fss._perRootCountsCache.get('/Documents').inFlight;
@@ -1709,7 +1742,7 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
         fss._clearPerRootCountsCache('/Documents');
         assert.equal(fss._perRootCountsCache.has('/Documents'), false);
         releaseBlocker();
-        await oldInFlight;
+        await assert.rejects(oldInFlight, { code: 'filemgr_counts_invalidated' });
 
         assert.equal(fss._getAnyCachedPerRootCount('/Documents'), null);
         assert.equal(fss._getFreshCachedPerRootCount('/Documents'), null);
@@ -3859,9 +3892,11 @@ async function testInitializeReadonlyOpensExistingBaseIndex() {
     );
     const dir = tmpDir('readonly-existing-base');
     try {
-        const writer = new FSStorage(dir);
+        // Seed a legacy base without scanner metadata; writable FSStorage now
+        // persists BM25 reset state as part of initialization.
+        const writer = new BaseStorage('filemgr', makeSchema(1024, { mode: 'base-only' }), path.join(dir, 'storage'));
         await writer.initialize();
-        writer.storage?.close?.();
+        await writer.close();
 
         const statePath = path.join(dir, 'scanner_state.json');
         assert.equal(fs.existsSync(statePath), false, 'setup should not write scanner state');
@@ -4731,6 +4766,17 @@ async function main() {
         testEmbedWithRetry429,
         testEmbedWithRetryUsesSmallApiBatch,
         testMakeSchemaModes,
+        testFullTextVersionLifecycle,
+        testFullTextSearchReadinessAndScope,
+        testFullTextQueueSelectionAndOutcomes,
+        testFullTextRebuildAndFilePatches,
+        testFullTextReadonlyCleanup,
+        testFullTextOwnershipAndDeletion,
+        testFullTextReadonly,
+        testFullTextOpenFailures,
+        testFullTextResetRecovery,
+        testFullTextResetRetryFailures,
+        testFullTextAssemblyAndUpgrade,
         testScannerStateNewField,
         testScannerStateMigratesLastFileCount,
         testScannerStateMigratesLastScanAt,
@@ -4835,3 +4881,938 @@ main().catch((e) => {
     console.error('Fatal:', e);
     process.exit(1);
 });
+
+async function withFullTextFixture(run) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-storage-'));
+    const owners = [];
+    const owner = () => {
+        const value = new FSStorage(directory);
+        owners.push(value);
+        return value;
+    };
+    try {
+        await run({ directory, owner });
+    } finally {
+        for (const value of owners) await value.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+async function testFullTextAssemblyAndUpgrade() {
+    for (const mode of ['base-only', 'full']) {
+        for (const fullText of [false, true]) {
+            await withFullTextFixture(async ({ directory }) => {
+                const schema = makeSchema(4, { mode, fullText });
+                assert.equal(schema.columns.bm25?.defaultValue, 0);
+                assert.equal(schema.columns.full_text?.nullable, true);
+                assert.equal(Boolean(schema.needIndexers.full_text), fullText);
+                const holder = new BaseStorage('filemgr', schema, path.join(directory, 'storage'));
+                try {
+                    await holder.initialize();
+                    assert.equal(Boolean((await holder.getStatus()).BM25Indexer), fullText);
+                } finally {
+                    await holder.close();
+                }
+            });
+        }
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        assert.deepEqual(fss.getFullTextState(), { available: true });
+        assert.equal(fss.scannerState.bm25_generation, 1);
+        assert.equal(fss.scannerState.bm25_rule_version, FULL_TEXT_RULE_VERSION);
+        assert.equal(fss.scannerState.bm25_reset_pending, false);
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: '/old.txt',
+                    item_type: 'file',
+                    type: 'file',
+                    bm25: 1,
+                    bm25_generation: 9,
+                    bm25_modified: 10,
+                    modified: 10
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        await fss.close();
+        const state = JSON.parse(fs.readFileSync(path.join(directory, 'scanner_state.json'), 'utf8'));
+        delete state.bm25_generation;
+        delete state.bm25_rule_version;
+        delete state.bm25_reset_pending;
+        fs.writeFileSync(path.join(directory, 'scanner_state.json'), JSON.stringify(state));
+        const upgraded = owner();
+        await upgraded.initialize({ syncEmbedding: false });
+        assert.equal(upgraded.scannerState.bm25_generation, 10);
+        const row = (
+            await upgraded.storage.search([
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: '/old.txt' }
+            ])
+        ).items[0].item;
+        assert.equal(isFullTextReady(row, 10), false);
+        assert.equal(row.full_text, null);
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const schema = makeSchema(4, { mode: 'base-only', fullTextColumns: false });
+        const old = new BaseStorage('filemgr', schema, path.join(directory, 'storage'));
+        await old.initialize();
+        await old.upsert([{ item_id: '/legacy.txt', item_type: 'file', type: 'file' }]);
+        await old.close();
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        const row = (await fss.storage.search([])).items[0].item;
+        assert.equal(row.bm25, 0);
+        assert.equal(row.bm25_generation, 0);
+        assert.equal(row.full_text, null);
+        assert.equal(fss.scannerState.bm25_generation, 1);
+    });
+}
+
+async function testFullTextResetRecovery() {
+    for (const stage of ['begin', 'complete']) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            assert.equal(fss.getFullTextState().available, true);
+            await fss.close();
+            const statePath = path.join(directory, 'scanner_state.json');
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            state.bm25_rule_version = 0;
+            fs.writeFileSync(statePath, JSON.stringify(state));
+            const bm25Path = path.join(directory, 'storage', 'bm25-index.db');
+            const beforeReset = fs.readFileSync(bm25Path);
+            const broken = owner();
+            const write = broken._writeScannerStateSnapshot;
+            let injected = 0;
+            broken._writeScannerStateSnapshot = async function (snapshot, commit) {
+                if (snapshot.bm25_reset_pending === (stage === 'begin')) {
+                    injected++;
+                    throw new Error('isolated full text snapshot failure');
+                }
+                return write.call(this, snapshot, commit);
+            };
+            await broken.initialize({ syncEmbedding: false });
+            assert.ok(injected > 0);
+            assert.deepEqual(broken.getFullTextState(), { available: false, reason: 'resetting' });
+            assert.equal(broken.scannerState.bm25_generation, stage === 'begin' ? 1 : 2);
+            const disk = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            assert.equal(disk.bm25_reset_pending, stage !== 'begin');
+            if (stage === 'begin') {
+                assert.equal(fs.existsSync(bm25Path), true, 'failed invalidation never deletes the BM25 store');
+                assert.deepEqual(fs.readFileSync(bm25Path), beforeReset);
+            }
+            await broken.close();
+            const resumed = owner();
+            await resumed.initialize({ syncEmbedding: false });
+            assert.equal(resumed.scannerState.bm25_generation, 2, 'resume must not advance the generation twice');
+            assert.deepEqual(resumed.getFullTextState(), { available: true });
+        });
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        await fss.storage.upsert([{ item_id: '/old.txt', item_type: 'file', type: 'file', bm25_generation: 6 }]);
+        await fss.close();
+        fs.writeFileSync(path.join(directory, 'scanner_state.json'), '{corrupt');
+        const interrupted = owner();
+        const write = interrupted._writeScannerStateSnapshot;
+        interrupted._writeScannerStateSnapshot = async function (snapshot, commit) {
+            if (snapshot.bm25_reset_pending === false) throw new Error('completion interrupted');
+            return write.call(this, snapshot, commit);
+        };
+        await interrupted.initialize({ syncEmbedding: false });
+        assert.equal(interrupted.scannerState.bm25_generation, null);
+        await interrupted.close();
+        const resumed = owner();
+        await resumed.initialize({ syncEmbedding: false });
+        assert.equal(resumed.scannerState.bm25_generation, 7);
+    });
+}
+
+async function testFullTextOpenFailures() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        await fss.close();
+        const database = new Database(path.join(directory, 'storage', 'bm25-index.db'));
+        database.pragma('user_version = 99');
+        database.close();
+        const reopened = owner();
+        await reopened.initialize({ syncEmbedding: false });
+        assert.deepEqual(reopened.getFullTextState(), { available: true });
+        assert.equal(reopened.scannerState.bm25_generation, 2);
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.saveFiles(
+            [{ path: path.join(directory, 'keep.txt'), filename: 'keep.txt', type: 'file', modified: 1, size: 1 }],
+            directory
+        );
+        await fss.close();
+        const database = new Database(path.join(directory, 'storage', 'bm25-index.db'));
+        database.exec('DROP INDEX postings_rec');
+        database.close();
+        const reopened = owner();
+        await reopened.initialize({ syncEmbedding: false });
+        assert.deepEqual(reopened.getFullTextState(), { available: true });
+        assert.equal(reopened.scannerState.bm25_generation, 2);
+        const rows = (await reopened.storage.search([])).items.map(({ item }) => item.item_id);
+        assert.deepEqual(rows, [path.join(directory, 'keep.txt')], 'only the BM25 store is rebuilt');
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        BM25Indexer.prototype.initialize = async function () {
+            const error = Object.assign(new Error('persistent schema failure'), { code: 'bm25_invalid_schema' });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+            throw error;
+        };
+        try {
+            const reopened = owner();
+            const drop = reopened._dropFullTextStore.bind(reopened);
+            let drops = 0;
+            reopened._dropFullTextStore = async () => {
+                drops++;
+                return drop();
+            };
+            await reopened.initialize({ syncEmbedding: false });
+            assert.equal(reopened.mode, 'base-only');
+            // Startup replaces the base holder with the full one when a model is configured.
+            await reopened._replaceRetrievalStorage({ dim: 2, mode: 'full' });
+            assert.equal(reopened.mode, 'full');
+            assert.equal(drops, 1, 'one reset is shared by every holder opened during initialization');
+            assert.equal(reopened.scannerState.bm25_generation, 2);
+            assert.deepEqual(reopened.getFullTextState(), { available: false, reason: 'open_failed' });
+            await reopened.initialize({ syncEmbedding: false });
+            assert.equal(drops, 2, 'a later initialization may try again once');
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+    for (const code of ['SQLITE_CORRUPT', 'EACCES', 'bm25_invalid_schema']) {
+        await withFullTextFixture(async ({ owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            assert.equal(fss.getFullTextState().available, true);
+            await fss.close();
+            const initialize = BM25Indexer.prototype.initialize;
+            let injected = 0;
+            BM25Indexer.prototype.initialize = async function () {
+                if (injected++ === 0 || code !== 'SQLITE_CORRUPT') {
+                    const error = Object.assign(new Error('isolated BM25 failure'), { code });
+                    recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+                    throw error;
+                }
+                return initialize.call(this);
+            };
+            try {
+                const reopened = owner();
+                await reopened.initialize({ syncEmbedding: false });
+                assert.ok(injected > 0);
+                assert.deepEqual(
+                    reopened.getFullTextState(),
+                    code === 'SQLITE_CORRUPT' ? { available: true } : { available: false, reason: 'open_failed' }
+                );
+                // A persistent schema failure is reset once, then falls back.
+                assert.equal(reopened.scannerState.bm25_generation, code === 'EACCES' ? 1 : 2);
+                if (code === 'bm25_invalid_schema') assert.equal(injected, 2);
+                assert.equal(reopened.mode, 'base-only');
+            } finally {
+                BM25Indexer.prototype.initialize = initialize;
+            }
+        });
+    }
+}
+
+async function testFullTextReadonly() {
+    for (const scenario of [
+        'exists',
+        'pending',
+        'rule',
+        'generation',
+        'missing',
+        'uninitialized',
+        'incompatible',
+        'open_failed'
+    ]) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const writer = owner();
+            await writer.initialize({ syncEmbedding: false });
+            assert.equal(writer.getFullTextState().available, true);
+            await writer.close();
+            const statePath = path.join(directory, 'scanner_state.json');
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            if (scenario === 'pending') state.bm25_reset_pending = true;
+            if (scenario === 'rule') state.bm25_rule_version = 0;
+            if (scenario === 'generation') state.bm25_generation = null;
+            fs.writeFileSync(statePath, JSON.stringify(state));
+            const dbPath = path.join(directory, 'storage', 'bm25-index.db');
+            if (['missing', 'uninitialized', 'open_failed'].includes(scenario)) fs.rmSync(dbPath);
+            if (scenario === 'uninitialized') fs.writeFileSync(dbPath, '');
+            if (scenario === 'open_failed') fs.mkdirSync(dbPath);
+            if (scenario === 'incompatible') {
+                const db = new Database(dbPath);
+                db.pragma('user_version = 99');
+                db.close();
+            }
+            const before = fs.readFileSync(statePath, 'utf8');
+            const reader = owner();
+            const created = [];
+            const closed = new Set();
+            const create = reader._newStorageHolder.bind(reader);
+            reader._newStorageHolder = async (options) => {
+                const result = await create(options);
+                created.push(result.holder);
+                const close = result.holder.close.bind(result.holder);
+                result.holder.close = async () => {
+                    await close();
+                    closed.add(result.holder);
+                };
+                return result;
+            };
+            await reader.initializeReadonly();
+            assert.ok(reader.storage, scenario);
+            assert.deepEqual(
+                reader.getFullTextState(),
+                scenario === 'exists'
+                    ? { available: true }
+                    : {
+                          available: false,
+                          reason: ['pending', 'rule', 'generation'].includes(scenario) ? 'resetting' : 'open_failed'
+                      }
+            );
+            assert.equal(fs.readFileSync(statePath, 'utf8'), before, 'readonly never persists BM25 state');
+            if (scenario === 'missing') assert.equal(fs.existsSync(dbPath), false);
+            assert.ok(created.length >= 2);
+            assert.ok(
+                created.filter((holder) => holder !== reader.storage).every((holder) => closed.has(holder)),
+                scenario
+            );
+        });
+    }
+}
+
+async function testFullTextOwnershipAndDeletion() {
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const old = fss.storage;
+        const initialize = BM25Indexer.prototype.initialize;
+        let injected = 0;
+        BM25Indexer.prototype.initialize = async function () {
+            injected++;
+            const error = Object.assign(new Error('candidate incompatible'), { code: 'bm25_index_version_mismatch' });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer' });
+            throw error;
+        };
+        try {
+            await fss._replaceRetrievalStorage({ dim: 4, mode: 'base-only' }, async () => ({
+                publish: false,
+                afterDiscard() {}
+            }));
+            assert.equal(injected, 1);
+            assert.equal(fss.storage, old);
+            assert.equal(fss.scannerState.bm25_reset_pending, true);
+            assert.deepEqual(fss.getFullTextState(), { available: false, reason: 'resetting' });
+            assert.ok((await old.getStatus()).BM25Indexer, 'D2 preserves the old physical owner');
+            await assert.rejects(
+                () => fss._newStorageHolder({ dim: 4, mode: 'base-only', fullText: 'required', role: 'write' }),
+                /still owned/
+            );
+            assert.equal(injected, 1, 'required D2 does not initialize a successor');
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+    for (const required of [false, true]) {
+        await withFullTextFixture(async ({ owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            await fss.close();
+            const initialize = BM25Indexer.prototype.initialize;
+            let injected = 0;
+            const failure = new Error('BM25 denied');
+            recordStorageInitializationFailure(failure, { indexer: 'BM25Indexer' });
+            BM25Indexer.prototype.initialize = async () => {
+                injected++;
+                throw failure;
+            };
+            try {
+                const options = { dim: 4, mode: 'base-only', role: 'write', fullText: required ? 'required' : 'off' };
+                const created = await fss._newStorageHolder(options);
+                if (required)
+                    await assert.rejects(
+                        () => fss._openStorageHolder(created, options),
+                        (error) => error === failure
+                    );
+                else {
+                    const holder = await fss._openStorageHolder(created, options);
+                    await fss._closeBaseStorage(holder);
+                }
+                assert.equal(injected, required ? 1 : 0);
+            } finally {
+                BM25Indexer.prototype.initialize = initialize;
+            }
+        });
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const statePath = path.join(directory, 'scanner_state.json');
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        state.bm25_rule_version = 0;
+        fs.writeFileSync(statePath, JSON.stringify(state));
+        const remove = fs.rmSync;
+        const initialize = BaseStorage.prototype.initialize;
+        const failure = Object.assign(new Error('BM25 delete denied'), { code: 'EACCES' });
+        let opens = 0,
+            deletes = 0;
+        fs.rmSync = (target, options) => {
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) {
+                deletes++;
+                throw failure;
+            }
+            return remove(target, options);
+        };
+        BaseStorage.prototype.initialize = async function () {
+            opens++;
+            return initialize.call(this);
+        };
+        try {
+            const failed = owner();
+            await assert.rejects(
+                () => failed.initialize({ syncEmbedding: false }),
+                (error) => error === failure
+            );
+            assert.equal(deletes, 1);
+            assert.equal(opens, 0);
+            assert.equal(failed.scannerState.bm25_generation, 2);
+            assert.equal(failed.scannerState.bm25_reset_pending, true);
+        } finally {
+            fs.rmSync = remove;
+            BaseStorage.prototype.initialize = initialize;
+        }
+        const resumed = owner();
+        await resumed.initialize({ syncEmbedding: false });
+        assert.equal(resumed.scannerState.bm25_generation, 2);
+        assert.equal(resumed.getFullTextState().available, true);
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        const close = BM25Indexer.prototype.close;
+        let opens = 0,
+            closes = 0;
+        const primary = Object.assign(new Error('BM25 corrupt with cleanup failure'), { code: 'SQLITE_CORRUPT' });
+        recordStorageInitializationFailure(primary, { indexer: 'BM25Indexer', backend: 'native' });
+        BM25Indexer.prototype.initialize = async () => {
+            opens++;
+            throw primary;
+        };
+        BM25Indexer.prototype.close = async () => {
+            closes++;
+            throw new Error('BM25 still held');
+        };
+        const broken = owner();
+        try {
+            await assert.rejects(
+                () => broken.initialize({ syncEmbedding: false }),
+                (error) => error === primary
+            );
+            assert.equal(opens, 1);
+            assert.ok(closes > 0);
+            assert.equal(broken._pendingStorageClosures.size, 1);
+            assert.equal(broken.scannerState.bm25_reset_pending, false);
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+            BM25Indexer.prototype.close = close;
+        }
+        await broken._retryStorageClosures();
+        assert.equal(broken._pendingStorageClosures.size, 0);
+    });
+}
+
+async function testFullTextReadonlyCleanup() {
+    await withFullTextFixture(async ({ owner }) => {
+        const writer = owner();
+        await writer.initialize({ syncEmbedding: false });
+        await writer.close();
+        const probe = BM25Indexer.prototype.probeBM25Store;
+        const initialize = BaseStorage.prototype.initialize;
+        let failing = true,
+            opens = 0,
+            observed;
+        BM25Indexer.prototype.probeBM25Store = async function () {
+            this.dependencies.probe = async (dbPath, retain) => {
+                observed = await probeBM25IndexStore(dbPath, retain, {
+                    wrapDriver(driver) {
+                        const close = driver.close.bind(driver);
+                        driver.close = () => {
+                            if (failing) throw new Error('isolated probe cleanup failure');
+                            return close();
+                        };
+                        return driver;
+                    }
+                });
+                return observed;
+            };
+            return probe.call(this);
+        };
+        BaseStorage.prototype.initialize = async function () {
+            opens++;
+            return initialize.call(this);
+        };
+        const reader = owner();
+        try {
+            await reader.initializeReadonly();
+            assert.equal(observed.status, 'open_failed');
+            assert.equal(observed.failure.operation, 'close');
+            assert.equal(reader.storage, null);
+            assert.equal(reader.deferredReason, 'open_failed');
+            assert.equal(opens, 0, 'probe cleanup failure forbids every successor initialization');
+            assert.equal(reader._pendingStorageClosures.size, 1);
+        } finally {
+            failing = false;
+            BM25Indexer.prototype.probeBM25Store = probe;
+            BaseStorage.prototype.initialize = initialize;
+        }
+        await reader._retryStorageClosures();
+        assert.equal(reader._pendingStorageClosures.size, 0);
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const writer = owner();
+        await writer.initialize({ syncEmbedding: false });
+        await writer.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        let injected = 0;
+        BM25Indexer.prototype.initialize = async () => {
+            injected++;
+            const error = Object.assign(new Error('readonly open failed after successful probe'), {
+                code: 'SQLITE_CORRUPT'
+            });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+            throw error;
+        };
+        try {
+            const reader = owner();
+            await reader.initializeReadonly();
+            assert.equal(injected, 1);
+            assert.deepEqual(reader.getFullTextState(), { available: false, reason: 'open_failed' });
+            assert.equal(reader.scannerState.bm25_generation, 1);
+            assert.equal(reader.scannerState.bm25_reset_pending, false);
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+}
+
+async function testFullTextRebuildAndFilePatches() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const primary = Object.assign(new Error('rebuild BM25 delete denied'), { code: 'EACCES' });
+        const remove = fs.rmSync;
+        const basePath = path.join(directory, 'storage', 'base-index.db');
+        const deleted = [];
+        fs.rmSync = (target, options) => {
+            deleted.push(target);
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) throw primary;
+            return remove(target, options);
+        };
+        try {
+            await assert.rejects(fss.rebuildAll('WF2 deletion failure'), (error) => error === primary);
+            assert.equal(deleted.includes(basePath), false);
+            assert.equal(fs.existsSync(basePath), true);
+            const state = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
+            assert.equal(state.bm25_reset_pending, true);
+            assert.equal(state.semantic_reset_pending, true);
+            assert.equal(state.bm25_generation, 2);
+        } finally {
+            fs.rmSync = remove;
+        }
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const file = path.join(directory, 'metadata.txt');
+        fs.writeFileSync(file, 'metadata text');
+        const entry = makeFileEntry(file);
+        await fss.saveFiles([entry], directory);
+        const read = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+                .items[0].item;
+        assert.equal((await read()).bm25, 0);
+        await fss.storage.update(
+            [{ item_id: file, item_type: 'file', bm25: 1, bm25_generation: 1, bm25_modified: entry.modified }],
+            { indexers: ['BaseIndexer'] }
+        );
+        await fss.saveFiles([entry], path.dirname(directory));
+        let row = await read();
+        assert.equal(row.bm25, 1);
+        assert.equal(row.bm25_generation, 1);
+        assert.equal(row.bm25_modified, entry.modified);
+        assert.equal(row.full_text, null);
+        await fss.saveFiles([{ ...entry, modified: entry.modified + 10 }], directory);
+        row = await read();
+        assert.equal(row.bm25, 0);
+        assert.equal(row.full_text, null);
+        const steps = [];
+        const close = fss._closeBaseStorage.bind(fss);
+        fss._closeBaseStorage = async (holder) => {
+            if (holder === fss.storage && holder) {
+                const state = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
+                assert.equal(state.bm25_reset_pending, true);
+                assert.equal(state.semantic_reset_pending, true);
+                steps.push('close');
+            }
+            return close(holder);
+        };
+        const remove = fs.rmSync;
+        fs.rmSync = (target, options) => {
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) steps.push('bm25');
+            if (target === path.join(directory, 'storage', 'base-index.db')) steps.push('base');
+            return remove(target, options);
+        };
+        const complete = fss._completeFullTextReset.bind(fss);
+        fss._completeFullTextReset = async (holder) => {
+            steps.push('complete');
+            return complete(holder);
+        };
+        const settings = Setting.getInstance().data;
+        Setting.updateInstanceData({ ...settings, default_embedding_model: '' });
+        try {
+            await fss.rebuildAll('WF2 fixture');
+        } finally {
+            Setting.updateInstanceData(settings);
+            fs.rmSync = remove;
+            fss._closeBaseStorage = close;
+        }
+        assert.deepEqual(steps, ['close', 'bm25', 'base', 'complete']);
+        assert.equal(fss.scannerState.bm25_reset_pending, false);
+        assert.equal(fss.scannerState.semantic_reset_pending, true);
+    });
+}
+
+async function testFullTextResetRetryFailures() {
+    for (const [indexer, code] of [
+        ['BM25Indexer', 'EACCES'],
+        ['BM25Indexer', 'SQLITE_CORRUPT'],
+        ['BaseIndexer', 'EACCES']
+    ]) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const original = owner();
+            await original.initialize({ syncEmbedding: false });
+            await original.close();
+            const second = Object.assign(new Error('reset retry opening failure'), { code });
+            recordStorageInitializationFailure(second, { indexer, backend: 'native' });
+            const first = Object.assign(new Error('initial BM25 corruption'), { code: 'SQLITE_CORRUPT' });
+            recordStorageInitializationFailure(first, { indexer: 'BM25Indexer', backend: 'native' });
+            const initialize = BaseStorage.prototype.initialize;
+            const remove = fs.rmSync;
+            let opens = 0;
+            let deletes = 0;
+            BaseStorage.prototype.initialize = async function () {
+                opens++;
+                if (opens === 1) throw first;
+                if (opens === 2) throw second;
+                return initialize.call(this);
+            };
+            fs.rmSync = (target, options) => {
+                if (target === path.join(directory, 'storage', 'bm25-index.db')) deletes++;
+                return remove(target, options);
+            };
+            const reopened = owner();
+            try {
+                if (indexer === 'BaseIndexer') {
+                    await assert.rejects(reopened.initialize({ syncEmbedding: false }), (error) => error === second);
+                    assert.equal(opens, 2);
+                } else {
+                    await reopened.initialize({ syncEmbedding: false });
+                    assert.equal(opens, 3);
+                    assert.deepEqual(reopened.getFullTextState(), { available: false, reason: 'open_failed' });
+                }
+                assert.equal(deletes, 1, 'a reset retry never deletes the store twice');
+                assert.equal(reopened.scannerState.bm25_generation, 2);
+                assert.equal(reopened.scannerState.bm25_reset_pending, true);
+                const state = JSON.parse(fs.readFileSync(reopened._scannerStatePath, 'utf8'));
+                assert.equal(state.bm25_reset_pending, true);
+            } finally {
+                BaseStorage.prototype.initialize = initialize;
+                fs.rmSync = remove;
+            }
+        });
+    }
+}
+
+async function testFullTextQueueSelectionAndOutcomes() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const active = path.join(directory, 'active');
+        const paused = path.join(directory, 'paused');
+        fs.mkdirSync(active);
+        fs.mkdirSync(paused);
+        const files = ['fresh.txt', 'old.txt', 'retry.txt', 'failed.txt'];
+        for (const file of files) fs.writeFileSync(path.join(active, file), 'wf2queuetoken');
+        const pausedFile = path.join(paused, 'paused.txt');
+        fs.writeFileSync(pausedFile, 'wf2queuetoken');
+        await fss.saveFiles(
+            files.map((file) => makeFileEntry(path.join(active, file))),
+            active
+        );
+        await fss.saveFiles([makeFileEntry(pausedFile)], paused);
+        await fss.storage.update(
+            [
+                { item_id: path.join(active, 'old.txt'), item_type: 'file', bm25: -2, bm25_generation: 0 },
+                { item_id: path.join(active, 'retry.txt'), item_type: 'file', bm25: -1, bm25_generation: 1 },
+                { item_id: path.join(active, 'failed.txt'), item_type: 'file', bm25: -2, bm25_generation: 1 }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const upsert = fss.storage.upsert.bind(fss.storage);
+        const built = [];
+        fss.storage.upsert = async (items, options) => {
+            if (options?.indexers?.includes('BM25Indexer')) built.push(path.basename(items[0].item_id));
+            return upsert(items, options);
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [active], limit: 1 }), {
+            outcome: 'completed',
+            processed: 3
+        });
+        assert.deepEqual(
+            built,
+            ['fresh.txt', 'old.txt', 'retry.txt'],
+            'paused fresh rows must not starve a runnable retry'
+        );
+        assert.equal((await fss.storage.searchBM25('wf2queuetoken', { field: 'full_text', topK: 10 })).length, 3);
+        assert.deepEqual(await fss.processFullTextQueue(() => true, { activeRoots: [active] }), {
+            outcome: 'yielded',
+            processed: 0
+        });
+        fss.storage.upsert = async () => {
+            throw new Error('BM25 queue disk failure');
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [paused] }), {
+            outcome: 'stopped',
+            processed: 0
+        });
+        assert.equal(
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: pausedFile }]))
+                .items[0].item.bm25,
+            0
+        );
+        fss.storage.upsert = upsert;
+        let changed = false;
+        const search = fss.storage.search.bind(fss.storage);
+        fss.storage.search = async (...args) => {
+            const result = await search(...args);
+            if (!changed) {
+                changed = true;
+                fss.scannerState.bm25_generation++;
+            }
+            return result;
+        };
+        assert.equal((await fss.processFullTextQueue(() => false, { activeRoots: [paused] })).outcome, 'stale');
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const files = [];
+        for (let index = 0; index < 53; index++) {
+            const file = path.join(directory, `batch-${index}.txt`);
+            fs.writeFileSync(file, '');
+            files.push(makeFileEntry(file));
+        }
+        const broken = path.join(directory, 'broken.docx');
+        fs.writeFileSync(broken, 'not an office document');
+        files.push(makeFileEntry(broken));
+        await fss.saveFiles(files, directory);
+        const select = fss._selectPendingEmbeddingCandidates.bind(fss);
+        const sizes = [];
+        // Cache refills pass batchLimit; only the per-batch selection is recorded.
+        fss._selectPendingEmbeddingCandidates = (items, options) => {
+            const batch = select(items, options);
+            if (options.batchLimit === undefined) sizes.push(batch.length);
+            return batch;
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [directory] }), {
+            outcome: 'completed',
+            processed: 53
+        });
+        assert.equal(sizes[0], 50);
+        const row = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: broken }]))
+                .items[0].item;
+        assert.equal((await row()).bm25, -1, 'same-round failure must not be retried');
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        assert.equal((await row()).bm25, -2);
+    });
+}
+
+async function testFullTextVersionLifecycle() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize();
+        assert.equal(fss.mode, 'full');
+        const file = path.join(directory, 'version.txt');
+        fs.writeFileSync(file, 'wf2versionone');
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        const row = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+                .items[0].item;
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        await fss.retrieval.buildStep(await row());
+        const first = await row();
+        assert.equal(first.embedded, 1);
+        assert.equal(isFullTextReady(first, fss.scannerState.bm25_generation), true);
+        assert.equal(first.bm25_modified, first.modified);
+        assert.equal((await fss.searchFullText('wf2versionone')).length, 1);
+        fs.writeFileSync(file, 'wf2versiontwo different length');
+        fs.utimesSync(file, new Date(), new Date(first.modified + 2000));
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [directory] }), {
+            outcome: 'completed',
+            processed: 0
+        });
+        await fss.retrieval.buildStep(first);
+        const advanced = await row();
+        assert.notEqual(advanced.modified, first.modified, 'embedding production build advances the observed version');
+        assert.equal(advanced.embedded, 1);
+        assert.equal(isFullTextReady(advanced, fss.scannerState.bm25_generation), false);
+        assert.deepEqual(await fss.searchFullText('wf2versionone'), []);
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        assert.equal((await row()).bm25, 0, 'scan invalidates BM25 even after embedding advanced modified');
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        const both = await row();
+        assert.equal(both.embedded, 1);
+        assert.equal(isFullTextReady(both, fss.scannerState.bm25_generation), true);
+        assert.equal(both.bm25_modified, both.modified);
+        assert.equal((await fss.searchFullText('wf2versiontwo')).length, 1);
+        assert.deepEqual(await fss.searchFullText('wf2versionone'), []);
+        await fss.saveFiles([makeFileEntry(file)], path.dirname(directory));
+        const refOnly = await row();
+        for (const key of ['bm25', 'bm25_generation', 'bm25_modified', 'full_text'])
+            assert.equal(refOnly[key], both[key]);
+        await fss.storage.update([{ item_id: file, item_type: 'file', bm25: -1, bm25_modified: first.modified }], {
+            indexers: ['BaseIndexer']
+        });
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        assert.equal((await row()).bm25, -1);
+        await fss.storage.delete([file]);
+        assert.deepEqual(await fss.storage.searchBM25('wf2versiontwo', { field: 'full_text', topK: 5 }), []);
+    });
+}
+
+async function testFullTextSearchReadinessAndScope() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const sub = path.join(directory, 'sub');
+        fs.mkdirSync(sub);
+        const paths = [];
+        for (const name of [
+            '鸿蒙操作系统说明.txt',
+            '鸿蒙笔记.txt',
+            'pending.txt',
+            'old.txt',
+            'drift.txt',
+            'hidden.txt',
+            'sub/inside.txt'
+        ]) {
+            const file = path.join(directory, name);
+            fs.writeFileSync(file, 'wf2searchtoken');
+            paths.push(file);
+        }
+        await fss.saveFiles(paths.map(makeFileEntry), directory);
+        assert.deepEqual(
+            (await fss.searchIndexedFilesByKeyword('鸿蒙 操作系统', { terms: ['鸿蒙', '操作系统'] }))
+                .map((x) => x.filename)
+                .sort(),
+            ['鸿蒙操作系统说明.txt', '鸿蒙笔记.txt'].sort()
+        );
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        const g = fss.scannerState.bm25_generation;
+        await fss.storage.update(
+            [
+                { item_id: paths[2], item_type: 'file', bm25: 0 },
+                { item_id: paths[3], item_type: 'file', bm25_generation: g + 1 },
+                { item_id: paths[4], item_type: 'file', bm25_modified: 1 },
+                { item_id: paths[5], item_type: 'file', ref_count: 0 }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const orphan = path.join(directory, 'orphan.txt');
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: orphan,
+                    item_type: 'file',
+                    indexer_columns: { BM25Indexer: [{ column: 'full_text', content: 'wf2searchtoken' }] }
+                }
+            ],
+            { indexers: ['BM25Indexer'] }
+        );
+        const calls = [];
+        const holder = fss.storage;
+        const raw = holder.searchBM25.bind(holder),
+            scoped = holder.searchScope.bind(holder);
+        holder.searchBM25 = async (q, o) => {
+            calls.push(['raw', q, o]);
+            return raw(q, o);
+        };
+        holder.searchScope = async (q, o) => {
+            calls.push(['scope', q, o]);
+            return scoped(q, o);
+        };
+        const found = await fss.searchFullText('wf2searchtoken', { topK: 1000 });
+        assert.deepEqual(found.map((x) => x.item_id).sort(), [paths[0], paths[1], paths[6]].sort());
+        assert.deepEqual(
+            found.map((x) => x.bm25Rank),
+            [1, 2, 3]
+        );
+        assert.equal(calls[0][0], 'raw');
+        assert.equal(calls[0][2].topK, 200);
+        const restricted = await fss.searchFullText('wf2searchtoken', { topK: 7, scope: { type: 'path', path: sub } });
+        assert.deepEqual(
+            restricted.map((x) => x.item_id),
+            [paths[6]]
+        );
+        assert.deepEqual(
+            restricted.map((x) => x.bm25Rank),
+            [1]
+        );
+        assert.equal(calls[1][0], 'scope');
+        assert.equal(calls[1][1].targetCondition.value.topK, 14);
+        assert.deepEqual(
+            calls[1][1].preconditions.map((x) => [x.field, x.value]),
+            [
+                ['type', 'file'],
+                ['bm25', 1],
+                ['bm25_generation', g],
+                ['ref_count', 0],
+                ['item_id', sub]
+            ]
+        );
+        const context = fss.captureFullTextContext();
+        assert.equal(fss.isFullTextContextCurrent(context), true);
+        fss.scannerState.embedding_generation++;
+        assert.equal(fss.isFullTextContextCurrent(context), true);
+        fss.scannerState.bm25_generation++;
+        assert.equal(fss.isFullTextContextCurrent(context), false);
+        fss.scannerState.bm25_generation--;
+        fss.scannerState.bm25_reset_pending = true;
+        assert.equal(fss.isFullTextContextCurrent(context), false);
+        assert.deepEqual(await fss.searchFullText('wf2searchtoken'), []);
+    });
+}
