@@ -228,6 +228,8 @@ PI_TUI_VERSION=$(node -p "require('./package.json').dependencies['@earendil-work
 # The copied account plugin loads this package at runtime outside the CLI bundle.
 SERVER_SDK_VERSION=$(node -e "process.stdout.write(require('./package.json').dependencies['@bitclub.ai/opendesk-server-sdk'])")
 
+JIEBA_WASM_VERSION=$(node -p "require('./package.json').dependencies['jieba-wasm']")
+
 cat > "$RELEASE_DIR/package.json" << EOF
 {
   "name": "@bitclub.ai/opendesk-cli",
@@ -251,6 +253,7 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "@bitclub.ai/opendesk-server-sdk": "$SERVER_SDK_VERSION",
     "hnsw": "^1.1.1",
     "node-sqlite3-wasm": "^0.8.55",
+    "jieba-wasm": "${JIEBA_WASM_VERSION}",
     "number-to-alphabet": "^1.0.0",
     "vectra": "^0.11.1",
     "esbuild": "^0.27.3",

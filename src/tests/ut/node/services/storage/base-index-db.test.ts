@@ -466,16 +466,13 @@ async function testArkDataPathDescendantOrSelfBindings() {
         const scopedCalls = calls.filter((call) => call.sql.includes('ESCAPE'));
         assert.ok(scopedCalls.length >= 2);
         for (const call of scopedCalls) {
-            assert.ok(
-                call.sql.includes(
-                    `((item_id = ? OR item_id LIKE ? ESCAPE '\\') OR (item_id = ? OR item_id LIKE ? ESCAPE '\\'))`
-                )
-            );
-            assert.deepEqual(call.params.slice(0, 4), [
+            // The vector SDK needs escaped wildcards in a literal pattern. Equality still binds each root.
+            assert.ok(call.sql.includes(
+                "((item_id = ? OR item_id LIKE '/a/ % _dir/%' ESCAPE ' ') OR (item_id = ? OR item_id LIKE '/b/ _root/%' ESCAPE ' '))"
+            ));
+            assert.deepEqual(call.params.slice(0, 2), [
                 { t: 'scalar', v: '/a/%_dir' },
-                { t: 'scalar', v: '/a/\\%\\_dir/%' },
-                { t: 'scalar', v: '/b/_root' },
-                { t: 'scalar', v: '/b/\\_root/%' }
+                { t: 'scalar', v: '/b/_root' }
             ]);
         }
 

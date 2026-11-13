@@ -18,9 +18,7 @@ export function normalizePathDescendantOrSelfValue(value: unknown): string {
 export function normalizePathDescendantOrSelfValues(value: unknown): string[] {
     const values = Array.isArray(value) ? Array.from(value) : [value];
     if (values.length === 0) {
-        throw new Error(
-            'path_descendant_or_self operator requires a non-empty string or non-empty string array value'
-        );
+        throw new Error('path_descendant_or_self operator requires a non-empty string or non-empty string array value');
     }
     return values.map((entry) => normalizePathDescendantOrSelfValue(entry));
 }

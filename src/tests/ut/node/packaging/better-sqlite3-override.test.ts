@@ -1,8 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
-import fs from 'fs';
-import path from 'path';
 
 const require = createRequire(import.meta.url);
 
@@ -24,6 +22,10 @@ const pkg: any = require('../../../../../package.json');
  * 注意：对根直接依赖的包设置 override 时，npm 要求 override spec 与根依赖
  * spec 完全一致才会生效；硬编码版本（如 "13.0.3" vs 根的 "^13.0.3"）会被
  * npm 静默忽略——agent-moss 的 override 曾因此长期未生效。必须保持 $ 引用写法。
+ *
+ * 仓库不跟踪 package-lock.json，这里只验证可复现的依赖声明；安装产物中的
+ * 实际去重与原生模块加载仍需在打包验收中验证。
+ * 具体待办见 src/main/services/storage/STORAGE_ARCHITECTURE.md 的 Windows SQLite 发布验收清单。
  */
 
 test('package.json overrides 对两个 @kenhkl 子包统一 better-sqlite3（$ 引用式，防 npm 静默忽略）', () => {
@@ -43,20 +45,4 @@ test('根 optionalDependencies 必须声明 better-sqlite3（$ 引用式 overrid
         pkg.optionalDependencies?.['better-sqlite3'],
         '$better-sqlite3 引用要求根声明该依赖，删除后 override 会失效'
     );
-});
-
-test('package-lock 不得包含 @kenhkl 嵌套的 better-sqlite3（ABI 编译副本回归守卫）', () => {
-    const lockPath = path.join(path.dirname(require.resolve('../../../../../package.json')), 'package-lock.json');
-    const lockText = fs.readFileSync(lockPath, 'utf8');
-    for (const scoped of ['agent-gate', 'agent-moss']) {
-        const marker = `"node_modules/@kenhkl/${scoped}/node_modules/better-sqlite3": {`;
-        assert.equal(
-            lockText.includes(marker),
-            false,
-            `package-lock 出现嵌套 better-sqlite3（@kenhkl/${scoped}）：嵌套副本按构建机系统` +
-                ' node ABI 编译，打包后 Electron-as-node 无法加载，将复现 Windows 安装包' +
-                ' "better-sqlite3 is not installed" 故障。请确认 overrides 仍为 $better-sqlite3' +
-                ' 引用式，删除该嵌套 lock 条目后重新 npm install。'
-        );
-    }
 });

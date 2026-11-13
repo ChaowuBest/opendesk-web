@@ -43,8 +43,11 @@
 import { retryArkdataStoreReleases } from './arkdata-bridge.js';
 import type { BaseCountGroup } from './grouped-count.js';
 import path from 'path';
-import { Indexer } from './indexer.js';
-import { BM25Indexer } from './bm25-indexer.js';
+import { Indexer, type IndexerSearchCandidate } from './indexer.js';
+import { BM25Indexer, resolveBM25Access } from './bm25-indexer.js';
+import type { BM25SearchOptions, BM25RecordHit, BM25StoreProbeResult } from './bm25-indexer.js';
+import { assertBM25Integer } from './bm25-scoring.js';
+export type { BM25SearchOptions, BM25RecordHit, BM25StoreProbeResult } from './bm25-indexer.js';
 import type { IVectorIndexDB } from './vector-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
@@ -75,7 +78,10 @@ export interface SearchItem {
     ChunkScore?: number;
     chunk_id?: string; // 新增：匹配的 chunk 标识符
     chunk_text?: string; // 新增：匹配的 chunk 原文
+    bm25Record?: { field: string; subKey: string };
 }
+
+type PendingSearchItem = Omit<SearchItem, 'item'> & { item: IndexerSearchCandidate };
 
 export interface SemanticWriteAvailability {
     acceptingWrites: boolean;
@@ -211,6 +217,12 @@ export function validateColumnSchema(schema: ColumnSchema): void {
         }
     }
 
+    try {
+        resolveBM25Access(schema);
+    } catch (error) {
+        errors.push((error as Error).message);
+    }
+
     if (errors.length > 0) {
         throw new SchemaValidationError(`Schema validation failed:\n${errors.join('\n')}`, invalidColumns);
     }
@@ -307,7 +319,7 @@ export interface ScopedSearchOptions {
 
 export interface ScopedSearchDiagnostics {
     backend: 'native' | 'arkdata' | 'wasm';
-    target: 'vector' | 'chunk';
+    target: 'vector' | 'chunk' | 'bm25';
     strategy: 'exact_temp' | 'exact_in' | 'ann_overfetch_filter';
     requestedK: number;
     topK: number;
@@ -442,11 +454,31 @@ function validateScopedSearchRequest(request: ScopedSearchRequest): void {
     if (!target || typeof target !== 'object' || Array.isArray(target)) {
         throw new ScopedSearchValidationError('Scoped search target must be an object');
     }
-    if (!['VectorIndexer', 'ChunkIndexer'].includes(target.indexer)) {
-        throw new ScopedSearchValidationError('Scoped search target must be VectorIndexer or ChunkIndexer');
+    if (!['VectorIndexer', 'ChunkIndexer', 'BM25Indexer'].includes(target.indexer)) {
+        throw new ScopedSearchValidationError(
+            'Scoped search target must be VectorIndexer, ChunkIndexer or BM25Indexer'
+        );
     }
     if (typeof target.field !== 'string' || target.field.trim().length === 0) {
         throw new ScopedSearchValidationError('Scoped search target field must be a non-empty string');
+    }
+    if (target.indexer === 'BM25Indexer') {
+        if (
+            target.operator !== 'bm25_match' ||
+            !target.value ||
+            typeof target.value !== 'object' ||
+            Array.isArray(target.value) ||
+            typeof target.value.query !== 'string' ||
+            target.vectorQuery !== undefined
+        ) {
+            throw new ScopedSearchValidationError('Scoped BM25 target requires bm25_match and a BM25Query');
+        }
+        try {
+            assertBM25Integer(target.value.topK === undefined ? 10 : target.value.topK, 1, 'topK');
+        } catch (error) {
+            throw new ScopedSearchValidationError((error as Error).message);
+        }
+        return;
     }
     if (target.operator !== 'vector_near') {
         throw new ScopedSearchValidationError('Scoped search target operator must be vector_near');
@@ -495,7 +527,7 @@ export type DropIndexName = 'BaseIndexer' | 'BM25Indexer' | 'TagIndexer' | 'Vect
  * BaseStorage - 协调多个 Indexer 的统一存储接口
  */
 export class BaseStorage {
-    private bm25Indexer: Indexer | null = null;
+    private bm25Indexer: BM25Indexer | null = null;
     // 语义索引器固定由 VectorIndexer / ChunkIndexer 构造（见构造函数），
     // 它们实现了 Indexer 上可选的语义能力方法（getBackend / probeStore / getWriteState），
     // 因此这里按具体子类声明，避免调用方把真实存在的语义能力当成“可能缺失”。
@@ -587,7 +619,9 @@ export class BaseStorage {
                                 ? this.vectorIndexer?.getBackend()
                                 : name === 'ChunkIndexer'
                                   ? this.chunkIndexer?.getBackend()
-                                  : undefined;
+                                  : name === 'BM25Indexer'
+                                    ? this.bm25Indexer?.getBackend()
+                                    : undefined;
                     } catch {
                         // A constructor may fail before its indexer receives the DB.
                     }
@@ -624,12 +658,23 @@ export class BaseStorage {
         return this.baseIndexer.probeStore();
     }
 
-    async probeIndexers(
-        indexers: Array<'VectorIndexer' | 'ChunkIndexer'>
-    ): Promise<Partial<Record<'VectorIndexer' | 'ChunkIndexer', BaseIndexStoreProbeResult>>> {
+    async probeIndexers(indexers: Array<'VectorIndexer' | 'ChunkIndexer' | 'BM25Indexer'>): Promise<
+        Partial<{
+            VectorIndexer: BaseIndexStoreProbeResult;
+            ChunkIndexer: BaseIndexStoreProbeResult;
+            BM25Indexer: BM25StoreProbeResult;
+        }>
+    > {
         this.ensureUsable();
-        const result: Partial<Record<'VectorIndexer' | 'ChunkIndexer', BaseIndexStoreProbeResult>> = {};
+        const result: Partial<{
+            VectorIndexer: BaseIndexStoreProbeResult;
+            ChunkIndexer: BaseIndexStoreProbeResult;
+            BM25Indexer: BM25StoreProbeResult;
+        }> = {};
         for (const indexer of indexers) {
+            this.ensureUsable();
+            if (indexer === 'BM25Indexer')
+                result.BM25Indexer = this.bm25Indexer ? await this.bm25Indexer.probeBM25Store() : { status: 'missing' };
             if (indexer === 'VectorIndexer') {
                 result.VectorIndexer = this.vectorIndexer ? await this.vectorIndexer.probeStore() : 'missing';
             }
@@ -695,7 +740,7 @@ export class BaseStorage {
             return this.searchWithChunkIndexer(filterConditions);
         }
 
-        let results: SearchItem[] = [];
+        let results: PendingSearchItem[] = [];
         let hasInitialData = false;
 
         // 按 indexer 分组条件
@@ -731,10 +776,18 @@ export class BaseStorage {
             // Groups were validated above and can only belong to BaseIndexer.
             const leafConditions = conditions.filter((condition): condition is FilterCondition => !('or' in condition));
 
-            if (!hasInitialData) {
+            if (indexerName === 'BM25Indexer') {
+                results = await this.searchBM25Candidates(
+                    leafConditions,
+                    hasInitialData ? results : undefined,
+                    hasInitialData ? {} : options
+                );
+                hasInitialData = true;
+            } else if (!hasInitialData) {
                 // 第一个有条件的 indexer，获取初始数据
                 const searchResult = await indexer.search(leafConditions, options);
-                results = this.itemsToSearchItems(searchResult.items, searchResult.scores, indexerName);
+                const complete = this.itemsToSearchItems(searchResult.items, searchResult.scores, indexerName);
+                results = complete;
                 hasInitialData = true;
             } else {
                 // 后续 indexer，基于已有结果进行 join
@@ -742,7 +795,8 @@ export class BaseStorage {
                 const searchResult = await indexer.search(leafConditions, {
                     existingResults: existingItems
                 });
-                results = this.mergeSearchResults(results, searchResult.items, searchResult.scores, indexerName);
+                const complete = this.mergeSearchResults(results, searchResult.items, searchResult.scores, indexerName);
+                results = complete;
             }
 
             // 提前退出：如果结果为空
@@ -751,10 +805,57 @@ export class BaseStorage {
             }
         }
 
-        return {
-            items: results,
-            totalCount: results.length
-        };
+        return { items: [], totalCount: 0 };
+    }
+
+    private async searchBM25Candidates(
+        conditions: FilterCondition[],
+        previous: PendingSearchItem[] | undefined,
+        options: Omit<IndexerSearchOptions, 'existingResults'>
+    ): Promise<PendingSearchItem[]> {
+        const condition = conditions[0];
+        if (condition.operator !== 'bm25_match') throw new Error('BM25Indexer requires bm25_match');
+        const query = condition.value as BM25Query;
+        const topK = query?.topK ?? options.limit ?? 10;
+        if (typeof topK !== 'number') throw new Error('Invalid BM25 topK');
+        // The generic stage historically sliced 2K candidates, then stopped its
+        // item loop at >= K. Raw/scope keep their stricter positive-integer API.
+        this.bm25Indexer!.validateSearch(query?.query, { field: condition.field });
+        const candidateCount = Math.trunc(topK * 2);
+        if (Number.isNaN(candidateCount) || candidateCount === 0 || candidateCount === -Infinity) {
+            // Empty results still require the normal holder and transaction version checks.
+            await this.searchBM25(query?.query, { field: condition.field, topK: 1, allowedItemIds: [] });
+            return [];
+        }
+        const hits = (
+            await this.searchBM25(query?.query, {
+                field: condition.field,
+                topK: candidateCount > 0 ? Math.min(candidateCount, Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER
+            })
+        ).slice(0, candidateCount);
+        const ids = new Set<string>();
+        for (const hit of hits) {
+            if (ids.has(hit.item_id))
+                throw new Error('Multiple BM25 records for one item require searchBM25 or searchScope');
+            ids.add(hit.item_id);
+        }
+        const previousMap = previous ? new Map(previous.map((result) => [result.item.item_id, result])) : undefined;
+        let results = hits
+            .filter((hit) => !previousMap || previousMap.has(hit.item_id))
+            .slice(0, Math.max(1, Math.ceil(topK)))
+            .map((hit) => {
+                const existing = previousMap?.get(hit.item_id);
+                return { ...existing, item: existing?.item ?? { item_id: hit.item_id }, BM25Score: hit.score };
+            });
+        if (options.offset !== undefined) results = results.slice(options.offset);
+        if (options.limit !== undefined && options.limit < results.length) results = results.slice(0, options.limit);
+        return results;
+    }
+
+    async searchBM25(query: string, options: BM25SearchOptions): Promise<BM25RecordHit[]> {
+        this.ensureUsable();
+        if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');
+        return this.bm25Indexer.searchHits(query, options);
     }
 
     async searchScope(request: ScopedSearchRequest, options: ScopedSearchOptions = {}): Promise<ScopedSearchResult> {
@@ -762,6 +863,18 @@ export class BaseStorage {
         validateScopedSearchRequest(request);
         if (request.preconditions.some((condition) => 'or' in condition))
             this.baseIndexer.validateOrGroups(request.preconditions);
+        if (request.targetCondition.indexer === 'BM25Indexer') {
+            if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');
+            try {
+                this.bm25Indexer.validateSearch(request.targetCondition.value.query, {
+                    field: request.targetCondition.field,
+                    topK: request.targetCondition.value.topK
+                });
+            } catch (error) {
+                throw new ScopedSearchValidationError((error as Error).message);
+            }
+            return this.searchBM25Scope(request, options, this.bm25Indexer);
+        }
 
         const startedAt = Date.now();
         const memoryBefore = options.collectDiagnostics ? process.memoryUsage().rss : 0;
@@ -835,6 +948,63 @@ export class BaseStorage {
                 targetSearchLatencyMs,
                 mergeLatencyMs,
                 latencyMs: Date.now() - startedAt,
+                memoryBeforeRssBytes: memoryBefore,
+                memoryAfterRssBytes: memoryAfter,
+                memoryDeltaRssBytes: memoryAfter - memoryBefore
+            };
+        }
+        return result;
+    }
+
+    private async searchBM25Scope(
+        request: ScopedSearchRequest,
+        options: ScopedSearchOptions,
+        indexer: BM25Indexer
+    ): Promise<ScopedSearchResult> {
+        const started = Date.now();
+        const memoryBefore = options.collectDiagnostics ? process.memoryUsage().rss : 0;
+        const base = await this.baseIndexer.search(request.preconditions);
+        const baseLatency = Date.now() - started;
+        const candidates = new Map(base.items.map((item) => [item.item_id, item]));
+        const field = request.targetCondition.field;
+        const topK = request.targetCondition.value.topK ?? 10;
+        const targetStart = Date.now();
+        const targetResult = await indexer.searchHitsWithDiagnostics(
+            request.targetCondition.value.query,
+            {
+                field,
+                topK,
+                allowedItemIds: [...candidates.keys()]
+            },
+            options.collectDiagnostics
+        );
+        const hits = targetResult.hits;
+        const targetLatency = Date.now() - targetStart;
+        const mergeStart = Date.now();
+        const items: SearchItem[] = hits.map((hit) => {
+            const item = candidates.get(hit.item_id);
+            if (!item) throw new Error('BM25 scope returned an item outside its candidate set');
+            return { item, tags: item.tag, BM25Score: hit.score, bm25Record: { field: hit.field, subKey: hit.subKey } };
+        });
+        const result: ScopedSearchResult = { items, totalCount: items.length };
+        const mergeLatency = Date.now() - mergeStart;
+        if (options.collectDiagnostics) {
+            const info = targetResult.diagnostics ? undefined : await indexer.getInfo();
+            const memoryAfter = process.memoryUsage().rss;
+            result.diagnostics = {
+                backend: indexer.getBackend(),
+                target: 'bm25',
+                strategy: targetResult.diagnostics?.strategy ?? 'exact_temp',
+                requestedK: topK,
+                topK,
+                totalTargetRows: targetResult.diagnostics?.totalTargetRows ?? info?.fields[field]?.n ?? 0,
+                exactCandidateCount: targetResult.diagnostics?.exactCandidateCount ?? candidates.size,
+                exactBatchSize: targetResult.diagnostics?.exactBatchSize ?? candidates.size,
+                exactBatchCount: targetResult.diagnostics?.exactBatchCount ?? (candidates.size ? 1 : 0),
+                basePrefilterLatencyMs: baseLatency,
+                targetSearchLatencyMs: targetLatency,
+                mergeLatencyMs: mergeLatency,
+                latencyMs: Date.now() - started,
                 memoryBeforeRssBytes: memoryBefore,
                 memoryAfterRssBytes: memoryAfter,
                 memoryDeltaRssBytes: memoryAfter - memoryBefore
@@ -968,13 +1138,25 @@ export class BaseStorage {
      */
     async getStatus(): Promise<Record<string, Record<string, any>>> {
         this.ensureUsable();
+        let failure: { error: unknown } | undefined;
+        const readInfo = async (indexer: Indexer | null): Promise<Record<string, any>> => {
+            try {
+                return indexer ? await indexer.getInfo() : {};
+            } catch (error) {
+                // Preserve the first failure, but let every started query settle
+                // before a caller can release this holder.
+                failure ??= { error };
+                return {};
+            }
+        };
         const [baseInfo, bm25Info, vectorInfo, tagInfo, chunkInfo] = await Promise.all([
-            this.baseIndexer.getInfo(),
-            this.bm25Indexer ? this.bm25Indexer.getInfo() : Promise.resolve({}),
-            this.vectorIndexer ? this.vectorIndexer.getInfo() : Promise.resolve({}),
-            this.tagIndexer ? this.tagIndexer.getInfo() : Promise.resolve({}),
-            this.chunkIndexer ? this.chunkIndexer.getInfo() : Promise.resolve({})
+            readInfo(this.baseIndexer),
+            readInfo(this.bm25Indexer),
+            readInfo(this.vectorIndexer),
+            readInfo(this.tagIndexer),
+            readInfo(this.chunkIndexer)
         ]);
+        if (failure) throw failure.error;
         return {
             BaseIndexer: baseInfo,
             ...(this.bm25Indexer && { BM25Indexer: bm25Info }),
@@ -1014,7 +1196,7 @@ export class BaseStorage {
             // belong to these stores and must participate in the same close contract.
             const temporary = await Promise.allSettled([
                 retryArkdataStoreReleases(
-                    ['base-index.db', 'vector-index.db', 'chunk-index.db'].map((file) =>
+                    ['base-index.db', 'vector-index.db', 'chunk-index.db', 'bm25-index.db'].map((file) =>
                         path.join(this.dbBasePath, file)
                     )
                 )
@@ -1204,7 +1386,7 @@ export class BaseStorage {
      * 合并搜索结果
      */
     private mergeSearchResults(
-        existing: SearchItem[],
+        existing: PendingSearchItem[],
         newItems: Item[],
         scores?: Map<string, number>,
         indexerName?: string

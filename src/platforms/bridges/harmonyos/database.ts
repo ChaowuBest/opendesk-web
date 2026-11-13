@@ -13,6 +13,9 @@ import { createHash } from 'node:crypto';
 import { logger } from '../../../main/utils/logger.js';
 import { ArkDataBridgeError, executePreparedManyBatchedWith } from '../common.js';
 import type {
+    ArkDataBM25Request,
+    ArkDataBM25Result,
+    ArkDataTransactionOptions,
     ArkDataBatchOptions,
     ArkDataCloseStoreOptions,
     ArkDataExecManyOptions,
@@ -382,6 +385,11 @@ function logSqlFailure(
     extra?: Record<string, unknown>
 ) {
     const err = error as { code?: string; category?: string; message?: string; details?: unknown } | null | undefined;
+    // SDK messages and SQL diagnostics may contain indexed file contents.
+    if (typeof extra?.txId === 'string' && extra.txId.startsWith('otx_')) {
+        logger.warn(`[arkdata] ${operation} failed storeId=${storeId} code=${err?.code ?? 'unknown'}`);
+        return;
+    }
     logger.warn(
         `[arkdata] ${operation} failed storeId=${storeId} code=${err?.code ?? 'unknown'} ` +
             `category=${err?.category ?? 'unknown'} message=${err?.message ?? String(error)} ` +
@@ -596,7 +604,10 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
             await pollReady(EtsBridgeMethods.ARKDATA_CLOSE_STORE_FORCE_READY, start.opId);
             return;
         }
-        const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_CLOSE_STORE_START, [storeId]);
+        const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_CLOSE_STORE_START, [
+            storeId,
+            ''
+        ]);
         await pollReady(EtsBridgeMethods.ARKDATA_CLOSE_STORE_READY, start.opId);
     }
 
@@ -610,11 +621,7 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
         try {
             statementId = await this.beginPrepared(storeId, sql);
             await callArkEnvelope(EtsBridgeMethods.ARKDATA_BIND_PARAMS, [statementId, stringifyParams(params)]);
-            const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_EXECUTE_PREPARED_START, [
-                storeId,
-                statementId,
-                opts.txId ?? ''
-            ]);
+            const start = await this.startPrepared(storeId, statementId, opts.txId, 'execute');
             const ready = await pollReady<{ affectedRows?: number | null }>(
                 EtsBridgeMethods.ARKDATA_EXECUTE_PREPARED_READY,
                 start.opId
@@ -683,11 +690,7 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
         try {
             statementId = await this.beginPrepared(storeId, sql);
             await callArkEnvelope(EtsBridgeMethods.ARKDATA_BIND_PARAMS, [statementId, stringifyParams(params)]);
-            const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_EXECUTE_PREPARED_START, [
-                storeId,
-                statementId,
-                opts.txId ?? ''
-            ]);
+            const start = await this.startPrepared(storeId, statementId, opts.txId, 'query');
             const ready = await pollReady<{ rows?: ArkDataRow[] }>(
                 EtsBridgeMethods.ARKDATA_EXECUTE_PREPARED_READY,
                 start.opId
@@ -701,8 +704,26 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
         }
     }
 
-    async beginTransaction(storeId: string): Promise<ArkDataTxHandle> {
-        const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_BEGIN_TRANS_START, [storeId]);
+    async bm25Query(storeId: string, request: ArkDataBM25Request, txId: string): Promise<ArkDataBM25Result> {
+        const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_BM25_QUERY_START, [
+            storeId,
+            JSON.stringify(request),
+            txId
+        ]);
+        const ready = await pollReady<{ bm25: ArkDataBM25Result }>(
+            EtsBridgeMethods.ARKDATA_BM25_QUERY_READY,
+            start.opId
+        );
+        return ready.bm25;
+    }
+
+    async beginTransaction(storeId: string, opts?: ArkDataTransactionOptions): Promise<ArkDataTxHandle> {
+        const start = opts
+            ? await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_BEGIN_OBJECT_TRANS_START, [
+                  storeId,
+                  opts.mode
+              ])
+            : await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_BEGIN_TRANS_START, [storeId]);
         const ready = await pollReady<{ txId: string }>(EtsBridgeMethods.ARKDATA_BEGIN_TRANS_READY, start.opId);
         return { id: ready.txId };
     }
@@ -759,6 +780,23 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
             throw commitErr;
         }
         return result;
+    }
+
+    private startPrepared(storeId: string, statementId: string, txId: string | undefined, intent: 'execute' | 'query') {
+        // AKI caches the callback signature per binding. Keep the legacy binding at three arguments.
+        if (txId?.startsWith('otx_')) {
+            return callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_EXECUTE_OBJECT_PREPARED_START, [
+                storeId,
+                statementId,
+                txId,
+                intent
+            ]);
+        }
+        return callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_EXECUTE_PREPARED_START, [
+            storeId,
+            statementId,
+            txId ?? ''
+        ]);
     }
 
     private async beginPrepared(storeId: string, sql: string): Promise<string> {

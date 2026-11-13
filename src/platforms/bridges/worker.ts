@@ -20,6 +20,9 @@ import {
     type ArkDataExecResult,
     type ArkDataOpenStoreOptions,
     type ArkDataRow,
+    type ArkDataTransactionOptions,
+    type ArkDataBM25Request,
+    type ArkDataBM25Result,
     type ArkDataTxHandle,
     type ArkDataValueType,
     type DatabaseKit
@@ -97,8 +100,12 @@ export class WorkerDatabaseKitProxy implements DatabaseKit {
         return this.worker.callAppWithResponse('databaseKitCall', 'queryPrepared', storeId, sql, params, opts);
     }
 
-    beginTransaction(storeId: string): Promise<ArkDataTxHandle> {
-        return this.worker.callAppWithResponse('databaseKitCall', 'beginTransaction', storeId);
+    bm25Query(storeId: string, request: ArkDataBM25Request, txId: string): Promise<ArkDataBM25Result> {
+        return this.worker.callAppWithResponse('databaseKitCall', 'bm25Query', storeId, request, txId);
+    }
+
+    beginTransaction(storeId: string, opts?: ArkDataTransactionOptions): Promise<ArkDataTxHandle> {
+        return this.worker.callAppWithResponse('databaseKitCall', 'beginTransaction', storeId, opts);
     }
 
     commitTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void> {

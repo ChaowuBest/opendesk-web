@@ -29,9 +29,11 @@ import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 /**
  * 索引器搜索选项
  */
+export type IndexerSearchCandidate = Pick<Item, 'item_id'> & Partial<Item>;
+
 export interface IndexerSearchOptions {
     /** 已有结果集，用于 join 过滤 */
-    existingResults?: Item[];
+    existingResults?: IndexerSearchCandidate[];
     /** 返回结果数量限制 */
     limit?: number;
     /** 跳过的结果数量 */

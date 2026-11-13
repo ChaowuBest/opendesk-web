@@ -27,10 +27,12 @@ import { ChunkIndexDBArkdata } from '../../../../../../main/services/storage/chu
 // error envelopes, proxy calls and resource session identities remain real.
 const timer = globalThis.setTimeout;
 let shorten = false;
+const rpcDeadlineMs = 5;
 globalThis.setTimeout = ((fn: any, ms: number, ...args: any[]) =>
-    timer(fn, shorten && ms === 60_000 ? 5 : ms, ...args)) as typeof setTimeout;
+    timer(fn, shorten && ms === 60_000 ? rpcDeadlineMs : ms, ...args)) as typeof setTimeout;
 parentPort!.on('message', (message) => {
     if (message.type === 'response') BaseWorker.handleAppResponse(message);
+    if (message.type === 'exitNow') process.exit(0);
 });
 const { name, scenario } = workerData;
 setCustomOpendeskDirectory(workerData.profile);
@@ -49,34 +51,36 @@ function create(): any {
     if (name === 'vector') return new VectorIndexDBArkdata(file, 2);
     return new ChunkIndexDBArkdata(file, 2);
 }
-const db = create();
-let other: any;
-try {
-    let code: string | undefined;
-    if (scenario === 'rpc-open-timeout') {
-        shorten = true;
-        await assert.rejects(db.count(), (error: any) => {
-            code = error.code;
-            return code === 'rpc_timeout';
-        });
-    } else {
-        await db.count();
-        shorten = true;
-        await assert.rejects(db.close(), (error: any) => {
-            code = error.code;
-            return code === 'rpc_timeout';
-        });
+{
+    const db = create();
+    let other: any;
+    try {
+        let code: string | undefined;
+        if (scenario === 'rpc-open-timeout') {
+            shorten = true;
+            await assert.rejects(db.count(), (error: any) => {
+                code = error.code;
+                return code === 'rpc_timeout';
+            });
+        } else {
+            await db.count();
+            shorten = true;
+            await assert.rejects(db.close(), (error: any) => {
+                code = error.code;
+                return code === 'rpc_timeout';
+            });
+        }
+        shorten = false;
+        parentPort!.postMessage({ type: 'timeoutObserved' });
+        if (scenario === 'rpc-close-aba') {
+            other = create();
+            await other.count();
+        }
+        await db.close();
+        if (other) await other.count();
+        await other?.close();
+        parentPort!.postMessage({ type: 'done', code });
+    } catch (error) {
+        parentPort!.postMessage({ type: 'failure', message: String((error as Error).stack ?? error) });
     }
-    shorten = false;
-    parentPort!.postMessage({ type: 'timeoutObserved' });
-    if (scenario === 'rpc-close-aba') {
-        other = create();
-        await other.count();
-    }
-    await db.close();
-    if (other) await other.count();
-    await other?.close();
-    parentPort!.postMessage({ type: 'done', code });
-} catch (error) {
-    parentPort!.postMessage({ type: 'failure', message: String((error as Error).stack ?? error) });
 }

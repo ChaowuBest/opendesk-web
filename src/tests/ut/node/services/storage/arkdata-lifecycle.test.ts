@@ -132,13 +132,13 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
             }
             control.sqlKit?.deleteStore(id);
         },
-        getRdbStore: async (_context?: any, config?: any) => {
+        getRdbStore: async (_context: any, config: { name: string }) => {
             calls.sdkOpens++;
             await control.openGate?.promise;
             if (
                 control.openError &&
                 (!control.openErrorStorePrefix ||
-                    sdkIdentities.get(config?.name)?.startsWith(control.openErrorStorePrefix))
+                    sdkIdentities.get(config.name)?.startsWith(control.openErrorStorePrefix))
             ) {
                 const error = control.openError;
                 if (control.openErrorOnce) control.openError = null;
@@ -201,26 +201,33 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
             const name = arkDataStoreName(id, options.path);
             sdkIdentities.set(name, id);
             if (adapter) return deletionBridge.deleteStore(id, options);
-            return sdk.deleteRdbStore({}, { name });
+            try {
+                await sdk.deleteRdbStore({}, { name });
+            } catch (error) {
+                // This branch stands in for DatabaseKit, including the adapter's SDK error envelope.
+                const sdkError = error as Error & { code?: unknown };
+                throw new ArkDataBridgeError('store_delete_failed', 'diagnostic', 'Failed to delete store', {
+                    storeId: id,
+                    operation: 'DeleteStoreStart',
+                    path: name,
+                    sdkErrorCode: typeof sdkError.code === 'number' ? sdkError.code : null,
+                    sdkMessage: sdkError.message
+                });
+            }
         },
         async openStore(id: string, options: any) {
             calls.acquires++;
-            sdkIdentities.set(arkDataStoreName(id, options.path), id);
+            const name = arkDataStoreName(id, options.path);
+            sdkIdentities.set(name, id);
             if (adapter) {
-                const result = checked(
-                    adapter.openStoreStart(
-                        id,
-                        arkDataStoreName(id, options.path),
-                        JSON.stringify({ vector: options.vector })
-                    )
-                );
+                const result = checked(adapter.openStoreStart(id, name, JSON.stringify({ vector: options.vector })));
                 if (result.opId) await ready('openStoreReady', result.opId);
                 return;
             }
             let record = stores.get(id);
             if (record) record.references++;
             else {
-                record = { references: 1, opening: sdk.getRdbStore() };
+                record = { references: 1, opening: sdk.getRdbStore({}, { name }) };
                 stores.set(id, record);
             }
             try {
@@ -1798,6 +1805,7 @@ for (const mode of ['full', 'base-only', 'none'])
                         assert.equal(result.status, 'error');
                         assert.equal(worker.status, 'error');
                         assert.equal(worker._initError.code, 'store_delete_failed');
+                        assert.equal(worker._initError.category, 'diagnostic');
                         assert.equal(worker._initError.details.sdkErrorCode, 14800011);
                         assert.equal(worker._initError.details.storeId, f.control.deleteTarget);
                         assert.equal(initializationRecovery(worker._initError), null);

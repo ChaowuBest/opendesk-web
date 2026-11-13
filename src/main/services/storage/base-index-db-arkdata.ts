@@ -957,6 +957,25 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         return rows[0];
     }
 
+    private buildLiteralLikeClause(field: string, pattern: string, params: any[]): string {
+        // The vector SDK mishandles bound patterns and doubled escape characters.
+        // Use an absent ASCII escape so literal characters never need doubling.
+        if (pattern.includes('\\') && !pattern.includes('\0')) {
+            const comparablePattern = pattern.toLowerCase();
+            for (let code = 32; code <= 126; code++) {
+                const escape = String.fromCharCode(code);
+                if ("'\\%_".includes(escape) || comparablePattern.includes(escape.toLowerCase())) continue;
+                const sdkPattern = pattern.replace(/\\([\\%_])/g, (_match, escaped: string) =>
+                    escaped === '\\' ? escaped : `${escape}${escaped}`
+                );
+                return `${field} LIKE '${sdkPattern.replaceAll("'", "''")}' ESCAPE '${escape}'`;
+            }
+        }
+        // Keep NUL and patterns without an available SDK escape on the original path.
+        params.push(pattern);
+        return `${field} LIKE ? ESCAPE '\\'`;
+    }
+
     private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
         const clauses: string[] = [];
         const params: any[] = [];
@@ -973,8 +992,8 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             if (op === 'path_descendant_or_self') {
                 const pathClauses = normalizePathDescendantOrSelfValues(value).map((pathValue) => {
                     const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(pathValue);
-                    params.push(normalizedPath, descendantPattern);
-                    return `(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`;
+                    params.push(normalizedPath);
+                    return `(${field} = ? OR ${this.buildLiteralLikeClause(field, descendantPattern, params)})`;
                 });
                 clauses.push(pathClauses.length === 1 ? pathClauses[0] : `(${pathClauses.join(' OR ')})`);
             } else if (op === 'in' || op === 'notin') {
@@ -994,8 +1013,7 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
             } else if (op === 'contains_literal') {
-                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
-                params.push(literalContainsPattern(value));
+                clauses.push(this.buildLiteralLikeClause(field, literalContainsPattern(value), params));
             } else if (op === 'like') {
                 clauses.push(`${field} LIKE ?`);
                 params.push(value);

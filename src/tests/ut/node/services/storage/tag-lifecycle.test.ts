@@ -38,11 +38,13 @@ for (const [name, Class] of [
     test(`${name} WASM closes retry failure and do not close a released connection twice`, () => {
         let attempts = 0;
         const db: any = Object.assign(Object.create(Class.prototype), {
-            db: {
+            [name === 'BM25' ? 'driver' : 'db']: {
+                backend: 'wasm',
                 close() {
                     if (++attempts === 1) throw new Error('isolated close failure');
                 }
-            }
+            },
+            ...(name === 'BM25' ? { statements: new Map() } : {})
         });
         assert.throws(() => db.close(), /isolated close failure/);
         db.close();
