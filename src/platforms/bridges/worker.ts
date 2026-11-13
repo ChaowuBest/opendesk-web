@@ -44,6 +44,10 @@ export class WorkerDatabaseKitProxy implements DatabaseKit {
         return this.worker.callAppWithResponse('databaseKitCall', 'querySqlShort', storeId, sql);
     }
 
+    deleteStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
+        return this.worker.callAppWithResponse('databaseKitCall', 'deleteStore', storeId, opts);
+    }
+
     openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
         return this.worker.callAppWithResponse('databaseKitCall', 'openStore', storeId, opts);
     }

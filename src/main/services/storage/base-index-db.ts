@@ -23,6 +23,13 @@ import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import {
+    recordStorageInitializationFailure,
+    recordStorageCleanupFailure,
+    handoffStorageInitializationCleanup,
+    type RetainStorageInitializationCleanup
+} from './platform.js';
+
 import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 import {
     compileOrGroup,
@@ -91,7 +98,7 @@ export class BaseIndexDB implements IBaseIndexDB {
     private requiredFields: string[];
     private readonly dbPath: string;
 
-    constructor(dbPath: string, schema: ColumnSchema) {
+    constructor(dbPath: string, schema: ColumnSchema, retainCleanup?: RetainStorageInitializationCleanup) {
         // 验证 schema
         validateColumnSchema(schema);
         this.schema = schema;
@@ -124,10 +131,13 @@ export class BaseIndexDB implements IBaseIndexDB {
             this.initializeTable();
         } catch (error) {
             // The failed constructor cannot hand its connection to the caller.
+            recordStorageInitializationFailure(error, { indexer: 'BaseIndexer', backend: 'native' });
             try {
                 this.db.close();
-            } catch {
+            } catch (cleanupError) {
                 /* Preserve the initialization failure. */
+                recordStorageCleanupFailure(error, cleanupError, 'BaseIndexer');
+                handoffStorageInitializationCleanup(error, () => this.close(), retainCleanup);
             }
             throw error;
         }

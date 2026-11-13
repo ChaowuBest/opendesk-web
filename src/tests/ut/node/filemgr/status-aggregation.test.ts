@@ -25,7 +25,7 @@ async function fixture(run: (fss: any, db: BaseIndexDBWasm) => Promise<void>) {
     };
     const fss = Object.create(FSStorage.prototype);
     Object.assign(fss, { storage, mode: 'base-only', scannerState: { roots: {}, unavailable_roots: {} } });
-    fss._getSemanticWriteState = async () => null;
+    fss.retrieval._getSemanticWriteState = async () => null;
     try {
         await run(fss, db);
     } finally {

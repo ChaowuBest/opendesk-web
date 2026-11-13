@@ -12,7 +12,12 @@ import assert from 'node:assert/strict';
 import { parentPort, workerData } from 'node:worker_threads';
 import { BaseWorker } from '../../../../../../../packages/app-sdk/src/index.js';
 import { WorkerDatabaseKitProxy } from '../../../../../../platforms/bridges/worker.js';
-import { setCustomOpendeskDirectory } from '../../../../../../main/utils/setting.js';
+import {
+    getLogDirectory,
+    getOpendeskDirectory,
+    setCustomOpendeskDirectory
+} from '../../../../../../main/utils/setting.js';
+import path from 'node:path';
 import { setArkdataDatabaseKit } from '../../../../../../main/services/storage/arkdata-bridge.js';
 import { BaseIndexDBArkdata } from '../../../../../../main/services/storage/base-index-db-arkdata.js';
 import { VectorIndexDBArkdata } from '../../../../../../main/services/storage/vector-index-db-arkdata.js';
@@ -29,16 +34,20 @@ parentPort!.on('message', (message) => {
 });
 const { name, scenario } = workerData;
 setCustomOpendeskDirectory(workerData.profile);
-const worker = new BaseWorker('isolated-rpc-test', '/isolated-rpc-test');
+assert.equal(getOpendeskDirectory(), workerData.profile);
+assert.equal(getLogDirectory(), path.join(workerData.profile, 'logs'));
+console.log(JSON.stringify({ workerProfile: getOpendeskDirectory(), logs: getLogDirectory() }));
+const worker = new BaseWorker('isolated-rpc-test', workerData.profile);
 setArkdataDatabaseKit(new WorkerDatabaseKitProxy(worker));
 const schema = {
     columns: { item_id: { type: 'TEXT' as const }, item_type: { type: 'TEXT' as const } },
     needIndexers: {}
 };
 function create(): any {
-    if (name === 'base') return new BaseIndexDBArkdata('/isolated-rpc-test.db', schema);
-    if (name === 'vector') return new VectorIndexDBArkdata('/isolated-rpc-test.db', 2);
-    return new ChunkIndexDBArkdata('/isolated-rpc-test.db', 2);
+    const file = path.join(workerData.profile, 'isolated-rpc-test.db');
+    if (name === 'base') return new BaseIndexDBArkdata(file, schema);
+    if (name === 'vector') return new VectorIndexDBArkdata(file, 2);
+    return new ChunkIndexDBArkdata(file, 2);
 }
 const db = create();
 let other: any;

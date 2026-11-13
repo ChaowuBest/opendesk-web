@@ -164,9 +164,11 @@ async function testIsNativeSqliteUnavailableUnchanged(): Promise<void> {
 async function main(): Promise<void> {
     await loadModules();
     const logFilePath = path.join(isolatedOpendeskDir, 'logs', getLogFilename());
+    assert.equal(fs.existsSync(logFilePath), false, 'importing logger should not activate its file transport');
+    logger.info('platform test: activate the isolated file transport');
     assert.ok(
         await waitForFile(logFilePath),
-        'logger should initialize its file transport under the isolated OpenDesk directory'
+        'the first log should initialize its file transport under the isolated OpenDesk directory'
     );
     console.log('=== platform.ts backend logging tests ===\n');
     const tests = [

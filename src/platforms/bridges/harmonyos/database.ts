@@ -63,6 +63,7 @@ const REQUIRED_CODES = new Set([
 
 const DIAGNOSTIC_CODES = new Set([
     'store_open_failed',
+    'store_delete_failed',
     'store_close_failed',
     'store_path_invalid',
     'store_config_invalid',
@@ -459,6 +460,23 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
         }
     }
 
+    async deleteStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
+        const start = await callArkEnvelope<{ opId?: string }>(EtsBridgeMethods.ARKDATA_DELETE_STORE_START, [
+            storeId,
+            arkDataStoreName(storeId, opts?.path),
+            optionsJson(opts)
+        ]);
+        if (typeof start.opId !== 'string' || start.opId.length === 0) {
+            throw new ArkDataBridgeError(
+                'payload_shape_invalid',
+                'bridge',
+                'ArkData.DeleteStoreStart returned no valid opId',
+                { storeId }
+            );
+        }
+        await pollReady(EtsBridgeMethods.ARKDATA_DELETE_STORE_READY, start.opId);
+    }
+
     async openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
         if (!opts?.sessionId) {
             await waitPendingStoreClose(storeId);
@@ -559,14 +577,6 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
         const closePromise = this.closeStoreInternal(storeId, opts);
         trackPendingStoreClose(storeId, closePromise);
         await closePromise;
-        if (opts?.force) {
-            for (const session of this.storeSessions.values()) {
-                if (session.storeId === storeId) {
-                    session.released = true;
-                    session.acquired = false;
-                }
-            }
-        }
     }
 
     private async closeStoreInternal(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void> {
@@ -574,6 +584,15 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
             const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_CLOSE_STORE_FORCE_START, [
                 storeId
             ]);
+            // Only a valid accepted Start confirms revocation; malformed replies retain normal release ownership.
+            if (typeof start.opId === 'string' && start.opId.startsWith('op_')) {
+                for (const session of this.storeSessions.values()) {
+                    if (session.storeId === storeId) {
+                        session.released = true;
+                        session.acquired = false;
+                    }
+                }
+            }
             await pollReady(EtsBridgeMethods.ARKDATA_CLOSE_STORE_FORCE_READY, start.opId);
             return;
         }

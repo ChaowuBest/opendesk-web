@@ -52,6 +52,7 @@ const DATABASE_KIT_METHODS = new Set([
     'execSqlParams',
     'querySqlShort',
     'openStore',
+    'deleteStore',
     'closeStore',
     'executePrepared',
     'executePreparedMany',

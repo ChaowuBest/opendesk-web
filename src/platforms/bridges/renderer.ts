@@ -99,6 +99,10 @@ class DatabaseKitProxy implements DatabaseKit {
         return nativeBridge().call('databaseKit:querySqlShort', storeId, sql);
     }
 
+    deleteStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
+        return nativeBridge().call('databaseKit:deleteStore', storeId, opts);
+    }
+
     openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
         return nativeBridge().call('databaseKit:openStore', storeId, opts);
     }

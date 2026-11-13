@@ -87,7 +87,7 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
             }
             const running = new FSStorage(directory);
             owners.push(running);
-            running._probeEmbedding = probe;
+            running.retrieval._probeEmbedding = probe;
             await running.initialize();
             const actual = {
                 base: running.storage.baseIndexer.db.backend,
@@ -100,7 +100,7 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
                 assert.equal(running.scannerState.vector_backend, 'native');
                 assert.equal(running.scannerState.chunk_backend, 'wasm');
             }
-            const initialHits = await running.searchIndexedChunks('model', { topK: 10 });
+            const initialHits = await running.retrieval.searchContent('model', { topK: 10 });
             const before = await running.getPerRootCounts([root]);
             console.log(
                 JSON.stringify({
@@ -123,15 +123,15 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
                 );
                 assert.equal(initialHits.results.length, 0, 'Old backend chunks must not be reported as current');
                 await running.processEmbeddingQueue(() => false, { activeRoots: [root] });
-                const recovered = await running.searchIndexedChunks('model', { topK: 10 });
+                const recovered = await running.retrieval.searchContent('model', { topK: 10 });
                 assert.ok(recovered.results.some((hit: any) => hit.chunk.text.includes('Current')));
                 assert.equal((await running.getPerRootCounts([root])).get(root).pending_count, 0);
                 return;
             }
             model = 'model-b';
-            await running.syncEmbeddingMode('changed model while running');
+            await running.retrieval._syncMode('changed model while running');
             await running.processEmbeddingQueue(() => false, { activeRoots: [root] });
-            const wasmHits = await running.searchIndexedChunks('model', { topK: 10 });
+            const wasmHits = await running.retrieval.searchContent('model', { topK: 10 });
             console.log(
                 JSON.stringify({
                     scenario,
@@ -145,9 +145,9 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
             SQLite.prototype.loadExtension = loadExtension;
             const restarted = new FSStorage(directory);
             owners.push(restarted);
-            restarted._probeEmbedding = probe;
+            restarted.retrieval._probeEmbedding = probe;
             await restarted.initialize();
-            const hits = await restarted.searchIndexedChunks('model', { topK: 10 });
+            const hits = await restarted.retrieval.searchContent('model', { topK: 10 });
             console.log(
                 JSON.stringify({
                     scenario,
@@ -166,13 +166,13 @@ for (const scenario of ['control', 'fallback-missing', 'fallback-return', 'chunk
             assert.equal(restarted.scannerState.chunk_backend, 'native');
             await restarted.processEmbeddingQueue(() => false, { activeRoots: [root] });
             assert.ok(
-                (await restarted.searchIndexedChunks('model', { topK: 10 })).results.some((hit: any) =>
+                (await restarted.retrieval.searchContent('model', { topK: 10 })).results.some((hit: any) =>
                     hit.chunk.text.includes('Current')
                 )
             );
             assert.equal((await restarted.getPerRootCounts([root])).get(root).pending_count, 0);
             assert.ok(
-                (await restarted.searchFileByName('document')).results.some(
+                (await restarted.retrieval.searchNames('document')).results.some(
                     (hit: any) => hit.source?.path === file || hit.path === file
                 )
             );

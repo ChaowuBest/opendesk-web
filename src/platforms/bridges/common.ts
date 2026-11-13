@@ -531,6 +531,7 @@ export interface DatabaseKit {
     execSqlParams(storeId: string, sql: string, params: ArkDataValueType[]): Promise<void>;
     querySqlShort(storeId: string, sql: string): Promise<ArkDataRow[]>;
 
+    deleteStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void>;
     openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void>;
     closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void>;
 
@@ -598,6 +599,10 @@ export class NaiveDatabaseKit implements DatabaseKit {
     }
 
     async querySqlShort(): Promise<ArkDataRow[]> {
+        this.unavailable();
+    }
+
+    async deleteStore(): Promise<void> {
         this.unavailable();
     }
 

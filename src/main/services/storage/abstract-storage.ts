@@ -50,6 +50,7 @@ import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
 import { BaseIndexer, type BaseIndexStoreProbeResult } from './base-indexer.js';
 import { ChunkIndexer, type ChunkSearchResult, type IChunkIndexDB } from './chunk-indexer.js';
+import { recordStorageInitializationFailure, recordStorageCleanupFailure } from './platform.js';
 
 const DELETE_BATCH_SIZE = 500;
 export const ARKDATA_SCOPED_SEARCH_BATCH_SIZE = 5000;
@@ -563,28 +564,46 @@ export class BaseStorage {
 
     private async initializeIndexers(): Promise<void> {
         // VectorIndexer first (may throw DimMismatchError — caller decides whether to wipe and reinit)
+        const indexers = [
+            ['VectorIndexer', this.vectorIndexer],
+            ['BaseIndexer', this.baseIndexer],
+            ['BM25Indexer', this.bm25Indexer],
+            ['TagIndexer', this.tagIndexer],
+            ['ChunkIndexer', this.chunkIndexer]
+        ] as const;
         try {
             // close() may complete while one initializer awaits. Never acquire
             // subsequent stores after the owning storage has been closed.
-            for (const indexer of [
-                this.vectorIndexer,
-                this.baseIndexer,
-                this.bm25Indexer,
-                this.tagIndexer,
-                this.chunkIndexer
-            ]) {
+            for (const [name, indexer] of indexers) {
                 this.ensureUsable();
-                if (indexer) await indexer.initialize();
+                if (!indexer) continue;
+                try {
+                    await indexer.initialize();
+                } catch (error) {
+                    let backend: IVectorIndexDB['backend'] | undefined;
+                    try {
+                        backend =
+                            name === 'VectorIndexer'
+                                ? this.vectorIndexer?.getBackend()
+                                : name === 'ChunkIndexer'
+                                  ? this.chunkIndexer?.getBackend()
+                                  : undefined;
+                    } catch {
+                        // A constructor may fail before its indexer receives the DB.
+                    }
+                    recordStorageInitializationFailure(error, { indexer: name, ...(backend && { backend }) });
+                    throw error;
+                }
             }
             this.ensureUsable();
         } catch (error) {
             // Await every release without masking the initialization error. Failed
             // indexers retain their holders so the caller can retry storage.close().
-            await Promise.allSettled(
-                [this.chunkIndexer, this.tagIndexer, this.bm25Indexer, this.baseIndexer, this.vectorIndexer].map(
-                    async (indexer) => indexer?.close()
-                )
-            );
+            const cleanup = [...indexers].reverse();
+            const results = await Promise.allSettled(cleanup.map(async ([, indexer]) => indexer?.close()));
+            results.forEach((result, i) => {
+                if (result.status === 'rejected') recordStorageCleanupFailure(error, result.reason, cleanup[i][0]);
+            });
             throw error;
         }
     }
@@ -1026,34 +1045,39 @@ export class BaseStorage {
      */
     async dropIndexers(indexerNames: DropIndexName[]): Promise<void> {
         this.ensureUsable();
-        let droppedAny = false;
+        let dropAttempted = false;
         try {
             for (const indexerName of indexerNames) {
                 switch (indexerName) {
                     case 'BaseIndexer':
+                        dropAttempted = true;
                         await this.baseIndexer.dropStorage();
                         break;
                     case 'BM25Indexer':
                         if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');
+                        dropAttempted = true;
                         await (this.bm25Indexer as BM25Indexer).dropStorage();
                         break;
                     case 'TagIndexer':
                         if (!this.tagIndexer) throw new Error('TagIndexer not initialized for this schema');
+                        dropAttempted = true;
                         await (this.tagIndexer as TagIndexer).dropStorage();
                         break;
                     case 'VectorIndexer':
                         if (!this.vectorIndexer) throw new Error('VectorIndexer not initialized for this schema');
+                        dropAttempted = true;
                         await (this.vectorIndexer as VectorIndexer).dropStorage();
                         break;
                     case 'ChunkIndexer':
                         if (!this.chunkIndexer) throw new Error('ChunkIndexer not initialized for this schema');
+                        dropAttempted = true;
                         await this.chunkIndexer.dropStorage();
                         break;
                 }
-                droppedAny = true;
             }
         } catch (error) {
-            if (droppedAny) this.droppedInPartialFailure = true;
+            // Even the first indexer may have removed files before rejecting.
+            if (dropAttempted) this.droppedInPartialFailure = true;
             throw error;
         }
     }

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { logger } from '../../../utils/logger.js';
 import path from 'path';
 import { resolveDriveRootPath } from '../utils.js';
 import picomatch from 'picomatch';
@@ -100,6 +101,7 @@ function collapseScopePaths(rawPaths) {
     return collapsed;
 }
 
+/** @returns {import('../document-retrieval/contract.js').FileSearchScope | undefined} */
 export function normalizeFilemgrSearchScope(scope) {
     if (scope === undefined) return undefined;
     if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
@@ -433,4 +435,47 @@ export function toIndexedFileSearchResult(query, items, totalHits, warning = und
         ...(warning ? { warning } : {}),
         ...(code ? { code } : {})
     };
+}
+
+export function scopedSearchDiagnosticsEnabled() {
+    return process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS === '1';
+}
+
+function scopeOperatorValue(scope) {
+    if (!scope) return undefined;
+    return scope.type === 'path' ? scope.path : scope.paths;
+}
+
+export function logScopedSearchDiagnostics(route, scope, result) {
+    if (!scope || !scopedSearchDiagnosticsEnabled()) return;
+    logger.info(
+        `[filemgr] scoped search diagnostics ${JSON.stringify({
+            route,
+            scopeType: scope.type,
+            ...(scope.type === 'path' ? { scopePath: scope.path } : { scopePaths: scope.paths }),
+            diagnostics: result?.diagnostics
+        })}`
+    );
+}
+
+/**
+ * @param {{ scope?: import('../document-retrieval/contract.js').FileSearchScope, algorithmConditions?: import('../../../services/storage/abstract-storage.js').FilterCondition[] }} options
+ * @returns {import('../../../services/storage/abstract-storage.js').FilterCondition[]}
+ */
+export function buildIndexedFilePreconditions({ scope, algorithmConditions = [] }) {
+    return [
+        { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+        ...algorithmConditions,
+        { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+        ...(scope
+            ? [
+                  {
+                      indexer: 'BaseIndexer',
+                      field: 'item_id',
+                      operator: 'path_descendant_or_self',
+                      value: scopeOperatorValue(scope)
+                  }
+              ]
+            : [])
+    ];
 }

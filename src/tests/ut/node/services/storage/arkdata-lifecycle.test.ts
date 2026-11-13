@@ -4,13 +4,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire, stripTypeScriptTypes } from 'node:module';
+import { createHash } from 'node:crypto';
+import { createArkDataStoreId, toArkDataDbPath } from '../../../../../main/services/storage/arkdata-path.js';
 import { setArkdataDatabaseKit } from '../../../../../main/services/storage/arkdata-bridge.js';
 import { setCustomOpendeskDirectory } from '../../../../../main/utils/setting.js';
 import { BaseIndexDBArkdata } from '../../../../../main/services/storage/base-index-db-arkdata.js';
 import { VectorIndexDBArkdata } from '../../../../../main/services/storage/vector-index-db-arkdata.js';
 import { ChunkIndexDBArkdata } from '../../../../../main/services/storage/chunk-index-db-arkdata.js';
 import type { ColumnSchema } from '../../../../../main/services/storage/abstract-storage.js';
-import type { DatabaseKit } from '../../../../../platforms/bridges/common.js';
+import { ArkDataBridgeError, type DatabaseKit } from '../../../../../platforms/bridges/common.js';
+import { getStorageInitializationFailure } from '../../../../../main/services/storage/platform.js';
+import { initializationRecovery } from '../../../../../main/applications/filemgr/document-retrieval/embedding/state.js';
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'arkdata-lifecycle-'));
 setCustomOpendeskDirectory(profile);
@@ -53,6 +57,24 @@ if (adapterDirectory) {
     loadAdapter = new Function('relationalStore', 'BaseAdapter', 'LogUtil', code + '\nreturn ArkDataAdapter;') as any;
 }
 
+const bridgeCode = stripTypeScriptTypes(
+    fs
+        .readFileSync(new URL('../../../../../platforms/bridges/harmonyos/database.ts', import.meta.url), 'utf8')
+        .replace(/^import[\s\S]*?;\s*/gm, ''),
+    { mode: 'transform' }
+).replace(/^export /gm, '');
+const loadBridge = new Function(
+    'createHash',
+    'logger',
+    'ArkDataBridgeError',
+    'executePreparedManyBatchedWith',
+    'callArkTS',
+    'EtsBridgeMethods',
+    'hasArkTSAdapter',
+    'Date',
+    bridgeCode + '\nreturn { HarmonyOSDatabaseKit, arkDataStoreName };'
+);
+
 const backends = [
     { name: 'base', create: (file: string) => new BaseIndexDBArkdata(file, schema) },
     { name: 'vector', create: (file: string) => new VectorIndexDBArkdata(file, 2) },
@@ -60,15 +82,30 @@ const backends = [
 ];
 
 async function fixture(backend: (typeof backends)[number], run: (f: any) => Promise<void>) {
-    const calls = { acquires: 0, releases: 0, sdkOpens: 0, sdkCloses: 0, tables: 0 };
+    const calls = {
+        acquires: 0,
+        releases: 0,
+        sdkOpens: 0,
+        sdkCloses: 0,
+        tables: 0,
+        sdkDeletes: 0,
+        deletes: 0,
+        deleteIds: [] as string[]
+    };
     const control = {
         openGate: null as ReturnType<typeof deferred> | null,
         tableGate: null as ReturnType<typeof deferred> | null,
         closeGate: null as ReturnType<typeof deferred> | null,
         openError: null as Error | null,
+        openErrorStorePrefix: null as string | null,
+        openErrorOnce: false,
         tableError: null as Error | null,
         closeError: null as Error | null,
         closeFailuresRemaining: 0,
+        deleteError: null as Error | null,
+        deleteGate: null as ReturnType<typeof deferred> | null,
+        deleteTimeout: false,
+        deleteTarget: null as string | null,
         sqlKit: null as any
     };
     const store = {
@@ -82,17 +119,61 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
             if (control.closeError) throw control.closeError;
         }
     };
+    const sdkIdentities = new Map<string, string>();
     const sdk = {
         SecurityLevel: { S1: 1, S2: 2, S3: 3, S4: 4 },
-        getRdbStore: async () => {
+        deleteRdbStore: async (_context: any, config: any) => {
+            calls.sdkDeletes++;
+            const id = sdkIdentities.get(config.name)!;
+            calls.deleteIds.push(id);
+            if (!control.deleteTarget || control.deleteTarget === id) {
+                await control.deleteGate?.promise;
+                if (control.deleteError) throw control.deleteError;
+            }
+            control.sqlKit?.deleteStore(id);
+        },
+        getRdbStore: async (_context?: any, config?: any) => {
             calls.sdkOpens++;
             await control.openGate?.promise;
-            if (control.openError) throw control.openError;
+            if (
+                control.openError &&
+                (!control.openErrorStorePrefix ||
+                    sdkIdentities.get(config?.name)?.startsWith(control.openErrorStorePrefix))
+            ) {
+                const error = control.openError;
+                if (control.openErrorOnce) control.openError = null;
+                throw error;
+            }
             return store;
         }
     };
     const Adapter = loadAdapter?.(sdk, class {}, { info() {}, warn() {}, error() {} });
     const adapter = Adapter ? new Adapter({}) : null;
+    const routes: Record<string, string> = {
+        'ArkData.DeleteStoreStart': 'deleteStoreStart',
+        'ArkData.DeleteStoreReady': 'deleteStoreReady'
+    };
+    let clock = 0,
+        deletingId = '';
+    const { HarmonyOSDatabaseKit, arkDataStoreName } = loadBridge(
+        createHash,
+        { warn() {} },
+        ArkDataBridgeError,
+        undefined,
+        async (method: string, _type: string, args: string[]) => adapter[routes[method]](...args),
+        {
+            ARKDATA_DELETE_STORE_START: 'ArkData.DeleteStoreStart',
+            ARKDATA_DELETE_STORE_READY: 'ArkData.DeleteStoreReady'
+        },
+        () => true,
+        {
+            now: () =>
+                control.deleteTimeout && (!control.deleteTarget || control.deleteTarget === deletingId)
+                    ? (clock += 31_001)
+                    : Date.now()
+        }
+    );
+    const deletionBridge = new HarmonyOSDatabaseKit();
     const stores = new Map<string, { references: number; opening: Promise<typeof store> }>();
     const checked = (raw: string) => {
         const result = JSON.parse(raw);
@@ -114,11 +195,24 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
     };
     const closePromises: Promise<void>[] = [];
     const kit = {
+        async deleteStore(id: string, options: any) {
+            calls.deletes++;
+            deletingId = id;
+            const name = arkDataStoreName(id, options.path);
+            sdkIdentities.set(name, id);
+            if (adapter) return deletionBridge.deleteStore(id, options);
+            return sdk.deleteRdbStore({}, { name });
+        },
         async openStore(id: string, options: any) {
             calls.acquires++;
+            sdkIdentities.set(arkDataStoreName(id, options.path), id);
             if (adapter) {
                 const result = checked(
-                    adapter.openStoreStart(id, 'fixture.db', JSON.stringify({ vector: options.vector }))
+                    adapter.openStoreStart(
+                        id,
+                        arkDataStoreName(id, options.path),
+                        JSON.stringify({ vector: options.vector })
+                    )
                 );
                 if (result.opId) await ready('openStoreReady', result.opId);
                 return;
@@ -194,8 +288,10 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
     try {
         await run({
             db,
+            kit,
             calls,
             control,
+            adapter,
             references,
             drain,
             another() {
@@ -219,6 +315,9 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
         control.tableGate?.resolve();
         control.closeGate?.resolve();
         control.closeError = null;
+        control.deleteError = null;
+        control.deleteTimeout = false;
+        control.deleteGate?.resolve();
         await Promise.allSettled(reads);
         await Promise.allSettled(owners.map((owner) => owner.close()));
         await drain();
@@ -234,6 +333,92 @@ async function fixture(backend: (typeof backends)[number], run: (f: any) => Prom
 }
 
 for (const backend of backends) {
+    test(`${backend.name}: P3a an old-reference close error carrying 14800011 is not opening corruption`, async (t) => {
+        await fixture(backend, async (f) => {
+            await f.read();
+            const close = f.kit.closeStore.bind(f.kit);
+            let timedOut = false;
+            t.mock.method(f.kit, 'closeStore', async (...args: any[]) => {
+                if (!timedOut) {
+                    timedOut = true;
+                    throw Object.assign(new Error('isolated bridge close timeout before dispatch'), {
+                        code: 'operation_timeout'
+                    });
+                }
+                return close(...args);
+            });
+            await assert.rejects(f.db.close(), { code: 'operation_timeout' });
+            const sdkError = Object.assign(new Error('isolated SDK close failure with corruption code'), {
+                code: 14800011
+            });
+            // The next close attempt fails once, then cleanup successfully releases it.
+            let reads = 2;
+            Object.defineProperty(f.control, 'closeError', {
+                configurable: true,
+                get: () => (reads-- > 0 ? sdkError : null),
+                set: () => {
+                    reads = 0;
+                }
+            });
+            let received: unknown;
+            await assert.rejects(f.read(), (error: unknown) => {
+                received = error;
+                return true;
+            });
+            const failure = getStorageInitializationFailure(received)!;
+            assert.equal(failure.cleanupFailures.length, 0);
+            assert.equal(failure.operation, 'close');
+            assert.equal(
+                initializationRecovery(received),
+                null,
+                'a successful cleanup does not turn a close failure into corruption'
+            );
+            assert.equal(f.calls.acquires, 1, 'no replacement store was opened');
+            assert.equal(f.references(), 0);
+        });
+    });
+
+    for (const code of [14800011, 14800010, 'SQLITE_CORRUPT']) {
+        test(`${backend.name}: P3a actual lazy acquisition records ArkData source and code ${code}`, async () => {
+            await fixture(backend, async (f) => {
+                f.control.openError = Object.assign(new Error('isolated SDK open failure'), { code });
+                let received: unknown;
+                await assert.rejects(f.read(), (error: unknown) => {
+                    received = error;
+                    return true;
+                });
+                const failure = getStorageInitializationFailure(received)!;
+                assert.equal(failure.indexer, backend.name[0].toUpperCase() + backend.name.slice(1) + 'Indexer');
+                assert.equal(failure.backend, 'arkdata');
+                assert.equal(failure.cause, received);
+                assert.equal(
+                    initializationRecovery(received),
+                    code === 14800011 ? (backend.name === 'base' ? 'full' : 'semantic') : null
+                );
+                assert.equal(f.references(), 0);
+            });
+        });
+    }
+
+    test(`${backend.name}: P3a cleanup failure preserves the original corruption and blocks automatic deletion`, async () => {
+        await fixture(backend, async (f) => {
+            const original = (f.control.tableError = Object.assign(new Error('isolated SDK table failure'), {
+                code: 14800011
+            }));
+            const cleanup = (f.control.closeError = new Error('isolated SDK release failure'));
+            await assert.rejects(f.read(), (error: unknown) => error === original);
+            const failure = getStorageInitializationFailure(original)!;
+            assert.equal(failure.indexer, backend.name[0].toUpperCase() + backend.name.slice(1) + 'Indexer');
+            assert.ok(failure.cleanupFailures.some(({ error }) => isCloseFailure(error, cleanup)));
+            assert.equal(initializationRecovery(original), null);
+            assert.equal(f.references(), 1);
+            f.control.closeError = null;
+            await f.db.close();
+            await f.drain();
+            assert.equal(f.references(), 0);
+        });
+    });
+
     test(`${backend.name}: concurrent first reads acquire one reference and final close reaches SDK`, async () => {
         await fixture(backend, async (f) => {
             f.control.openGate = deferred();
@@ -482,6 +667,91 @@ for (const backend of backends) {
     });
 }
 
+for (const code of [14800011, 14800010]) {
+    test(`base: P3a actual schema reconciliation preserves and classifies wrapped SDK cause ${code}`, async () => {
+        await fixture(backends[0], async (f) => {
+            const original = new ArkDataBridgeError('query_failed', 'diagnostic', 'isolated SDK schema query failure', {
+                sdkErrorCode: code
+            });
+            f.control.sqlKit = {
+                async execSql() {},
+                async executePrepared() {
+                    throw original;
+                },
+                async queryPrepared(_id: string, sql: string) {
+                    if (sql.includes('meta_value')) return [];
+                    throw original;
+                }
+            };
+            let received: any;
+            await assert.rejects(f.read(), (error: unknown) => {
+                received = error;
+                return true;
+            });
+            assert.match(received.message, /schema upgrade failed/);
+            assert.equal(received.cause, original);
+            assert.equal(getStorageInitializationFailure(received)?.cause, original);
+            assert.equal(getStorageInitializationFailure(received)?.operation, 'initialize');
+            assert.equal(initializationRecovery(received), code === 14800011 ? 'full' : null);
+            assert.equal(f.references(), 0);
+        });
+    });
+}
+
+test('P13 raw delete keeps the SDK error and never manufactures a cleanup owner', async () => {
+    const { FSStorage } = await import('../../../../../main/applications/filemgr/storage.js');
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const available = process.env.ARKDATA_AVAILABLE;
+    Object.defineProperty(process, 'platform', { value: 'openharmony' });
+    process.env.ARKDATA_AVAILABLE = '1';
+    try {
+        await fixture(backends[1], async (f) => {
+            const fss = new FSStorage(fs.mkdtempSync(path.join(profile, 'legacy-drop-')));
+            const primary = new ArkDataBridgeError('execute_failed', 'diagnostic', 'isolated SDK delete failure', {
+                sdkErrorCode: 14800011
+            });
+            f.control.deleteError = Object.assign(new Error(primary.message), { code: 14800011 });
+            f.control.closeError = new Error('isolated unused close failure');
+            let received: any;
+            try {
+                await assert.rejects(
+                    fss.retrieval.rebuildProducts({
+                        kind: 'semantic-reset',
+                        reason: 'P13 raw SDK delete',
+                        dim: 2,
+                        mode: 'full'
+                    }),
+                    (error: any) => {
+                        received = error;
+                        return (
+                            error === f.control.deleteError ||
+                            (error.code === 'store_delete_failed' && error.details.sdkErrorCode === 14800011)
+                        );
+                    }
+                );
+                assert.equal(getStorageInitializationFailure(received)?.operation, 'delete');
+                assert.equal(initializationRecovery(received), null);
+                assert.equal(fss._pendingStorageClosures.size, 0);
+                assert.equal(fss.storage, null);
+                assert.equal(f.references(), 0);
+                assert.equal(f.calls.sdkDeletes, 1);
+                assert.equal(f.calls.sdkOpens, 0);
+                assert.equal(f.calls.sdkCloses, 0);
+            } finally {
+                f.control.deleteError = null;
+                f.control.closeError = null;
+                await fss.close();
+            }
+            assert.equal(fss._pendingStorageClosures.size, 0);
+            assert.equal(f.references(), 0);
+        });
+    } finally {
+        Object.defineProperty(process, 'platform', platform);
+        if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+        else process.env.ARKDATA_AVAILABLE = available;
+    }
+});
+
 test('readonly startup status pushes share the lazy base store reference', async () => {
     const { BaseStorage } = await import('../../../../../main/services/storage/abstract-storage.js');
     const { FSStorage, makeSchema } = await import('../../../../../main/applications/filemgr/storage.js');
@@ -605,7 +875,7 @@ test('BaseStorage.close waits for every indexer, coalesces callers and rejects n
 });
 
 for (const backend of backends.slice(1)) {
-    test(`${backend.name}: an unopened indexer retains a raw-drop owner after failed close`, async () => {
+    test(`${backend.name}: an unopened indexer propagates raw SDK failure without acquiring a drop owner`, async () => {
         const { BaseStorage } = await import('../../../../../main/services/storage/abstract-storage.js');
         const { makeSchema } = await import('../../../../../main/applications/filemgr/storage.js');
         const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -615,17 +885,22 @@ for (const backend of backends.slice(1)) {
         try {
             await fixture(backend, async (f) => {
                 const storage = new BaseStorage('raw-drop', makeSchema(2, { mode: 'full' }), profile);
-                f.control.closeError = new Error('synthetic raw-drop close failure');
+                f.control.deleteError = new Error('synthetic raw SDK delete failure');
                 const name = backend.name[0].toUpperCase() + backend.name.slice(1) + 'Indexer';
                 await assert.rejects(storage.dropIndexers([name] as any));
-                assert.ok((storage as any)[backend.name + 'Indexer'].db);
-                assert.equal(f.references(), 1);
-                assert.equal(
-                    f.calls.tables,
-                    2,
-                    'Raw drop executes only two DROP statements, without CREATE or dim reads'
-                );
-                f.control.closeError = null;
+                assert.equal((storage as any)[backend.name + 'Indexer'].db, null);
+                assert.equal(f.references(), 0);
+                assert.equal(f.calls.tables, 0);
+                assert.equal(f.calls.sdkOpens, 0);
+                assert.equal(f.calls.sdkCloses, 0);
+                assert.equal(f.calls.sdkDeletes, 1);
+                f.control.deleteError = null;
+                await assert.rejects(storage.dropIndexers([name] as any), /partially-dropped/);
+                assert.equal(f.calls.sdkDeletes, 1);
+                const replacement = new BaseStorage('raw-drop-retry', makeSchema(2, { mode: 'full' }), profile);
+                await replacement.dropIndexers([name] as any);
+                await replacement.close();
+                assert.equal(f.calls.sdkDeletes, 2);
                 await storage.close();
                 assert.equal(f.references(), 0);
             });
@@ -654,7 +929,7 @@ test('failed mode-transition candidate remains reachable for final cleanup', asy
                 throw failure;
             };
             f.control.closeError = new Error('synthetic candidate cleanup failure');
-            await assert.rejects(fss._demoteToBaseOnly('isolated'), (error) => error === failure);
+            await assert.rejects(fss.retrieval._demoteToBaseOnly('isolated'), (error) => error === failure);
             assert.equal(fss.storage, old, 'Failed initialization must not publish the candidate');
             assert.equal(fss._pendingStorageClosures.size, 1);
             assert.equal(f.references(), 1);
@@ -719,6 +994,10 @@ function sqliteSqlFixture() {
     const values = (params: any[]) =>
         params.map(({ t, v }) => (t === 'vector' ? Buffer.from(new Float32Array(v).buffer) : v));
     const kit = {
+        deleteStore(id: string) {
+            databases.get(id)?.close();
+            databases.delete(id);
+        },
         execSql(id: string, sql: string) {
             database(id).exec(sql);
         },
@@ -757,6 +1036,135 @@ function sqliteSqlFixture() {
             for (const db of databases.values()) db.close();
         }
     };
+}
+
+for (const phase of ['delete', 'candidate-init', 'reconcile', 'success', ...(adapterDirectory ? ['pending'] : [])]) {
+    test(`R1 F1 actual ArkData base-only semantic reset ${phase} retains the base owner until publication`, async (t) => {
+        const { BaseStorage } = await import('../../../../../main/services/storage/abstract-storage.js');
+        const { FSStorage, makeSchema } = await import('../../../../../main/applications/filemgr/storage.js');
+        const sql = sqliteSqlFixture();
+        const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        const available = process.env.ARKDATA_AVAILABLE;
+        Object.defineProperty(process, 'platform', { value: 'openharmony' });
+        process.env.ARKDATA_AVAILABLE = '1';
+        try {
+            await fixture(backends[1], async (f) => {
+                f.control.sqlKit = sql.kit;
+                const directory = fs.mkdtempSync(path.join(profile, `r1-base-only-${phase}-`));
+                const fss = new FSStorage(directory);
+                const old = new BaseStorage('filemgr', makeSchema(2, { mode: 'base-only' }), fss._storageDir);
+                fss.storage = old;
+                fss.mode = 'base-only';
+                const file = path.join(directory, 'kept.md');
+                const primary = new Error(`isolated ArkData ${phase}`);
+                const gate = deferred();
+                let failing = true;
+                try {
+                    await old.initialize();
+                    await old.upsert([
+                        { item_id: file, item_type: 'file', type: 'file', filename: 'kept.md', ref_count: 1 }
+                    ]);
+                    await fss.saveScannerState();
+                    f.control.deleteTarget = createArkDataStoreId(
+                        'arkdata-chunk',
+                        toArkDataDbPath(path.join(fss._storageDir, 'chunk-index.db'))
+                    );
+                    if (phase === 'delete') f.control.deleteError = primary;
+                    if (phase === 'pending') {
+                        f.control.deleteTimeout = true;
+                        f.control.deleteGate = gate;
+                    }
+                    const initialize = BaseStorage.prototype.initialize;
+                    t.mock.method(BaseStorage.prototype, 'initialize', async function () {
+                        await initialize.call(this);
+                        if (failing && phase === 'candidate-init') throw primary;
+                    });
+                    const upsert = BaseStorage.prototype.upsert;
+                    t.mock.method(BaseStorage.prototype, 'upsert', async function (items: any[], options?: any) {
+                        if (failing)
+                            assert.equal(
+                                fss.storage,
+                                old,
+                                'The candidate must not displace the live base during reconciliation'
+                            );
+                        const result = await upsert.call(this, items, options);
+                        if (failing && phase === 'reconcile') throw primary;
+                        return result;
+                    });
+                    const reset = (resume = false) =>
+                        fss.retrieval.rebuildProducts({
+                            kind: 'semantic-reset',
+                            reason: 'R1 F1 ArkData',
+                            dim: 2,
+                            mode: 'full',
+                            resume,
+                            embeddingState: { embedding_model: 'isolated-model', vec_dim: 2 }
+                        });
+                    if (phase === 'success') await reset();
+                    else {
+                        await assert.rejects(reset(), (error: any) => {
+                            if (phase === 'pending') return error.code === 'operation_timeout';
+                            if (phase === 'delete')
+                                return (
+                                    error === primary ||
+                                    (error.code === 'store_delete_failed' &&
+                                        error.details.sdkMessage === primary.message)
+                                );
+                            return error === primary;
+                        });
+                        assert.equal(fss.storage, old);
+                        assert.equal(fss.mode, 'base-only');
+                        assert.equal(f.references(), 1, 'Candidate cleanup must release only its own SDK references');
+                        assert.deepEqual(
+                            (await fss.searchFilesByKeyword('kept')).map((row) => row.path),
+                            [file]
+                        );
+                        assert.equal(fss.scannerState.semantic_reset_pending, true);
+                        assert.equal(fss.scannerState.embedding_generation, 1);
+                        if (phase === 'pending') {
+                            assert.ok(
+                                [...f.adapter.operations.values()].some(
+                                    (op: any) =>
+                                        op.type === 'deleteStore' &&
+                                        op.storeId === f.control.deleteTarget &&
+                                        op.state === 'pending'
+                                )
+                            );
+                            assert.equal(f.calls.sdkOpens, 1, 'A timed-out delete must not open a replacement');
+                        }
+                    }
+                    failing = false;
+                    f.control.deleteError = null;
+                    f.control.deleteTimeout = false;
+                    gate.resolve();
+                    await f.drain();
+                    if (phase !== 'success') await reset(true);
+                    assert.equal(fss.mode, 'full');
+                    assert.notEqual(fss.storage, old);
+                    assert.equal(fss.scannerState.embedding_generation, 1);
+                    assert.equal(fss.scannerState.semantic_reset_pending, false);
+                    assert.equal(fss._pendingStorageClosures.size, 0);
+                    assert.deepEqual(
+                        (await fss.searchFilesByKeyword('kept')).map((row) => row.path),
+                        [file]
+                    );
+                } finally {
+                    failing = false;
+                    f.control.deleteError = null;
+                    f.control.deleteTimeout = false;
+                    gate.resolve();
+                    await f.drain();
+                    await fss.close();
+                    assert.equal(f.references(), 0);
+                }
+            });
+        } finally {
+            sql.close();
+            Object.defineProperty(process, 'platform', platform);
+            if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+            else process.env.ARKDATA_AVAILABLE = available;
+        }
+    });
 }
 
 const recoveryCases: Array<{ recovery: 'sync' | 'scan' | 'restart'; rootCount: number; content: string }> = [];
@@ -844,7 +1252,7 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                 worker.callApp = async () => {};
                 worker.taskQueue.pause();
                 let probes = 0;
-                fss._probeEmbedding = async () => {
+                fss.retrieval._probeEmbedding = async () => {
                     probes++;
                     return { ok: true, dim: 2, model_name: 'model-b', requestDim: 2 };
                 };
@@ -891,20 +1299,27 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                     if (content === 'oversize') {
                         const { RAW_TEXT_MAX_FILE_SIZE } =
                             await import('../../../../../main/applications/filemgr/parser/extract.js');
-                        fs.writeFileSync(oldFile, 'x'.repeat(RAW_TEXT_MAX_FILE_SIZE + 1));
+                        const block = Buffer.alloc(1024 * 1024, 'x');
+                        fs.writeFileSync(oldFile, '');
+                        for (let remaining = RAW_TEXT_MAX_FILE_SIZE + 1; remaining > 0; ) {
+                            const size = Math.min(remaining, block.length);
+                            fs.appendFileSync(oldFile, block.subarray(0, size));
+                            remaining -= size;
+                        }
                     }
                     const scanners = new Map();
                     for (const entry of entries) {
                         scanners.set(entry.root, await worker._startScanner(entry, entries));
                     }
                     f.control.closeError = new Error('synthetic persistent SDK close failure');
-                    await assert.rejects(fss.syncEmbeddingMode('embedding config changed'));
+                    await assert.rejects(fss.retrieval._syncMode('embedding config changed'));
+                    assert.equal(f.calls.sdkDeletes, 0, 'Failed resource close must prevent every SDK delete');
                     assert.equal(fss.scannerState.embedding_model, 'model-b');
                     assert.equal(fss.scannerState.embedding_generation, 1);
                     assert.equal(fss._pendingStorageClosures.size, 1);
                     assert.equal(fss.isDeferred(), true, 'A closing holder must not be advertised as usable');
                     const acquires = f.calls.acquires;
-                    await assert.rejects(fss.syncEmbeddingMode('still failed'));
+                    await assert.rejects(fss.retrieval._syncMode('still failed'));
                     assert.equal(
                         f.calls.acquires,
                         acquires,
@@ -913,11 +1328,11 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                     assert.equal(probes, 1, 'Failed cleanup must run before probing or the already-full shortcut');
                     f.control.closeError = null;
                     if (recovery === 'restart') {
-                        const probe = fss._probeEmbedding;
+                        const probe = fss.retrieval._probeEmbedding;
                         await worker._stopScanners();
                         await fss.close();
                         fss = new FSStorage(directory);
-                        fss._probeEmbedding = probe;
+                        fss.retrieval._probeEmbedding = probe;
                         worker.storage = fss;
                         await fss.initialize();
                         scanners.clear();
@@ -926,7 +1341,7 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                         }
                     }
                     if (recovery === 'sync') {
-                        await fss.syncEmbeddingMode('recovered');
+                        await fss.retrieval._syncMode('recovered');
                         assert.equal(fss._pendingStorageClosures.size, 0);
                         assert.notEqual(fss.storage, old);
                         const rows = (await fss.storage.search([])).items;
@@ -954,7 +1369,7 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                     assert.ok(rows.every(({ item }: any) => item.embedding_generation === 1 && item.embedded === 1));
                     assert.ok(embeddings > 0, 'Recovered scan must actually reach embedding');
                     assert.equal(fss.scannerState.semantic_reset_pending, false);
-                    const search = await fss.searchIndexedChunks('obsolete content', { topK: 10 });
+                    const search = await fss.retrieval.searchContent('obsolete content', { topK: 10 });
                     assert.equal(
                         search.results.some((hit: any) => hit.chunk.id === 'obsolete-model-a'),
                         false,
@@ -1001,6 +1416,8 @@ for (const { recovery, rootCount, content } of recoveryCases) {
                     await worker.finalize();
                     assert.equal(f.references(), 0, 'All recovered holders must eventually exit');
                     sql.close();
+                    // Each oversize fixture is 100 MiB; do not retain all cases until file teardown.
+                    fs.rmSync(directory, { recursive: true, force: true });
                 }
             });
         } finally {
@@ -1115,3 +1532,303 @@ test('BaseStorage close awaits a real in-flight first ArkData acquisition', asyn
         else process.env.ARKDATA_AVAILABLE = available;
     }
 });
+
+for (const target of ['base', 'vector', 'chunk'])
+    for (const code of [14800011, 14800010, 'SQLITE_CORRUPT', undefined])
+        test(`P13 actual ArkData ${target} opening ${code ?? 'unknown'} uses only its approved recovery targets`, async (t) => {
+            const { FSStorage } = await import('../../../../../main/applications/filemgr/storage.js');
+            const { Setting } = await import('../../../../../main/utils/setting.js');
+            const sql = sqliteSqlFixture();
+            const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+            const available = process.env.ARKDATA_AVAILABLE;
+            Object.defineProperty(process, 'platform', { value: 'openharmony' });
+            process.env.ARKDATA_AVAILABLE = '1';
+            t.mock.method(
+                Setting,
+                'getInstance',
+                () =>
+                    ({
+                        data: { locale: 'en-US' },
+                        getData: () => ({}),
+                        getDefaultEmbeddingModelInstance: () => ({ model_name: 'p13-fixture' })
+                    }) as any
+            );
+            try {
+                await fixture(backends[0], async (f) => {
+                    f.control.sqlKit = sql.kit;
+                    const directory = fs.mkdtempSync(path.join(profile, `p13-open-${target}-`));
+                    const fss = new FSStorage(directory);
+                    fss.retrieval._probeEmbedding = async () => ({
+                        ok: true,
+                        dim: 2,
+                        model_name: 'p13-fixture',
+                        requestDim: 2
+                    });
+                    try {
+                        if (target !== 'base') {
+                            await fss.initialize({ syncEmbedding: false });
+                            await fss.storage!.upsert(
+                                [
+                                    {
+                                        item_id: 'retained-base-row',
+                                        item_type: 'file',
+                                        filename: 'retained.md',
+                                        root_refs: '[]',
+                                        ref_count: 1
+                                    }
+                                ],
+                                { indexers: ['BaseIndexer'] }
+                            );
+                        }
+                        f.control.openError = Object.assign(
+                            new Error('isolated SDK opening failure'),
+                            code === undefined ? {} : { code }
+                        );
+                        f.control.openErrorStorePrefix = `arkdata-${target}:`;
+                        f.control.openErrorOnce = true;
+                        const operation =
+                            target === 'base'
+                                ? fss.initialize({ syncEmbedding: false })
+                                : fss.retrieval.prepare({
+                                      context: {},
+                                      reason: 'P13 actual SDK opening',
+                                      role: 'write'
+                                  });
+                        if (code === 14800011) {
+                            await operation;
+                            assert.deepEqual(
+                                f.calls.deleteIds.map((id: string) => id.split(':')[0]),
+                                target === 'base'
+                                    ? [
+                                          'arkdata-vector',
+                                          'arkdata-chunk',
+                                          'arkdata-base',
+                                          'arkdata-vector',
+                                          'arkdata-chunk'
+                                      ]
+                                    : ['arkdata-vector', 'arkdata-chunk']
+                            );
+                            assert.equal(fss.scannerState.embedding_generation, 1);
+                            assert.equal(fss.scannerState.semantic_reset_pending, false);
+                            if (target !== 'base')
+                                assert.deepEqual(
+                                    (await fss.storage!.search([])).items.map(({ item }: any) => item.item_id),
+                                    ['retained-base-row']
+                                );
+                        } else {
+                            await assert.rejects(operation);
+                            assert.deepEqual(f.calls.deleteIds, []);
+                            assert.equal(fss.scannerState.embedding_generation, 0);
+                            if (target !== 'base')
+                                assert.deepEqual(
+                                    (await fss.storage!.search([])).items.map(({ item }: any) => item.item_id),
+                                    ['retained-base-row']
+                                );
+                        }
+                        assert.equal(fss._pendingStorageClosures.size, 0);
+                    } finally {
+                        await fss.close();
+                        sql.close();
+                    }
+                    assert.equal(f.references(), 0);
+                });
+            } finally {
+                Object.defineProperty(process, 'platform', platform);
+                if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+                else process.env.ARKDATA_AVAILABLE = available;
+            }
+        });
+
+if (adapterDirectory)
+    for (const failed of [false, true])
+        test(`P13 pending base deletion survives reset failure and error refresh; late SDK failure=${failed}`, async (t) => {
+            const { FSStorage } = await import('../../../../../main/applications/filemgr/storage.js');
+            const { default: FileManagerWorker } = await import('../../../../../main/applications/filemgr/worker.js');
+            const { Setting } = await import('../../../../../main/utils/setting.js');
+            const sql = sqliteSqlFixture();
+            const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+            const available = process.env.ARKDATA_AVAILABLE;
+            Object.defineProperty(process, 'platform', { value: 'openharmony' });
+            process.env.ARKDATA_AVAILABLE = '1';
+            t.mock.method(
+                Setting,
+                'getInstance',
+                () =>
+                    ({
+                        data: { locale: 'en-US' },
+                        getData: () => ({}),
+                        getDefaultEmbeddingModelInstance: () => null
+                    }) as any
+            );
+            try {
+                await fixture(backends[0], async (f) => {
+                    f.control.sqlKit = sql.kit;
+                    const directory = fs.mkdtempSync(path.join(profile, 'p13-pending-reset-'));
+                    const root = path.join(directory, 'files');
+                    fs.mkdirSync(root);
+                    const fss = new FSStorage(directory);
+                    const worker = new FileManagerWorker('com.test.p13-pending', directory);
+                    worker.storage = fss;
+                    worker.config = { entries: [{ root, include_patterns: ['**/*'], exclude_patterns: [] }] };
+                    worker.callApp = async () => {};
+                    worker.callAppWithResponse = async (name: string, method: string, ...args: any[]) => {
+                        assert.equal(name, 'databaseKitCall');
+                        return f.kit[method](...args);
+                    };
+                    const gate = deferred();
+                    const target = createArkDataStoreId(
+                        'arkdata-base',
+                        toArkDataDbPath(path.join(fss._storageDir, 'base-index.db'))
+                    );
+                    f.control.deleteTarget = target;
+                    f.control.deleteGate = gate;
+                    f.control.deleteTimeout = true;
+                    try {
+                        const first = await worker.resetFileSystemStorage();
+                        assert.equal(first.status, 'error');
+                        assert.equal(worker.status, 'error');
+                        const op = [...f.adapter.operations.values()].find(
+                            (op: any) => op.type === 'deleteStore' && op.storeId === target
+                        ) as any;
+                        assert.equal(op.state, 'pending');
+                        assert.equal(f.calls.sdkOpens, 0);
+                        assert.deepEqual(
+                            f.calls.deleteIds.map((id: string) => id.split(':')[0]),
+                            ['arkdata-vector', 'arkdata-chunk', 'arkdata-base']
+                        );
+                        const refresh = await worker.forceRefreshScan();
+                        assert.equal(refresh.status, 'error');
+                        assert.equal(worker.status, 'error');
+                        assert.equal(f.calls.sdkOpens, 0, 'Pending target open is rejected before SDK creation');
+                        assert.equal(f.calls.deleteIds.length, 3, 'Refresh must never reissue SDK deletion');
+                        assert.equal((await worker.resetFileSystemStorage()).status, 'error');
+                        assert.equal(f.calls.deleteIds.filter((id: string) => id === target).length, 1);
+                        assert.equal(f.calls.sdkOpens, 0);
+                        assert.equal(op.state, 'pending');
+                        if (failed)
+                            f.control.deleteError = Object.assign(new Error('isolated late deletion failure'), {
+                                code: 14800011
+                            });
+                        gate.resolve();
+                        await tick();
+                        assert.equal(op.state, failed ? 'error' : 'success');
+                        assert.equal(first.status, 'error');
+                        f.control.deleteError = null;
+                        f.control.deleteTimeout = false;
+                        const retry = await worker.resetFileSystemStorage();
+                        assert.equal(retry.status, 'ok');
+                        await worker.taskQueue.onIdle();
+                        assert.equal(f.calls.deleteIds.filter((id: string) => id === target).length, 2);
+                        assert.notEqual(worker.status, 'error');
+                        assert.equal(worker._initError, null);
+                        assert.equal(worker.storage!.mode, 'base-only');
+                        assert.ok(worker.storage!.scannerState.roots[root]);
+                    } finally {
+                        gate.resolve();
+                        f.control.deleteError = null;
+                        f.control.deleteTimeout = false;
+                        await worker.finalize();
+                        sql.close();
+                    }
+                    assert.equal(f.references(), 0);
+                });
+            } finally {
+                Object.defineProperty(process, 'platform', platform);
+                if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+                else process.env.ARKDATA_AVAILABLE = available;
+            }
+        });
+
+for (const mode of ['full', 'base-only', 'none'])
+    for (const target of ['vector', 'chunk', 'base'])
+        test(`P13 ${mode} reset aborts at SDK ${target} deletion failure without reopening`, async (t) => {
+            const { FSStorage } = await import('../../../../../main/applications/filemgr/storage.js');
+            const { default: FileManagerWorker } = await import('../../../../../main/applications/filemgr/worker.js');
+            const { Setting } = await import('../../../../../main/utils/setting.js');
+            const sql = sqliteSqlFixture();
+            const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+            const available = process.env.ARKDATA_AVAILABLE;
+            Object.defineProperty(process, 'platform', { value: 'openharmony' });
+            process.env.ARKDATA_AVAILABLE = '1';
+            t.mock.method(
+                Setting,
+                'getInstance',
+                () =>
+                    ({
+                        data: { locale: 'en-US' },
+                        getData: () => ({}),
+                        getDefaultEmbeddingModelInstance: () => (mode === 'full' ? { model_name: 'p13-fixture' } : null)
+                    }) as any
+            );
+            try {
+                await fixture(backends[0], async (f) => {
+                    f.control.sqlKit = sql.kit;
+                    const directory = fs.mkdtempSync(path.join(profile, `p13-reset-failure-${target}-`));
+                    const root = path.join(directory, 'files');
+                    fs.mkdirSync(root);
+                    const fss = new FSStorage(directory);
+                    fss.retrieval._probeEmbedding = async () => ({
+                        ok: true,
+                        dim: 2,
+                        model_name: 'p13-fixture',
+                        requestDim: 2
+                    });
+                    const worker = new FileManagerWorker('com.test.p13-reset-failure', directory);
+                    worker.callApp = async () => {};
+                    worker.callAppWithResponse = async (name: string, method: string, ...args: any[]) => {
+                        assert.equal(name, 'databaseKitCall');
+                        return f.kit[method](...args);
+                    };
+                    worker.config = { entries: [{ root, include_patterns: ['**/*'], exclude_patterns: [] }] };
+                    try {
+                        if (mode !== 'none') {
+                            await fss.initialize();
+                            assert.equal(fss.mode, mode);
+                            worker.storage = fss;
+                        }
+                        const before = f.calls.sdkOpens;
+                        f.control.deleteTarget = createArkDataStoreId(
+                            `arkdata-${target}`,
+                            toArkDataDbPath(path.join(fss._storageDir, `${target}-index.db`))
+                        );
+                        f.control.deleteError = Object.assign(new Error('isolated SDK raw deletion failure'), {
+                            code: 14800011
+                        });
+                        const result = await worker.resetFileSystemStorage();
+                        assert.equal(result.status, 'error');
+                        assert.equal(worker.status, 'error');
+                        assert.equal(worker._initError.code, 'store_delete_failed');
+                        assert.equal(worker._initError.details.sdkErrorCode, 14800011);
+                        assert.equal(worker._initError.details.storeId, f.control.deleteTarget);
+                        assert.equal(initializationRecovery(worker._initError), null);
+                        assert.deepEqual(
+                            f.calls.deleteIds.map((id: string) => id.split(':')[0]),
+                            ['vector', 'chunk', 'base']
+                                .slice(0, ['vector', 'chunk', 'base'].indexOf(target) + 1)
+                                .map((kind) => `arkdata-${kind}`)
+                        );
+                        assert.equal(f.calls.sdkOpens, before);
+                        assert.equal(f.references(), 0);
+                        assert.equal(worker.scanners.size, 0);
+                        await worker.embeddingConfigChanged();
+                        await worker.applicationConfigChanged(worker.config);
+                        await worker.runSequentially(() => worker._restartScanners());
+                        assert.equal(worker.status, 'error');
+                        assert.equal(
+                            f.calls.sdkOpens,
+                            before,
+                            'Automatic entries cannot reopen after a raw reset failure'
+                        );
+                    } finally {
+                        f.control.deleteError = null;
+                        await worker.finalize();
+                        await fss.close();
+                        sql.close();
+                    }
+                });
+            } finally {
+                Object.defineProperty(process, 'platform', platform);
+                if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+                else process.env.ARKDATA_AVAILABLE = available;
+            }
+        });

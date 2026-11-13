@@ -10,6 +10,21 @@
  */
 
 import fs from 'fs';
+import { toWasmDbPath } from './wasm-path.js';
+
+export function assertWasmStoresUnlocked(dbPaths: string[]): void {
+    for (const dbPath of dbPaths) {
+        const lockPath = `${toWasmDbPath(dbPath)}.lock`;
+        try {
+            fs.lstatSync(lockPath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+            throw error;
+        }
+        // A conservative snapshot, not a lock acquisition or stale-lock cleanup.
+        throw Object.assign(new Error(`EBUSY: ${lockPath}`), { code: 'EBUSY', path: lockPath });
+    }
+}
 
 export function removePathIfExists(targetPath: string): void {
     try {

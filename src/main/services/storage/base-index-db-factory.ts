@@ -16,8 +16,26 @@
 import type { ColumnSchema } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult, IBaseIndexDB } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
+import type { RetainStorageInitializationCleanup } from './platform.js';
+import { assertWasmStoresUnlocked, removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 
-export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): Promise<IBaseIndexDB> {
+export async function dropBaseIndexStore(dbPath: string): Promise<void> {
+    assertWasmStoresUnlocked([dbPath]);
+    if (shouldUseArkData()) {
+        const { dropBaseIndexStoreArkdata } = await import('./base-index-db-arkdata.js');
+        await dropBaseIndexStoreArkdata(dbPath);
+        return;
+    }
+    removeSqliteStoreFiles(dbPath);
+    removeSqliteStoreFiles(toWasmDbPath(dbPath));
+}
+
+export async function createBaseIndexDB(
+    dbPath: string,
+    schema: ColumnSchema,
+    retainCleanup?: RetainStorageInitializationCleanup
+): Promise<IBaseIndexDB> {
     if (shouldUseArkData()) {
         const { BaseIndexDBArkdata } = await import('./base-index-db-arkdata.js');
         return new BaseIndexDBArkdata(dbPath, schema);
@@ -25,11 +43,11 @@ export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): P
     return createWithNativeSqliteFallback(
         async () => {
             const { BaseIndexDB } = await import('./base-index-db.js');
-            return new BaseIndexDB(dbPath, schema);
+            return new BaseIndexDB(dbPath, schema, retainCleanup);
         },
         async () => {
             const { BaseIndexDBWasm } = await import('./base-index-db-wasm.js');
-            return new BaseIndexDBWasm(dbPath, schema);
+            return new BaseIndexDBWasm(dbPath, schema, retainCleanup);
         }
     );
 }

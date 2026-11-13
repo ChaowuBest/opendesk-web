@@ -12,14 +12,18 @@
 /**
  * VectorIndexDB 工厂：根据平台动态加载 ArkData / WASM / Node 原生实现
  */
-import fs from 'fs';
 import type { IVectorIndexDB } from './vector-indexer.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
-import { removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
+import type { RetainStorageInitializationCleanup } from './platform.js';
+import { assertWasmStoresUnlocked, removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
 import { toWasmDbPath } from './wasm-path.js';
 
-export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
+export async function createVectorIndexDB(
+    dbPath: string,
+    dimension: number = 1024,
+    retainCleanup?: RetainStorageInitializationCleanup
+): Promise<IVectorIndexDB> {
     if (shouldUseArkData()) {
         const { VectorIndexDBArkdata } = await import('./vector-index-db-arkdata.js');
         return new VectorIndexDBArkdata(dbPath, dimension);
@@ -27,19 +31,13 @@ export async function createVectorIndexDB(dbPath: string, dimension: number = 10
     return createWithNativeSqliteFallback(
         async () => {
             const { VectorIndexDB } = await import('./vector-index-db.js');
-            return new VectorIndexDB(dbPath, dimension);
+            return new VectorIndexDB(dbPath, dimension, retainCleanup);
         },
         async () => {
             const { VectorIndexDBWasm } = await import('./vector-index-db-wasm.js');
-            return new VectorIndexDBWasm(dbPath, dimension);
+            return new VectorIndexDBWasm(dbPath, dimension, retainCleanup);
         }
     );
-}
-
-/** Raw ArkData deletion needs a retained connection; file backends delete without opening a DB. */
-export async function createVectorIndexDBForDrop(dbPath: string, dimension: number): Promise<IVectorIndexDB | null> {
-    if (!shouldUseArkData()) return null;
-    return createVectorIndexDB(dbPath, dimension);
 }
 
 export async function probeVectorIndexStore(dbPath: string): Promise<BaseIndexStoreProbeResult> {
@@ -60,6 +58,7 @@ export async function probeVectorIndexStore(dbPath: string): Promise<BaseIndexSt
 }
 
 export async function dropVectorIndexStore(dbPath: string): Promise<void> {
+    assertWasmStoresUnlocked([dbPath]);
     if (shouldUseArkData()) {
         const { dropVectorIndexStoreArkdata } = await import('./vector-index-db-arkdata.js');
         await dropVectorIndexStoreArkdata(dbPath);
@@ -67,8 +66,6 @@ export async function dropVectorIndexStore(dbPath: string): Promise<void> {
     }
     removeSqliteStoreFiles(dbPath, [`${dbPath}.hnsw.json`]);
     removePathIfExists(`${toWasmDbPath(dbPath)}.hnsw.json`);
-    if (fs.existsSync(toWasmDbPath(dbPath))) {
-        const { dropVectorIndexStoreWasm } = await import('./vector-index-db-wasm.js');
-        await dropVectorIndexStoreWasm(dbPath);
-    }
+    // A previous attempt may already have removed the main file before failing on a sidecar.
+    removeSqliteStoreFiles(toWasmDbPath(dbPath));
 }

@@ -43,6 +43,8 @@ export const EtsBridgeMethods = {
     ARKDATA_EXEC_SQL: 'ArkData.ExecSql',
     ARKDATA_EXEC_SQL_PARAMS: 'ArkData.ExecSqlParams',
     ARKDATA_QUERY_SQL_SHORT: 'ArkData.QuerySql',
+    ARKDATA_DELETE_STORE_START: 'ArkData.DeleteStoreStart',
+    ARKDATA_DELETE_STORE_READY: 'ArkData.DeleteStoreReady',
     ARKDATA_OPEN_STORE_START: 'ArkData.OpenStoreStart',
     ARKDATA_OPEN_STORE_READY: 'ArkData.OpenStoreReady',
     ARKDATA_CLOSE_STORE_START: 'ArkData.CloseStoreStart',
