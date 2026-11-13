@@ -1281,6 +1281,8 @@ export const zhCn: Record<string, string> = {
         '子任务因主任务收到新消息而转为后台执行，请使用 planning-waitSubTask 工具获取结果。',
     'tools.createSubTask.endedWithoutResult': '子任务已结束但未返回结果。',
     'tools.createSubTask.executionFailed': '子任务执行失败: ${error}',
+    'tools.createSubTask.invalidTitle':
+        'title 参数不可用: "${title}"。子任务标题必须是一句可读的描述，不能是格式占位符（如 {子任务标题}、任务名称）、纯符号、纯不可见字符或空内容。请改写 title 后重新调用 createSubTask，objective 与 criteria 保持不变。',
     'tools.waitSubTask.name': '等待子任务',
     'tools.attachToSubTask.name': '追加消息到子任务',
     'tools.askUser.name': '询问用户',

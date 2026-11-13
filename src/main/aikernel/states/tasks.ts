@@ -56,7 +56,7 @@ import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
-import { truncateTaskName } from '../../utils/task-name.js';
+import { normalizeGeneratedTaskName, TASK_NAME_PROMPT_PLACEHOLDER, truncateTaskName } from '../../utils/task-name.js';
 import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
 import { collectToolSystemPromptContributions } from '../tool-system-prompt.js';
 import { LLM } from '../llm.js';
@@ -2649,11 +2649,22 @@ export class TaskState {
             'task.id': this.task_id
         });
         await TelemetryOperationRegistry.aroundOperation(operation, async () => {
+            // 回退名：用户消息清洗并按 Unicode 码点截断到统一长度（避免 emoji 代理对被截半），
+            // 它同时是"用户输入是否含可命名内容"的判据——纯图片消息、纯空白或纯不可见字符都会得到空串
+            const fallbackName = truncateTaskName(user_message);
+            // 没有可命名的内容时，prompt 里的用户消息槽位是空的，模型只会复读格式占位符，
+            // 因此直接保留当前任务名（通常是"未命名任务"）
+            if (!fallbackName) {
+                logger.info(`skip task name generation for ${this.task_id}: empty user message`);
+                operation.setAttribute('task.name', this.task_name ?? '');
+                return;
+            }
+
             const quickModel = Setting.getInstance().getData().default_quick_model;
             const model = quickModel || this.ensureValidModelOrFallback();
             const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
                 请输出一个简洁明了的任务名称，不要超过10个字符。
-                只输出单行内容，格式为 <taskname>{生成的任务名}</taskname>，不要输出任何其他内容。
+                只输出单行内容，格式为 <taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>，其中的占位文字要替换成你生成的名字，不要输出任何其他内容。
                 `;
 
             const output = await LLM.ask(prompt.trim(), model, {
@@ -2667,20 +2678,10 @@ export class TaskState {
             });
 
             // 某些模型会把思维链和正文混在同一输出里，逐行取末行不可靠；
-            // 改为从 <taskname></taskname> 标签中提取，标签可能出现在输出任意位置
-            const match = output?.match(/<taskname>([\s\S]*?)<\/taskname>/);
-            // 标签内容可能跨行或含连续空白，折叠为单个空格，避免任务名在列表中折行显示
-            const generatedName = match?.[1]?.replace(/\s+/g, ' ').trim();
-            if (generatedName) {
-                this.task_name = generatedName;
-            } else {
-                // 解析失败时回退为用户消息截断到统一长度的任务名。
-                // truncateTaskName 按 Unicode 码点截断，避免把 emoji 的代理对截半产生乱码
-                const fallbackName = truncateTaskName(user_message);
-                if (fallbackName) {
-                    this.task_name = fallbackName;
-                }
-            }
+            // 改为从 <taskname></taskname> 标签中提取，标签可能出现在输出任意位置，且大小写不固定
+            const match = output?.match(/<taskname>([\s\S]*?)<\/taskname>/i);
+            // 解析失败、模型回显格式占位符或只输出省略号时回退为用户消息截断出来的名称
+            this.task_name = normalizeGeneratedTaskName(match?.[1]) ?? fallbackName;
             operation.setAttribute('task.name', this.task_name ?? '');
         });
     }

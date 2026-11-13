@@ -512,11 +512,17 @@ const CallSkillToolSchema = z.object({
     bundleName: z.string().describe('要调用的Skill内置工具所属的应用名(bundleName)'),
     skillName: z.string().describe('要调用的Skill的名称'),
     toolName: z.string().describe('要调用的工具名称'),
-    toolArgs: z
+    arguments: z
         .unknown()
         .optional()
         .describe('要传递给工具的参数, 该参数是一个object, 应该遵循被调用的工具给出的Schema。无参数工具可省略或传{}')
 });
+
+/**
+ * arguments 字段改名前（历史任务记录 / 旧提示词）使用的外层参数旧名。
+ * 解析与平铺参数修复时需识别旧名并回退，避免模型沿用旧习惯传参时内层参数整体丢失。
+ */
+const LEGACY_TOOL_ARGS_KEY = 'toolArgs';
 
 /**
  * 创建一个临时的 ToolCall 对象用于渲染内部工具调用
@@ -541,15 +547,15 @@ function createInnerToolCall(
     return innerToolCall;
 }
 
-function parseCallSkillToolArgs(toolArgs: unknown): object {
-    if (toolArgs === undefined || toolArgs === null) {
+function parseCallSkillToolArgs(innerArgs: unknown): object {
+    if (innerArgs === undefined || innerArgs === null) {
         return {};
     }
-    if (typeof toolArgs === 'object') {
-        return toolArgs;
+    if (typeof innerArgs === 'object') {
+        return innerArgs;
     }
-    if (typeof toolArgs === 'string') {
-        const trimmed = toolArgs.trim();
+    if (typeof innerArgs === 'string') {
+        const trimmed = innerArgs.trim();
         if (trimmed.length === 0) {
             return {};
         }
@@ -561,12 +567,26 @@ function parseCallSkillToolArgs(toolArgs: unknown): object {
             return parsed;
         }
     }
-    throw new Error('toolArgs的类型无法解析');
+    throw new Error('内层工具参数无法解析');
+}
+
+/**
+ * 读取调用入参中显式声明的内层工具参数字段。
+ * arguments 缺失时回退改名前的旧名 toolArgs，保证改名不影响旧习惯调用与历史记录回放。
+ */
+function resolveExplicitInnerArgs(record: Record<string, unknown>): unknown {
+    if (record['arguments'] !== undefined) {
+        return record['arguments'];
+    }
+    return record[LEGACY_TOOL_ARGS_KEY];
 }
 
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
-    /** CallSkillTool 自身 schema 的外层字段（从 schema 派生，新增外层字段时自动同步），平铺参数修复时需从候选内层参数中剔除 */
-    private static readonly OUTER_ARG_KEYS: readonly string[] = Object.keys(CallSkillToolSchema.shape);
+    /** CallSkillTool 自身 schema 的外层字段（从 schema 派生，新增外层字段时自动同步）+ 改名前旧名，平铺参数修复时需从候选内层参数中剔除 */
+    private static readonly OUTER_ARG_KEYS: readonly string[] = [
+        ...Object.keys(CallSkillToolSchema.shape),
+        LEGACY_TOOL_ARGS_KEY
+    ];
 
     constructor() {
         super(
@@ -581,13 +601,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
     /**
      * 部分模型在调用 CallSkillTool 时会把内部工具参数直接平铺到顶层，
-     * 丢失 toolName/toolArgs 包装，导致 schema 校验必然失败，且模型重试往往重复同样的错误。
-     * 此方法尝试把这类参数还原为规范的 { bundleName, skillName, toolName, toolArgs } 结构。
+     * 丢失 toolName/arguments 包装，或仍按改名前旧名 toolArgs 传递内层参数，
+     * 导致内层参数整体丢失，且模型重试往往重复同样的错误。
+     * 此方法尝试把这类参数还原为规范的 { bundleName, skillName, toolName, arguments } 结构。
      * 仅当已加载技能的内部工具 schema 能唯一解释全部平铺字段时才修复，避免误判。
      */
     private resolveSkillToolArgs(
         raw: unknown
-    ): { bundleName: string; skillName: string; toolName: string; toolArgs: object } | undefined {
+    ): { bundleName: string; skillName: string; toolName: string; arguments: object } | undefined {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
             return undefined;
         }
@@ -600,16 +621,16 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
         const toolName = typeof record['toolName'] === 'string' ? record['toolName'] : undefined;
         if (toolName) {
-            let toolArgs: object;
+            let innerArgs: object;
             try {
-                toolArgs = parseCallSkillToolArgs(record['toolArgs']);
+                innerArgs = parseCallSkillToolArgs(resolveExplicitInnerArgs(record));
             } catch {
-                toolArgs = {};
+                innerArgs = {};
             }
-            return { bundleName, skillName, toolName, toolArgs };
+            return { bundleName, skillName, toolName, arguments: innerArgs };
         }
 
-        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断
+        // toolName 缺失：合并顶层平铺字段与显式 arguments（同名字段以显式 arguments 为准，旧名 toolArgs 参与回退）后推断
         const flatArgs: Record<string, unknown> = {};
         let hasFlatArgs = false;
         for (const [key, value] of Object.entries(record)) {
@@ -619,20 +640,19 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             flatArgs[key] = value;
             hasFlatArgs = true;
         }
-        // toolName 缺失：合并顶层平铺字段与显式 toolArgs（同名字段以显式 toolArgs 为准）后推断。
-        // toolArgs 可能是 JSON 字符串（部分模型按字符串嵌套传递，见 task_mtvpprvf_91ts 故障），先解析成对象
-        let parsedExplicitToolArgs: unknown;
+        // toolName 缺失：显式 arguments 可能是 JSON 字符串（部分模型按字符串嵌套传递，见 task_mtvpprvf_91ts 故障），先解析成对象
+        let parsedExplicitInnerArgs: unknown;
         try {
-            parsedExplicitToolArgs = parseCallSkillToolArgs(record['toolArgs']);
+            parsedExplicitInnerArgs = parseCallSkillToolArgs(resolveExplicitInnerArgs(record));
         } catch {
-            parsedExplicitToolArgs = undefined;
+            parsedExplicitInnerArgs = undefined;
         }
         if (
-            parsedExplicitToolArgs &&
-            typeof parsedExplicitToolArgs === 'object' &&
-            !Array.isArray(parsedExplicitToolArgs)
+            parsedExplicitInnerArgs &&
+            typeof parsedExplicitInnerArgs === 'object' &&
+            !Array.isArray(parsedExplicitInnerArgs)
         ) {
-            Object.assign(flatArgs, parsedExplicitToolArgs);
+            Object.assign(flatArgs, parsedExplicitInnerArgs);
             hasFlatArgs = true;
         }
         if (!hasFlatArgs) {
@@ -647,7 +667,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         if (!inferredToolName) {
             return undefined;
         }
-        return { bundleName, skillName, toolName: inferredToolName, toolArgs: flatArgs };
+        return { bundleName, skillName, toolName: inferredToolName, arguments: flatArgs };
     }
 
     /**
@@ -707,9 +727,48 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         return top.name;
     }
 
+    /**
+     * 改名兼容：arguments 缺失且存在旧名 toolArgs 时，把旧名重命名为 arguments 返回。
+     * zod 会把旧名 toolArgs 当未知字段忽略、把 optional 的 arguments 视为缺失，
+     * schema 校验会静默通过但内层参数整体丢失（真实故障 task 5f9d23b1 的静默失败路径），
+     * 因此必须在成功路径上主动归一化。仅处理带 toolName 的规范形态；
+     * 无 toolName 的平铺形态由 resolveSkillToolArgs 推断处理。
+     * 旧名内容无法解析（如标量）时直接抛错，由 validateArgs 转为显式失败，
+     * 避免静默丢弃参数退化为空参执行（改名前 execute 主路径对同类输入即显式报错）。
+     */
+    private normalizeLegacyInnerArgs(raw: unknown): object | undefined {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return undefined;
+        }
+        const record = raw as Record<string, unknown>;
+        if (record['arguments'] !== undefined || record[LEGACY_TOOL_ARGS_KEY] === undefined) {
+            return undefined;
+        }
+        if (typeof record['toolName'] !== 'string') {
+            return undefined;
+        }
+        const innerArgs = parseCallSkillToolArgs(record[LEGACY_TOOL_ARGS_KEY]);
+        const { [LEGACY_TOOL_ARGS_KEY]: _legacy, ...rest } = record;
+        return { ...rest, arguments: innerArgs };
+    }
+
     validateArgs(args: unknown): ToolArgsValidationResult<typeof CallSkillToolSchema> {
         const baseResult = super.validateArgs(args);
         if (baseResult.success) {
+            try {
+                const normalized = this.normalizeLegacyInnerArgs(args);
+                if (normalized) {
+                    const normalizedResult = super.validateArgs(normalized);
+                    if (normalizedResult.success) {
+                        return { ...normalizedResult, repaired: true };
+                    }
+                }
+            } catch (err) {
+                return {
+                    success: false,
+                    error: err instanceof Error ? err.message : String(err)
+                };
+            }
             return baseResult;
         }
         const repaired = this.resolveSkillToolArgs(args);
@@ -732,7 +791,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         if (cachedSkill) {
             const innerTool = cachedSkill.getTool(resolved.toolName);
             if (innerTool) {
-                const innerPerms = innerTool.getDeclaredPermissions(resolved.toolArgs);
+                const innerPerms = innerTool.getDeclaredPermissions(resolved.arguments);
                 if (innerPerms.length > 0) {
                     return innerPerms;
                 }
@@ -832,7 +891,8 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
         let parsedToolArgs: object;
         try {
-            parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
+            // 历史任务记录回放时 args_object 可能仍是旧名 toolArgs，统一经回退解析
+            parsedToolArgs = parseCallSkillToolArgs(resolveExplicitInnerArgs(args as Record<string, unknown>));
         } catch {
             parsedToolArgs = {};
         }
@@ -884,6 +944,34 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 
     /**
+     * 内层参数校验失败时生成自我纠正指引：
+     * 列出该工具的必填参数（含类型）与本次实际收到的字段；
+     * 收到空参数时额外点名外层字段名错误（如沿用旧名 toolArgs）这一常见根因，
+     * 对应真实故障（task 5f9d23b1）：模型反复收到 "target: 类型不正确或缺少必要字段"
+     * 这类含糊错误后无法定位根因，盲目重试十余次。
+     */
+    private buildInnerArgsErrorGuidance(tool: BaseTool<z.ZodType>, toolArgs: object): string {
+        const jsonSchema = tool.getJsonSchema();
+        const required = Array.isArray(jsonSchema?.required) ? (jsonSchema.required as string[]) : [];
+        const properties = (jsonSchema?.properties ?? {}) as Record<string, { type?: string }>;
+        const receivedKeys = Object.keys(toolArgs);
+        const parts: string[] = [];
+        if (required.length > 0) {
+            const requiredDesc = required.map((name) => `${name}(${properties[name]?.type ?? 'any'})`).join(', ');
+            parts.push(`内部工具 ${tool.name} 要求以下必填参数: ${requiredDesc}`);
+        }
+        if (receivedKeys.length === 0) {
+            parts.push(
+                `本次调用没有收到任何内层参数。参数必须放在 CallSkillTool 顶层 arguments 字段中传递；` +
+                    `请检查是否误用了其他字段名（如 ${LEGACY_TOOL_ARGS_KEY}/args/params），或把参数平铺到了顶层`
+            );
+        } else {
+            parts.push(`本次调用收到的内层参数字段: ${receivedKeys.join(', ')}，请对照上方必填参数补齐或修正字段名`);
+        }
+        return parts.join('。') + '。';
+    }
+
+    /**
      * 通用执行器：转发 updatedCallback 和 taskState 给内部工具，
      * 使内部工具的流式更新（如 QR 码渲染）能够传播到 TUI/Electron 前端。
      */
@@ -909,9 +997,17 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         }
 
         try {
-            const toolArgs = parseCallSkillToolArgs(args.toolArgs);
+            const toolArgs = parseCallSkillToolArgs(args.arguments);
 
-            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
+            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.arguments)}`);
+
+            // 内层参数预检：校验失败时直接返回带必填参数指引的错误，
+            // 让模型能对照参数列表发现外层字段名写错（如误用旧名 toolArgs/args）或漏传参数并自我纠正，
+            // 而不是收到含糊的逐字段校验错误后盲目重试
+            const precheck = tool.validateArgs(toolArgs);
+            if (!precheck.success) {
+                throw new Error(`${precheck.error}。${this.buildInnerArgsErrorGuidance(tool, toolArgs)}`);
+            }
 
             // skill 内部工具执行前送审 AgentGate 安全网关。
             // executeToolCall 的 checkBeforeToolCall 只针对 CallSkillTool 本身

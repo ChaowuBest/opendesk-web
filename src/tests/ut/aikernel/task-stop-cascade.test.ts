@@ -2,6 +2,7 @@ import { jest } from '@jest/globals';
 import { CreateSubTaskTool, startSubTask, waitSubTaskResult } from '../../../main/aikernel/planning/tools.js';
 import { SkillRegistry } from '../../../main/aikernel/skill.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { TASK_NAME_MAX_LENGTH } from '../../../main/utils/task-name.js';
 import { Setting } from '../../../main/utils/setting.js';
 
 function createTaskTree(parentStatus: TaskState['task_status'] = 'running'): {
@@ -228,6 +229,79 @@ describe('TaskState.stop() child task cascade', () => {
                 model: 'parent-model'
             })
         );
+    });
+
+    test('cleans the model-generated subtask title before it becomes the task name', async () => {
+        const runWithTitle = async (title: string): Promise<string> => {
+            const manager = new TaskManagerState();
+            manager.save = jest.fn();
+            manager.publishTaskListUpdate = jest.fn();
+            manager.moveTaskToEnd = jest.fn();
+            const parent = new TaskState(manager, null);
+            parent.task_id = 'task-parent';
+            parent.task_status = 'running';
+            manager.tasks.push(parent);
+            jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+            let child!: TaskState;
+            await startSubTask({
+                parentTask: parent,
+                config: { title, objective: 'do work', criteria: 'return result', isAsync: false },
+                onCreated: (created) => {
+                    child = created;
+                    jest.spyOn(child, 'submitUserMessage').mockResolvedValue({ status: 'ok' });
+                    jest.spyOn(child, 'waitUntilFinished').mockImplementation(async () => {
+                        child.task_status = 'stopped';
+                    });
+                }
+            });
+            return child.task_name ?? '';
+        };
+
+        // 模型照抄 schema 描述里的占位说法时，不能直接落库成子任务名
+        expect(await runWithTitle('{子任务标题}')).toBe('未命名子任务');
+        expect(await runWithTitle('子任务标题')).toBe('未命名子任务');
+        expect(await runWithTitle('   ')).toBe('未命名子任务');
+        // 不可见字符在落库前剔除
+        expect(await runWithTitle('修复\u200B登录')).toBe('修复登录');
+        // 把占位标签当标题前缀复读时，剥掉前缀留下真名
+        expect(await runWithTitle('任务名称：修复登录')).toBe('修复登录');
+        expect(await runWithTitle('子任务标题 - 重构解析器')).toBe('重构解析器');
+
+        const longTitle = '重构解析器并补齐单元测试与回归验证以及文档更新和示例代码，顺带整理类型定义';
+        expect(await runWithTitle(longTitle)).toBe(
+            Array.from(longTitle).slice(0, TASK_NAME_MAX_LENGTH).join('') + '...'
+        );
+    });
+
+    test('rejects an unusable subtask title so the model can correct it', async () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        manager.moveTaskToEnd = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task-parent';
+        parent.task_status = 'running';
+        manager.tasks.push(parent);
+        jest.spyOn(SkillRegistry.getInstance(), 'getSkillFrontmatterXml').mockResolvedValue('');
+
+        const result = await new CreateSubTaskTool().execute(
+            {
+                title: '{子任务标题}',
+                objective: 'do work',
+                criteria: 'return result',
+                isAsync: false
+            },
+            undefined,
+            parent
+        );
+
+        // 不静默落成同名占位子任务，而是把可纠正的错误回给模型
+        expect(result.status).toBe('error');
+        expect(String(result.result)).toContain('title');
+        // 错误里回显原值，模型才知道要改的是哪个参数、原值是什么
+        expect(String(result.result)).toContain('{子任务标题}');
+        expect(manager.tasks).toHaveLength(1);
     });
 
     test('keeps the child task id in createSubTask progress updates', async () => {

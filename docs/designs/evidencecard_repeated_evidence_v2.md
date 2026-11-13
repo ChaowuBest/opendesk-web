@@ -81,7 +81,7 @@ Shell 判断采用保守白名单。无法明确确认只读时直接忽略。
 对 skill-manager-CallSkillTool 只做一层最小解包：
 
 1. 读取内部 toolName。
-2. 只有内部工具名属于文件或 Shell 白名单时，才解析 toolArgs。
+2. 只有内部工具名属于文件或 Shell 白名单时，才解析内层参数（arguments 字段，历史记录兼容旧名 toolArgs）。
 3. 继续应用与直接调用相同的参数校验和 Shell 命令校验。
 4. 其他 Skill 工具直接忽略。
 

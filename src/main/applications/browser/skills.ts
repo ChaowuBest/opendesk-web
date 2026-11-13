@@ -63,7 +63,7 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 底层通过 Chrome DevTools Protocol (CDP) 定位和控制目标页面。键鼠操作遵循焦点隔离：后台任务或用户正在操作 OpenDesk 时，在目标 frame 内定向执行，不主动切换窗口、任务或输入焦点；仅当目标 webview 本来就拥有焦点时，才使用原生 CDP 输入事件。
 
-下方所有示例均按 skill-manager-CallSkillTool 的真实调用参数结构书写（bundleName / skillName / toolName / toolArgs），其中 toolName 不可省略。
+下方所有示例均按 skill-manager-CallSkillTool 的真实调用参数结构书写（bundleName / skillName / toolName / arguments），其中 toolName 不可省略。
 
 ## 核心工作流
 
@@ -101,14 +101,14 @@ CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "click",
-  "toolArgs": { "target": "e8", "snapshot": true }
+  "arguments": { "target": "e8", "snapshot": true }
 })
 
 CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "type",
-  "toolArgs": { "target": "e3", "text": "关键词", "submit": true, "snapshot": true }
+  "arguments": { "target": "e3", "text": "关键词", "submit": true, "snapshot": true }
 })
 \`\`\`
 
@@ -135,7 +135,7 @@ CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "trigger",
-  "toolArgs": { "action": "Search", "args": { "keyword": "OpenHarmony" }, "snapshot": true }
+  "arguments": { "action": "Search", "args": { "keyword": "OpenHarmony" }, "snapshot": true }
 })
 \`\`\`
 
@@ -227,14 +227,14 @@ CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "uploadFile",
-  "toolArgs": { "target": "e8", "filePath": "/home/user/image.png", "snapshot": true }
+  "arguments": { "target": "e8", "filePath": "/home/user/image.png", "snapshot": true }
 })
 
 CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "uploadFile",
-  "toolArgs": { "target": "e12", "filePaths": ["./a.png", "./b.png"], "snapshot": true }
+  "arguments": { "target": "e12", "filePaths": ["./a.png", "./b.png"], "snapshot": true }
 })
 \`\`\`
 
@@ -277,7 +277,7 @@ CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "screenshot",
-  "toolArgs": { "tabId": 2 }
+  "arguments": { "tabId": 2 }
 })
 \`\`\`
 
@@ -298,7 +298,7 @@ CallSkillTool({
   "bundleName": "browser",
   "skillName": "use-browser",
   "toolName": "download",
-  "toolArgs": { "url": "https://example.com/files/report.zip", "path": "/tmp/report.zip" }
+  "arguments": { "url": "https://example.com/files/report.zip", "path": "/tmp/report.zip" }
 })
 \`\`\`
 
