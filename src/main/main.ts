@@ -66,6 +66,9 @@ import {
     getLogFilename
 } from './utils/logger.js';
 import { broadcastToAllWindows, safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
+import { getWebModeConfig, isWebMode } from './web/config.js';
+import { attachHiddenMainWindow } from './web/ipc-bridge.js';
+import { startWebServer } from './web/web-server.js';
 import {
     isRecoverableMainProcessError,
     logRecoverableMainProcessError,
@@ -754,6 +757,8 @@ function describeFrozenMainWindow(): string | null {
 /** 重新加载主窗口入口页；返回 false 表示窗口不可用或重载配额已耗尽 */
 function reloadMainWindowEntry(reason: string): boolean {
     if (!globalMainWindow || globalMainWindow.isDestroyed()) return false;
+    // web 模式主窗口只是隐藏的 IPC 宿主，不承载 renderer
+    if (isWebMode()) return false;
     if (!mainWindowReloadBudget.tryConsume(reason)) return false;
     logger.warn(`reloading main window entry (reason: ${reason})`);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -921,6 +926,14 @@ const createWindow = () => {
     };
     const showMainWindow = (reason: 'ready-to-show' | 'did-finish-load fallback') => {
         if (mainWindow.isDestroyed() || hasShownMainWindow || mainWindow.isVisible()) return;
+        if (isWebMode()) {
+            // web 模式不显示桌面窗口，界面由浏览器访问 web 服务获得；
+            // 仍需放行等待"主窗口已显示"的后台初始化（遥测、应用全量加载等）
+            hasShownMainWindow = true;
+            signalMainWindowShown();
+            logger.info(`[startup] web 模式：主窗口保持隐藏 (${reason})`);
+            return;
+        }
         // per-monitor DPI 下 BrowserWindow 构造时的 bounds 可能被错误缩放，
         // 在窗口已确定最终显示器（DPI 已就绪）后用 setBounds 精确修正
         // （savedBounds 为视觉语义，扩展阴影边距后再应用到窗口矩形）
@@ -964,7 +977,11 @@ const createWindow = () => {
     displayZoomSync.add(mainWindow);
     mainWindow.once('closed', () => displayZoomSync.remove(mainWindow));
     installWebviewHostHandlers(mainWindow);
-    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    if (isWebMode()) {
+        // 浏览器连接替代 renderer：发往主窗口的消息转发给所有浏览器
+        attachHiddenMainWindow(mainWindow);
+        void mainWindow.loadURL('about:blank');
+    } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
     } else {
         mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -3916,6 +3933,26 @@ async function startApplication(): Promise<void> {
 
         createWindow();
 
+        const webModeConfig = getWebModeConfig();
+        if (webModeConfig) {
+            const rendererDir = path.join(__dirname, '..', 'renderer');
+            const schemes = Array.from(
+                new Set([...ApplicationRegistry.collectProtocolHandlerEntries().map((c) => c.scheme), 'opendesk-app'])
+            );
+            try {
+                await startWebServer({
+                    config: webModeConfig,
+                    rendererDir,
+                    webPreloadPath: path.join(__dirname, '..', 'web', 'preload.js'),
+                    schemes
+                });
+            } catch (error) {
+                logger.error(`[web] failed to start web server: ${(error as Error)?.stack || error}`);
+                app.exit(1);
+                return;
+            }
+        }
+
         // 主窗口就绪后启动 renderer 冻结看门狗；GPU 崩溃恢复由上面的 child-process-gone 驱动
         windowRecovery.start();
 
@@ -3939,7 +3976,7 @@ async function startApplication(): Promise<void> {
             logInfo: (message) => logger.info(message),
             logError: (message) => logger.error(message)
         });
-        initTaskStatusWidget({
+        const taskStatusWidgetOptions: Parameters<typeof initTaskStatusWidget>[0] = {
             getPreloadPath: getRendererPreloadPath,
             getMainWindow: () => globalMainWindow,
             getTaskList: () => GlobalState.getInstance().taskManagerState.getTaskList(),
@@ -3967,7 +4004,9 @@ async function startApplication(): Promise<void> {
                 task.addSubscriber(subscriber);
                 return () => task.removeSubscriber(subscriber.subscription_id);
             }
-        });
+        };
+        // 任务状态浮窗是宿主桌面上的独立窗口，web 模式不创建
+        if (!isWebMode()) initTaskStatusWidget(taskStatusWidgetOptions);
         startMemoryCleanupScheduler(() =>
             FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
         );
@@ -4264,9 +4303,10 @@ async function startApplication(): Promise<void> {
         // 此处 createWindow() 已完成、ArkTS 侧已 active，显式 init() 安全，
         // 确保窗口背景色等主题效果在显示前就绪。
         getMainThemeService().init();
-        registerHotKeys();
+        // web 模式运行在服务器/容器上：全局快捷键与托盘属于宿主桌面，不注册
+        if (!isWebMode()) registerHotKeys();
         registerQuickCaptureHandlers();
-        registerTray();
+        if (!isWebMode()) registerTray();
 
         migrateFileMgrWorkspaceSettingsOnStartup();
 

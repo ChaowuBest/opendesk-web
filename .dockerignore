@@ -1,0 +1,14 @@
+**/node_modules
+**/.DS_Store
+.git
+.husky
+dist
+out
+packages/*/dist
+native/linux/sandbox/build
+native/darwin/sandbox/build
+native/windows/sandbox/dist
+native/windows/sandbox/bin
+native/windows/sandbox/obj
+temp
+*.log

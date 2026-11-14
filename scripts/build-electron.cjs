@@ -69,13 +69,26 @@ function runBuild(target) {
     });
 }
 
+// Web 模式 preload（OPENDESK_WEB_PORT）：同一份 preload 源码换用 WebSocket IPC，见 build-web-preload.mjs
+function runWebPreloadBuild() {
+    return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'build-web-preload.mjs'), '--production'], {
+            cwd: ROOT,
+            stdio: 'inherit'
+        });
+        child.on('error', reject);
+        child.on('exit', (code, signal) => resolve(signal ? 1 : (code ?? 1)));
+    });
+}
+
 async function main() {
     const cores = os.cpus().length;
     if (process.env.OPENDESK_BUILD_SEQUENTIAL === '1' || cores < MIN_CORES_FOR_PARALLEL) {
         if (cores < MIN_CORES_FOR_PARALLEL) {
             process.stdout.write(`[build] 检测到 ${cores} 个 CPU 核心，改为顺序构建\n`);
         }
-        process.exit(await runBuild());
+        const code = await runBuild();
+        process.exit(code === 0 ? await runWebPreloadBuild() : code);
     }
 
     process.stdout.write('[build] 并行构建 main+preload 与 renderer（顺序构建：OPENDESK_BUILD_SEQUENTIAL=1）\n');
@@ -84,6 +97,7 @@ async function main() {
         console.error(`[build] 构建失败：main+preload 退出码 ${mainCode}，renderer 退出码 ${rendererCode}`);
         process.exit(1);
     }
+    process.exit(await runWebPreloadBuild());
 }
 
 main().catch((error) => {

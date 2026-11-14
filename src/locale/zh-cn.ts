@@ -3327,5 +3327,23 @@ export const zhCn: Record<string, string> = {
     'main.desktop.card.noHtml': 'Agent 未生成有效的卡片 HTML',
     'main.desktop.card.timeout': '卡片生成超时（3 分钟），模型可能不可用，请稍后右键卡片重试',
 
+    'renderer.webMode.connecting': '正在连接 OpenDesk 服务…',
+    'renderer.webMode.reconnecting': '与 OpenDesk 服务的连接已断开，正在重连…',
+    'renderer.webMode.cancel': '取消',
+    'renderer.webMode.ok': '确定',
+    'renderer.webMode.open': '打开',
+    'renderer.webMode.save': '保存',
+    'renderer.webMode.selectFolder': '选择此文件夹',
+    'renderer.webMode.up': '上一级',
+    'renderer.webMode.upload': '上传本地文件…',
+    'renderer.webMode.newFolder': '新建文件夹',
+    'renderer.webMode.folderName': '文件夹名称',
+    'renderer.webMode.fileName': '文件名',
+    'renderer.webMode.openFileTitle': '选择文件',
+    'renderer.webMode.openDirectoryTitle': '选择文件夹',
+    'renderer.webMode.saveFileTitle': '保存文件',
+    'renderer.webMode.popupBlocked': '浏览器拦截了新窗口，点击打开：',
+    'renderer.webMode.empty': '（空）',
+
     ...modelZhCn
 };

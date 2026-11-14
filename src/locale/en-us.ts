@@ -3445,5 +3445,23 @@ export const enUs: Record<string, string> = {
     'main.desktop.card.timeout':
         'Card generation timed out (3 minutes). The model may be unavailable — right-click the card to retry later.',
 
+    'renderer.webMode.connecting': 'Connecting to OpenDesk…',
+    'renderer.webMode.reconnecting': 'Connection to OpenDesk lost, reconnecting…',
+    'renderer.webMode.cancel': 'Cancel',
+    'renderer.webMode.ok': 'OK',
+    'renderer.webMode.open': 'Open',
+    'renderer.webMode.save': 'Save',
+    'renderer.webMode.selectFolder': 'Select folder',
+    'renderer.webMode.up': 'Up',
+    'renderer.webMode.upload': 'Upload local files…',
+    'renderer.webMode.newFolder': 'New folder',
+    'renderer.webMode.folderName': 'Folder name',
+    'renderer.webMode.fileName': 'File name',
+    'renderer.webMode.openFileTitle': 'Choose files',
+    'renderer.webMode.openDirectoryTitle': 'Choose folder',
+    'renderer.webMode.saveFileTitle': 'Save file',
+    'renderer.webMode.popupBlocked': 'The browser blocked a new window. Click to open: ',
+    'renderer.webMode.empty': '(empty)',
+
     ...modelEnUs
 };
