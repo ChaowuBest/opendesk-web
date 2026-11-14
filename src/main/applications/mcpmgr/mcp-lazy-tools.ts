@@ -22,6 +22,8 @@ interface McpToolsetOptions {
     task?: TaskState;
     callTool: (tool: McpToolInfo, args: Record<string, unknown>) => Promise<string>;
     loadTools?: () => Promise<readonly McpToolInfo[]>;
+    // 直装预算（字符）：按任务模型上下文窗口缩放；缺省回落到 16k 基线。
+    eagerBudget?: number;
 }
 
 // Store identities only: a rebuilt task toolset always uses the latest discovered definitions.
@@ -89,9 +91,10 @@ export function createMcpToolset(
         .filter(({ info, native }) => allowsTool(options.task, info, native.name));
 
     const fullSize = entries.reduce((sum, entry) => sum + entry.size, 0);
+    const eagerBudget = options.eagerBudget ?? MCP_EAGER_DEFINITION_CHAR_BUDGET;
     // Explicit tool-name restrictions must not make permitted native tools unreachable.
     if (
-        fullSize <= MCP_EAGER_DEFINITION_CHAR_BUDGET ||
+        fullSize <= eagerBudget ||
         !allowsName(options.task, 'mcpActivateTools') ||
         !allowsName(options.task, 'mcpListTools')
     ) {
@@ -188,8 +191,7 @@ export function createMcpToolset(
     let installed = 0;
     for (const entry of ordered) {
         // A single explicitly selected definition may exceed the soft MCP budget; never truncate its schema.
-        if (size + entry.size > MCP_EAGER_DEFINITION_CHAR_BUDGET && !(installed === 0 && preferred[0] === entry.key))
-            continue;
+        if (size + entry.size > eagerBudget && !(installed === 0 && preferred[0] === entry.key)) continue;
         toolset.addTool(entry.native);
         size += entry.size;
         installed++;

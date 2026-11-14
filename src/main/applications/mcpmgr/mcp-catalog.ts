@@ -13,6 +13,22 @@ import type { McpToolInfo } from './common.js';
 
 export const MCP_CATALOG_CHAR_BUDGET = 6_000;
 export const MCP_EAGER_DEFINITION_CHAR_BUDGET = 16_000;
+// 窗口感知直装预算的上限：更大的集合仍走懒加载，避免工具选择精度被稀释并减少前缀缓存失效。
+export const MCP_EAGER_DEFINITION_CHAR_BUDGET_MAX = 128_000;
+// 16k 字符基线最初为 70k token 窗口设计，换算比例取 0.25 字符/token。
+const MCP_EAGER_BUDGET_CHARS_PER_TOKEN = 0.25;
+
+/**
+ * 按模型上下文窗口缩放 MCP 直装预算：窗口越大可直装的字符越多，线性放大后封顶。
+ * 窗口未知或非法时回落到 16k 基线，保持小窗口模型的既有懒加载行为。
+ */
+export function scaleEagerDefinitionBudget(contextWindow?: number): number {
+    if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+        return MCP_EAGER_DEFINITION_CHAR_BUDGET;
+    }
+    const scaled = Math.round(contextWindow * MCP_EAGER_BUDGET_CHARS_PER_TOKEN);
+    return Math.min(MCP_EAGER_DEFINITION_CHAR_BUDGET_MAX, Math.max(MCP_EAGER_DEFINITION_CHAR_BUDGET, scaled));
+}
 
 interface ToolEntry {
     serverId: string;

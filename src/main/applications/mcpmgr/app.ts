@@ -14,6 +14,9 @@ import { t } from './locale/index.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
+import type { ModelInstance } from '../../utils/setting.js';
+import { lookupKnownContextSize } from '../../utils/model-context.js';
+import { ModelContextBudgets } from '../../aikernel/compaction/model-context-budget.js';
 import {
     DeleteMcpServerTool,
     GetMcpRegistryEntryTool,
@@ -28,6 +31,7 @@ import {
     UpdateMcpServerTool
 } from './tools.js';
 import { createMcpToolset } from './mcp-lazy-tools.js';
+import { scaleEagerDefinitionBudget } from './mcp-catalog.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Skill } from '../../aikernel/skill.js';
 import type {
@@ -130,6 +134,38 @@ const AgentMcpConfigSchema = z.object({
 export interface AgentMcpRegistration {
     agentId: string;
     config: unknown;
+}
+
+/**
+ * 仅使用本地证据解析模型上下文窗口：用户配置 → 运行期学习窗口 → 内置模型表。
+ * getToolsets 每轮对话都会同步构建，这里绝不能触发网络查询（fetchContextSizeFromAPI）。
+ */
+export function resolveLocalContextWindow(model?: string): number {
+    try {
+        const setting = Setting.getInstance();
+        let instance: ModelInstance | null;
+        if (typeof model === 'string') {
+            instance = setting.getModelInstance(model, 'chat');
+            if (!instance) return lookupKnownContextSize(model);
+        } else {
+            instance = setting.getDefaultModelInstance();
+            if (!instance) return 0;
+        }
+        if (instance.context_length && instance.context_length > 0) {
+            return instance.context_length;
+        }
+        const learnedWindow = ModelContextBudgets.getLearnedWindow(instance);
+        if (learnedWindow !== undefined) return learnedWindow;
+        const knownSize = lookupKnownContextSize(instance.model_name);
+        if (knownSize > 0) return knownSize;
+        if (typeof model === 'string') {
+            const fallbackKnownSize = lookupKnownContextSize(model);
+            if (fallbackKnownSize > 0) return fallbackKnownSize;
+        }
+        return 0;
+    } catch {
+        return 0;
+    }
 }
 
 export class McpMgrApplication extends BaseApplication {
@@ -557,11 +593,14 @@ export class McpMgrApplication extends BaseApplication {
             return [];
         }
         if (tools.length === 0) return [];
+        // 大窗口模型按比例放宽直装预算（clamp 到 [16k, 128k]）；窗口未知时回落 16k 基线走懒加载。
+        const eagerBudget = scaleEagerDefinitionBudget(resolveLocalContextWindow(task?.model));
         // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑；激活后沿用原生调用路径。
         return [
             createMcpToolset(tools, {
                 task,
                 loadTools,
+                eagerBudget,
                 callTool: async (tool, args) => {
                     const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
                     if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
