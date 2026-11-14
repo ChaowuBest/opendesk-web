@@ -84,6 +84,9 @@ export const zhCn: Record<string, string> = {
     'renderer.skill.count.installed': '已安装 ${count} 个技能',
     'renderer.skill.count.external': '外部目录 ${count} 个技能',
     'renderer.skill.count.builtin': '系统内置 ${count} 个技能',
+    'renderer.skill.pluginManaged.before': '由插件 ',
+    'renderer.skill.pluginManaged.after': ' 注册和管理',
+    'renderer.skill.detail.loadingTools': '正在加载内部工具…',
     'renderer.skill.error.connect': '无法连接技能服务',
     'renderer.skill.error.load': '加载失败',
     'renderer.skill.error.refresh': '刷新失败',
@@ -156,7 +159,6 @@ export const zhCn: Record<string, string> = {
 
     // ========== Renderer：详情 =++
     'renderer.skill.detail.builtinTools': '自带工具 (${count})',
-    'renderer.skill.detail.params': '参数 (${count})',
     'renderer.skill.detail.paramName': '参数名',
     'renderer.skill.detail.paramType': '类型',
     'renderer.skill.detail.paramRequired': '必填',

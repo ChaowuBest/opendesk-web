@@ -9,13 +9,15 @@ import { z } from 'zod';
 import { logger } from '../../../utils/logger.js';
 import { getOpendeskDirectory } from '../../../utils/setting.js';
 import { OPENDESK_PLUGIN_CAPABILITIES, type PluginCapability } from '../../../../../packages/plugin-sdk/src/index.js';
+import type { PluginSourceKind } from '../../../aikernel/skill.js';
 import { ensurePluginDirectories, getPluginRecordRoot, getPluginRegistryPath } from './paths.js';
 
 /**
  * 插件来源：`builtin` 为内置级（默认内置目录 + 附加插件目录），`local` 为安装到
  * `plugins/` 目录里的插件。附加插件目录与内置同级，因此不再单独区分外部来源。
+ * 取值定义统一收敛在 aikernel（PluginSourceKind），此处仅按本模块语义复述约束。
  */
-export type PluginSourceKind = 'builtin' | 'local';
+export type { PluginSourceKind };
 
 /**
  * 旧版注册表可能写入的来源，读取时一次性归并，避免散落到各处判断：

@@ -11,6 +11,7 @@
 
 import { BaseWorker } from '../base';
 import { logger } from '../../utils/logger.js';
+import { toErrorMessage } from '../../../common/utils/error.js';
 import iconv from 'iconv-lite';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -55,13 +56,33 @@ interface McpConnection {
     lastToolsChangedAt?: string;
 }
 
+/**
+ * 技能内部 MCP server 的空闲自动断开时长：连续该时长内没有任何工具调用就断开
+ * 连接以释放 stdio 子进程等资源；后续工具调用会按需重连（懒加载自愈）。
+ */
+const PLUGIN_SKILL_MCP_IDLE_DISCONNECT_MS = 30 * 60 * 1000;
+
 export default class McpMgrWorker extends BaseWorker {
     private readonly localRuntimeState: HarmonyLocalRuntimeState | null;
     private servers: McpServerConfig[] = [];
     private configuredServers: McpServerConfig[] = [];
     private agentServers: McpServerConfig[] = [];
+    /** 插件技能注入的内部 MCP server（运行时存在，不写入用户配置；随插件启停全量同步） */
+    private pluginSkillServers: McpServerConfig[] = [];
     private pendingAgentConnections = new Map<string, Promise<void>>();
     private connections: Map<string, McpConnection> = new Map();
+    /** 进行中的建连（按 server id 去重）：懒加载的并发触发（技能加载/技能详情）不会重复建连或泄漏传输 */
+    private connectingServers = new Map<string, Promise<void>>();
+    /**
+     * 技能内部 server 的空闲断开计时器（按 server id）：连接成功时启动、工具调用时重置，
+     * 连续空闲超时后自动断开以释放 stdio 子进程等资源
+     */
+    private pluginSkillIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /**
+     * 插件技能内部 server 配置变更的串行队列：replace（插件全量同步）与 ensure（技能加载补齐）
+     * 来自并发路径，串行化避免两者在 syncConnections 的 await 点交错后用过期视图互相断连
+     */
+    private pluginSkillMutationQueue: Promise<void> = Promise.resolve();
     private currentWorkspace?: string;
 
     constructor(
@@ -77,9 +98,13 @@ export default class McpMgrWorker extends BaseWorker {
         return (this.config as any)?.servers || [];
     }
 
+    private recomposeServers(): void {
+        this.servers = [...this.configuredServers, ...this.agentServers, ...this.pluginSkillServers];
+    }
+
     async initialize(): Promise<void> {
         this.configuredServers = this.parseServersFromConfig();
-        this.servers = [...this.configuredServers];
+        this.recomposeServers();
         logger.info(`[mcpmgr] Initialized with ${this.servers.length} server configs`);
 
         // 启动时自动连接已启用的 server，失败后延迟重试
@@ -138,10 +163,9 @@ export default class McpMgrWorker extends BaseWorker {
     async applicationConfigChanged(config: object): Promise<void> {
         await super.applicationConfigChanged(config);
         this.configuredServers = this.parseServersFromConfig();
-        const newServers = [...this.configuredServers, ...this.agentServers];
         const oldServers = this.servers;
-        this.servers = newServers;
-        await this.syncConnections(newServers, oldServers);
+        this.recomposeServers();
+        await this.syncConnections(this.servers, oldServers);
         await this.emitEvent('serversUpdated');
     }
 
@@ -151,12 +175,143 @@ export default class McpMgrWorker extends BaseWorker {
             ...server,
             agentIds: server.agentIds ? [...server.agentIds] : []
         }));
-        this.servers = [...this.configuredServers, ...this.agentServers];
+        this.recomposeServers();
         await this.syncConnections(this.servers, oldServers);
         await this.emitEvent('serversUpdated');
     }
 
-    private async syncConnections(newServers: McpServerConfig[], oldServers: McpServerConfig[]): Promise<void> {
+    /**
+     * 原子替换插件技能注入的内部 MCP server。
+     *
+     * 与 replaceAgentServers 同语义的全量替换，但只注册配置、不触发建连：内部 server 的
+     * 连接是懒加载的，延迟到技能加载（ensurePluginSkillServers）或技能详情展示
+     * （connectPluginSkillServers）时进行，避免启动即拉起一批插件子进程。
+     */
+    async replacePluginSkillServers(servers: McpServerConfig[]): Promise<void> {
+        await this.enqueuePluginSkillMutation(() =>
+            this.applyPluginSkillServers(
+                servers.map((server) => ({ ...server })),
+                true,
+                false
+            )
+        );
+    }
+
+    /**
+     * 幂等补齐插件技能注入的内部 MCP server，并确保其已连接（技能加载/详情展示路径）。
+     *
+     * 以 id 为键合并：缺失的补上、配置变化的触发重连，其余保持不变。配置未变化的
+     * server 不经 syncConnections 建连，这里对已登记但尚未连接的兜底建连——全量同步
+     * （replace）只登记不建连，首次技能加载必须在此拿到可用连接。
+     * 同时承担全局 worker 重启后的自愈（新 worker 会丢失运行时注入的 server）。
+     */
+    async ensurePluginSkillServers(servers: McpServerConfig[]): Promise<void> {
+        await this.enqueuePluginSkillMutation(async () => {
+            const merged = new Map(this.pluginSkillServers.map((server) => [server.id, server]));
+            for (const server of servers) {
+                merged.set(server.id, { ...server });
+            }
+            await this.applyPluginSkillServers([...merged.values()], false, true);
+            await Promise.all(
+                servers.filter((server) => server.enabled !== false).map((server) => this.ensureServerConnected(server))
+            );
+        });
+    }
+
+    /**
+     * 确保指定插件技能的内部 MCP server 已连接（技能详情展示前的懒加载触发点）。
+     *
+     * 配置来自此前 replace/ensure 注入的清单；目标已连接/连接中时是幂等快速返回。
+     */
+    async connectPluginSkillServers(pluginId: string, skillName: string): Promise<void> {
+        const targets = this.pluginSkillServers.filter(
+            (server) => server.pluginId === pluginId && server.pluginSkillName === skillName && server.enabled
+        );
+        await Promise.all(targets.map((server) => this.ensureServerConnected(server)));
+    }
+
+    /** server 已连接/连接中时不重复建连；未连接或上次失败时拉起连接（懒加载路径共用） */
+    private async ensureServerConnected(server: McpServerConfig): Promise<void> {
+        const conn = this.connections.get(server.id);
+        if (conn && (conn.status === 'connected' || conn.status === 'connecting')) return;
+        try {
+            await this.connectServer(server.id);
+        } catch (err) {
+            logger.error(`[mcpmgr] Connect failed for ${server.name}: ${toErrorMessage(err)}`);
+        }
+    }
+
+    /**
+     * 启动/重置技能内部 server 的空闲断开计时器。
+     * 连接成功与每次工具调用都会触达这里；非内部 server 直接忽略。
+     */
+    private armPluginSkillIdleTimer(id: string): void {
+        const server = this.servers.find((s) => s.id === id);
+        if (!server || server.pluginSkillName === undefined) return;
+        this.clearPluginSkillIdleTimer(id);
+        const timer = setTimeout(() => {
+            this.pluginSkillIdleTimers.delete(id);
+            void this.disconnectIdlePluginSkillServer(id);
+        }, PLUGIN_SKILL_MCP_IDLE_DISCONNECT_MS);
+        timer.unref?.();
+        this.pluginSkillIdleTimers.set(id, timer);
+    }
+
+    private clearPluginSkillIdleTimer(id: string): void {
+        const timer = this.pluginSkillIdleTimers.get(id);
+        if (timer !== undefined) {
+            clearTimeout(timer);
+            this.pluginSkillIdleTimers.delete(id);
+        }
+    }
+
+    /** 空闲超时回调：连接已不在（或已非连接态）时跳过，否则断开并广播状态 */
+    private async disconnectIdlePluginSkillServer(id: string): Promise<void> {
+        const server = this.servers.find((s) => s.id === id);
+        const conn = this.connections.get(id);
+        if (!server || server.pluginSkillName === undefined) return;
+        if (!conn || conn.status !== 'connected') return;
+        logger.info(
+            `[mcpmgr] Plugin skill MCP server "${server.name}" (${id}) disconnected after ${PLUGIN_SKILL_MCP_IDLE_DISCONNECT_MS / 60000}min idle`
+        );
+        await this.disconnectServer(id);
+        await this.emitEvent('serversUpdated');
+    }
+
+    /** 插件技能内部 server 的配置变更串行执行；单次失败不阻塞后续操作 */
+    private enqueuePluginSkillMutation<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.pluginSkillMutationQueue.then(operation, operation);
+        this.pluginSkillMutationQueue = result.then(
+            () => undefined,
+            () => undefined
+        );
+        return result;
+    }
+
+    private async applyPluginSkillServers(
+        servers: McpServerConfig[],
+        alwaysApply: boolean,
+        autoConnect: boolean
+    ): Promise<void> {
+        const next = servers.map((server) => ({ ...server, enabled: server.enabled !== false }));
+        if (!alwaysApply && JSON.stringify(next) === JSON.stringify(this.pluginSkillServers)) return;
+        const oldServers = this.servers;
+        this.pluginSkillServers = next;
+        this.recomposeServers();
+        // 懒加载：autoConnect=false 的全量同步跳过内部 server 的自动建连（已连接的配置变更仍会断开旧连接）
+        await this.syncConnections(
+            this.servers,
+            oldServers,
+            autoConnect ? undefined : (server) => server.pluginSkillName !== undefined
+        );
+        await this.emitEvent('serversUpdated');
+    }
+
+    private async syncConnections(
+        newServers: McpServerConfig[],
+        oldServers: McpServerConfig[],
+        skipAutoConnect?: (server: McpServerConfig) => boolean
+    ): Promise<void> {
         const newMap = new Map(newServers.map((s) => [s.id, s]));
         const oldMap = new Map(oldServers.map((s) => [s.id, s]));
 
@@ -174,10 +329,12 @@ export default class McpMgrWorker extends BaseWorker {
             const oldServer = oldMap.get(id);
             const configChanged = !oldServer || JSON.stringify(newServer) !== JSON.stringify(oldServer);
 
-            if (configChanged) {
-                if (this.connections.has(id)) {
-                    await this.disconnectServer(id);
-                }
+            if (configChanged && this.connections.has(id)) {
+                await this.disconnectServer(id);
+            }
+
+            // skipAutoConnect：懒加载的 server 只做配置登记与旧连接清理，不主动建连
+            if (configChanged && !skipAutoConnect?.(newServer)) {
                 const connection = this.connectServer(id).catch((err) => {
                     logger.error(`[mcpmgr] Connect failed for ${newServer.name}: ${err.message}`);
                 });
@@ -224,6 +381,8 @@ export default class McpMgrWorker extends BaseWorker {
         this.currentWorkspace = workspace;
         const reconnects = this.servers
             .filter((server) => server.enabled && server.transport === 'stdio' && !server.cwd)
+            // 懒加载的技能内部 server：从未建连过的不随 workspace 切换主动拉起
+            .filter((server) => server.pluginSkillName === undefined || this.connections.has(server.id))
             .map((server) =>
                 this.connectServer(server.id, workspace).catch((err) => {
                     logger.error(`[mcpmgr] Workspace reconnect failed for ${server.name}: ${err.message}`);
@@ -234,6 +393,16 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async connectServer(id: string, workspace?: string): Promise<void> {
+        const inFlight = this.connectingServers.get(id);
+        if (inFlight) return inFlight;
+        const connection = this.doConnectServer(id, workspace).finally(() => {
+            if (this.connectingServers.get(id) === connection) this.connectingServers.delete(id);
+        });
+        this.connectingServers.set(id, connection);
+        return connection;
+    }
+
+    private async doConnectServer(id: string, workspace?: string): Promise<void> {
         const server = this.servers.find((s) => s.id === id);
         if (!server) throw new Error('Server not found');
 
@@ -296,6 +465,8 @@ export default class McpMgrWorker extends BaseWorker {
             if (transport.stderr) {
                 transport.stderr.removeAllListeners('data');
             }
+            // 技能内部 server 从连接成功起计时，连续空闲超时后自动断开
+            this.armPluginSkillIdleTimer(id);
 
             logger.info(`[mcpmgr] Connected to "${server.name}", discovered ${tools.length} tools`);
         } catch (err: any) {
@@ -447,6 +618,7 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async disconnectServer(id: string): Promise<void> {
+        this.clearPluginSkillIdleTimer(id);
         const conn = this.connections.get(id);
         if (!conn) return;
         try {
@@ -467,6 +639,9 @@ export default class McpMgrWorker extends BaseWorker {
         const tools: McpToolInfo[] = [];
         for (const server of this.servers) {
             if (!server.enabled) continue;
+            // 技能内部挂载的 MCP 不进入全局工具视角：其工具只通过所属 Skill 渐进式披露，
+            // 全局任务工具集与 MCP 网关工具（搜索/调用）都不应看到它们
+            if (server.pluginSkillName !== undefined) continue;
             const conn = this.connections.get(server.id);
             if (!conn || conn.status !== 'connected') continue;
             for (const tool of conn.tools) {
@@ -484,10 +659,26 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async callMcpTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
-        const conn = this.connections.get(serverId);
-        if (!conn || conn.status !== 'connected') {
-            throw new Error(`Server ${serverId} is not connected`);
+        const server = this.servers.find((s) => s.id === serverId);
+        if (!server) {
+            throw new Error(`MCP server ${serverId} not found`);
         }
+
+        let conn = this.connections.get(serverId);
+        // 技能内部 server 懒加载自愈：历史任务里已披露过的技能工具再次被调用、
+        // 或空闲自动断开/worker 重启后连接丢失时，由工具调用按需重连。
+        // 走 connectServer 而非 ensureServerConnected：有建连在途时等待其完成而不是立即报“连接中”
+        if (server.pluginSkillName !== undefined && (!conn || conn.status !== 'connected')) {
+            await this.connectServer(serverId).catch((err) => {
+                logger.error(`[mcpmgr] Connect failed for ${server.name}: ${toErrorMessage(err)}`);
+            });
+            conn = this.connections.get(serverId);
+        }
+        if (!conn || conn.status !== 'connected') {
+            throw new Error(this.describeServerUnavailable(server, conn));
+        }
+        // 本次调用即活跃：重置空闲断开计时
+        this.armPluginSkillIdleTimer(serverId);
 
         const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, {
             timeout: 180_000,
@@ -499,5 +690,24 @@ export default class McpMgrWorker extends BaseWorker {
             return result.content.map((c: any) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n');
         }
         return JSON.stringify(result);
+    }
+
+    /**
+     * server 不可调用的错误描述。面向模型与工具结果展示：
+     * 带上 server 展示名与底层连接失败原因（conn.error 含 stderr 诊断），
+     * 让模型/用户能据实重试或排查，而不是只看到一个哈希 id。
+     */
+    private describeServerUnavailable(server: McpServerConfig, conn?: McpConnection): string {
+        const scope =
+            server.pluginSkillName !== undefined
+                ? `"${server.name}" (plugin skill "${server.pluginSkillName}")`
+                : `"${server.name}"`;
+        if (conn?.status === 'error' && conn.error) {
+            return `MCP server ${scope} is not connected. Last connect attempt failed: ${conn.error}`;
+        }
+        if (conn?.status === 'connecting') {
+            return `MCP server ${scope} is still connecting; retry shortly`;
+        }
+        return `MCP server ${scope} is not connected`;
     }
 }

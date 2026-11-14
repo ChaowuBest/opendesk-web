@@ -39,7 +39,8 @@ import {
     combineToolsetProviders,
     findUnusablePluginDirectories,
     initializePluginHost,
-    setRuntimePluginsDirectories
+    setRuntimePluginsDirectories,
+    syncPluginSkillServers
 } from './applications/pluginmgr/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
@@ -444,6 +445,8 @@ async function main(args: CommandLineArgs) {
 
         initializeRegistryWorker();
         await ApplicationRegistry.ensureFullyLoaded();
+        // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
+        await syncPluginSkillServers();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
                 listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)
@@ -483,6 +486,8 @@ async function main(args: CommandLineArgs) {
 
         initializeRegistryWorker();
         await ApplicationRegistry.ensureFullyLoaded();
+        // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
+        await syncPluginSkillServers();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
             {
                 listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)

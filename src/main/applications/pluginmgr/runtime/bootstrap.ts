@@ -33,6 +33,7 @@ import {
 import { applyPluginToolDefinitions } from './tool-provider.js';
 import { PluginAgent } from './agent.js';
 import { disposePluginContributions, initializePluginContributions, PLUGIN_SKILL_BUNDLE } from './contributions.js';
+import { registerPluginSkillServerResync, syncPluginSkillServers } from './skill-mcp.js';
 import {
     disposePluginMcpProvider,
     disposePluginMcpRuntime,
@@ -291,6 +292,9 @@ async function initialize(): Promise<void> {
     for (const candidate of candidates) {
         await loadCandidate(host, candidate, configDir);
     }
+    // 注册全局 worker 崩溃重启后的内部 MCP server 重同步（幂等），随后完成首次全量登记
+    registerPluginSkillServerResync();
+    await syncPluginSkillServers();
     await syncPluginAgentsWithRegistry();
     notifyPluginMcpServersChanged();
 }
@@ -347,7 +351,8 @@ async function loadCandidate(
             hostVersion: OPENDESK_RUNTIME_VERSION,
             integrity: candidate.integrity,
             pluginDir: loaded.rootDir,
-            resources: loaded.resources
+            resources: loaded.resources,
+            source: candidate.source
         });
         return undefined;
     } catch (error) {
@@ -482,6 +487,8 @@ async function applyPluginEnabledChangeInternal(id: string, enabled: boolean): P
  */
 async function syncPluginDerivedRegistries(): Promise<void> {
     await syncPluginAgentsWithRegistry();
+    // 差量启停/安装/卸载后同步插件技能的内部 MCP server（全量 replace，随插件移除而移除）
+    await syncPluginSkillServers();
     notifyPluginMcpServersChanged();
     // 插件技能经 SkillRegistry 的 provider 缓存输出，差量启停后按 bundle 定向失效
     SkillRegistry.getInstance().clearCache(PLUGIN_SKILL_BUNDLE);

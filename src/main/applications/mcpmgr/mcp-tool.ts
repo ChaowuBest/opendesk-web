@@ -202,6 +202,14 @@ export function renderMcpToolCall(toolcall: ToolCall, fullName: string): string 
     </div>`;
 }
 
+/**
+ * MCP 工具模型可见名的净化规则：`<namespace>__<tool>` 的两段都经此净化。
+ * 与 MCPTool 的命名约定强绑定，插件全局 MCP 与技能内部 MCP 的工具集组装共用。
+ */
+export function mcpSafeName(value: string): string {
+    return value.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
 /** MCP 工具类，保留服务端参数，同时提供调用目的和专门的渲染逻辑。 */
 export class MCPTool extends BaseTool<z.ZodType<Record<string, unknown>>> {
     private serverName: string;
@@ -220,7 +228,7 @@ export class MCPTool extends BaseTool<z.ZodType<Record<string, unknown>>> {
         modelToolName = toolName
     ) {
         // 工具名格式：serverName__toolName（去掉 mcpmgr 前缀）
-        const safeName = `${toolNamespace.replace(/[^a-zA-Z0-9_]/g, '_')}__${modelToolName}`;
+        const safeName = `${mcpSafeName(toolNamespace)}__${modelToolName}`;
         const prepared = prepareInputSchema(inputSchema);
         let params: z.ZodType<Record<string, unknown>>;
         try {

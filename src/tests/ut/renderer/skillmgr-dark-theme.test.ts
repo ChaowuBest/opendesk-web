@@ -43,7 +43,8 @@ describe('Skill Center dark theme regressions', () => {
         expect(source).toContain("const skillOwner = s.pluginName || s.pluginId || s.bundleName || ''");
         expect(source).toContain('const pluginSkillOwner = detail.pluginName || detail.pluginId;');
         expect(source).toContain('name: detail.name || detail.id');
-        expect(source).toContain('subtitle: pluginSkillAttribution || undefined');
+        // 详情副标题改为宿主注入的高亮归属文案（subtitleHtml，宿主侧已转义）
+        expect(source).toContain('subtitleHtml: pluginManagedHtml || undefined');
         expect(source).toContain('opts.isBuiltin && detail.bundleName');
         expect(detailCardSource).toContain('const subtitle = model.subtitle ?? model.id;');
     });

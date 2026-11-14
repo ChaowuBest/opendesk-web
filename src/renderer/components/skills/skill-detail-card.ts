@@ -73,6 +73,8 @@ export interface SkillDetailCardModel {
     id: string;
     name: string;
     subtitle?: string;
+    /** 副标题 HTML（优先于 subtitle）：供宿主注入带高亮片段的归属文案，如「由插件 xxx 注册和管理」 */
+    subtitleHtml?: string;
     closeLabel: string;
     /** 设置后 header 左上角显示返回按钮，点击触发 skill-detail-action id='back' */
     backLabel?: string;
@@ -104,7 +106,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 .detail-back { width:28px; height:28px; display:flex; align-items:center; justify-content:center; flex:none; border:0; border-radius:8px; background:rgba(0,0,0,0.06); color:#555; cursor:pointer; transition:background .12s,color .12s,transform .12s; }.detail-back:hover { background:rgba(0,0,0,0.12); color:#333; transform:translateX(-1px); }.detail-back svg { width:15px; height:15px; }.detail-back[hidden] { display:none; }
 .detail-icon { width:36px; height:36px; display:flex; align-items:center; justify-content:center; flex:none; border-radius:10px; font-size:16px; font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
 
-.detail-header-info { min-width:0; flex:1; }.detail-name { overflow:hidden; margin-bottom:2px; color:#1d1d1f; font-size:15px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }.detail-id { overflow:hidden; color:#86868B; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.detail-header-info { min-width:0; flex:1; }.detail-name { overflow:hidden; margin-bottom:2px; color:#1d1d1f; font-size:15px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }.detail-id { overflow:hidden; color:#86868B; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }.detail-id .plugin-owner-label { color:#9C7B76; }.detail-id .plugin-owner-name { color:#DF4436; font-weight:600; }
 .detail-close { width:26px; height:26px; display:flex; align-items:center; justify-content:center; flex:none; border:0; border-radius:7px; background:rgba(0,0,0,0.06); color:#555; cursor:pointer; transition:background .12s,color .12s; }.detail-close:hover { background:rgba(0,0,0,0.12); color:#333; }.detail-close svg { width:14px; height:14px; }
 .detail-body { flex:1; overflow-y:auto; padding:20px 24px 24px; }.detail-section { margin-bottom:16px; }.detail-section:last-child { margin-bottom:0; }.detail-section-label { margin-bottom:6px; color:#999; font-size: var(--fs-sm); font-weight:600; letter-spacing:.04em; text-transform:uppercase; }.detail-desc { color:#1d1d1f; font-size: var(--fs-base); line-height:1.6; }
 .detail-body.body-switch-forward { animation:body-switch-forward .22s cubic-bezier(.23,1,.32,1); }
@@ -128,7 +130,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 .agent-chevron { width:15px; height:15px; flex:none; color:#b6b9be; }
 .detail-footer { display:flex; justify-content:flex-end; gap:8px; padding:12px 24px; border-top:1px solid #f0f0f0; background:#fff; }.detail-footer[hidden] { display:none; }.detail-footer-hint { margin-right:auto; align-self:center; color:#999; font-size: var(--fs-sm); line-height:1.4; }.detail-action { display:inline-flex; align-items:center; gap:6px; padding:7px 16px; border:1px solid rgba(0,0,0,.08); border-radius:8px; background:#fff; color:#333; font-size:12.5px; font-weight:600; cursor:pointer; transition:background .15s,transform .15s; }.detail-action:not(:disabled):hover { background:#f8f8f8; }.detail-action:not(:disabled):active { transform:scale(.97); }.detail-action:disabled { opacity:.45; cursor:not-allowed; }.detail-action.primary { border-color:#DF4436; background:#DF4436; color:#fff; }.detail-action.primary:not(:disabled):hover { background:#C43A2E; }.detail-action.danger { border-color:rgba(224,96,96,.2); color:#e06060; }.detail-action.danger:not(:disabled):hover { background:#fff5f5; }
 .tag-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:12px; font-size: var(--fs-sm); font-weight:500; }.tag-star { background:#fff7e0; color:#d4a028; }.tag-download { background:#ebf3fe; color:#5b8def; }
-.detail-tools-list { display:flex; flex-direction:column; gap:8px; }.detail-tool-item { padding:12px 14px; border:1px solid #f0f0f0; border-radius:10px; background:#fafafa; }.detail-tool-header { margin-bottom:8px; }.detail-tool-name { margin-bottom:3px; color:#1d1d1f; font-size: var(--fs-base); font-weight:600; }.detail-tool-desc { color:#777; font-size: var(--fs-md); line-height:1.5; }.detail-tool-no-params { margin-top:4px; color:#bbb; font-size: var(--fs-sm); }.detail-tool-params-toggle { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border:1px solid rgba(0,0,0,.06); border-radius:6px; background:#fff; color:#555; font:inherit; font-size: var(--fs-sm); font-weight:500; cursor:pointer; }.detail-tool-params-toggle:hover { background:#f0f0f0; color:#333; }.toggle-icon { display:inline-block; font-size: var(--icon-xs); transition:transform .15s; }.detail-tool-params-toggle.expanded .toggle-icon { transform:rotate(90deg); }.detail-tool-params { margin-top:10px; overflow:hidden; border:1px solid #f0f0f0; border-radius:8px; }.detail-tool-params-header,.detail-tool-param { display:grid; grid-template-columns:1fr .7fr .5fr 1.5fr; gap:8px; padding:6px 12px; }.detail-tool-params-header { background:#f5f5f5; color:#999; font-size: var(--fs-xs); font-weight:600; letter-spacing:.03em; text-transform:uppercase; }.detail-tool-param { border-top:1px solid #f5f5f5; font-size: var(--fs-sm); }.param-name { color:#333; font-family:'SF Mono','Cascadia Code',monospace; font-weight:500; }
+.detail-tools-list { display:flex; flex-direction:column; gap:8px; }.detail-tool-item { padding:12px 14px; border:1px solid #f0f0f0; border-radius:10px; background:#fafafa; }.detail-tool-header { margin-bottom:8px; }.detail-tool-name { display:flex; align-items:center; gap:8px; min-width:0; margin-bottom:5px; color:#1d1d1f; font-size: var(--fs-base); font-weight:600; font-family: var(--font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace); }.detail-tool-icon { display:inline-flex; align-items:center; justify-content:center; flex:none; width:20px; height:20px; border-radius:6px; background:#EBF3FE; color:#5B8DEF; font-size:11px; }.detail-tool-desc { color:#777; font-size: var(--fs-md); line-height:1.5; }.detail-tool-no-params { margin-top:4px; color:#bbb; font-size: var(--fs-sm); }.detail-tool-params { margin-top:10px; overflow:hidden; border:1px solid #f0f0f0; border-radius:8px; }.detail-tool-params-header,.detail-tool-param { display:grid; grid-template-columns:1fr .7fr .5fr 1.5fr; gap:8px; padding:6px 12px; }.detail-tool-params-header { background:#f5f5f5; color:#999; font-size: var(--fs-xs); font-weight:600; letter-spacing:.03em; text-transform:uppercase; }.detail-tool-param { border-top:1px solid #f5f5f5; font-size: var(--fs-sm); }.param-name { color:#333; font-family: var(--font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace); font-weight:500; }.param-type { color:#6ba3ef; font-family: var(--font-mono,'Maple Mono','Cascadia Code','Fira Code','JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace); }.param-required { font-size: var(--fs-xs); font-weight:600; }.param-required.is-required { color:#e06060; }.param-required.is-optional { color:#999; }.param-desc { color:#666; line-height:1.4; word-break:break-word; }
 .detail-body::-webkit-scrollbar,.detail-body-content::-webkit-scrollbar { width:4px; height:4px; }.detail-body::-webkit-scrollbar-track,.detail-body-content::-webkit-scrollbar-track { background:transparent; }.detail-body::-webkit-scrollbar-thumb,.detail-body-content::-webkit-scrollbar-thumb { border-radius:2px; background:#d1d5db; }
 :host([data-theme='dark']),:host-context([data-theme='dark']) { color:#ccc; color-scheme:dark; }
 :host([data-theme='dark']) .detail-dialog,:host-context([data-theme='dark']) .detail-dialog { border-color:rgba(255,255,255,.2); background:#2A2826; color:#ccc; }
@@ -136,7 +138,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 :host([data-theme='dark']) .detail-icon,:host-context([data-theme='dark']) .detail-icon { box-shadow:0 1px 3px rgba(0,0,0,0.3); }
 :host([data-theme='dark']) .detail-header,:host-context([data-theme='dark']) .detail-header { border-bottom-color:rgba(255,255,255,.12); }
 :host([data-theme='dark']) .detail-name,:host-context([data-theme='dark']) .detail-name { color:#e4e4e4; }
-:host([data-theme='dark']) .detail-id,:host-context([data-theme='dark']) .detail-id { color:#ababab; }
+:host([data-theme='dark']) .detail-id,:host-context([data-theme='dark']) .detail-id { color:#ababab; }:host([data-theme='dark']) .detail-id .plugin-owner-label,:host-context([data-theme='dark']) .detail-id .plugin-owner-label { color:#C9A29C; }:host([data-theme='dark']) .detail-id .plugin-owner-name,:host-context([data-theme='dark']) .detail-id .plugin-owner-name { color:#E8563F; }
 :host([data-theme='dark']) .hook-pill,:host-context([data-theme='dark']) .hook-pill { background:rgba(255,255,255,.08); color:#ccc; }
 :host([data-theme='dark']) .detail-close,:host-context([data-theme='dark']) .detail-close { background:rgba(255,255,255,.08); color:#ccc; }
 :host([data-theme='dark']) .detail-close:hover,:host-context([data-theme='dark']) .detail-close:hover { background:rgba(255,255,255,.15); color:#fff; }
@@ -157,8 +159,7 @@ button, input, select, option, optgroup, textarea { font-family:inherit; }
 :host([data-theme='dark']) .detail-action.primary,:host-context([data-theme='dark']) .detail-action.primary { border-color:#E85A5A; background:#E85A5A; color:#fff; }
 :host([data-theme='dark']) .detail-action.danger,:host-context([data-theme='dark']) .detail-action.danger { border-color:rgba(224,96,96,.3); color:#f08a8a; }
 :host([data-theme='dark']) .detail-action.danger:not(:disabled):hover,:host-context([data-theme='dark']) .detail-action.danger:not(:disabled):hover { background:rgba(224,96,96,.12); }
-:host([data-theme='dark']) .detail-tool-item,:host-context([data-theme='dark']) .detail-tool-item { border-color:rgba(255,255,255,.12); background:#333; }:host([data-theme='dark']) .detail-tool-name,:host-context([data-theme='dark']) .detail-tool-name { color:inherit; }
-:host([data-theme='dark']) .detail-tool-params-toggle,:host-context([data-theme='dark']) .detail-tool-params-toggle { border-color:rgba(255,255,255,.16); background:#3f3f46; color:#ccc; }
+:host([data-theme='dark']) .detail-tool-item,:host-context([data-theme='dark']) .detail-tool-item { border-color:rgba(255,255,255,.12); background:#333; }:host([data-theme='dark']) .detail-tool-name,:host-context([data-theme='dark']) .detail-tool-name { color:inherit; }:host([data-theme='dark']) .detail-tool-icon,:host-context([data-theme='dark']) .detail-tool-icon { background:rgba(91,141,239,.18); color:#7AA5F2; }:host([data-theme='dark']) .param-name,:host-context([data-theme='dark']) .param-name { color:#d1d5db; }
 :host([data-theme='dark']) .detail-tool-params,:host-context([data-theme='dark']) .detail-tool-params { border-color:rgba(255,255,255,.12); }:host([data-theme='dark']) .detail-tool-params-header,:host-context([data-theme='dark']) .detail-tool-params-header { background:#3f3f46; }:host([data-theme='dark']) .detail-tool-param,:host-context([data-theme='dark']) .detail-tool-param { border-top-color:rgba(255,255,255,.1); }:host([data-theme='dark']) .param-name,:host-context([data-theme='dark']) .param-name { color:inherit; }
 :host([data-theme='dark']) .markdown-body blockquote,:host-context([data-theme='dark']) .markdown-body blockquote { color:#ababab; }:host([data-theme='dark']) .markdown-body code,:host-context([data-theme='dark']) .markdown-body code { background:#3f3f46; }:host([data-theme='dark']) .markdown-body pre,:host-context([data-theme='dark']) .markdown-body pre { border-color:rgba(255,255,255,.12); background:#292929; }:host([data-theme='dark']) .markdown-body th,:host([data-theme='dark']) .markdown-body td,:host-context([data-theme='dark']) .markdown-body th,:host-context([data-theme='dark']) .markdown-body td { border-color:rgba(255,255,255,.16); }:host([data-theme='dark']) .markdown-body a,:host-context([data-theme='dark']) .markdown-body a { color:#93c5fd; }
 :host([data-theme='dark']) .detail-body::-webkit-scrollbar-thumb,:host([data-theme='dark']) .detail-body-content::-webkit-scrollbar-thumb,:host-context([data-theme='dark']) .detail-body::-webkit-scrollbar-thumb,:host-context([data-theme='dark']) .detail-body-content::-webkit-scrollbar-thumb { background:rgba(255,255,255,.18); }
@@ -247,22 +248,12 @@ export class SkillDetailCard extends HTMLElement {
         }
         shadowRoot.querySelector('.detail-close')?.addEventListener('click', () => this.emitAction('close'));
         shadowRoot.querySelector('.detail-back')?.addEventListener('click', () => this.emitAction('back'));
-        // footer 按钮与工具参数折叠使用事件委托，内容更新后无需重复绑定
+        // footer 按钮使用事件委托，内容更新后无需重复绑定
         shadowRoot.querySelector('.detail-footer')?.addEventListener('click', (event) => {
             const button = (event.target as Element).closest<HTMLElement>('[data-detail-action]');
             // 禁用态按钮不派发动作：防御性拦截，避免其它前端用脚本点击绕过
             if (!button || (button as HTMLButtonElement).disabled) return;
             this.emitAction(button.dataset.detailAction!, button.dataset.detailActionValue || undefined);
-        });
-        shadowRoot.querySelector('.detail-body')?.addEventListener('click', (event) => {
-            const toggle = (event.target as Element).closest<HTMLElement>('.detail-tool-params-toggle');
-            if (!toggle) return;
-            const index = toggle.dataset.toolToggle;
-            const parameters = shadowRoot.querySelector<HTMLElement>(`[data-tool-params="${index}"]`);
-            if (!parameters) return;
-            const expanded = parameters.style.display === 'none';
-            parameters.style.display = expanded ? 'block' : 'none';
-            toggle.classList.toggle('expanded', expanded);
         });
     }
 
@@ -277,7 +268,7 @@ export class SkillDetailCard extends HTMLElement {
 
         // 内容区是整体重写的：同一视图被外部刷新（宿主广播变更等）时把滚动位置放回去，
         // 换插件或进出下一级视图则该从顶部开始
-        const viewKey = `${model.id}\u0000${model.name}\u0000${model.subtitle ?? ''}\u0000${model.backLabel ?? ''}`;
+        const viewKey = `${model.id}\u0000${model.name}\u0000${model.subtitleHtml ?? model.subtitle ?? ''}\u0000${model.backLabel ?? ''}`;
         const keepScrollTop = viewKey === this.renderedViewKey ? body.scrollTop : 0;
         this.renderedViewKey = viewKey;
 
@@ -308,7 +299,14 @@ export class SkillDetailCard extends HTMLElement {
         const nameElement = this.shadowRoot.querySelector<HTMLElement>('.detail-name');
         if (nameElement) nameElement.textContent = model.name || model.id;
         const subtitleElement = this.shadowRoot.querySelector<HTMLElement>('.detail-id');
-        if (subtitleElement) subtitleElement.textContent = subtitle;
+        if (subtitleElement) {
+            if (model.subtitleHtml) {
+                // 宿主注入的带高亮片段的归属文案（如「由插件 xxx 注册和管理」），已由宿主转义
+                subtitleElement.innerHTML = model.subtitleHtml;
+            } else {
+                subtitleElement.textContent = subtitle;
+            }
+        }
         const headerExtra = this.shadowRoot.querySelector<HTMLElement>('.header-extra');
         if (headerExtra) headerExtra.innerHTML = model.headerExtraHtml ?? '';
 

@@ -50,13 +50,15 @@ import {
     resolvePluginDisplayName
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { ensurePluginDataDirectory } from '../management/paths.js';
+import type { PluginSourceKind } from '../management/registry.js';
 import { describeHostVersionIssue } from '../catalog-common.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import { resolveAppearanceLogoValues } from './appearance.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import type { CompiledHintPattern } from './browser-hints.js';
-import { qualifyPluginToolName } from './tool-names.js';
+import { qualifyPluginToolName, sanitizeModelToolName } from './tool-names.js';
+import { mcpSafeName } from '../../mcpmgr/mcp-tool.js';
 import { createAccountsContext } from './account-context.js';
 import { HostRegistration } from './registration.js';
 import {
@@ -81,6 +83,8 @@ export interface PluginHostEntry {
     version?: string;
     apiVersion: number;
     origin: string;
+    /** 插件来源类型（builtin=内置目录 / local=plugins 目录后装），用于技能/MCP 的分类展示 */
+    source?: PluginSourceKind;
     failureMode: PluginFailureMode;
     status: PluginStatus;
     requestedCapabilities: PluginCapability[];
@@ -99,6 +103,8 @@ export interface ActivatePluginOptions {
     integrity?: string;
     pluginDir?: string;
     resources?: PluginStaticResources;
+    /** 插件来源类型，由 discovery 阶段传入 */
+    source?: PluginSourceKind;
 }
 
 export interface RecordPluginErrorOptions extends ActivatePluginOptions {
@@ -723,6 +729,7 @@ export class PluginHost {
             id,
             apiVersion: OPENDESK_PLUGIN_API_VERSION,
             origin: options.origin,
+            source: options.source,
             failureMode: 'open',
             status: 'error',
             requestedCapabilities: [],
@@ -756,6 +763,7 @@ export class PluginHost {
             version: plugin.version,
             apiVersion: plugin.apiVersion ?? OPENDESK_PLUGIN_API_VERSION,
             origin: options.origin,
+            source: options.source,
             failureMode: plugin.failureMode === 'closed' ? 'closed' : 'open',
             status: 'active',
             requestedCapabilities,
@@ -1021,18 +1029,35 @@ export class PluginHost {
                         throw new Error(`plugin.skill_body_invalid:${definition.name}`);
                     }
                     const normalized = this.normalizeSkillDefinition(definition, pluginDir);
+                    // skill 自带工具不走全局 tools.register：在这里完成与全局注册一致的校验。
+                    // 工具模型可见名即工具本名（净化后）——CallSkillTool 的调用签名已带
+                    // bundleName + skillName，skill 本身就是命名空间，因此只需保证本名
+                    // 在技能内唯一，避免 CallSkillTool 解析歧义
+                    const seenToolNames = new Set<string>();
+                    for (const tool of normalized.tools ?? []) {
+                        validatePluginToolDefinition(tool);
+                        const localName = sanitizeModelToolName(tool.name);
+                        if (seenToolNames.has(localName)) {
+                            throw new Error(`plugin.skill_tool_name_conflict:${entry.id}-${localName}`);
+                        }
+                        seenToolNames.add(localName);
+                    }
+                    // skill 内部 MCP server：名字在技能内唯一即可。内部 server 的工具不进入
+                    // 全局工具视角、只作为技能内部工具暴露，与本插件全局 server 同名不产生
+                    // 运行时冲突（id 按 插件/技能/server 三元组哈希，模型可见名按视图隔离）
+                    const seenServers: PluginMcpServerDefinition[] = [];
+                    for (const server of normalized.mcps ?? []) {
+                        this.validateMcpServerDefinition(server);
+                        this.validateSkillInternalMcpName(seenServers, server.name);
+                        seenServers.push(server);
+                    }
                     return this.registerContribution(this.skills, entry, normalized, definition.name, track);
                 }
             },
             mcps: {
                 registerServer: (definition: PluginMcpServerDefinition) => {
                     this.validateNamedContribution('mcp', definition.name, definition.transport);
-                    if (definition.transport === 'stdio' && !definition.command.trim()) {
-                        throw new Error('Plugin MCP stdio command is required');
-                    }
-                    if (definition.transport !== 'stdio') {
-                        new URL(definition.url);
-                    }
+                    this.validateMcpServerDefinition(definition);
                     addCapability('mcp');
                     return this.registerContribution(
                         this.mcpServers,
@@ -1045,6 +1070,28 @@ export class PluginHost {
                                 Array.from(this.mcpRemovalListeners).map((listener) => listener(id))
                             );
                         }
+                    );
+                },
+                registerInternalServer: (definition: PluginMcpServerDefinition, skillName: string) => {
+                    this.validateNamedContribution('mcp', definition.name, definition.transport);
+                    this.validateMcpServerDefinition(definition);
+                    // 内部 server 只服务于本插件的某个技能，目标技能必须已注册
+                    const skillRecord = Array.from(this.skills.values()).find(
+                        (record) => record.pluginKey === entry.key && record.definition.name === skillName
+                    );
+                    if (!skillRecord) {
+                        throw new Error(`plugin.internal_mcp_skill_not_found:${skillName}`);
+                    }
+                    addCapability('mcp');
+                    const mcps = skillRecord.definition.mcps ?? (skillRecord.definition.mcps = []);
+                    // 与 skills.register 的 mcps 字段同一套唯一性约束（含净化名）
+                    this.validateSkillInternalMcpName(mcps, definition.name);
+                    mcps.push(definition);
+                    return track(
+                        new HostRegistration(async () => {
+                            const index = mcps.indexOf(definition);
+                            if (index >= 0) mcps.splice(index, 1);
+                        })
                     );
                 }
             },
@@ -1272,12 +1319,43 @@ export class PluginHost {
         if (!description.trim()) throw new Error(`Plugin ${kind} description is required`);
     }
 
+    /** 校验 MCP server 定义的传输配置（registerServer 与 skill 内部 MCP 共用） */
+    private validateMcpServerDefinition(definition: PluginMcpServerDefinition): void {
+        if (definition.transport === 'stdio' && !definition.command.trim()) {
+            throw new Error('Plugin MCP stdio command is required');
+        }
+        if (definition.transport !== 'stdio') {
+            new URL(definition.url);
+        }
+    }
+
+    /**
+     * 校验 skill 内部 MCP server 名在技能内唯一。
+     *
+     * 除原始名外还校验净化名（mcpSafeName）：模型可见工具名是 `<净化 server>__<净化 tool>`，
+     * `my-server` 与 `my_server` 这类净化后同名的 server 会让工具名冲突、getTool 解析歧义。
+     */
+    private validateSkillInternalMcpName(existing: readonly PluginMcpServerDefinition[], name: string): void {
+        if (existing.some((server) => server.name === name)) {
+            throw new Error(`plugin.skill_mcp_name_conflict:${name}`);
+        }
+        const safeName = mcpSafeName(name);
+        if (existing.some((server) => mcpSafeName(server.name) === safeName)) {
+            throw new Error(`plugin.skill_mcp_name_conflict:${name}`);
+        }
+    }
+
     private normalizeSkillDefinition(definition: PluginSkillDefinition, pluginDir: string): PluginSkillDefinition {
+        // tools/mcps 是技能自带的贡献内容，浅拷贝数组避免宿主后续追加（registerInternalServer）
+        // 时写回插件传入的原始定义
+        const withCopiedContributions = (): PluginSkillDefinition => ({
+            ...definition,
+            tools: definition.tools ? [...definition.tools] : undefined,
+            mcps: definition.mcps ? [...definition.mcps] : undefined,
+            frontmatter: definition.frontmatter ? { ...definition.frontmatter } : undefined
+        });
         if (!definition.directory) {
-            return {
-                ...definition,
-                frontmatter: definition.frontmatter ? { ...definition.frontmatter } : undefined
-            };
+            return withCopiedContributions();
         }
         const normalizedRoot = path.resolve(pluginDir);
         const resolved = path.isAbsolute(definition.directory)
@@ -1292,9 +1370,8 @@ export class PluginHost {
             throw new Error('plugin.skill_directory_outside_root');
         }
         return {
-            ...definition,
-            directory: realDirectory,
-            frontmatter: definition.frontmatter ? { ...definition.frontmatter } : undefined
+            ...withCopiedContributions(),
+            directory: realDirectory
         };
     }
 

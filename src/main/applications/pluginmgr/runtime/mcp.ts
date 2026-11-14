@@ -21,7 +21,7 @@ import {
     type PluginMcpServerDefinition
 } from '../../../../../packages/plugin-sdk/src/index.js';
 import { sanitizeModelToolName } from './tool-names.js';
-import { MCPTool } from '../../mcpmgr/mcp-tool.js';
+import { MCPTool, mcpSafeName } from '../../mcpmgr/mcp-tool.js';
 
 interface DiscoveredTool {
     name: string;
@@ -33,10 +33,6 @@ interface Connection {
     client: Client;
     tools: DiscoveredTool[];
     connecting?: Promise<void>;
-}
-
-function safeName(value: string): string {
-    return value.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 function formatMcpResult(result: Awaited<ReturnType<Client['callTool']>>): string {
@@ -78,8 +74,8 @@ class PluginMcpRuntime {
                     discovered.description,
                     discovered.inputSchema,
                     undefined,
-                    safeName(contribution.definition.name),
-                    safeName(discovered.name)
+                    mcpSafeName(contribution.definition.name),
+                    mcpSafeName(discovered.name)
                 );
                 tool.setExecutor(async (args) => {
                     if (!getPluginHost().hasMcpServer(contribution.id)) {
@@ -109,9 +105,8 @@ class PluginMcpRuntime {
         await Promise.all(contributions.map((contribution) => this.ensureConnected(contribution)));
         return contributions.map((contribution) => {
             const definition = contribution.definition;
-            const pluginName =
-                resolvePluginDisplayName(getPluginHost().get(contribution.pluginId)?.displayName, getLocale()) ??
-                contribution.pluginId;
+            const entry = getPluginHost().get(contribution.pluginId);
+            const pluginName = resolvePluginDisplayName(entry?.displayName, getLocale()) ?? contribution.pluginId;
             const connection = this.connections.get(contribution.id);
             const status = connection?.connecting
                 ? 'connecting'
@@ -134,6 +129,8 @@ class PluginMcpRuntime {
                 source: pluginName,
                 providerId: 'pluginMgr',
                 readOnly: true,
+                pluginId: contribution.pluginId,
+                pluginSource: entry?.source,
                 status,
                 error: this.lastErrors.get(contribution.id),
                 tools: connection?.tools ?? []

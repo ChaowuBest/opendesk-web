@@ -14,7 +14,7 @@ import { t } from './locale/index.js';
 import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
 import { logger, useCliTransport, useConsoleTransport } from '../../utils/logger.js';
-import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
+import { Skill, SkillRegistry as AISkillRegistry, type PluginSourceKind } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
@@ -58,6 +58,10 @@ import type { PluginSkillInstallContext, PluginSkillListItem } from '../../../..
 import { getProvidedSkillRegistryDefinitions } from './registry/provider.js';
 import { serializeSkillRegistryInfo, type PluginSkillRegistryInfo } from './registry/contributed.js';
 import type { SearchOptions, SearchResult } from './registry/base.js';
+import { ApplicationRegistry } from '../registry.js';
+import type { McpMgrApplication } from '../mcpmgr/app.js';
+import { flattenSchemaParams } from '../../../common/utils/schema-params.js';
+import { PLUGIN_SKILL_MCP_TOOLSET_PREFIX } from '../pluginmgr/runtime/skill-mcp.js';
 import { getHarmonyLocalRuntimeState } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 
 const isHarmonyosRuntime = (process.platform as string) === 'openharmony';
@@ -74,6 +78,50 @@ export interface SkillInstallResult {
     error?: string;
 }
 
+/** 插件技能内部 MCP 已发现工具的展平形态（技能中心工具列表用） */
+interface McpPluginSkillTool {
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+}
+
+/**
+ * agentoffice staff 智能体的技能 bundle 前缀（CustomAgent 的 skillBundleName: `staff:<staffId>`，
+ * 见 agentoffice/app.ts createStaffAgent）。这类技能只服务于对应 staff 智能体自身，
+ * 技能中心（GUI/TUI）不展示。
+ */
+export function isStaffSkillBundle(bundleName: string): boolean {
+    return bundleName.startsWith('staff:');
+}
+
+/**
+ * 从 MCPMgr 查询插件技能内部 MCP server 已发现的工具，按 `pluginId/技能名` 分组。
+ * 仅包含当前已连接 server 的工具快照（连接是懒加载的，技能加载/详情展示后才产生条目）。
+ */
+async function getPluginSkillMcpToolIndex(): Promise<Map<string, McpPluginSkillTool[]>> {
+    const index = new Map<string, McpPluginSkillTool[]>();
+    try {
+        const mcpMgr = ApplicationRegistry.getApplication('mcpmgr') as McpMgrApplication | undefined;
+        if (!mcpMgr) return index;
+        for (const server of await mcpMgr.getPluginSkillServers()) {
+            if (!server.pluginId || !server.pluginSkillName) continue;
+            const key = `${server.pluginId}/${server.pluginSkillName}`;
+            const tools = index.get(key) ?? [];
+            for (const tool of server.tools ?? []) {
+                tools.push({
+                    name: tool.name,
+                    description: tool.description,
+                    inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>
+                });
+            }
+            index.set(key, tools);
+        }
+    } catch (error) {
+        logger.warn('[skillmgr] Failed to query plugin skill MCP tools', error);
+    }
+    return index;
+}
+
 /**
  * 技能中心「内置技能」Tab 的条目契约（桌面端渲染层与 CLI TUI 共用）。
  * 与 getBuiltinSkills 返回的数组元素结构一致。
@@ -85,6 +133,8 @@ export interface BuiltinSkillInfo {
     bundleName: string;
     pluginId?: string;
     pluginName?: string;
+    /** 插件来源类型（builtin=内置插件 / local=后装插件）；内置应用池等宿主技能无此字段 */
+    pluginSource?: PluginSourceKind;
     tools: Array<{
         name: string;
         description: string;
@@ -642,13 +692,16 @@ export class SkillMgrApplication extends BaseApplication {
 
     /**
      * 获取所有系统内置技能，供技能中心的"内置技能"Tab 使用。
-     * 对于 skillmgr bundle，排除用户安装的技能和 manage-skills。
+     * 对于 skillmgr bundle，排除用户安装的技能和 manage-skills；
+     * agentoffice staff 智能体的技能（staff:<id> bundle）只服务于该智能体自己，不在技能中心展示。
      */
     async getBuiltinSkills(): Promise<BuiltinSkillInfo[]> {
         const registry = AISkillRegistry.getInstance();
         const allSkills = await registry.getAllSkillsRaw();
+        const mcpToolIndex = await getPluginSkillMcpToolIndex();
         const result: BuiltinSkillInfo[] = [];
         for (const [bundleName, skills] of allSkills) {
+            if (isStaffSkillBundle(bundleName)) continue;
             for (const skill of skills) {
                 if (bundleName === 'skillmgr') continue;
                 const tools: Array<{
@@ -658,38 +711,36 @@ export class SkillMgrApplication extends BaseApplication {
                 }> = [];
                 if (skill.toolsets) {
                     for (const toolset of skill.toolsets) {
+                        // 插件技能的内部 MCP 工具集：模型加载技能时 resolver 会把它写回
+                        // Skill.toolsets，而下方索引来源已按原始工具名展示同一批工具，
+                        // 跳过避免同一工具出现两行（索引取自 worker 实时状态，比加载时快照更新）
+                        if (skill.attribution && toolset.name.startsWith(PLUGIN_SKILL_MCP_TOOLSET_PREFIX)) {
+                            continue;
+                        }
                         for (const [, tool] of toolset.tools) {
-                            const jsonSchema = tool.getJsonSchema();
-                            const required: string[] = Array.isArray(jsonSchema['required'])
-                                ? jsonSchema['required']
-                                : [];
-                            const properties = jsonSchema['properties'] || {};
-                            const paramsList: Array<{
-                                name: string;
-                                type: string;
-                                description: string;
-                                required: boolean;
-                            }> = [];
-                            for (const [paramName, paramSchema] of Object.entries(properties)) {
-                                const ps = paramSchema as Record<string, unknown>;
-                                const paramType = Array.isArray(ps['type'])
-                                    ? (ps['type'] as string[]).join(' | ')
-                                    : typeof ps['type'] === 'string'
-                                      ? ps['type']
-                                      : 'any';
-                                paramsList.push({
-                                    name: paramName,
-                                    type: paramType,
-                                    description: typeof ps['description'] === 'string' ? ps['description'] : '',
-                                    required: required.includes(paramName)
-                                });
-                            }
                             tools.push({
                                 name: tool.name,
                                 description: tool.description,
-                                params: paramsList
+                                params: flattenSchemaParams(tool.getJsonSchema())
                             });
                         }
+                    }
+                }
+                // 插件技能：把内部挂载的 MCP 工具展平为普通工具展示（仅已连接 server 的已发现工具）。
+                // 按名去重：与静态工具同名的 MCP 工具在模型侧会带 server 前缀消歧
+                // （如静态 `echo` + MCP `echo` -> `fs__echo`），这里跳过已列出的名字，
+                // 避免两行同名工具
+                if (skill.attribution) {
+                    const mcpTools = mcpToolIndex.get(`${skill.attribution.sourceId}/${skill.frontmatter.name}`) ?? [];
+                    const listedNames = new Set(tools.map((tool) => tool.name));
+                    for (const mcpTool of mcpTools) {
+                        if (listedNames.has(mcpTool.name)) continue;
+                        listedNames.add(mcpTool.name);
+                        tools.push({
+                            name: mcpTool.name,
+                            description: mcpTool.description,
+                            params: flattenSchemaParams(mcpTool.inputSchema)
+                        });
                     }
                 }
                 const skillId = `${bundleName}/${skill.frontmatter.name}`;
@@ -704,6 +755,7 @@ export class SkillMgrApplication extends BaseApplication {
                     bundleName,
                     pluginId: skill.attribution?.sourceId,
                     pluginName: skill.attribution?.sourceName,
+                    pluginSource: skill.attribution?.sourceKind,
                     tools,
                     directory: skill.directory || undefined,
                     license: skill.frontmatter.license || undefined,
@@ -718,6 +770,32 @@ export class SkillMgrApplication extends BaseApplication {
             }
         }
         return result;
+    }
+
+    /**
+     * 技能详情展示前的懒加载触发点：确保指定插件技能的内部 MCP server 已连接，
+     * 返回其已发现工具（展平为技能中心工具列表形态）。server 未配置或连接失败时返回空数组。
+     */
+    async revealPluginSkillTools(pluginId: string, skillName: string): Promise<BuiltinSkillInfo['tools']> {
+        const mcpMgr = ApplicationRegistry.getApplication('mcpmgr') as McpMgrApplication | undefined;
+        if (!mcpMgr) return [];
+        try {
+            const servers = await mcpMgr.revealPluginSkillServers(pluginId, skillName);
+            const tools: BuiltinSkillInfo['tools'] = [];
+            for (const server of servers) {
+                for (const tool of server.tools ?? []) {
+                    tools.push({
+                        name: tool.name,
+                        description: tool.description,
+                        params: flattenSchemaParams((tool.inputSchema ?? {}) as Record<string, unknown>)
+                    });
+                }
+            }
+            return tools;
+        } catch (error) {
+            logger.warn(`[skillmgr] Failed to reveal plugin skill MCP tools for ${pluginId}/${skillName}`, error);
+            return [];
+        }
     }
 
     /**
