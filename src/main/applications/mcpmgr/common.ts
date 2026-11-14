@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import type { PluginSourceKind } from '../../aikernel/skill.js';
+
 export interface McpServerConfig {
     id: string;
     name: string;
@@ -34,6 +36,15 @@ export interface McpServerConfig {
      * undefined 表示不限定；空数组表示不向任何 Agent 暴露。
      */
     agentIds?: string[];
+    /**
+     * 内部 MCP 归属信息：由插件技能（skills.register 的 mcps 字段 / mcps.registerInternalServer）
+     * 注入的 server 带 `pluginSkillName` 标记。这类 server 的工具不进入全局工具视角，
+     * 只作为所属技能的内部工具集渐进式披露；生命周期由插件启停驱动（运行时注入，
+     * 不写入用户配置）。
+     */
+    pluginId?: string;
+    pluginSkillName?: string;
+    pluginSource?: PluginSourceKind;
 }
 
 export interface McpToolInfo {

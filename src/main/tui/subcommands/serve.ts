@@ -103,7 +103,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     const { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } =
         await import('../../applications/registry.js');
     const { initializeHarnesses } = await import('../../aikernel/harnesses/index.js');
-    const { PluginToolsetProvider, combineToolsetProviders, initializePluginHost } =
+    const { PluginToolsetProvider, combineToolsetProviders, initializePluginHost, syncPluginSkillServers } =
         await import('../../applications/pluginmgr/index.js');
 
     setPlatform(new CliPlatform());
@@ -127,6 +127,8 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     initializeRegistry();
     initializeRegistryWorker();
     await ApplicationRegistry.ensureFullyLoaded();
+    // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
+    await syncPluginSkillServers();
     GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
         {
             listAvailableToolsets: (taskState) => ApplicationRegistry.listAvailableToolsets(taskState)

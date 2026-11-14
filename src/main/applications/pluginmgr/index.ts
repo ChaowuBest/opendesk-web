@@ -124,6 +124,7 @@ export {
     combineToolsetProviders
 } from './runtime/tool-provider.js';
 export { syncPluginTuiCommands } from './runtime/commands.js';
+export { registerPluginSkillServerResync, syncPluginSkillServers } from './runtime/skill-mcp.js';
 export {
     formatPluginInstallError,
     formatPluginInstallException,

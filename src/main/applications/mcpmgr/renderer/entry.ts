@@ -10,9 +10,11 @@
  */
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
+import { WRENCH_SVG } from '../../../../common/ui-icons.js';
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 import { z } from 'zod';
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { flattenSchemaParams } from '../../../../common/utils/schema-params.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
@@ -473,12 +475,51 @@ button, input, textarea { font: inherit; }
     border: 1px solid #F0F0F0; border-radius: 10px;
     color: #555; font-size: var(--fs-sm); line-height: 1.55;
     max-height: 220px; overflow: auto;
+    /* 继承 OpenDesk 全局等宽字体（:root 变量可穿透 shadow DOM） */
+    font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
 }
 .detail-tools-list { display: flex; flex-direction: column; gap: 8px; }
 .detail-tool-item { padding: 12px 14px; background: #FAFAFA; border-radius: 10px; border: 1px solid #F0F0F0; }
-.detail-tool-name { font-size: var(--fs-base); font-weight: 600; color: #1d1d1f; margin-bottom: 3px; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.detail-tool-header { margin-bottom: 8px; }
+.detail-tool-name {
+    font-size: var(--fs-base); font-weight: 600; color: #1d1d1f; margin-bottom: 5px;
+    font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+/* 工具名前缀徽章：浅蓝圆角底 + 蓝色扳手，与技能中心详情同款 */
+.detail-tool-icon {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 20px; height: 20px; border-radius: 6px;
+    background: #EBF3FE; color: #5B8DEF; font-size: 11px;
+    font-family: inherit;
+}
 .detail-tool-desc { font-size: var(--fs-md); color: #777; line-height: 1.5; }
-.detail-tool-params { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+/* 参数折叠表格：与技能中心详情的工具列表同款交互与样式 */
+.detail-tool-no-params { font-size: 11px; color: #bbb; margin-top: 4px; }
+.detail-tool-params {
+    margin-top: 10px; border-radius: 8px; overflow: hidden;
+    border: 1px solid #F0F0F0;
+}
+.detail-tool-params-header {
+    display: grid; grid-template-columns: 1fr 0.7fr 0.5fr 1.5fr; gap: 8px;
+    padding: 6px 12px; background: #F5F5F5;
+    font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.detail-tool-param {
+    display: grid; grid-template-columns: 1fr 0.7fr 0.5fr 1.5fr; gap: 8px;
+    padding: 6px 12px; font-size: 11px; border-top: 1px solid #F5F5F5;
+    background: #fff;
+}
+.param-name { font-weight: 500; color: #333; font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.param-type { color: #6BA3EF; font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.param-required { font-size: 10px; font-weight: 600; }
+.param-required.is-required { color: #E06060; }
+.param-required.is-optional { color: #999; }
+.param-desc { color: #666; line-height: 1.4; word-break: break-word; }
+/* 插件归属副标题：与技能卡片胶囊同款配色（「由插件 xxx 注册和管理」） */
+.card-subtitle .plugin-owner-label { color: #9C7B76; }
+.card-subtitle .plugin-owner-name { color: #DF4436; font-weight: 600; }
+.installed-card .card-meta { flex-shrink: 0; }
 .detail-footer {
     padding: 12px 24px 16px; border-top: 1px solid #F0F0F0;
     display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
@@ -544,6 +585,17 @@ button, input, textarea { font: inherit; }
 :host([data-theme="dark"]) .empty-title {
     color: #e4e4e4;
 }
+:host([data-theme="dark"]) .detail-tool-item {
+    background: #2A2A2E; border-color: #3A3A3E;
+}
+:host([data-theme="dark"]) .detail-tool-desc { color: #9CA3AF; }
+:host([data-theme="dark"]) .detail-tool-params { border-color: #3A3A3E; }
+:host([data-theme="dark"]) .detail-tool-params-header { background: #333333; color: #9CA3AF; }
+:host([data-theme="dark"]) .detail-tool-param { border-top-color: #3A3A3E; background: #26262A; }
+:host([data-theme="dark"]) .param-name { color: #d1d5db; }
+:host([data-theme="dark"]) .param-desc { color: #9CA3AF; }
+:host([data-theme="dark"]) .card-subtitle .plugin-owner-label { color: #C9A29C; }
+:host([data-theme="dark"]) .card-subtitle .plugin-owner-name { color: #E8563F; }
 :host([data-theme="dark"]) .seg-control,
 :host([data-theme="dark"]) .search-input,
 :host([data-theme="dark"]) .form-row input,
@@ -694,6 +746,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private _settingUnsubscribe: (() => void) | null = null;
     private registries: { id: string; label: string; icon: string; slogan: string }[] = [];
     private activeTab: string = 'installed';
+
+    /** registry 广场 tab 之外的两个固定列表 tab */
+    private isListTab(tab: string): boolean {
+        return tab === 'installed' || tab === 'builtin';
+    }
+
+    /** 当前激活的是否为 registry 广场 tab（非 installed/builtin 的都来自 registry 插件） */
+    private isRegistryTabActive(): boolean {
+        return !this.isListTab(this.activeTab);
+    }
     private servers: McpServerState[] = [];
     private loadingServers = true;
     private serverError = '';
@@ -714,6 +776,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         message: null
     };
     private installedQuery = '';
+    private builtinQuery = '';
     private installedScrollTop = 0;
     /* 已安装 MCP 的批量多选集合（只收录可操作项：非只读、非 agent 专属） */
     private installedSelection = new Set<string>();
@@ -882,6 +945,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.loadingServers = false;
             if (silent) {
                 this.syncHeaderBadge();
+                this.syncBuiltinPanel({ fade: true });
                 this.syncInstalledPanel({ fade: true });
                 this.syncInstalledTray();
                 this.syncBatchBadge();
@@ -915,12 +979,12 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
             // 仅首次成功加载时自动进入第一个 registry。插件启停后的刷新不应
             // 把用户从“已安装”页强行切换到市场页。
-            if (!wasLoaded && this.activeTab === 'installed' && this.registries.length > 0) {
+            if (!wasLoaded && this.isListTab(this.activeTab) && this.registries.length > 0) {
                 this.activeTab = this.registries[0].id;
                 this.render();
                 void this.searchRegistry('', 1);
             } else if (
-                this.activeTab !== 'installed' &&
+                this.isRegistryTabActive() &&
                 this.activeTab === previousActiveTab &&
                 !stateMerge.removedIds.includes(this.activeTab)
             ) {
@@ -949,7 +1013,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async searchRegistry(query = this.registryState.query, page = 1) {
-        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        const registryId = this.isRegistryTabActive() ? this.activeTab : '';
         if (!registryId) return;
         const requestId = ++this._registrySearchRequestId;
         const state = this.registryState;
@@ -1005,7 +1069,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     async loadMoreRegistry() {
         const state = this.registryState;
-        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        const registryId = this.isRegistryTabActive() ? this.activeTab : '';
         if (!registryId || state.loadingMore || state.searching || !state.hasMore) return;
         const requestId = ++this._registrySearchRequestId;
         state.loadingMore = true;
@@ -1192,10 +1256,21 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         </div>`;
     }
 
+    /** 内置插件（来源为 builtin 目录）贡献的 server，在「内置 MCP」tab 展示 */
+    private getBuiltinServers(): McpServerState[] {
+        return this.servers.filter((server) => server.pluginSource === 'builtin');
+    }
+
+    /** 「已安装 MCP」tab 展示的 server：排除内置插件贡献项 */
+    private getInstalledServers(): McpServerState[] {
+        return this.servers.filter((server) => server.pluginSource !== 'builtin');
+    }
+
     private getFilteredServers(): McpServerState[] {
         const query = this.installedQuery.trim().toLowerCase();
-        if (!query) return this.servers;
-        return this.servers.filter((server) => {
+        const scoped = this.getInstalledServers();
+        if (!query) return scoped;
+        return scoped.filter((server) => {
             const haystack = [
                 server.name,
                 server.displayName,
@@ -1205,6 +1280,29 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 server.url,
                 server.source,
                 ...(server.agentIds || []),
+                server.error
+            ]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+            return haystack.includes(query);
+        });
+    }
+
+    private getFilteredBuiltinServers(): McpServerState[] {
+        const query = this.builtinQuery.trim().toLowerCase();
+        const scoped = this.getBuiltinServers();
+        if (!query) return scoped;
+        return scoped.filter((server) => {
+            const haystack = [
+                server.name,
+                server.displayName,
+                server.transport,
+                server.command,
+                (server.args || []).join(' '),
+                server.url,
+                server.source,
+                server.pluginSkillName,
                 server.error
             ]
                 .filter(Boolean)
@@ -1249,13 +1347,48 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     /** 已安装列表结果区（英雄标题 + 卡片网格 / 空态），供整页渲染与局部替换共用 */
     private renderInstalledBody(): string {
         const filtered = this.getFilteredServers();
-        if (this.servers.length === 0) {
+        const installed = this.getInstalledServers();
+        if (installed.length === 0) {
             return `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.installed.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.installed.empty.hint'))}</div></div>`;
         }
         if (filtered.length === 0) {
             return `<div class="empty-state"><div class="empty-icon">⌕</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.hint'))}</div></div>`;
         }
-        return `<div class="hero-title">${escapeHtml(this._t('renderer.mcp.installed.count', { count: this.servers.length }))}</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
+        return `<div class="hero-title">${escapeHtml(this._t('renderer.mcp.installed.count', { count: installed.length }))}</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
+    }
+
+    /** 内置 MCP 面板：搜索 + 只读卡片网格（无批量操作，条目由内置插件拥有） */
+    private renderBuiltinPanel(): string {
+        if (this.loadingServers) {
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${escapeHtml(this._t('renderer.mcp.loading'))}</span></div></div>`;
+        }
+        if (this.serverError) {
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">!</div><div class="empty-title">${escapeHtml(this.serverError)}</div></div></div>`;
+        }
+        return `
+        <div class="registry-panel">
+            <div class="search-bar">
+                <div class="search-input-wrap">
+                    <input type="text" class="search-input" data-search-tab="builtin" placeholder="${escapeHtml(this._t('renderer.mcp.search.placeholder.builtin'))}" value="${escapeHtml(this.builtinQuery)}" />
+                    <button type="button" class="search-clear" data-clear-tab="builtin" title="${escapeHtml(this._t('renderer.mcp.search.clear'))}">×</button>
+                </div>
+                <button type="button" class="search-btn" data-search-btn="builtin">${escapeHtml(this._t('renderer.mcp.search.button'))}</button>
+            </div>
+            <div class="panel-body">${this.renderBuiltinBody()}</div>
+        </div>`;
+    }
+
+    /** 内置 MCP 结果区，供整页渲染与局部替换共用 */
+    private renderBuiltinBody(): string {
+        const filtered = this.getFilteredBuiltinServers();
+        const builtin = this.getBuiltinServers();
+        if (builtin.length === 0) {
+            return `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.builtin.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.builtin.empty.hint'))}</div></div>`;
+        }
+        if (filtered.length === 0) {
+            return `<div class="empty-state"><div class="empty-icon">⌕</div><div class="empty-title">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.title'))}</div><div class="empty-hint">${escapeHtml(this._t('renderer.mcp.installed.filter.empty.hint'))}</div></div>`;
+        }
+        return `<div class="hero-title">${escapeHtml(this._t('renderer.mcp.builtin.count', { count: builtin.length }))}</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
     }
 
     /** 只读或 agent 专属的条目不可批量操作，也不显示勾选圈 */
@@ -1378,6 +1511,17 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             server.transport === 'stdio'
                 ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
                 : server.url || '';
+        // 插件提供的 server：标题栏副标题显示「由插件 xxx 注册和管理」体现归属
+        // （与技能卡片左下角胶囊同文案、同配色）；插件内部路径对用户无意义，
+        // 命令/URL 保留在详情弹窗中
+        const isPluginProvided = server.readOnly && Boolean(server.source || server.providerId);
+        const subtitle = isPluginProvided
+            ? `<span class="plugin-owner-label">${escapeHtml(
+                  this._t('renderer.mcp.card.pluginManaged.before')
+              )}</span><span class="plugin-owner-name">${escapeHtml(
+                  server.source || server.providerId || ''
+              )}</span><span class="plugin-owner-label">${escapeHtml(this._t('renderer.mcp.card.pluginManaged.after'))}</span>`
+            : escapeHtml(desc || TRANSPORT_LABELS[server.transport] || server.transport);
 
         // toggle 状态：enabled=true 但连接失败时显示警告样式
         const toggleError = server.enabled && server.status === 'error';
@@ -1387,8 +1531,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             : server.enabled
               ? this._t('renderer.mcp.card.toggle.disableHint')
               : this._t('renderer.mcp.card.toggle.enableHint');
+        // 插件提供的 server（readOnly）：归属已在标题栏副标题（「由插件 xxx 注册和管理」）中
+        // 体现，右下角不再重复放置插件名胶囊；Agent 专属与用户自配 server 维持原有控件
         const scopeControl = server.readOnly
-            ? `<span class="tag-pill tag-gray">${escapeHtml(server.source || server.providerId || '')}</span>`
+            ? ''
             : server.agentIds !== undefined
               ? '<span class="tag-pill tag-gray">Agent</span>'
               : `<label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
@@ -1403,12 +1549,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 ${this.renderIcon(label)}
                 <div class="card-info">
                     <div class="card-title">${escapeHtml(label)}</div>
-                    <div class="card-subtitle">${escapeHtml(desc || TRANSPORT_LABELS[server.transport] || server.transport)}</div>
+                    <div class="card-subtitle">${subtitle}</div>
                 </div>
             </div>
             ${server.error ? `<div class="card-desc status-error">${escapeHtml(server.error)}</div>` : `<div class="card-desc">${escapeHtml(this._t('renderer.mcp.card.toolsCount', { count: server.tools?.length || 0 }))}${server.lastToolsChangedAt ? escapeHtml(this._t('renderer.mcp.card.toolsChangedSuffix')) : ''}</div>`}
             <div class="card-footer">
                 <div class="card-meta">
+                    ${server.pluginSource === 'builtin' ? `<span class="tag-pill tag-gray">${escapeHtml(this._t('renderer.mcp.card.builtinTag'))}</span>` : ''}
                     <span class="tag-pill tag-blue">${escapeHtml(TRANSPORT_LABELS[server.transport] || server.transport)}</span>
                     <span class="status-line ${status.colorClass}"><span class="status-dot ${status.dotClass}"></span>${status.label}</span>
                 </div>
@@ -1433,7 +1580,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             .join('');
         const tabsHtml =
             registryTabs +
-            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> ${escapeHtml(this._t('renderer.mcp.tab.installed'))}${this.servers.length > 0 ? ` <span class="seg-badge">${this.servers.length}</span>` : ''}</button>`;
+            `<button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin"><span class="seg-icon">◆</span> ${escapeHtml(this._t('renderer.mcp.tab.builtin'))}${this.getBuiltinServers().length > 0 ? ` <span class="seg-badge">${this.getBuiltinServers().length}</span>` : ''}</button>` +
+            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> ${escapeHtml(this._t('renderer.mcp.tab.installed'))}${this.getInstalledServers().length > 0 ? ` <span class="seg-badge">${this.getInstalledServers().length}</span>` : ''}</button>`;
 
         this.shadowRoot!.innerHTML = `
         <style>${STYLE}</style>
@@ -1452,7 +1600,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         </div>
         ${this.localRuntimeMessage ? `<div class="runtime-banner">${escapeHtml(this.localRuntimeMessage)}</div>` : ''}
         <div class="content">
-            <div class="tab-panel ${this.activeTab !== 'installed' ? 'active' : ''}" id="panel-registry">${this.activeTab !== 'installed' ? this.renderRegistryPanel(this.activeTab) : ''}</div>
+            <div class="tab-panel ${this.isRegistryTabActive() ? 'active' : ''}" id="panel-registry">${this.isRegistryTabActive() ? this.renderRegistryPanel(this.activeTab) : ''}</div>
+            <div class="tab-panel ${this.activeTab === 'builtin' ? 'active' : ''}" id="panel-builtin">${this.activeTab === 'builtin' ? this.renderBuiltinPanel() : ''}</div>
             <div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this.renderInstalledPanel()}</div>
         </div>`;
 
@@ -1474,7 +1623,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     this.activeTab = tab;
                     // 切走时收起批量菜单：面板隐藏后点不到外面，菜单会一直挂成展开态
                     this.showBatchMenu = false;
-                    if (tab !== 'installed') {
+                    if (!this.isListTab(tab)) {
                         // 切换到 registry tab 时触发搜索
                         const isFirstSearch = !this.registryState.hasSearched || this.registryState.query === '';
                         if (isFirstSearch) this.searchRegistry('', 1);
@@ -1488,7 +1637,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         root.querySelector('#add-btn')?.addEventListener('click', () => this.showServerModal('add'));
         root.querySelector('#import-btn')?.addEventListener('click', () => this.showImportModal());
 
-        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        const registryId = this.isRegistryTabActive() ? this.activeTab : '';
         const matrixInput = root.querySelector(
             `[data-search-tab="${CSS.escape(registryId)}"]`
         ) as HTMLInputElement | null;
@@ -1524,6 +1673,23 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.installedQuery = '';
             if (installedInput) installedInput.value = '';
             this.syncInstalledPanel({ resetScroll: true });
+        });
+
+        const builtinInput = root.querySelector('[data-search-tab="builtin"]') as HTMLInputElement | null;
+        builtinInput?.addEventListener('input', () => {
+            this.builtinQuery = builtinInput.value;
+        });
+        builtinInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.isComposing) this.syncBuiltinPanel({ resetScroll: true });
+        });
+        root.querySelector('[data-search-btn="builtin"]')?.addEventListener('click', () =>
+            this.syncBuiltinPanel({ resetScroll: true })
+        );
+        root.querySelector('[data-clear-tab="builtin"]')?.addEventListener('click', () => {
+            if (!this.builtinQuery.trim()) return;
+            this.builtinQuery = '';
+            if (builtinInput) builtinInput.value = '';
+            this.syncBuiltinPanel({ resetScroll: true });
         });
 
         this.bindRegistryCardEvents(root);
@@ -1690,7 +1856,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         if (this._refreshing) return;
         this.setRefreshBusy(true);
         try {
-            if (this.activeTab !== 'installed') await this.searchRegistry(this.registryState.query.trim(), 1);
+            if (this.isRegistryTabActive()) await this.searchRegistry(this.registryState.query.trim(), 1);
             else await this.loadServers({ silent: true });
         } finally {
             this.setRefreshBusy(false);
@@ -1702,12 +1868,23 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const btn = this.shadowRoot?.querySelector('.seg-control .seg-item[data-tab="installed"]');
         if (!btn) return;
         const badge = btn.querySelector('.seg-badge');
-        const count = this.servers.length;
+        const count = this.getInstalledServers().length;
         if (count > 0) {
             if (badge) badge.textContent = String(count);
             else btn.insertAdjacentHTML('beforeend', ` <span class="seg-badge">${count}</span>`);
         } else {
             badge?.remove();
+        }
+        // 内置 MCP tab 徽标同步
+        const builtinBtn = this.shadowRoot?.querySelector('.seg-control .seg-item[data-tab="builtin"]');
+        if (!builtinBtn) return;
+        const builtinBadge = builtinBtn.querySelector('.seg-badge');
+        const builtinCount = this.getBuiltinServers().length;
+        if (builtinCount > 0) {
+            if (builtinBadge) builtinBadge.textContent = String(builtinCount);
+            else builtinBtn.insertAdjacentHTML('beforeend', ` <span class="seg-badge">${builtinCount}</span>`);
+        } else {
+            builtinBadge?.remove();
         }
     }
 
@@ -1753,8 +1930,8 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     /** registry 结果区局部替换，不重建搜索框与 header */
     private syncRegistryPanel({ fade = true, resetScroll = false } = {}) {
         const registryId = this.activeTab;
-        // 已切换回「已安装」时 registry 面板没有内容，不能把注册源结果写进去
-        if (registryId === 'installed') return;
+        // 已切换回固定列表 tab（已安装/内置）时 registry 面板没有内容，不能把注册源结果写进去
+        if (this.isListTab(registryId)) return;
         const panel = this.shadowRoot?.querySelector('#panel-registry') as HTMLElement | null;
         const body = panel?.querySelector('.registry-body') as HTMLElement | null;
         if (!panel || !body) return;
@@ -1791,6 +1968,26 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             fade && panel.classList.contains('active')
         );
         // 只有搜索条件变化才回到顶部：后台状态推送不该把用户正在看的位置顶走
+        if (resetScroll) panel.scrollTop = 0;
+    }
+
+    /** 内置 MCP 结果区局部替换：与 syncInstalledPanel 同构，但无批量状态需要维护 */
+    private syncBuiltinPanel({ fade = true, resetScroll = false } = {}) {
+        const panel = this.shadowRoot?.querySelector('#panel-builtin') as HTMLElement | null;
+        const body = panel?.querySelector('.panel-body') as HTMLElement | null;
+        if (!panel || !body) return;
+        if (this.loadingServers || this.serverError) {
+            this.render();
+            return;
+        }
+        this.swapWithFade(
+            body,
+            () => {
+                body.innerHTML = this.renderBuiltinBody();
+                this.bindInstalledCardEvents(body);
+            },
+            fade && panel.classList.contains('active')
+        );
         if (resetScroll) panel.scrollTop = 0;
     }
 
@@ -2005,7 +2202,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         });
     }
 
-    private showServerDetail(id: string) {
+    private showServerDetail(id: string, options: { autoReveal?: boolean; updateDialog?: HTMLElement } = {}) {
         const server = this.servers.find((item) => item.id === id);
         if (!server) return;
         this.selectedServerId = id;
@@ -2023,6 +2220,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 value: server.enabled ? this._t('renderer.mcp.detail.meta.yes') : this._t('renderer.mcp.detail.meta.no')
             },
             { label: this._t('renderer.mcp.detail.meta.source'), value: server.source },
+            {
+                label: this._t('renderer.mcp.detail.meta.skill'),
+                value: server.pluginSkillName ? `${server.pluginSkillName} (${server.pluginId || ''})` : undefined
+            },
             { label: 'Agent ID', value: server.agentIds?.join(', ') },
             { label: this._t('renderer.mcp.detail.meta.toolCount'), value: server.tools?.length || 0 },
             { label: this._t('renderer.mcp.detail.meta.refreshCount'), value: server.toolsChangedCount },
@@ -2061,6 +2262,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             iconName: this.getServerLabel(server),
             body: `${errorHtml}${meta}${commandHtml}${envHtml}${headerHtml}${toolsHtml}`,
             footer,
+            updateExisting: options.updateDialog,
             onBind: (overlay) => {
                 overlay.querySelector('#detail-edit')?.addEventListener('click', () => {
                     this.removeDetailDialog();
@@ -2075,25 +2277,82 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     ?.addEventListener('click', () => this.handleReconnectServer(server.id));
             }
         });
+
+        // 懒加载：内部 server 的详情被打开时按需建连；完成后刷新列表，若用户仍停留在
+        // 同一 server 的详情上就重建弹窗展示最新状态与工具（失败时展示 server.error）
+        if (
+            options.autoReveal !== false &&
+            server.pluginId &&
+            server.pluginSkillName !== undefined &&
+            server.status !== 'connected'
+        ) {
+            void this.revealInternalServerInDetail(server);
+        }
     }
 
+    private async revealInternalServerInDetail(server: McpServerState) {
+        try {
+            await getAPI().callMainWorld('revealPluginSkillServers', server.pluginId, server.pluginSkillName);
+        } catch (err) {
+            // 连接失败不阻塞详情浏览：刷新后列表与详情都会展示 server.error 的准确原因
+            console.warn('[mcpmgr] Reveal plugin skill MCP server failed:', err);
+        }
+        await this.loadServers({ silent: true });
+        // 就地更新必须以弹窗仍在 DOM 为前提：selectedServerId 在弹窗关闭时不会清理，
+        // 只看它会把已关闭的详情弹窗重新创建出来（showDetailDialog 对 null 会走新建分支）
+        const existingDialog = this.shadowRoot?.getElementById('detail-overlay');
+        if (existingDialog && this.selectedServerId === server.id) {
+            const fresh = this.servers.find((item) => item.id === server.id);
+            if (fresh) {
+                // 弹窗仍停留在该 server 上时就地更新内容（骨架不动，无闪烁）
+                this.showServerDetail(server.id, {
+                    autoReveal: false,
+                    updateDialog: existingDialog
+                });
+            }
+        }
+    }
+
+    /** 可用工具列表：与技能中心详情的工具列表同款（图标 + 直接展开的参数表格） */
     private renderTools(tools: { name: string; description: string; inputSchema?: object }[]): string {
         if (tools.length === 0) {
             return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.tools'))}</div><div class="empty-state" style="padding:24px 20px"><div class="empty-title">${escapeHtml(this._t('renderer.mcp.detail.tools.empty'))}</div></div></div>`;
         }
-        return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(this._t('renderer.mcp.detail.section.toolsWithCount', { count: tools.length }))}</div><div class="detail-tools-list">${tools
+        return `<div class="detail-section"><div class="detail-section-label">${escapeHtml(
+            this._t('renderer.mcp.detail.section.toolsWithCount', { count: tools.length })
+        )}</div><div class="detail-tools-list">${tools
             .map((tool) => {
-                const schema = tool.inputSchema as any;
-                const properties = schema?.properties || {};
-                const required = schema?.required || [];
-                const params = Object.entries(properties)
-                    .map(([name, prop]: [string, any]) => {
-                        const type = prop?.type || 'any';
-                        const req = required.includes(name) ? '*' : '';
-                        return `<span class="tag-pill ${required.includes(name) ? 'tag-orange' : 'tag-gray'}">${escapeHtml(name)}: ${escapeHtml(type)}${req}</span>`;
-                    })
-                    .join('');
-                return `<div class="detail-tool-item"><div class="detail-tool-name">${escapeHtml(tool.name)}</div>${tool.description ? `<div class="detail-tool-desc">${escapeHtml(tool.description)}</div>` : ''}${params ? `<div class="detail-tool-params">${params}</div>` : ''}</div>`;
+                const params = flattenSchemaParams(tool.inputSchema);
+                const paramsHtml =
+                    params.length > 0
+                        ? `<div class="detail-tool-params">
+                             <div class="detail-tool-params-header">
+                               <span>${escapeHtml(this._t('renderer.mcp.detail.tool.paramName'))}</span><span>${escapeHtml(
+                                   this._t('renderer.mcp.detail.tool.paramType')
+                               )}</span><span>${escapeHtml(this._t('renderer.mcp.detail.tool.paramRequired'))}</span><span>${escapeHtml(
+                                   this._t('renderer.mcp.detail.tool.colDesc')
+                               )}</span>
+                             </div>
+                             ${params
+                                 .map(
+                                     (param) => `
+                               <div class="detail-tool-param">
+                                 <span class="param-name">${escapeHtml(param.name)}</span>
+                                 <span class="param-type">${escapeHtml(param.type)}</span>
+                                 <span class="param-required ${param.required ? 'is-required' : 'is-optional'}">${escapeHtml(
+                                     param.required
+                                         ? this._t('renderer.mcp.detail.tool.required')
+                                         : this._t('renderer.mcp.detail.tool.optional')
+                                 )}</span>
+                                 <span class="param-desc">${escapeHtml(param.description || '-')}</span>
+                               </div>`
+                                 )
+                                 .join('')}
+                           </div>`
+                        : `<div class="detail-tool-no-params">${escapeHtml(this._t('renderer.mcp.detail.tool.noParams'))}</div>`;
+                return `<div class="detail-tool-item"><div class="detail-tool-header"><div class="detail-tool-name"><span class="detail-tool-icon">${WRENCH_SVG}</span>${escapeHtml(
+                    tool.name
+                )}</div>${tool.description ? `<div class="detail-tool-desc">${escapeHtml(tool.description)}</div>` : ''}</div>${paramsHtml}</div>`;
             })
             .join('')}</div></div>`;
     }
@@ -2108,7 +2367,27 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         onBind?: (overlay: HTMLElement) => void;
         /** 是否允许点击遮罩关闭；带表单填写的弹窗应传 false 防止误关丢失输入 */
         dismissOnOverlay?: boolean;
+        /** 传入已打开的弹窗时就地更新标题与内容区（骨架不重建），避免整弹窗闪烁 */
+        updateExisting?: HTMLElement;
     }) {
+        const updateExisting = options.updateExisting;
+        if (updateExisting && updateExisting.isConnected) {
+            // 就地更新：遮罩与窗口骨架保持静止，只替换标题、副标题、内容与底部按钮区
+            const nameEl = updateExisting.querySelector('.detail-name');
+            if (nameEl) nameEl.textContent = options.title;
+            const subtitleEl = updateExisting.querySelector('.detail-id');
+            if (subtitleEl) subtitleEl.textContent = options.subtitle ?? '';
+            const bodyEl = updateExisting.querySelector('.detail-body');
+            if (bodyEl) bodyEl.innerHTML = options.body;
+            const footerEl = updateExisting.querySelector('.detail-footer');
+            if (footerEl) footerEl.innerHTML = options.footer;
+            // footer 被整体替换，其中的关闭按钮需要重新绑定
+            updateExisting
+                .querySelector('#detail-close-secondary')
+                ?.addEventListener('click', () => this.removeDetailDialog());
+            options.onBind?.(updateExisting);
+            return;
+        }
         this.removeDetailDialog();
         const overlay = document.createElement('div');
         overlay.className = 'detail-overlay od-overlay visible';

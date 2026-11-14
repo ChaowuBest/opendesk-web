@@ -496,6 +496,32 @@ const workerRestartController = new WorkerRestartController(MAX_WORKER_RESTARTS)
 let settingUpdateCallbackRegistered = false;
 
 /**
+ * 全局 worker 崩溃重启后的回调：重启出的新 worker 不携带任何运行时注入状态
+ * （agent 专属 server、插件技能内部 MCP server 等），宿主借此补齐。
+ */
+type GlobalWorkerRestartListener = () => void | Promise<void>;
+const globalWorkerRestartListeners = new Set<GlobalWorkerRestartListener>();
+
+export function onGlobalWorkerRestarted(listener: GlobalWorkerRestartListener): () => void {
+    globalWorkerRestartListeners.add(listener);
+    return () => globalWorkerRestartListeners.delete(listener);
+}
+
+/** 触发重启回调并汇聚异步结果；仅供 worker 重启路径与测试使用 */
+export function notifyGlobalWorkerRestarted(): Promise<void> {
+    const results: unknown[] = [];
+    for (const listener of globalWorkerRestartListeners) {
+        try {
+            results.push(listener());
+        } catch (error) {
+            logger.warn('global worker restart listener failed', error);
+        }
+    }
+    const promises = results.filter((result): result is Promise<void> => result instanceof Promise);
+    return promises.length > 0 ? Promise.all(promises).then(() => undefined) : Promise.resolve();
+}
+
+/**
  * 初始化 Worker 和协议 handlers
  * 在 app.whenReady() 之后调用
  */
@@ -933,6 +959,8 @@ function scheduleWorkerRestart(source: object): WorkerRestartDecision {
     const decision = workerRestartController.schedule(source, () => {
         // 重新读取当前设置，确保重启后的 worker 拿到最新配置
         spawnGlobalWorker(cachedRuntimeOptions);
+        // 新 worker 不携带运行时注入状态，通知宿主补齐（如插件技能内部 MCP server 的配置登记）
+        void notifyGlobalWorkerRestarted();
     });
     if (decision.exhausted) {
         logger.error(`global worker crashed and max restart attempts (${MAX_WORKER_RESTARTS}) exceeded, giving up`);

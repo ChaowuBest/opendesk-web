@@ -15,6 +15,12 @@ const CHEVRON_ATTRS =
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ' +
     'style="width:1em;height:1em;display:inline-block;vertical-align:-0.125em"';
 
+/** 工具类装饰图标用：比 chevron 更细的线条，小尺寸下更清晰 */
+const DETAIL_ICON_ATTRS =
+    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ' +
+    'style="width:1em;height:1em;display:inline-block"';
+
 /** 右向 chevron；配合 CSS transform: rotate(90deg) 表达展开态 */
 export const CHEVRON_RIGHT_SVG = `<svg ${CHEVRON_ATTRS}><path d="M9 6l6 6-6 6"/></svg>`;
 
@@ -23,3 +29,6 @@ export const CHEVRON_DOWN_SVG = `<svg ${CHEVRON_ATTRS}><path d="M6 9l6 6 6-6"/><
 
 /** 上向 chevron */
 export const CHEVRON_UP_SVG = `<svg ${CHEVRON_ATTRS}><path d="M6 15l6-6 6 6"/></svg>`;
+
+/** 扳手（工具）图标；用于技能/MCP 详情里工具名的前缀（配合浅色圆角徽章底展示） */
+export const WRENCH_SVG = `<svg ${DETAIL_ICON_ATTRS}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`;

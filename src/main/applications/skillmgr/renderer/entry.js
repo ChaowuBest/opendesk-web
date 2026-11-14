@@ -41,6 +41,8 @@ function getSkillsAPI() {
         sendNotification: (type, title, message) =>
             window.applicationAPI.call('sendNotification', type, title, message),
         getBuiltinSkills: () => window.applicationAPI.callMainWorld('getBuiltinSkills'),
+        revealPluginSkillTools: (pluginId, skillName) =>
+            window.applicationAPI.callMainWorld('revealPluginSkillTools', pluginId, skillName),
         scanDirectoryForSkills: (dirPath, callback) =>
             window.applicationAPI.streamCall('scanDirectoryForSkills', callback, dirPath),
         batchImportSkills: (skills, callback) =>
@@ -75,7 +77,7 @@ function getSkillsAPI() {
 }
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { CHEVRON_RIGHT_SVG } from '../../../../common/ui-icons.js';
+import { CHEVRON_RIGHT_SVG, WRENCH_SVG } from '../../../../common/ui-icons.js';
 import { mergeRegistryTabState } from './registry-tabs.js';
 import { Marked, Renderer } from 'marked';
 import markdownCSS from '../../../../renderer/styles/print-markdown.css?inline';
@@ -200,6 +202,10 @@ ${OVERLAY_CSS}
 :host([data-theme="dark"]) .loading-more,
 :host([data-theme="dark"]) .registry-msg {
     color: #ababab;
+}
+:host([data-theme="dark"]) .detail-tool-name { color: #e4e4e4; }
+:host([data-theme="dark"]) .detail-tool-icon {
+    background: rgba(91, 141, 239, 0.18); color: #7AA5F2;
 }
 :host([data-theme="dark"]) .search-count {
     color: #8b8b8b;
@@ -739,6 +745,23 @@ ${OVERLAY_CSS}
 .tag-star { background: #FFF7E0; color: #C89520; }
 .tag-download { background: #EBF3FE; color: #5B8DEF; }
 .tag-score { background: #F3F3F3; color: #888; font-size: 10px; }
+/* 插件注册管理 pill：样式对齐主界面「为你推荐」的强调色（浅红底 + 红 accent），
+   插件名单独高亮加重；始终单行，超长从右侧裁剪（ellipsis）。
+   必须用 inline-block 而非 inline-flex：text-overflow 只对行内内容生效 */
+.plugin-owner-pill {
+    display: inline-block; max-width: 100%;
+    padding: 3px 9px; border-radius: 12px; font-size: 10px; font-weight: 500;
+    background: #FDEEEC; color: #9C7B76; border: 1px solid #F3D3CF;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+}
+.plugin-owner-pill .plugin-owner-name { color: #DF4436; font-weight: 650; }
+.builtin-card .card-footer > .tag-pill,
+.installed-card .card-footer > .tag-pill { flex: none; }
+:host([data-theme="dark"]) .plugin-owner-pill {
+    background: rgba(232, 86, 63, 0.16); color: #C9A29C; border-color: rgba(232, 86, 63, 0.35);
+}
+:host([data-theme="dark"]) .plugin-owner-pill .plugin-owner-name { color: #E8563F; }
 .install-btn {
     padding: 5px 14px; border-radius: 14px; border: none;
     background: #EBF3FE; color: #5B8DEF; font-size: 12px; font-weight: 600;
@@ -894,18 +917,21 @@ ${OVERLAY_CSS}
 .detail-tools-list { display: flex; flex-direction: column; gap: 8px; }
 .detail-tool-item { padding: 12px 14px; background: #FAFAFA; border-radius: 10px; border: 1px solid #F0F0F0; }
 .detail-tool-header { margin-bottom: 8px; }
-.detail-tool-name { font-size: 13px; font-weight: 600; color: #1d1d1f; margin-bottom: 3px; }
+.detail-tool-name {
+    font-size: 13px; font-weight: 600; color: #1d1d1f; margin-bottom: 5px;
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+/* 工具名前缀徽章：浅蓝圆角底 + 蓝色扳手，与仓库 tag-blue/install-btn 同色系 */
+.detail-tool-icon {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 20px; height: 20px; border-radius: 6px;
+    background: #EBF3FE; color: #5B8DEF; font-size: 11px;
+}
 .detail-tool-desc { font-size: 12px; color: #777; line-height: 1.5; }
 .detail-tool-no-params { font-size: 11px; color: #bbb; margin-top: 4px; }
-.detail-tool-params-toggle {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.06);
-    background: #fff; color: #555; font-size: 11px; font-weight: 500;
-    cursor: pointer; font-family: inherit; transition: all 0.12s;
-}
-.detail-tool-params-toggle:hover { background: #F0F0F0; color: #333; }
-.detail-tool-params-toggle .toggle-icon { font-size: 10px; transition: transform 0.15s; display: inline-block; }
-.detail-tool-params-toggle.expanded .toggle-icon { transform: rotate(90deg); }
+/* 内部 MCP 工具懒加载提示行：与 refresh 按钮的 mini-spinner 同款 */
+.mcp-tools-loading { display: flex; align-items: center; gap: 6px; color: #999; font-size: 12px; }
+:host([data-theme="dark"]) .mcp-tools-loading { color: #8b8b8b; }
 .detail-tool-params {
     margin-top: 10px; border-radius: 8px; overflow: hidden;
     border: 1px solid #F0F0F0;
@@ -920,8 +946,8 @@ ${OVERLAY_CSS}
     padding: 6px 12px; font-size: 11px; border-top: 1px solid #F5F5F5;
 }
 .detail-tool-param:nth-child(odd) { background: #fff; }
-.param-name { font-weight: 500; color: #333; font-family: 'SF Mono', 'Cascadia Code', monospace; }
-.param-type { color: #6BA3EF; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.param-name { font-weight: 500; color: #333; font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+.param-type { color: #6BA3EF; font-family: var(--font-mono, 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
 .param-required { font-size: 10px; font-weight: 600; }
 .param-required.is-required { color: #E06060; }
 .param-required.is-optional { color: #999; }
@@ -1621,6 +1647,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._locale = undefined;
         this._settingUnsubscribe = null;
         this.skills = [];
+        this.installedPluginSkills = [];
         this.externalSkills = [];
         this.skillsDir = '';
         this.loading = false;
@@ -2172,6 +2199,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             const normalizedSkills = Array.isArray(skills) ? skills : [];
             this.externalSkills = normalizedSkills.filter((s) => s?.source === 'config' || s?.readonly === true);
             this.skills = normalizedSkills.filter((s) => s?.source !== 'config' && s?.readonly !== true);
+            // 后装插件贡献的技能在「已安装」tab 以独立的插件分区展示（只读、无启停/删除）；
+            // 数据与「内置技能」tab 同源（loadBuiltinSkills 一次拉取后本地拆分），这里只消费
             const dir = await api.getSkillsDirectory();
             if (dir) this.skillsDir = dir;
             this.installedState.query = '';
@@ -2183,6 +2212,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.error = e?.message || this._t('renderer.skill.error.load');
             this.skills = [];
             this.externalSkills = [];
+            // installedPluginSkills 由 loadBuiltinSkills 拥有，技能目录加载失败不清空它
         } finally {
             if (this.activeTab === 'external' && this.externalSkills.length === 0) this.activeTab = 'installed';
             this.loading = false;
@@ -2199,12 +2229,18 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.builtinLoading = true;
         this.builtinError = null;
         try {
-            this.builtinSkills = await api.getBuiltinSkills();
-            if (!Array.isArray(this.builtinSkills)) this.builtinSkills = [];
+            const builtinSkills = await api.getBuiltinSkills();
+            // 一次拉取全量并本地拆分，避免「内置/已安装」两个 tab 各自触发一遍后端全量遍历：
+            // 内置插件（pluginSource='builtin'）与宿主技能留在「内置技能」tab；
+            // 后装插件（'local'）的技能改由「已安装」tab 的插件分区展示
+            const allSkills = Array.isArray(builtinSkills) ? builtinSkills : [];
+            this.builtinSkills = allSkills.filter((s) => s?.pluginSource !== 'local');
+            this.installedPluginSkills = allSkills.filter((s) => s?.pluginSource === 'local');
             this.builtinState.selection.clear();
         } catch (e) {
             this.builtinError = e?.message || this._t('renderer.skill.error.load');
             this.builtinSkills = [];
+            this.installedPluginSkills = [];
         } finally {
             this.builtinLoading = false;
             this.render();
@@ -2450,6 +2486,15 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (e.target.closest('.skill-toggle')) return;
                 if (e.target.closest('.batch-check')) return;
                 this.showSkillDetail(el.getAttribute('data-view-skill'));
+            });
+        });
+
+        root.querySelectorAll('[data-view-plugin-skill]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('[data-delete]')) return;
+                if (e.target.closest('.skill-toggle')) return;
+                if (e.target.closest('.batch-check')) return;
+                this.showInstalledPluginSkillDetail(el.getAttribute('data-view-plugin-skill'));
             });
         });
 
@@ -3126,9 +3171,51 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._renderDetailModal(detail, { isExternal: true });
     }
 
-    showBuiltinSkillDetail(skillId) {
-        const skill = this.builtinSkills.find((s) => s.id === skillId);
-        if (!skill) return;
+    /**
+     * 插件注册的 skill 在卡片左下角的归属 pill：「由插件 xxx 注册和管理」。
+     * xxx（插件名）使用「为你推荐」同款强调色高亮；pill 始终单行，超长从右侧裁剪。
+     * 非插件 skill（无 pluginId/pluginName）不渲染。
+     */
+    _renderPluginOwnerPill(skill) {
+        const pluginName = skill.pluginName || skill.pluginId || '';
+        if (!pluginName) return '';
+        return `<span class="plugin-owner-pill"><span class="plugin-owner-label">${escapeHtml(
+            this._t('renderer.skill.pluginManaged.before')
+        )}</span><span class="plugin-owner-name">${escapeHtml(pluginName)}</span><span class="plugin-owner-label">${escapeHtml(
+            this._t('renderer.skill.pluginManaged.after')
+        )}</span></span>`;
+    }
+
+    /**
+     * 插件技能详情的懒加载触发点：连接其内部 MCP server 并取回已发现工具，
+     * 与列表快照按工具名去重合并；无 pluginId / 连接失败时原样返回列表快照。
+     * 合并结果回写到列表数据（skill.tools），后续打开首次渲染即含完整工具。
+     */
+    async _revealPluginSkillTools(skill, tools) {
+        if (!skill?.pluginId) return tools;
+        let revealed = [];
+        try {
+            revealed = (await getSkillsAPI()?.revealPluginSkillTools(skill.pluginId, skill.name)) || [];
+        } catch {
+            revealed = [];
+        }
+        if (revealed.length === 0) return tools;
+        const known = new Set((tools || []).map((t) => t.name));
+        const merged = [...(tools || []), ...revealed.filter((t) => !known.has(t.name))];
+        skill.tools = merged;
+        return merged;
+    }
+
+    /**
+     * 插件技能详情（内置/已安装两个入口共用）。
+     *
+     * 内部 MCP 工具懒加载的呈现策略：
+     * - 工具能快速就绪（server 已连接或技能无内部 MCP，通常几十毫秒内）：
+     *   等待后一次性渲染最终内容，没有任何二次更新；
+     * - 连接较慢：先以快照 + 「正在加载内部工具」提示打开，就绪后就地增量更新
+     *   （弹窗骨架不动，入场动画不重播，加载态让补充看起来是有意的加载过程）。
+     */
+    async _openPluginSkillDetail(skill) {
         const detail = {
             id: skill.id,
             name: skill.name,
@@ -3143,11 +3230,52 @@ class SkillMgrEntryWidget extends HTMLElement {
             compatibility: skill.compatibility,
             directory: skill.directory
         };
-        this._renderDetailModal(detail, { isBuiltin: true });
+        const revealPromise = this._revealPluginSkillTools(skill, detail.tools);
+        let settleTimer;
+        let settled;
+        try {
+            settled = await Promise.race([
+                revealPromise.then((tools) => ({ ready: true, tools })),
+                new Promise((resolve) => {
+                    settleTimer = setTimeout(() => resolve({ ready: false }), 200);
+                })
+            ]);
+        } finally {
+            clearTimeout(settleTimer);
+        }
+        if (settled.ready) {
+            if (settled.tools !== detail.tools) detail.tools = settled.tools;
+            this._renderDetailModal(detail, { isBuiltin: true });
+            return;
+        }
+        // 连接较慢：快照 + 加载提示先打开，工具就绪后就地更新
+        const card = this._renderDetailModal(detail, { isBuiltin: true, loadingTools: true });
+        const mergedTools = await revealPromise;
+        if (card.isConnected && card.model?.id === detail.id && mergedTools !== detail.tools) {
+            this._renderDetailModal({ ...detail, tools: mergedTools }, { isBuiltin: true }, card);
+        }
+    }
+
+    async showBuiltinSkillDetail(skillId) {
+        const skill = this.builtinSkills.find((s) => s.id === skillId);
+        if (!skill) return;
+        await this._openPluginSkillDetail(skill);
+    }
+
+    /** 已安装 tab 的插件技能详情：与内置技能详情同构（展平自带工具，只读，含懒加载的内部 MCP 工具） */
+    async showInstalledPluginSkillDetail(skillId) {
+        const skill = (this.installedPluginSkills || []).find((s) => s.id === skillId);
+        if (!skill) return;
+        await this._openPluginSkillDetail(skill);
     }
 
     /**
-     * 独立的工具列表渲染组件，可在任何需要展示工具列表的地方复用
+     * 独立的工具列表渲染组件，可在任何需要展示工具列表的地方复用。
+     *
+     * 注意：这里的 HTML 会作为 extraSectionsHtml 注入 skill-detail-card 组件
+     * （GUI 技能详情弹窗），展示样式由组件内的 CSS 负责；本文件的
+     * .detail-tool-* 规则仅为非组件渲染路径兜底。
+     *
      * @param {Array<{name:string, description:string, params?:Array<{name:string, type:string, description:string, required:boolean}>}>} tools
      * @returns {string} HTML 字符串
      */
@@ -3157,18 +3285,15 @@ class SkillMgrEntryWidget extends HTMLElement {
             <div class="detail-section-label">${this._t('renderer.skill.detail.builtinTools', { count: tools.length })}</div>
             <div class="detail-tools-list">${tools
                 .map(
-                    (t, i) => `
+                    (t) => `
                 <div class="detail-tool-item">
                     <div class="detail-tool-header">
-                        <div class="detail-tool-name">🔧 ${escapeHtml(t.name)}</div>
+                        <div class="detail-tool-name"><span class="detail-tool-icon">${WRENCH_SVG}</span>${escapeHtml(t.name)}</div>
                         <div class="detail-tool-desc">${escapeHtml(t.description)}</div>
                     </div>
                     ${
                         t.params && t.params.length > 0
-                            ? `<button type="button" class="detail-tool-params-toggle" data-tool-toggle="${i}">
-                            <span class="toggle-icon">${CHEVRON_RIGHT_SVG}</span> ${this._t('renderer.skill.detail.params', { count: t.params.length })}
-                           </button>
-                           <div class="detail-tool-params" data-tool-params="${i}" style="display:none">
+                            ? `<div class="detail-tool-params">
                              <div class="detail-tool-params-header">
                                <span>${this._t('renderer.skill.detail.paramName')}</span><span>${this._t('renderer.skill.detail.paramType')}</span><span>${this._t('renderer.skill.detail.paramRequired')}</span><span>${this._t('renderer.skill.deps.col.desc')}</span>
                              </div>
@@ -3219,8 +3344,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         });
     }
 
-    _renderDetailModal(detail, opts = {}) {
-        this._removeDetailModal();
+    _renderDetailModal(detail, opts = {}, existingCard = null) {
+        // 复用已连接的弹窗时就地更新，不能先移除：existingCard 正是 #detail-overlay，
+        // 先删再判 isConnected 会让复用分支永远不可达（退化为整弹窗重建、动画重播）
+        if (!existingCard?.isConnected) {
+            this._removeDetailModal();
+        }
         const metaItems = [];
         if (detail.author) metaItems.push({ label: this._t('renderer.skill.detail.author'), value: detail.author });
         if (detail.source)
@@ -3257,9 +3386,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             ? `<div class="detail-section"><div class="detail-section-label">${this._t('renderer.skill.detail.resources')}</div><div class="detail-resources">${(res.references || []).map((r) => `<span class="detail-resource-tag">📄 ${escapeHtml(r.name || r)}</span>`).join('')}${(res.scripts || []).map((s) => `<span class="detail-resource-tag">📜 ${escapeHtml(s)}</span>`).join('')}${(res.assets || []).map((a) => `<span class="detail-resource-tag">🖼️ ${escapeHtml(a)}</span>`).join('')}</div></div>`
             : '';
 
-        // 内置技能的工具列表
+        // 内置技能的工具列表；懒加载中的插件技能在末尾追加加载提示行，
+        // 让内部 MCP 工具就绪后的补充看起来是有意的加载过程，而非内容跳变
         const toolsHtml =
             opts.isBuiltin && detail.tools && detail.tools.length > 0 ? this._renderToolsList(detail.tools) : '';
+        const loadingToolsHtml = opts.loadingTools
+            ? `<div class="detail-section"><div class="mcp-tools-loading"><span class="mini-spinner"></span> ${escapeHtml(this._t('renderer.skill.detail.loadingTools'))}</div></div>`
+            : '';
 
         const downloadsStr = formatDownloads(detail.downloads);
         const statsPills =
@@ -3267,9 +3400,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                 ? `<div style="display:flex;gap:6px;margin-top:4px">${detail.stars ? `<span class="tag-pill tag-star">★ ${detail.stars}</span>` : ''}${downloadsStr ? `<span class="tag-pill tag-download">↓ ${downloadsStr}</span>` : ''}</div>`
                 : '';
         const pluginSkillOwner = detail.pluginName || detail.pluginId;
-        const pluginSkillAttribution = pluginSkillOwner ? `${pluginSkillOwner}/${detail.name || detail.id}` : '';
+        // 插件技能的副标题：「由插件 xxx 注册和管理」（与技能卡片左下角胶囊同文案、同配色）
+        const pluginManagedHtml = pluginSkillOwner
+            ? `<span class="plugin-owner-label">${escapeHtml(this._t('renderer.skill.pluginManaged.before'))}</span><span class="plugin-owner-name">${escapeHtml(pluginSkillOwner)}</span><span class="plugin-owner-label">${escapeHtml(this._t('renderer.skill.pluginManaged.after'))}</span>`
+            : '';
+        // header 下的 bundleName 行只对宿主内置技能有意义（如所属应用）；
+        // 插件技能的归属已在副标题中体现，不再重复显示 bundleName（pluginMgr 等）
         const headerAttribution =
-            opts.isBuiltin && detail.bundleName
+            opts.isBuiltin && detail.bundleName && !detail.pluginId
                 ? `<div style="font-size:11px;color:#8e8e93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>`
                 : '';
 
@@ -3293,13 +3431,18 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
         }
 
-        const card = document.createElement('skill-detail-card');
-        card.id = 'detail-overlay';
-        card.dataset.theme = this.dataset.theme || document.documentElement.dataset.theme || 'light';
+        // 传入 existingCard 时复用已打开的弹窗就地更新 model（骨架只建一次，内容区增量重绘），
+        // 避免 remove + 重建让入场动画重播、弹窗看起来闪烁（如懒加载工具就绪后的刷新）
+        const card =
+            existingCard && existingCard.isConnected ? existingCard : document.createElement('skill-detail-card');
+        if (card !== existingCard) {
+            card.id = 'detail-overlay';
+            card.dataset.theme = this.dataset.theme || document.documentElement.dataset.theme || 'light';
+        }
         card.model = {
             id: detail.id,
             name: detail.name || detail.id,
-            subtitle: pluginSkillAttribution || undefined,
+            subtitleHtml: pluginManagedHtml || undefined,
             closeLabel: this._t('renderer.skill.detail.close'),
             description: detail.description,
             descriptionLabel: this._t('renderer.skill.detail.descLabel'),
@@ -3310,17 +3453,21 @@ class SkillMgrEntryWidget extends HTMLElement {
             metadata: metaItems,
             metadataLabel: this._t('renderer.skill.detail.metadataLabel'),
             headerExtraHtml: `${opts.isBuiltin ? headerAttribution : ''}${statsPills}`,
-            extraSectionsHtml: `${resourceHtml}${toolsHtml}`,
+            extraSectionsHtml: `${resourceHtml}${toolsHtml}${loadingToolsHtml}`,
             actions
         };
-        card.addEventListener('skill-detail-action', (event) => {
-            const action = event.detail;
-            this._removeDetailModal();
-            if (action.id === 'delete') this.deleteSkill(detail.id);
-            if (action.id === 'install' && action.data) this.installFromRegistry(action.data, detail.id, detail.name);
-        });
+        if (card !== existingCard) {
+            card.addEventListener('skill-detail-action', (event) => {
+                const action = event.detail;
+                this._removeDetailModal();
+                if (action.id === 'delete') this.deleteSkill(detail.id);
+                if (action.id === 'install' && action.data)
+                    this.installFromRegistry(action.data, detail.id, detail.name);
+            });
 
-        this.shadowRoot.appendChild(card);
+            this.shadowRoot.appendChild(card);
+        }
+        return card;
     }
 
     _removeDetailModal() {
@@ -4408,30 +4555,56 @@ class SkillMgrEntryWidget extends HTMLElement {
             return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.common.loading')}</span></div></div>`;
         if (this.error)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.error)}</div></div></div>`;
-        if (this.skills.length === 0)
+        if (this.skills.length === 0 && this.installedPluginSkills.length === 0)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">${this._t('renderer.skill.empty.installed')}</div><div class="empty-hint">${this._t('renderer.skill.empty.installedHint')}</div>${this.skillsDir ? `<code class="empty-dir">${escapeHtml(this.skillsDir)}</code>` : ''}</div></div>`;
 
         const q = state.query.trim().toLowerCase();
         const filtered = this._getFilteredSkills('installed');
+        // 插件贡献的技能与普通已安装技能混排进同一网格，只靠卡片上的归属胶囊区分（不设独立分区）；
+        // 插件卡不渲染勾选圈/开关/删除，批量选择与删除仍只作用于 this.skills
+        const pluginSkills = q
+            ? this.installedPluginSkills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q) ||
+                      (s.pluginName || s.pluginId || '').toLowerCase().includes(q)
+              )
+            : this.installedPluginSkills;
+        const merged = [...filtered, ...pluginSkills];
         const selection = state.selection;
 
-        const total = filtered.length;
-        const visible = filtered.slice(0, state.page * state.pageSize);
+        const total = merged.length;
+        const visible = merged.slice(0, state.page * state.pageSize);
         const hasMore = visible.length < total;
 
         let contentHtml;
-        if (filtered.length === 0) {
+        if (merged.length === 0) {
             contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">${this._t('renderer.skill.analyze.noMatch')}</div><div class="empty-hint">${this._t('renderer.skill.empty.noMatchTry')}</div></div>`;
         } else {
-            const skillCount = this.skills.length;
             const heroHtml =
                 !q && state.page === 1
-                    ? `<div class="hero-title">${this._t('renderer.skill.count.installed', { count: skillCount })}</div>`
+                    ? `<div class="hero-title">${this._t('renderer.skill.count.installed', { count: merged.length })}</div>`
                     : '';
             contentHtml = `
                 ${heroHtml}
                 <div class="skills-grid">${visible
                     .map((s) => {
+                        if (s.pluginSource === 'local' && s.pluginId) {
+                            const color = this._getSkillPastel(s.name || s.id);
+                            return `
+                <div class="skill-card installed-card" data-view-plugin-skill="${escapeHtml(s.id)}">
+                  <div class="card-header">
+                    <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
+                    <div class="card-info">
+                      <div class="card-title">${escapeHtml(s.name || s.id || '')}</div>
+                    </div>
+                  </div>
+                  ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
+                  <div class="card-footer">
+                    ${this._renderPluginOwnerPill(s)}
+                  </div>
+                </div>`;
+                        }
                         const color = this._getSkillPastel(s.name || s.id);
                         const isEnabled = s.enabled !== false;
                         const isBlacklisted = s.blacklisted === true;
@@ -4585,8 +4758,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                         const toolCount = (s.tools && s.tools.length) || 0;
                         const isEnabled = s.enabled !== false;
                         const skillOwner = s.pluginName || s.pluginId || s.bundleName || '';
+                        // 插件注册的 skill：左下角显示「由插件 xxx 注册和管理」（高亮归属 pill）；
+                        // 宿主内置技能保持原有 bundleName 灰 pill
                         const scopeControl = s.readOnly
-                            ? `<span class="tag-pill tag-score">${escapeHtml(s.bundleName || '')}</span>`
+                            ? s.pluginId
+                                ? this._renderPluginOwnerPill(s)
+                                : `<span class="tag-pill tag-score">${escapeHtml(s.bundleName || '')}</span>`
                             : `<label class="skill-toggle" title="${isEnabled ? this._t('renderer.skill.toggle.enableHint') : this._t('renderer.skill.toggle.disableHint')}">
                   <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
                   <span class="skill-toggle-slider"></span>

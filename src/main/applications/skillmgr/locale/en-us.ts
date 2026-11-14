@@ -85,6 +85,9 @@ export const enUs: Record<string, string> = {
     'renderer.skill.count.installed': '${count} skills installed',
     'renderer.skill.count.external': '${count} external skills',
     'renderer.skill.count.builtin': '${count} built-in skills',
+    'renderer.skill.pluginManaged.before': 'Registered & managed by ',
+    'renderer.skill.pluginManaged.after': '',
+    'renderer.skill.detail.loadingTools': 'Loading bundled tools…',
     'renderer.skill.error.connect': 'Cannot connect to the skill service',
     'renderer.skill.error.load': 'Load failed',
     'renderer.skill.error.refresh': 'Refresh failed',
@@ -158,7 +161,6 @@ export const enUs: Record<string, string> = {
 
     // ========== Renderer：详情 ==========
     'renderer.skill.detail.builtinTools': 'Built-in tools (${count})',
-    'renderer.skill.detail.params': 'Parameters (${count})',
     'renderer.skill.detail.paramName': 'Name',
     'renderer.skill.detail.paramType': 'Type',
     'renderer.skill.detail.paramRequired': 'Required',

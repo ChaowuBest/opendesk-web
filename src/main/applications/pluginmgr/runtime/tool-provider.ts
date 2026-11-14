@@ -16,7 +16,7 @@ import { escapeHtml } from '../../../../common/utils/escape.js';
 import { logger } from '../../../utils/logger.js';
 import { getPluginHost, type PluginHost } from './host.js';
 import { getPluginMcpToolsets } from './mcp.js';
-import { getPluginToolLocalName, qualifyPluginToolsetName } from './tool-names.js';
+import { getPluginToolLocalName, qualifyPluginToolsetName, sanitizeModelToolName } from './tool-names.js';
 
 const fallbackAbortSignal = new AbortController().signal;
 
@@ -138,6 +138,21 @@ class PluginTool extends BaseTool<any> {
 
 function createPluginTool(pluginId: string, definition: ToolDefinition): BaseTool<any> {
     return new PluginTool(pluginId, definition);
+}
+
+/**
+ * 创建 skill 内部工具的实例。
+ *
+ * 与全局插件工具不同，skill 内部工具不经 ChatContext 按 toolset 名限定
+ * （`ChatContext.getTools()` 用 `${toolset.name}-${tool.name}` 拼接），
+ * 而是由 CallSkillTool 通过 `skill.getTool(toolName)` 直接解析。
+ * CallSkillTool 的调用签名已带 bundleName + skillName，skill 本身就是命名空间，
+ * 因此工具名直接用工具本名（净化后），不再叠加插件前缀。
+ */
+export function createSkillScopedPluginTool(pluginId: string, definition: ToolDefinition): BaseTool<any> {
+    const tool = createPluginTool(pluginId, definition);
+    tool.name = sanitizeModelToolName(definition.name);
+    return tool;
 }
 
 class PluginDefinedTool extends BaseTool<any> {

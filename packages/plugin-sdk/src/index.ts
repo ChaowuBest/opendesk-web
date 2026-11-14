@@ -397,6 +397,22 @@ export interface PluginSkillDefinition {
     frontmatter?: Record<string, unknown>;
     userInvocable?: boolean;
     modelInvocable?: boolean;
+    /**
+     * Skill 自带的内部工具。这些工具不经 ctx.tools.register 注册、不属于全局工具，
+     * 只在 Skill 被加载（LoadSkillTool）后随 Skill 正文渐进式披露，由 CallSkillTool
+     * 以工具本名（净化后）调用——bundleName/skillName 已承担命名空间，工具名不再
+     * 叠加插件前缀；同一技能内的工具名需唯一（宿主会校验）。
+     */
+    tools?: ToolDefinition[];
+    /**
+     * Skill 内部挂载的 MCP server。注册技能时宿主会自动把它们以内部 MCP 的形式
+     * 交给 MCPMgr 统一管理（设置界面可见；连接懒加载，技能被加载或用户在技能中心
+     * 查看详情时才建立），但其工具不进入全局工具视角，只作为该 Skill 的内部工具集
+     * 渐进式披露，由 CallSkillTool 按模型可见名调用：
+     * 仅声明一个 server 且展平名（工具本名）不与 tools 字段工具名冲突时，
+     * 直接以工具本名调用（如 `read_file`）；否则带 server 前缀（如 `fs__read_file`）。
+     */
+    mcps?: PluginMcpServerDefinition[];
 }
 
 interface PluginMcpServerBase {
@@ -765,6 +781,15 @@ export interface PluginContext {
     };
     readonly mcps: {
         registerServer(definition: PluginMcpServerDefinition): PluginRegistration;
+        /**
+         * 注册一个只服务于某个 Skill 的内部 MCP server。
+         *
+         * server 在 MCPMgr 设置界面可见、连接生命周期由 MCPMgr 统一维护，但其工具
+         * 不进入全局工具视角，只作为 `skillName` 指向技能的内部工具集渐进式披露。
+         * `skillName` 必须是同一插件已通过 ctx.skills.register 注册的技能名。
+         * 声明式的等价写法是在 ctx.skills.register 的定义里直接给出 mcps 字段。
+         */
+        registerInternalServer(definition: PluginMcpServerDefinition, skillName: string): PluginRegistration;
     };
     readonly agents: {
         register(definition: AgentDefinition): PluginRegistration;

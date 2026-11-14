@@ -153,9 +153,14 @@ export interface SkillFrontmatter {
     [key: string]: unknown;
 }
 
+/** 插件来源类型：builtin=内置插件，local=后装插件；技能/MCP 分类展示共用的归一化取值 */
+export type PluginSourceKind = 'builtin' | 'local';
+
 export interface SkillAttribution {
     sourceId: string;
     sourceName: string;
+    /** 贡献来源的插件类型：builtin=内置插件，local=后装插件；供技能中心分类展示 */
+    sourceKind?: PluginSourceKind;
 }
 
 /**
@@ -166,6 +171,12 @@ export class Skill {
     body: string;
     directory?: string;
     toolsets?: BaseToolset[];
+    /**
+     * 惰性工具集解析器：由 Provider 注入，在 Skill 被加载（loadSkillForAgent）时执行，
+     * 返回该 Skill 最终生效的完整 toolsets（含静态与动态解析出的部分，如内部挂载的
+     * MCP 工具集）。列表展示等只读场景不触发解析，保持按需连接的渐进式披露语义。
+     */
+    toolsetResolver?: () => Promise<BaseToolset[]>;
     /** 由外部生命周期管理器提供，只允许宿主展示和调用。 */
     readOnly = false;
     /** 由宿主贡献的 Skill 的来源标识，不写入 SKILL.md frontmatter。 */
@@ -211,7 +222,8 @@ export class Skill {
             result += `Skill 的安装路径是：${this.directory}\n\n`;
         }
         result += this.body;
-        if (!this.toolsets) {
+        // resolver 可能产出空数组（如内部 MCP 全部未连接），此时视作没有内部工具
+        if (!this.toolsets || this.toolsets.length === 0) {
             return result;
         }
 
@@ -1373,6 +1385,16 @@ export class SkillRegistry {
                 skillName,
                 error instanceof Error ? error.message : String(error)
             );
+        }
+
+        // 动态 toolsets（如 skill 内部挂载的 MCP）只在真正加载时解析；
+        // 解析失败不阻断 skill 加载，此时 skill 正文仍可见、只是缺少内部工具
+        if (skill.toolsetResolver) {
+            try {
+                skill.toolsets = await skill.toolsetResolver();
+            } catch (error) {
+                logger.error(`Skill toolset resolver failed: ${bundleName}/${skillName}`, error);
+            }
         }
 
         const content = skill.getFullContent();

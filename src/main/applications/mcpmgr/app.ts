@@ -172,7 +172,12 @@ export class McpMgrApplication extends BaseApplication {
         } catch {
             configured = [];
         }
-        return [...configured, ...(await getProvidedMcpServers())];
+        // 插件技能注入的内部 server 由插件拥有：设置界面只读展示（状态/工具/来源），
+        // 不提供启停与删除入口
+        const configuredForUI = configured.map((server) =>
+            server.pluginSkillName !== undefined ? { ...server, readOnly: true } : server
+        );
+        return [...configuredForUI, ...(await getProvidedMcpServers())];
     }
 
     private saveServersToConfig(servers: McpServerConfig[]): void {
@@ -227,6 +232,62 @@ export class McpMgrApplication extends BaseApplication {
         if (result.status !== 'ok') {
             throw new Error(result.message || 'Failed to register custom agent MCP servers');
         }
+    }
+
+    /**
+     * 原子替换插件技能注入的内部 MCP server。
+     *
+     * 语义与 replaceAgentServers 一致：只存在于运行时，不写入 MCPMgr 的通用用户配置；
+     * 由 pluginmgr 在插件 bootstrap 与差量启停/安装/卸载后全量同步，随插件移除而移除。
+     * 这类 server 的工具不进入全局工具视角（getToolsets），只作为所属技能的
+     * 内部工具集渐进式披露；设置界面可见、连接生命周期由本 worker 统一维护。
+     */
+    async replacePluginSkillServers(servers: McpServerConfig[]): Promise<void> {
+        const result = await this.callWorker('replacePluginSkillServers', servers);
+        if (result.status !== 'ok') {
+            throw new Error(result.message || 'Failed to replace plugin skill MCP servers');
+        }
+    }
+
+    /**
+     * 幂等补齐插件技能内部 MCP server（不删除其它技能的 server）并确保其已连接。
+     * 由 pluginmgr 在技能加载前调用，同时承担 worker 重启等场景下自愈；
+     * 内容未变化且连接健康时 worker 静默返回，不触发重连。
+     */
+    async ensurePluginSkillServers(servers: McpServerConfig[]): Promise<void> {
+        const result = await this.callWorker('ensurePluginSkillServers', servers);
+        if (result.status !== 'ok') {
+            throw new Error(result.message || 'Failed to ensure plugin skill MCP servers');
+        }
+    }
+
+    /**
+     * 技能详情展示前的懒加载触发点：确保指定技能的内部 MCP server 已连接，
+     * 返回这些 server 的最新状态（含已发现工具）。
+     */
+    async revealPluginSkillServers(pluginId: string, skillName: string): Promise<McpServerState[]> {
+        const connectResult = await this.callWorker('connectPluginSkillServers', pluginId, skillName);
+        if (connectResult.status !== 'ok') {
+            throw new Error(connectResult.message || 'Failed to connect plugin skill MCP servers');
+        }
+        return (await this.getPluginSkillServers()).filter(
+            (state) => state.pluginId === pluginId && state.pluginSkillName === skillName
+        );
+    }
+
+    /** 查询插件技能内部 MCP server 的运行状态与已发现工具（供技能工具集组装与技能中心展示） */
+    async getPluginSkillServers(): Promise<McpServerState[]> {
+        const result = await this.callWorker('getServers');
+        if (result.status !== 'ok') return [];
+        const states = (result.data as McpServerState[]) ?? [];
+        return states.filter((state) => state.pluginSkillName !== undefined);
+    }
+
+    /** 通过 MCPMgr worker 执行插件技能内部 MCP 工具（CallSkillTool 内层工具的执行通路） */
+    async callPluginSkillMcpTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
+        const result = await this.callWorker('callMcpTool', serverId, toolName, args);
+        if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
+        return result.data as string;
     }
 
     public isServerDuplicate(a: McpServerConfig, b: McpServerConfig): boolean {

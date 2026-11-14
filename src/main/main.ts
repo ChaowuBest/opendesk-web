@@ -142,7 +142,8 @@ import {
     PluginToolsetProvider,
     combineToolsetProviders,
     disposePluginHost,
-    initializePluginHost
+    initializePluginHost,
+    syncPluginSkillServers
 } from './applications/pluginmgr/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
@@ -4000,6 +4001,9 @@ async function startApplication(): Promise<void> {
         // Worker 初始化与应用 Agent 加载将在 createWindow 之后并行执行，避免阻塞窗口显示。
         initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
         resolveRegistryWorkerReady();
+
+        // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
+        void syncPluginSkillServers();
 
         // createWindow 之后并行执行重初始化，不阻塞窗口显示。
         // renderer 加载页面需要时间（dev 模式需 Vite 编译），这些初始化会在

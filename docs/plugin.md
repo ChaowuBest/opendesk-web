@@ -941,6 +941,104 @@ export default definePlugin({
 这种方式适合根据 `ctx.options`、操作系统或运行环境动态决定 contribution。静态 manifest
 更适合可在执行插件代码之前校验的固定资源；两种方式可以同时使用。
 
+## 在 Skill 中挂载内部工具与内部 MCP
+
+Skill 除了说明文本，还可以自带「内部工具」。内部工具不走 `ctx.tools.register`，不占用任务顶层工具位，
+而是随 Skill 正文渐进式披露：模型先通过 `LoadSkill` 加载 Skill，加载后的正文末尾会出现 `<tools>` 清单
+（逐个列出工具名、描述与参数 Schema），模型再用 `CallSkillTool`（参数 `bundleName`、`skillName`、
+`toolName`、`arguments`）按名调用。`bundleName` + `skillName` 已经承担了命名空间，因此 `toolName`
+使用工具本名，不会出现插件 id。
+
+内部工具分两类：`tools` 字段是插件代码实现的函数工具；`mcps` 字段是把 MCP server 挂到
+Skill 名下的内部 MCP。`mcps` 在 `setup` 阶段求值，server 参数可以按插件配置或运行环境动态生成。
+
+### tools 字段：代码实现的函数工具
+
+```ts
+import { definePlugin, tool } from '@bitclub.ai/opendesk-plugin-sdk';
+
+export default definePlugin({
+    id: 'report-skill',
+    capabilities: ['skill'],
+    setup(ctx) {
+        ctx.skills.register({
+            name: 'weekly-report',
+            description: 'Generate weekly reports with built-in helpers.',
+            body: [
+                '# Weekly Report',
+                '',
+                'Call the render_table tool to render collected rows into the report body.'
+            ].join('\n'),
+            tools: [
+                tool({
+                    name: 'render_table',
+                    description: 'Render rows as a Markdown table',
+                    args: {
+                        title: tool.schema.string(),
+                        rows: tool.schema.array(tool.schema.record(tool.schema.string()))
+                    },
+                    async execute(args, context, result) {
+                        const rows = args.rows.map((cells) => Object.values(cells).join(' | '));
+                        result.attachResult(`Rendering ${rows.length} rows`);
+                        return { output: [args.title, ...rows].join('\n') };
+                    }
+                })
+            ]
+        });
+    }
+});
+```
+
+同一 Skill 内 `tools` 的名字净化后必须唯一（净化规则：`[^a-zA-Z0-9_-]` 转为 `-`），冲突会在插件激活时
+报 `plugin.skill_tool_name_conflict`。
+
+### mcps 字段：挂在 Skill 名下的内部 MCP
+
+```ts
+ctx.skills.register({
+    name: 'weekly-report',
+    description: 'Generate weekly reports backed by an internal MCP server.',
+    body: '# Weekly Report\n\nCall the query_drafts tool to read report drafts.',
+    mcps: [
+        {
+            name: 'report-db',
+            transport: 'stdio',
+            command: 'node',
+            args: [`${ctx.pluginDir}/mcps/report-server.mjs`],
+            cwd: ctx.pluginDir
+        }
+    ]
+});
+```
+
+内部 MCP server 交给 MCPMgr 统一管理，但与全局 server 有三点差异：
+
+- **连接懒加载**：Skill 被模型加载、或用户在技能中心查看该 Skill 详情时才建立连接；Skill 列表态不会
+  拉起子进程。
+- **空闲自动断开**：连续 30 分钟没有任何工具调用会断开连接释放子进程，后续调用按需重连。
+- **不进入全局工具视角**：内部 MCP 的工具不会出现在 MCP 网关的搜索/调用范围内，MCP 管理器中可见但
+  只读，由插件拥有（随插件停用/卸载而移除）。
+
+### 模型可见名
+
+| 场景                                                  | `toolName` 形态                  | 示例                      |
+| ----------------------------------------------------- | -------------------------------- | ------------------------- |
+| `tools` 字段的静态工具                                | 工具本名（净化后）               | `echo`                    |
+| 仅一个内部 MCP，且展平名不与 `tools` 工具名冲突       | 工具本名                         | `read_file`               |
+| 多个内部 MCP server                                   | `<server>__<工具名>`（前缀消歧） | `fs__read`、`git__commit` |
+| 单个 MCP 但与 `tools` 工具重名（含连字符/下划线近形） | 回退 `<server>__<工具名>`        | `fs__echo`                |
+
+展平的 MCP 工具描述会保留 `[MCP: <server>]` 前缀说明来源。同一技能内的重名会在注册阶段校验
+（`mcps` 的 server 名净化后同名报 `plugin.skill_mcp_name_conflict`）；MCP 工具与 `tools` 工具的
+运行时冲突则按上表回退带前缀形态。
+
+### 边界
+
+- `tools` / `mcps` 只能通过 `setup` 中的 `ctx.skills.register` 携带；manifest `resources.skills`
+  静态声明的 SKILL.md 不支持这两个字段——`tools` 依赖代码实现，需要为静态 Skill 挂载内部 MCP 时，
+  改为在 `setup` 中用 `ctx.skills.register` 动态注册。
+- 内部工具的执行结果会以 `CallSkillTool` 的调用记录呈现，内部 MCP 工具的执行统一经由 MCPMgr worker。
+
 ## 无 manifest 的本地插件
 
 手工放入 `plugins/` 的单个 `.js`、`.mjs`、`.cjs` 文件不要求 manifest。
