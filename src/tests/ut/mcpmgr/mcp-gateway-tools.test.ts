@@ -8,7 +8,8 @@ import {
     partitionMcpToolsForContext
 } from '../../../main/applications/mcpmgr/mcp-gateway-tools.js';
 import type { McpToolInfo } from '../../../main/applications/mcpmgr/common.js';
-import { ToolCall } from '../../../main/aikernel/messages.js';
+import { ChatContext, ToolCall } from '../../../main/aikernel/messages.js';
+import type { TaskState } from '../../../main/aikernel/states/tasks.js';
 import { MCPTool } from '../../../main/applications/mcpmgr/mcp-tool.js';
 import { t } from '../../../main/applications/mcpmgr/locale/index.js';
 
@@ -241,7 +242,7 @@ describe('MCP layered tool loading', () => {
         expect(payload.hint.length).toBeGreaterThan(0);
     });
 
-    test('application exposes gateway tools instead of a large server definition set', async () => {
+    test('application exposes discovery controls and activates a large native definition', async () => {
         const discoveredTools = [
             tool({
                 serverId: 'small-id',
@@ -266,10 +267,12 @@ describe('MCP layered tool loading', () => {
         const app = Object.create(McpMgrApplication.prototype) as McpMgrApplication;
         (app as any).callWorker = callWorker;
 
-        const [toolset] = await app.getToolsets();
+        const task = { chat_context: new ChatContext(), getTurnGeneration: () => 1 } as unknown as TaskState;
+        const [toolset] = await app.getToolsets(task);
+        task.chat_context.attachToolsets(toolset);
         const names = Array.from(toolset.getTools().keys());
 
-        expect(names).toEqual(expect.arrayContaining(['small__ping', 'mcpSearchTools', 'mcpGetTool', 'mcpCallTool']));
+        expect(names).toEqual(expect.arrayContaining(['small__ping', 'mcpListTools', 'mcpActivateTools']));
         expect(names).not.toContain('arkts__search_components');
 
         const eager = toolset.getTool('small__ping')!;
@@ -281,11 +284,17 @@ describe('MCP layered tool loading', () => {
             description: 'Check availability'
         });
 
-        const result = await toolset.callTool('mcpCallTool', {
-            serverId: 'arkts-id',
-            toolName: 'search_components',
-            arguments: { query: 'Button' }
-        });
+        const activated = await toolset.callTool(
+            'mcpActivateTools',
+            {
+                tools: [{ serverId: 'arkts-id', toolName: 'search_components' }]
+            },
+            task
+        );
+        expect(activated.status).toBe('success');
+        const result = await task.chat_context
+            .getTool('arkts__search_components')!
+            .execute({ query: 'Button' }, undefined, task);
         expect(result.result).toBe('called');
         expect(callWorker).toHaveBeenLastCalledWith('callMcpTool', 'arkts-id', 'search_components', {
             query: 'Button'

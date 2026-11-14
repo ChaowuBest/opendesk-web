@@ -8,7 +8,9 @@ export function demoTools(count = 24): McpToolInfo[] {
         description: index === 0 ? 'Reserve inventory for a shipment.' : `Inspect storage bin ${index}.`,
         inputSchema: {
             type: 'object',
-            properties: { shipment: { type: 'string', description: 'Internal specification. '.repeat(80) } },
+            properties: {
+                shipment: { type: 'string', description: 'Internal specification. '.repeat(index === 0 ? 240 : 80) }
+            },
             required: ['shipment'],
             additionalProperties: false
         }

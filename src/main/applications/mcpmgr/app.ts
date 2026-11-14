@@ -27,13 +27,8 @@ import {
     ToggleMcpServerTool,
     UpdateMcpServerTool
 } from './tools.js';
-import { MCPTool } from './mcp-tool.js';
-import {
-    McpCallToolTool,
-    McpGetToolTool,
-    McpSearchToolsTool,
-    partitionMcpToolsForContext
-} from './mcp-gateway-tools.js';
+import { createMcpToolset } from './mcp-lazy-tools.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
 import { Skill } from '../../aikernel/skill.js';
 import type {
     McpBatchFailure,
@@ -548,61 +543,32 @@ export class McpMgrApplication extends BaseApplication {
         };
     }
 
-    async getToolsets(): Promise<BaseToolset[]> {
-        const toolsets: BaseToolset[] = [];
-
+    async getToolsets(task?: TaskState): Promise<BaseToolset[]> {
         // 1. 现有的 MCP 工具（来自已连接的服务器）
+        const loadTools = async (): Promise<McpToolInfo[]> => {
+            const result = await this.callWorker('getDiscoveredTools');
+            if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
+            return (result.data as McpToolInfo[]) ?? [];
+        };
         let tools: McpToolInfo[];
         try {
-            const result = await this.callWorker('getDiscoveredTools');
-            if (result.status !== 'ok') return [];
-            tools = result.data as McpToolInfo[];
+            tools = await loadTools();
         } catch {
-            tools = [];
+            return [];
         }
-
-        if (tools && tools.length > 0) {
-            const { eager, deferred } = partitionMcpToolsForContext(tools);
-            const toolset = new BaseToolset('mcpmgr');
-            for (const tool of eager) {
-                // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑
-                const toolNamespace =
-                    tool.agentIds === undefined ? tool.serverName : `${tool.serverName}_${tool.serverId.slice(-8)}`;
-                const mcpTool = new MCPTool(
-                    tool.serverName,
-                    tool.name,
-                    tool.description,
-                    tool.inputSchema,
-                    tool.agentIds,
-                    toolNamespace
-                );
-
-                const serverId = tool.serverId;
-                const toolName = tool.name;
-                mcpTool.setExecutor(async (args) => {
-                    const result = await this.callWorker('callMcpTool', serverId, toolName, args);
+        if (tools.length === 0) return [];
+        // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑；激活后沿用原生调用路径。
+        return [
+            createMcpToolset(tools, {
+                task,
+                loadTools,
+                callTool: async (tool, args) => {
+                    const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
                     if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
                     return result.data as string;
-                });
-
-                toolset.addTool(mcpTool);
-            }
-
-            if (deferred.length > 0) {
-                toolset.addTool(new McpSearchToolsTool(deferred));
-                toolset.addTool(new McpGetToolTool(deferred));
-                toolset.addTool(
-                    new McpCallToolTool(deferred, async (tool, args) => {
-                        const result = await this.callWorker('callMcpTool', tool.serverId, tool.name, args);
-                        if (result.status !== 'ok') throw new Error(result.message || t('error.toolCallFailed'));
-                        return result.data as string;
-                    })
-                );
-            }
-            toolsets.push(toolset);
-        }
-
-        return toolsets;
+                }
+            })
+        ];
     }
 
     async getSkills(): Promise<Skill[]> {

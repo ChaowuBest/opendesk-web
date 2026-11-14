@@ -12,6 +12,7 @@
 import type { McpToolInfo } from './common.js';
 
 export const MCP_CATALOG_CHAR_BUDGET = 6_000;
+export const MCP_EAGER_DEFINITION_CHAR_BUDGET = 16_000;
 
 interface ToolEntry {
     serverId: string;
