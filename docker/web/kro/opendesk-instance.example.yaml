@@ -1,0 +1,39 @@
+# OpenDesk 实例示例（先 kubectl apply -f opendesk-rgd.yaml）
+#
+# 1) 最简：自动创建 <实例名>-home（10Gi，集群默认 StorageClass），不启用访问令牌
+apiVersion: kro.run/v1alpha1
+kind: OpenDesk
+metadata:
+    name: alice
+    namespace: opendesk
+spec: {}
+---
+# 2) 挂载已有 PVC，启用访问令牌，从私有镜像仓库拉取
+#    令牌 Secret：kubectl -n opendesk create secret generic bob-web-token --from-literal=OPENDESK_WEB_TOKEN=$(openssl rand -hex 24)
+#    拉取凭据：kubectl -n opendesk create secret docker-registry ghcr-pull --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>
+apiVersion: kro.run/v1alpha1
+kind: OpenDesk
+metadata:
+    name: bob
+    namespace: opendesk
+spec:
+    imagePullSecrets: [ghcr-pull]
+    auth:
+        tokenSecret: bob-web-token
+    storage:
+        existingClaim: bob-data
+---
+# 3) 新建 PVC 时指定 StorageClass 与容量，并调整资源
+apiVersion: kro.run/v1alpha1
+kind: OpenDesk
+metadata:
+    name: carol
+    namespace: opendesk
+spec:
+    storage:
+        size: 50Gi
+        storageClassName: fast-ssd
+    resources:
+        limits:
+            cpu: '4'
+            memory: 8Gi
