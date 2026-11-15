@@ -83,7 +83,8 @@ jest.unstable_mockModule('@bitclub.ai/opendesk-office/sheets-main', () => ({
 
 jest.unstable_mockModule('../../../locale/index.js', () => ({
     t: (key: string) => key,
-    getLocale: () => 'en-US'
+    getLocale: () => 'en-US',
+    translateWithDomain: (key: string) => key
 }));
 
 jest.unstable_mockModule('../../../main/utils/electron-ipc.js', () => ({

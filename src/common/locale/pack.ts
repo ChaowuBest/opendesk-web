@@ -1,0 +1,251 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
+ * 语言包（locale pack）纯函数层：解析、合并与展示名格式化。
+ *
+ * 语言包是插件以 resources.locales 声明的扁平 JSON 词典（string -> string），
+ * 合并后作为"增量层"叠加在内置词典之上：增量优先于内置，同一语言允许多个
+ * 插件部分提供，同 key 冲突按插件 ID 字典序后者胜。本模块不依赖 Electron/文件
+ * 系统，宿主（loader / LocaleStore）与测试共用同一实现，保证口径一致。
+ */
+
+/** 宿主内置语言：词典全量、互不回退（zh-CN / en-US）。定义在本模块以避免与 ../locale.ts 互相引用 */
+export const BUILTIN_LOCALES = ['zh-CN', 'en-US'] as const;
+
+/** 语言包内保留给元数据的 key 前缀，不参与翻译查找 */
+const RESERVED_KEY_PREFIX = '@';
+/** 保留 key：该语言的回退语言 tag（仅非内置语言有意义，缺省 en-US） */
+export const LOCALE_PACK_FALLBACK_KEY = '@fallback';
+
+/** 单个语言包文件的内容（已解析、tag 已规范化） */
+export interface LocalePackContent {
+    /** 规范化后的 BCP-47 tag，如 tr-TR */
+    tag: string;
+    /** 回退语言 tag（已规范化）。非内置语言缺省 en-US，内置语言无回退 */
+    fallback?: string;
+    /** 参与查找的词条（保留 key 已剥离） */
+    entries: Record<string, string>;
+}
+
+/** 语言包 JSON 的解析错误：携带文件来源与出错 key，便于定位 */
+export class LocalePackParseError extends Error {
+    constructor(
+        message: string,
+        readonly sourceFile?: string
+    ) {
+        super(sourceFile ? `${message} (${sourceFile})` : message);
+        this.name = 'LocalePackParseError';
+    }
+}
+
+/**
+ * normalizeLocaleTag 的结果缓存：该函数位于 t() / 系统语言解析的热路径上，
+ * 且非法 tag（如 'auto'）每次都要构造 Intl.Locale 并吞掉 RangeError。
+ * 候选值（设置值、系统语言、包文件名）是有穷小集合，容量上限触顶即整体清空。
+ */
+const normalizedTagCache = new Map<string, string | undefined>();
+const NORMALIZED_TAG_CACHE_LIMIT = 512;
+
+/**
+ * 规范化语言 tag：'tr-tr' / 'tr_TR' -> 'tr-TR'。
+ * 优先使用 Intl.Locale（Electron / full-icu Node 均可用），不可用或非法时返回 undefined。
+ */
+export function normalizeLocaleTag(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim().replace(/_/g, '-');
+    if (!trimmed) return undefined;
+    if (normalizedTagCache.has(trimmed)) return normalizedTagCache.get(trimmed);
+    let normalized: string | undefined;
+    try {
+        normalized = new Intl.Locale(trimmed).toString();
+    } catch {
+        normalized = undefined;
+    }
+    if (normalizedTagCache.size >= NORMALIZED_TAG_CACHE_LIMIT) normalizedTagCache.clear();
+    normalizedTagCache.set(trimmed, normalized);
+    return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * 解析语言包 JSON 数据（已 JSON.parse 的原始值）为 LocalePackContent。
+ *
+ * 结构要求：顶层扁平对象、key/value 均为字符串；`@` 前缀的保留 key 仅支持
+ * @fallback（值必须是合法语言 tag），其余保留 key 忽略。任何结构问题都抛出
+ * 带定位信息的 LocalePackParseError，不允许静默丢弃整个语言包。
+ */
+export function parseLocalePackJson(raw: unknown, sourceFile?: string): LocalePackContent {
+    // function 声明（而非箭头函数常量）：TS 只对函数声明的 never 返回做控制流收窄
+    function fail(message: string): never {
+        throw new LocalePackParseError(message, sourceFile);
+    }
+    if (!isRecord(raw)) fail('locale pack must be a flat object');
+    const entries: Record<string, string> = {};
+    let fallback: string | undefined;
+    for (const [key, value] of Object.entries(raw)) {
+        if (typeof value !== 'string') fail(`entry "${key}" must map to a string`);
+        if (key.startsWith(RESERVED_KEY_PREFIX)) {
+            if (key === LOCALE_PACK_FALLBACK_KEY) {
+                const tag = normalizeLocaleTag(value);
+                if (!tag) fail(`reserved key ${LOCALE_PACK_FALLBACK_KEY} must be a valid language tag`);
+                fallback = tag;
+            }
+            continue;
+        }
+        if (!key.trim()) fail('entry key must not be empty');
+        entries[key] = value;
+    }
+    const tagFromFilename = sourceFile ? tagFromPackFileName(sourceFile) : undefined;
+    if (!tagFromFilename) fail('pack file name must be a BCP-47 tag like ja-JP.json');
+    return {
+        tag: tagFromFilename,
+        fallback,
+        entries
+    };
+}
+
+/** 从语言包文件名提取语言 tag：'locales/tr-TR.json' -> 'tr-TR' */
+export function tagFromPackFileName(filePath: string): string | undefined {
+    const basename = filePath.split(/[\\/]/).pop() ?? '';
+    if (!basename.toLowerCase().endsWith('.json')) return undefined;
+    return normalizeLocaleTag(basename.slice(0, -'.json'.length));
+}
+
+/** 合并冲突记录：key -> 覆盖获胜的插件 ID 与被覆盖方列表 */
+export interface LocalePackMergeConflict {
+    key: string;
+    winner: string;
+    losers: string[];
+}
+
+/** 多插件语言包按 tag 合并的结果 */
+export interface MergedLocalePack {
+    /** 该语言下所有插件词条的合并结果（增量层最终形态） */
+    entries: Record<string, string>;
+    /** 多包 fallback 的合并结果：字典序最后一个声明生效 */
+    fallback?: string;
+    /** 同 key 多插件冲突报告（获胜者为合并后实际生效的插件） */
+    conflicts: LocalePackMergeConflict[];
+}
+
+/** 参与合并的单个来源 */
+export interface LocalePackSource {
+    pluginId: string;
+    content: LocalePackContent;
+}
+
+/**
+ * 按插件 ID 字典序合并同一语言的多份语言包：后者覆盖前者。
+ *
+ * 顺序与安装顺序、启动顺序无关——卸载重装不改变合并结果，冲突可复现、可解释。
+ * key 冲突不是错误：照常合并并写入 conflicts 报告（P2 插件中心展示）。
+ */
+export function mergeLocalePacks(sources: readonly LocalePackSource[]): MergedLocalePack | undefined {
+    if (sources.length === 0) return undefined;
+    const ordered = [...sources].sort((a, b) => (a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0));
+    const entries: Record<string, string> = {};
+    const owners = new Map<string, string[]>();
+    const conflicts: LocalePackMergeConflict[] = [];
+    let fallback: string | undefined;
+    for (const source of ordered) {
+        for (const [key, value] of Object.entries(source.content.entries)) {
+            const previousOwners = owners.get(key);
+            if (previousOwners !== undefined) {
+                conflicts.push({ key, winner: source.pluginId, losers: [...previousOwners] });
+            }
+            entries[key] = value;
+            const ownerList = owners.get(key) ?? [];
+            ownerList.push(source.pluginId);
+            owners.set(key, ownerList);
+        }
+        if (source.content.fallback !== undefined) {
+            fallback = source.content.fallback;
+        }
+    }
+    return { entries, fallback, conflicts };
+}
+
+/**
+ * 语言 tag 的展示名：取该语言主语言的自身书写形式（如 tr-TR -> Türkçe、id-ID ->
+ * Bahasa Indonesia），与设置页/TUI 下拉框对齐；不展示区域后缀（pt-BR/pt-PT 均
+ * 显示 Português，语言包层面的区分交给插件 displayName）。
+ * Intl.DisplayNames 不可用或解析失败时退回原始 tag。
+ */
+export function formatLocaleDisplayName(tag: string): string {
+    try {
+        const primary = tag.trim().replace(/_/g, '-').split('-')[0];
+        const displayNames = new Intl.DisplayNames([primary], { type: 'language' });
+        const name = displayNames.of(primary);
+        if (name && name.toLowerCase() !== primary.toLowerCase()) return name;
+    } catch {
+        /* Intl.DisplayNames 不可用时退回 tag 本身 */
+    }
+    return tag;
+}
+
+/**
+ * 判断语言 tag 是否是宿主内置语言（zh-CN / en-US）。
+ * 内置语言词典全量、互不回退；非内置语言才走 @fallback 链。
+ */
+export function isBuiltinLocaleTag(tag: string): boolean {
+    return (BUILTIN_LOCALES as readonly string[]).includes(tag);
+}
+
+/**
+ * 语言包查找链的统一实现，main 侧全局 t() 与应用域 t()、renderer 的
+ * createTranslator 共用同一顺序，保证各端对同一 key 的解析结果一致。
+ *
+ * 链序：
+ *  1. pack[locale][key]
+ *  2. domain[locale][key]（内置词典：全局词典或应用词典，由调用方传入）
+ *  3. 非 builtin locale：pack[fallback][key] -> domain[fallback][key]，fallback 缺省 en-US
+ *  4. locale === 'en-US'：domain['zh-CN'][key]（保持 renderer 既有兜底）
+ *  5. 回显 key 本身
+ *
+ * @param lookupPack 由宿主注入的增量查询：返回该 tag 的合并增量词条
+ */
+export function resolveLocaleText(
+    key: string,
+    locale: string,
+    domainTranslations: Record<string, Record<string, string>>,
+    lookupPack: (tag: string) => Record<string, string> | undefined,
+    getPackFallback: (tag: string) => string | undefined
+): string {
+    const packEntries = lookupPack(locale);
+    let text = packEntries?.[key] ?? domainTranslations[locale]?.[key];
+    if (text !== undefined) return text;
+    if (!isBuiltinLocaleTag(locale)) {
+        const fallback = getPackFallback(locale) ?? 'en-US';
+        if (fallback !== locale) {
+            text = lookupPack(fallback)?.[key] ?? domainTranslations[fallback]?.[key];
+            if (text !== undefined) return text;
+        }
+    }
+    if (locale === 'en-US') {
+        text = domainTranslations['zh-CN']?.[key];
+        if (text !== undefined) return text;
+    }
+    return key;
+}
+
+/** 对已解析文案应用 ${param} 插值（与既有 t() 行为一致） */
+export function applyLocaleParams(text: string, params?: Record<string, string | number>): string {
+    if (!params) return text;
+    let result = text;
+    for (const [name, value] of Object.entries(params)) {
+        result = result.replace(new RegExp(`\\$\\{${name}\\}`, 'g'), String(value));
+    }
+    return result;
+}

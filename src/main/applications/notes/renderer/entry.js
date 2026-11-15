@@ -12,7 +12,7 @@
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.ts';
 import { TOUCH_LONG_PRESS_SCRIPT } from '../../../../renderer/touchLongPressScript.ts';
-import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForNotes } from '../locale/renderer.js';
 import { z } from 'zod';
 import TurndownService from 'turndown';
@@ -757,7 +757,19 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             this._updateDeletedBadge();
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

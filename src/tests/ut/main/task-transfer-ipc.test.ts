@@ -16,7 +16,10 @@ jest.unstable_mockModule('electron', () => ({
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) }
 }));
-jest.unstable_mockModule('../../../locale/index.js', () => ({ t: (key: string) => key }));
+jest.unstable_mockModule('../../../locale/index.js', () => ({
+    t: (key: string) => key,
+    translateWithDomain: (key: string) => key
+}));
 jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { warn } }));
 
 describe('task transfer workspace IPC', () => {

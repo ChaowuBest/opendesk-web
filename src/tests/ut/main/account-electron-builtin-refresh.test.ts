@@ -24,7 +24,23 @@ jest.unstable_mockModule('../../../main/utils/electron-ipc.js', () => ({
 jest.unstable_mockModule('../../../main/aikernel/llm.js', () => ({
     LLM: { clearAdapterCache: jest.fn() }
 }));
-jest.unstable_mockModule('../../../locale/index.js', () => ({ getLocale: () => 'zh-CN' }));
+jest.unstable_mockModule('../../../locale/index.js', () => {
+    // 包装层 t 经 translateWithDomain 走统一查找链；这里按 zh-CN 内联等价实现，保持用例断言稳定
+    const translateWithDomain = (
+        key: string,
+        domain: Record<string, Record<string, string>>,
+        params?: Record<string, string | number>
+    ): string => {
+        let text = domain['zh-CN']?.[key] ?? key;
+        if (params) {
+            for (const [name, value] of Object.entries(params)) {
+                text = text.replace(new RegExp(`\\$\\{${name}\\}`, 'g'), String(value));
+            }
+        }
+        return text;
+    };
+    return { getLocale: () => 'zh-CN', translateWithDomain };
+});
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getData: () => settingData }) }
 }));

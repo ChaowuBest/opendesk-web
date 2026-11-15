@@ -12,7 +12,7 @@
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
-import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createRendererTranslator, onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { getEffortIconSVG, getModelIconTile } from '../../../../renderer/utils/model-picker-icons.js';
 import { bindOverlayDismiss, showConfirmModal } from '../../../../renderer/components/confirmModal';
 import { createTranslatorForBenchmark } from '../locale/renderer.js';
@@ -321,7 +321,19 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             void this.loadRegistries().then(() => this.renderUnlessModalOpen());
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

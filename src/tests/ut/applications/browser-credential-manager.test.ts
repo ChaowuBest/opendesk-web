@@ -13,7 +13,10 @@ jest.unstable_mockModule('electron', () => ({
 jest.unstable_mockModule('../../../main/services/browser-credentials/save-prompt.js', () => ({
     showCredentialSavePrompt: confirmSave
 }));
-jest.unstable_mockModule('../../../locale/index.js', () => ({ t: (key: string) => key }));
+jest.unstable_mockModule('../../../locale/index.js', () => ({
+    t: (key: string) => key,
+    translateWithDomain: (key: string) => key
+}));
 const { installBrowserCredentials } = await import('../../../main/services/browser-credentials/manager.js');
 
 describe('credential IPC boundaries', () => {

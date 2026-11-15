@@ -11,7 +11,8 @@
 
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { escapeHtml } from '../../common/utils/escape.js';
-import { createRendererTranslator } from '../locale.ts';
+import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
+import { formatLocaleDisplayName } from '../../common/locale/pack.js';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
@@ -175,6 +176,11 @@ class SettingPanel extends HTMLElement {
                 this.updateState = state;
                 this.refreshUpdateSection();
             });
+            // 语言包安装/卸载后语言选项与文案即时变化：重建翻译器并整体刷新
+            this._localePacksUnsubscribe = onLocalePacksChanged(() => {
+                this._t = createRendererTranslator(this.currentData);
+                this.refreshAll();
+            });
         })();
     }
 
@@ -207,6 +213,8 @@ class SettingPanel extends HTMLElement {
         this._clearStartupListeners();
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
+        this._localePacksUnsubscribe?.();
+        this._localePacksUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
         this._scaleFactorChangeUnsub = null;
         if (this._modalEscHandler) {
@@ -2303,6 +2311,18 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
+        // 语言选项动态化：内置语言 + 已启用语言包注册的语言（preload 快照；不可用时退回内置）
+        const builtinLocaleLabels = { 'zh-CN': '中文', 'en-US': 'English' };
+        const availableLocales =
+            window.localeAPI?.getLocalePacks?.()?.availableLocales?.length > 0
+                ? window.localeAPI.getLocalePacks().availableLocales
+                : Object.keys(builtinLocaleLabels);
+        const localeOptionsHtml = availableLocales
+            .map((tag) => {
+                const label = builtinLocaleLabels[tag] ?? formatLocaleDisplayName(tag);
+                return `<option value="${escapeHtml(tag)}"${currentLocale === tag ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            })
+            .join('');
         const systemStartupSettings = this.launchAtLoginState?.mode === 'system-settings';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
@@ -2379,8 +2399,7 @@ class SettingPanel extends HTMLElement {
                     <label class="sp-form-label">${this._t('sp.general.language')}</label>
                     <select id="locale-select" class="sp-form-input">
                         <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>${this._t('sp.general.language.system')}</option>
-                        <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
-                        <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
+                        ${localeOptionsHtml}
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">

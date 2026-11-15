@@ -12,7 +12,13 @@ import type {
     PluginCapability,
     PluginStaticResources
 } from '../../../../../packages/plugin-sdk/src/index.js';
-import { applyPluginManifest, loadPluginResources, readPluginManifest, type PluginManifest } from './manifest.js';
+import {
+    applyPluginManifest,
+    loadPluginResources,
+    readPluginManifest,
+    readStaticOnlyPluginManifest,
+    type PluginManifest
+} from './manifest.js';
 
 const INDEX_FILES = ['index.js', 'index.mjs', 'index.cjs'];
 const RUNNABLE_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
@@ -88,11 +94,16 @@ function resolveDeclaredEntry(directory: string, packageJson: Record<string, unk
     return undefined;
 }
 
+/**
+ * 解析插件入口。目录插件没有可运行入口但带根级清单时返回 undefined：
+ * 这是纯静态插件（如语言包，只贡献 resources.locales 等声明资源），
+ * 由 loadPlugin 跳过动态 import，从清单合成最小插件对象。
+ */
 export function resolvePluginEntry(
     spec: string,
     baseDirectory: string,
     options: ResolvePluginEntryOptions = {}
-): { entry: string; rootDir: string } {
+): { entry: string; rootDir: string } | undefined {
     const target = path.isAbsolute(spec) ? spec : path.resolve(baseDirectory, spec);
     if (!fs.existsSync(target)) throw new Error('plugin.entry_not_found');
 
@@ -115,6 +126,16 @@ export function resolvePluginEntry(
         }
         return { entry: declared, rootDir: target };
     }
+
+    // 纯静态插件：带清单（根级 opendesk.plugin.json 或 package.json#opendesk）但未声明
+    // 入口、也没有可运行的 index 文件（语言包等只声明 resources.* 的贡献）。
+    // 清单形态口径与 readStaticOnlyPluginManifest 一致。该检查必须在 requireDeclaration
+    // 之前——内置候选一律带 requireDeclaration，语言包正是以纯静态形态随宿主分发的。
+    const hasIndexEntry = INDEX_FILES.some((filename) => fs.existsSync(path.join(target, filename)));
+    const hasStaticManifest =
+        fs.existsSync(path.join(target, 'opendesk.plugin.json')) ||
+        (packageJson !== undefined && isRecord(packageJson.opendesk));
+    if (!hasIndexEntry && hasStaticManifest) return undefined;
 
     if (options.requireDeclaration) throw new Error('plugin.entry_not_declared');
 
@@ -140,6 +161,23 @@ export async function loadPlugin(
     options: ResolvePluginEntryOptions = {}
 ): Promise<LoadedPlugin> {
     const resolved = resolvePluginEntry(candidate.spec, baseDirectory, options);
+    // 纯静态插件：无入口文件但有根级清单，合成最小插件对象，不执行任何插件代码
+    if (!resolved) {
+        const rootDir = path.isAbsolute(candidate.spec) ? candidate.spec : path.resolve(baseDirectory, candidate.spec);
+        const manifest = readStaticOnlyPluginManifest(rootDir);
+        if (!manifest?.id) throw new Error('plugin.manifest_invalid_id');
+        logger.info(`Loading static-only OpenDesk plugin: ${candidate.origin}`);
+        const resources = loadPluginResources(manifest, rootDir);
+        const plugin = applyPluginManifest({ id: manifest.id, setup: async () => undefined }, manifest);
+        return {
+            plugin,
+            manifest,
+            entry: '',
+            rootDir,
+            resources,
+            candidate
+        };
+    }
     const manifest = readPluginManifest(resolved.entry, resolved.rootDir);
     const resources = loadPluginResources(manifest, resolved.rootDir);
     const entry = resolved.entry;

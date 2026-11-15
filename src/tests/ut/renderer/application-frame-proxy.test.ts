@@ -223,3 +223,27 @@ describe('application frame task manager proxy', () => {
         await expect(toolResultPromise).resolves.toBe('drafted reply');
     });
 });
+
+describe('application frame host API 借用', () => {
+    test('settingAPI/localeAPI 按引用从宿主借用，应用帧才能读到语言包快照', () => {
+        const postMessage = jest.fn();
+        const hostLocaleAPI = {
+            getLocalePacks: () => null,
+            onLocalePacksChanged: () => () => undefined
+        };
+        const hostSettingAPI = { loadSettingObject: jest.fn(async () => ({})) };
+        // 用普通对象模拟子帧窗口：linkedom 的 Window 实例间共享属性定义，
+        // 其他用例已 define 过的 parent 属性在本用例无法重复定义
+        const childWindow: Record<string, unknown> = {
+            addEventListener: jest.fn(),
+            postMessage: jest.fn()
+        };
+        childWindow.parent = { postMessage, localeAPI: hostLocaleAPI, settingAPI: hostSettingAPI };
+        Object.assign(globalThis, { window: childWindow });
+
+        expect(installApplicationFrameProxies('todomgr')).toBe(true);
+        // 借用必须是同一引用：翻译器按调用时序读取最新快照，且回调注册在宿主 preload 侧
+        expect(childWindow.localeAPI).toBe(hostLocaleAPI);
+        expect(childWindow.settingAPI).toBe(hostSettingAPI);
+    });
+});

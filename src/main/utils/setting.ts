@@ -454,10 +454,13 @@ let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema() {
     return z.object({
+        // 语言设置：auto 或 BCP-47 语言 tag（含插件语言包注册的语言，如 tr-TR）。
+        // schema 只做格式校验，可用性由 locale/index.ts 的 resolveLocaleSetting 在运行时
+        // 按语言包动态集合判定（语言包被卸载后残留值自动回退系统语言），避免把枚举写死。
         locale: z
-            .enum(['auto', 'zh-CN', 'en-US'])
+            .union([z.literal('auto'), z.string().regex(/^[A-Za-z]{2,8}([-_][A-Za-z0-9]{2,8})*$/, 'BCP-47 tag')])
             .default('auto')
-            .describe('语言设置: auto=跟随系统, zh-CN=中文, en-US=英文'),
+            .describe('语言设置: auto=跟随系统, 或 BCP-47 语言 tag（zh-CN/en-US 及语言包注册的语言）'),
         default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
         default_quick_model: z
             .string()

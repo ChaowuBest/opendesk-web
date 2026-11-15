@@ -15,7 +15,7 @@
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { createTranslatorForCalendar } from '../locale/renderer.js';
-import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 
 const EVENT_TYPES = [
     { id: 'meeting', icon: 'fa-users', color: '#34C759', bg: '#ECFDF5' },
@@ -1076,12 +1076,25 @@ class CalendarEntryWidget extends HTMLElement {
     /* 语言设置变化时重建翻译器并刷新整个界面（打开中的弹窗为用户输入态，不重建） */
     _subscribeLocaleChanges() {
         if (this._settingUnsubscribe) return;
-        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
+        const unsubscribe = window.settingAPI?.onSettingChanged?.((setting) => {
             if (!this.isConnected) return;
             if (resolveRendererLocale(setting) === this._locale) return;
             this._applyLocaleSetting(setting);
             this._refreshAll();
         });
+        // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+        // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+        const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+            if (!this.isConnected) return;
+            void window.settingAPI
+                ?.loadSettingObject?.()
+                .then((setting) => this._applyLocaleSetting(setting))
+                .catch(() => {});
+        });
+        this._settingUnsubscribe = () => {
+            unsubscribe?.();
+            unsubscribeLocalePacks?.();
+        };
     }
 
     _injectStyles() {

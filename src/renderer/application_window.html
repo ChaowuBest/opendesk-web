@@ -190,6 +190,13 @@
                 .then(applyLocalization)
                 .catch(function () {});
             window.settingAPI.onSettingChanged?.(applyLocalization);
+            // 语言包安装/卸载后按最新设置重放一次本地化
+            window.localeAPI?.onLocalePacksChanged?.(function () {
+                window.settingAPI
+                    .loadSettingObject()
+                    .then(applyLocalization)
+                    .catch(function () {});
+            });
 
             // 加载应用
             var params = new URLSearchParams(window.location.search);

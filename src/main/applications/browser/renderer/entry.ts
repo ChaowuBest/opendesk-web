@@ -18,7 +18,7 @@ import {
     fetchBrowserHintsForPage,
     type BrowserHintPanelHandle
 } from '../../../../renderer/components/browserHintPanel.js';
-import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createRendererTranslator, onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForBrowser } from '../locale/renderer.js';
 // 注册 <content-loading-view> 加载中组件，用于页面加载反馈
 import '../../../../renderer/components/loading.js';
@@ -1187,7 +1187,19 @@ class BrowserEntryWidget extends HTMLElement {
             }
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

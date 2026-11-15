@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getLocale } from '../../../../locale/index.js';
+import { translateWithDomain } from '../../../../locale/index.js';
 import { zhCn } from './zh-cn.js';
 import { enUs } from './en-us.js';
 
@@ -18,7 +18,6 @@ const translations: Record<string, Record<string, string>> = {
     'en-US': enUs
 };
 
-export function t(key: string): string {
-    const locale = getLocale();
-    return translations[locale]?.[key] ?? translations['zh-CN']?.[key] ?? key;
+export function t(key: string, params?: Record<string, string | number>): string {
+    return translateWithDomain(key, translations, params);
 }

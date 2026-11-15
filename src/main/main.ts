@@ -178,6 +178,7 @@ import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/e
 import { registerElectronAccountIntegration } from './applications/account/electron.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
+import { getLocalePackStore } from '../locale/packs.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { replaceTaskHarnessForWorkspace, switchTaskMode } from './aikernel/task/mode.js';
 import {
@@ -2643,6 +2644,11 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
     });
+    // 语言包快照（与激活语言解耦，按 tag 组织）：preload 启动时拉取，
+    // 之后由 packsChanged 推送刷新
+    ipcMain.handle('locale:getLocalePacks', () => {
+        return { status: 'ok', data: getLocalePackStore().getSnapshot() };
+    });
 
     ipcMain.handle('model:checkVisionSupport', (_event, models) => {
         if (!Array.isArray(models)) {
@@ -4368,6 +4374,16 @@ async function startApplication(): Promise<void> {
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
                     safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
+                }
+            }
+        });
+
+        // 语言包变更广播：插件宿主激活/停用语言包（LocaleStore 变更）后，
+        // 推送最新快照到所有窗口，各翻译器重建后立即生效
+        getLocalePackStore().subscribe((snapshot) => {
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    safeSendToWebContents(win.webContents, 'locale:packsChanged', snapshot);
                 }
             }
         });

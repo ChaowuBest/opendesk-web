@@ -588,8 +588,9 @@ export default {
 ```
 
 manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities` 可使用：
-`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
-或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
+`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`channel`、`account`、
+`appearance`、`locale`、`registry`。声明静态 Skill、MCP、Agent 或语言包时，必须同时声明对应的
+`skill`、`mcp`、`agent` 或 `locale` capability。
 
 清单里**没有** `schemaVersion` 字段：它不参与任何版本协商，写与不写解析结果一样
 （旧清单里残留的这个键会按未知字段忽略）。
@@ -751,6 +752,11 @@ warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔
 插件贡献的 MCP 会出现在 GUI 的 MCP 管理器中，来源优先显示插件的
 `displayName`（支持本地化对象形式，按当前界面语言解析），未声明时回退到插件 ID。
 这类配置由插件拥有，因此在 MCP 管理器中只读；应通过插件中心启停插件或修改插件配置。
+
+### 语言包路径
+
+`resources.locales` 声明语言包目录或文件，目录顶层的每个 `*.json` 文件就是一份语言词典
+（子目录不递归收集），**文件名即 BCP-47 语言 tag**（如 `tr-TR.json`）。必须同时声明 `locale` capability。
 
 ## 使用 package.json#opendesk
 
@@ -1039,6 +1045,62 @@ ctx.skills.register({
   改为在 `setup` 中用 `ctx.skills.register` 动态注册。
 - 内部工具的执行结果会以 `CallSkillTool` 的调用记录呈现，内部 MCP 工具的执行统一经由 MCPMgr worker。
 
+## 语言包插件（纯静态 locale）
+
+语言包插件让第三方为 OpenDesk 提供新语言或修正既有文案，覆盖主界面与各应用的 locale 词条。
+它是**纯静态插件**：只声明 `resources.locales`，**不需要入口文件**（没有 `index.js`，宿主不执行
+任何插件代码），manifest 即全部契约：
+
+```json
+{
+    "id": "acme-langpack-ja",
+    "displayName": { "en": "Japanese Language Pack" },
+    "version": "1.0.0",
+    "apiVersion": 1,
+    "capabilities": ["locale"],
+    "resources": { "locales": ["locales"] }
+}
+```
+
+```text
+acme-langpack-ja/
+├── opendesk.plugin.json
+└── locales/
+    └── ja-JP.json        ← 文件名即语言 tag（经 Intl.Locale 规范化）
+```
+
+词典文件为扁平 `key -> 文案` 的 JSON（与内置词典同一种扁平 key，如 `renderer.sidebar.apps`、
+`notes.app.name`），插值沿用 `${param}` 约定：
+
+```json
+{
+    "@fallback": "en-US",
+    "renderer.sidebar.apps": "アプリ",
+    "sp.general.language": "言語"
+}
+```
+
+规则与语义：
+
+- **覆盖内置**：语言包增量永远优先于内置词典（全局词典与各应用词典都先查增量层），
+  因此既可以补全缺失 key，也可以修正既有文案。
+- **部分提供**：同一语言允许多个插件各自贡献一部分 key，按 key 合并；同 key 冲突时按
+  **插件 ID 字典序后者胜**，冲突不是错误但会记录告警（后续插件中心展示冲突报告）。
+- **新语言动态注册**：语言包声明的语言会自动出现在设置页 / TUI 语言选项中（显示名用
+  `Intl.DisplayNames` 按语言自身书写形式生成，如 `Türkçe`）；`auto`（跟随系统）模式下按
+  BCP-47 最佳匹配（精确 tag → 主语言 tag）。未翻译的 key 沿 `@fallback` 声明的回退语言
+  展示（缺省 `en-US`），全链未命中时回显 key 本身。
+- **即时生效**：安装 / 卸载 / 启停语言包即时广播刷新，无需重启；卸载提供当前语言的包后
+  设置里的残留值自动回退为跟随系统。
+- **校验**：结构必须为扁平 `string -> string`；单文件上限 2MB；`@` 前缀是保留 key
+  （当前仅支持 `@fallback`）；路径越界与结构非法都会让加载失败并携带文件与 key 定位。
+- **边界**：外部 iframe 应用与 browser 应用 `<webview>` 中的外部页面文案不受语言包控制；
+  应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，语言包覆盖它们会同时
+  影响所有应用，贡献应用文案时请使用带应用前缀的 key。
+
+内置试点语言包见 `resources/plugins/opendesk-langpack-tr/`（土耳其语）与
+`resources/plugins/opendesk-langpack-id/`（印尼语）。
+
 ## 无 manifest 的本地插件
 
 手工放入 `plugins/` 的单个 `.js`、`.mjs`、`.cjs` 文件不要求 manifest。
@@ -1054,6 +1116,10 @@ index.cjs
 旁边的 `skills/` 或 `mcps/`。如果要声明静态资源，可为目录增加
 `opendesk.plugin.json`；单文件 `hello.mjs` 也可以使用同目录下的
 `hello.opendesk.plugin.json` sidecar manifest。
+
+带清单（根级 `opendesk.plugin.json` 或 `package.json#opendesk`）但**既没有 `entry` 也没有
+index 文件**的目录视为**纯静态插件**（语言包是典型形态）：宿主不执行任何插件代码，
+只装载清单声明的 `resources.*` 静态资源，详见「语言包插件」章节。
 
 OpenDesk 不会编译 TypeScript 插件入口。第三方依赖仍需要插件自己的 `node_modules`，入口必须是
 Node.js 可以直接运行的 `.js`、`.mjs` 或 `.cjs` 文件。

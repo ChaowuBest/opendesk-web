@@ -95,9 +95,11 @@ function validateBuiltinPluginSource(sourceDirectory: string, knownIds: Set<stri
     const rawManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as unknown;
     const manifest = parsePluginManifest(rawManifest);
     if (!manifest.id) throw new Error(`plugin.builtin_manifest_id_required:${sourceName}`);
-    if (!manifest.entry) throw new Error(`plugin.builtin_manifest_entry_required:${manifest.id}`);
     if (knownIds.has(manifest.id)) throw new Error(`plugin.builtin_duplicate_id:${manifest.id}`);
     knownIds.add(manifest.id);
+
+    // 无入口的纯静态插件（语言包等只声明 resources.* 的贡献）合法，跳过入口校验
+    if (!manifest.entry) return { manifest, sourceEntry: undefined };
 
     const sourceEntry = path.resolve(sourceDirectory, manifest.entry);
     if (!isPathInside(sourceDirectory, sourceEntry)) {
@@ -110,7 +112,7 @@ function validateBuiltinPluginSource(sourceDirectory: string, knownIds: Set<stri
         throw new Error(`plugin.builtin_entry_typescript_unsupported:${manifest.id}`);
     }
 
-    return { manifest, sourceEntry };
+    return { manifest, sourceEntry: sourceEntry as string };
 }
 
 async function buildExpandedBuiltinPlugin(
@@ -122,7 +124,17 @@ async function buildExpandedBuiltinPlugin(
     const { manifest, sourceEntry } = validateBuiltinPluginSource(sourceDirectory, knownIds);
 
     const pluginOutputDirectory = path.join(outputRoot, manifest.id);
-    const outputEntry = path.resolve(pluginOutputDirectory, manifest.entry);
+    const outputEntry = manifest.entry ? path.resolve(pluginOutputDirectory, manifest.entry) : '';
+    if (!sourceEntry) {
+        // 无入口的纯静态插件（语言包等）：原样拷贝清单与资源文件，无需依赖安装与打包
+        copyPluginSources(sourceDirectory, pluginOutputDirectory, true);
+        return {
+            id: manifest.id,
+            sourceDirectory,
+            outputDirectory: pluginOutputDirectory,
+            entry: ''
+        };
+    }
     await ensurePluginDependencies(sourceDirectory, runNpm);
     if (shouldBundlePlugin(sourceDirectory)) {
         copyPluginSources(sourceDirectory, pluginOutputDirectory, false, true);
@@ -158,7 +170,7 @@ function buildZipBuiltinPlugin(
             id: manifest.id,
             sourceDirectory,
             outputDirectory: pluginOutputDirectory,
-            entry: path.resolve(pluginOutputDirectory, manifest.entry)
+            entry: manifest.entry ? path.resolve(pluginOutputDirectory, manifest.entry) : ''
         };
     } finally {
         fs.rmSync(stagingRoot, { recursive: true, force: true });

@@ -61,6 +61,7 @@ import { qualifyPluginToolName, sanitizeModelToolName } from './tool-names.js';
 import { mcpSafeName } from '../../mcpmgr/mcp-tool.js';
 import { createAccountsContext } from './account-context.js';
 import { HostRegistration } from './registration.js';
+import { getLocalePackStore } from '../../../../locale/packs.js';
 import {
     parsePluginCommandArguments,
     preparePluginCommandDefinition,
@@ -858,6 +859,13 @@ export class PluginHost {
             }
             for (const agent of options.resources?.agents ?? []) {
                 context.agents.register(agent);
+            }
+            // 语言包增量：整体登记到 LocaleStore（同 id 插件重复激活时按插件覆盖替换），
+            // 随注册回滚（setup 失败）与停用/卸载一并移除
+            const localePacks = options.resources?.locales ?? [];
+            if (localePacks.length > 0) {
+                getLocalePackStore().replacePluginPacks(plugin.id, localePacks);
+                entry.registrations.push(new HostRegistration(() => getLocalePackStore().removePluginPacks(plugin.id)));
             }
             const teardown = await plugin.setup(context);
             if (typeof teardown === 'function') {

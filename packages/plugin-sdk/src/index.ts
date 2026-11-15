@@ -104,6 +104,7 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'channel',
     'account',
     'appearance',
+    'locale',
     'registry'
 ] as const;
 
@@ -436,6 +437,23 @@ export interface PluginMcpRemoteServerDefinition extends PluginMcpServerBase {
 export type PluginMcpServerDefinition = PluginMcpStdioServerDefinition | PluginMcpRemoteServerDefinition;
 
 /**
+ * 单个语言包：一份已解析的语言词典，对应插件目录中的一个 JSON 文件。
+ *
+ * 语言包是纯数据（扁平 key -> 文案），tag 由文件名给出（如 locales/tr-TR.json）；
+ * 文件内可通过保留 key @fallback 声明回退语言（仅非内置语言有意义，缺省 en-US）。
+ */
+export interface PluginLocalePackDefinition {
+    /** 规范化后的 BCP-47 tag，如 tr-TR */
+    tag: string;
+    /** 回退语言 tag（已规范化），未声明时宿主按 en-US 处理 */
+    fallback?: string;
+    /** 参与翻译查找的词条（@ 保留 key 已剥离） */
+    entries: Record<string, string>;
+    /** 来源文件相对插件根的路径，诊断与冲突报告用 */
+    sourceFile: string;
+}
+
+/**
  * 插件在 manifest 中声明的静态资源。
  *
  * 这些资源无需执行 setup() 即可由宿主直接从插件目录加载并注册。
@@ -444,6 +462,7 @@ export interface PluginStaticResources {
     skills?: PluginSkillDefinition[];
     mcpServers?: PluginMcpServerDefinition[];
     agents?: AgentDefinition[];
+    locales?: PluginLocalePackDefinition[];
 }
 
 // ---------------------------------------------------------------------------
