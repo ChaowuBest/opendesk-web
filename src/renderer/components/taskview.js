@@ -120,7 +120,7 @@ import {
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
 } from './taskview-output.js';
-import { installGenUi, setGenUiLocaleSource } from '../genui/index.js';
+import { installGenUi, renderGenUiForExport, setGenUiLocaleSource } from '../genui/index.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -6004,7 +6004,8 @@ class TaskView extends HTMLElement {
             const header = await this._buildExportHeaderInfo();
             const { html, fontUrls } = buildTaskExportHtml({
                 taskName: header.title,
-                contentHtml: this._renderFullHistoryForExport(),
+                // 生成式 UI 组件在导出页里渲染成静态快照
+                contentHtml: await renderGenUiForExport(this._renderFullHistoryForExport()),
                 chatHistory,
                 doc: document,
                 reasoningCollapseLabel: taskViewT('reasoning.hide.content'),

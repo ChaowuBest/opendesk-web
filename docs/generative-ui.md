@@ -9,6 +9,7 @@
 - 工具参数按 `src/common/genui/catalog.ts` 的 zod schema 校验，校验失败作为工具错误交还模型；工具说明里附带每个组件的 JSON Schema。
 - 主进程把工具调用渲染为带 `data-genui` 载荷的占位节点；渲染进程的 MutationObserver（`src/renderer/genui/index.ts`）发现占位节点后按需加载 React（`mount.tsx`），并按「调用 id + 组件 + props」缓存组件节点：taskview 重建或就地合并消息 HTML 后接回原节点，未提交的输入不会丢。
 - 组件条目在对话里始终显示，不随已完成的过程折叠（`taskview-output.ts` 的 `widget` 项）。
+- 导出任务时，占位节点用同一套组件渲染成静态 HTML（`static.tsx`，按需加载 `react-dom/server`），等待中的交互卡片按只读快照导出。
 
 ## 工具
 

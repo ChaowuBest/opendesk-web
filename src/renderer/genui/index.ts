@@ -34,6 +34,13 @@ export function setGenUiLocaleSource(source: LocaleSource): void {
     localeSource = source;
 }
 
+/** 导出任务前把组件占位节点渲染成静态 HTML（按需加载 React 服务端渲染）。 */
+export async function renderGenUiForExport(content: string[]): Promise<string[]> {
+    if (!content.some((fragment) => fragment.includes(GENUI_PLACEHOLDER_CLASS))) return content;
+    const { renderGenUiStaticHtml } = await import('./static.js');
+    return content.map((fragment) => renderGenUiStaticHtml(fragment, localeSource));
+}
+
 function isElement(node: Node | null): node is Element {
     return node !== null && node.nodeType === 1;
 }

@@ -267,6 +267,37 @@ try {
         await shot(page, '07-after-reload');
     });
 
+    await step('task export renders widgets as static HTML', async () => {
+        const exportPath = `/tmp/genui-export-${Date.now()}.html`;
+        // 绕过保存对话框：直接让导出写到固定路径，再经 web 模式的文件路由读回
+        await page.evaluate(async (filePath) => {
+            const view = [...document.querySelectorAll('task-view')].find((element) => element.offsetParent !== null);
+            const original = window.fsAPI.saveFile;
+            window.fsAPI.saveFile = async () => ({ canceled: false, filePath });
+            try {
+                await view.exportTask();
+            } finally {
+                window.fsAPI.saveFile = original;
+            }
+        }, exportPath);
+        const response = await page.request.get(`${baseUrl}/__opendesk/fs${exportPath}`);
+        assert(response.ok(), `export not written: HTTP ${response.status()}`);
+        const html = await response.text();
+        fs.writeFileSync(path.join(outDir, 'export.html'), html);
+        assert(!html.includes('od-genui-fallback'), 'export still contains placeholder fallbacks');
+        for (const expected of ['data-component="data-table"', '华东', 'data-component="approval-card"', '已批准']) {
+            assert(html.includes(expected), `export misses ${expected}`);
+        }
+        assert(/\.bg-background\s*\{/.test(html), 'export misses widget styles');
+
+        const viewer = await context.newPage();
+        await viewer.setContent(html, { waitUntil: 'domcontentloaded' });
+        const table = viewer.locator('.od-genui-widget[data-component="data-table"]').first();
+        await table.waitFor({ state: 'visible', timeout: 10_000 });
+        await shot(viewer, '09-export-table', table);
+        await viewer.close();
+    });
+
     await step('widgets follow the dark theme', async () => {
         await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'));
         const table = widget(page, 'data-table');
