@@ -86,6 +86,13 @@ declare global {
             readText: () => Promise<string>;
             writeText: (text: string) => Promise<void>;
         };
+        /** 生成式 UI：askUI 组件回传用户操作。 */
+        genuiAPI?: {
+            respond: (
+                requestId: string,
+                response: unknown
+            ) => Promise<{ ok: true } | { ok: false; error: 'expired' | 'invalid'; message?: string }>;
+        };
         terminalAPI: {
             listProfiles: () => Promise<
                 Array<{ id: string; kind: 'powershell' | 'bash' | 'zsh' | 'cmd'; path: string }>

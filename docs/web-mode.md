@@ -41,3 +41,7 @@ docker run -d -p 8080:8080 -e OPENDESK_WEB_TOKEN=<令牌> -v opendesk-home:/home
 - 内置浏览器（`<webview>`）无法在普通网页中嵌入，web 模式下不可用。
 - 通过 http（非 localhost）访问时浏览器不开放 Clipboard API，粘贴只能使用浏览器原生快捷键；部署在 HTTPS 后可恢复完整剪贴板能力。
 - 全局快捷键、托盘、任务状态浮窗属于宿主桌面，web 模式下不启用。
+
+## 生成式 UI
+
+对话里的 `showUI` / `askUI` 组件在 web 模式下同样可用，详见 [generative-ui.md](./generative-ui.md)。

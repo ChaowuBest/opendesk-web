@@ -20,6 +20,8 @@ import { ElectronPermissionPromptProvider } from '../main/aikernel/security/elec
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
+import { createGenUiTools } from '../main/aikernel/interaction/genui.js';
+import { ElectronGenUiProvider } from '../main/aikernel/interaction/electronGenUi.js';
 import { switchTaskMode } from '../main/aikernel/task/mode.js';
 import { serializeTaskUpdateForRender } from '../main/aikernel/task/update-render.js';
 import { resolveNativeBridge } from './bridges/main.js';
@@ -322,7 +324,12 @@ export class ElectronPlatform extends WorkerPlatform {
                 }
             }
         });
-        return createInteractionToolset(askUserProvider, exitPlanModeProvider);
+        const toolset = createInteractionToolset(askUserProvider, exitPlanModeProvider);
+        // 生成式 UI（showUI/askUI）依赖 GUI 渲染进程，只在 Electron 平台挂载
+        for (const tool of createGenUiTools(new ElectronGenUiProvider())) {
+            toolset.addTool(tool);
+        }
+        return toolset;
     }
 
     getWorkerPath(): string {

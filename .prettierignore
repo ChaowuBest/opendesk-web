@@ -5,3 +5,4 @@ native/
 *.node
 package-lock.json
 src/renderer/scripts/libs/
+src/renderer/genui/vendor/

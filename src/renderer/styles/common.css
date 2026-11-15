@@ -3,6 +3,8 @@
 @import '@fortawesome/fontawesome-free/css/all.min.css';
 /* 内嵌字体（HarmonyOS Sans / Maple Mono / LXGW WenKai）与字体变量统一在 fonts.css */
 @import './fonts.css';
+/* 生成式 UI 组件（assistant-ui Elements）使用的 animate-in / fade-in 等动画工具类 */
+@import 'tw-animate-css';
 
 /*
  * Tailwind 类名扫描范围。
@@ -20,6 +22,20 @@
 @source '../**/*.{html,js,ts,jsx,tsx}';
 @source '../../main/**/*.{html,js,ts,jsx,tsx}';
 @source '../../common/**/*.{html,js,ts,jsx,tsx}';
+
+/*
+ * 生成式 UI 组件沿用 shadcn 的语义色名，这里映射到 OpenDesk 主题变量，
+ * dark: 变体跟随 html[data-theme='dark'] 而不是系统配色。
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+    --color-background: var(--od-bg-elevated);
+    --color-popover: var(--od-bg-elevated);
+    --color-foreground: var(--od-text);
+    --color-muted-foreground: var(--od-text-muted);
+    --color-border: var(--od-border-strong);
+}
 
 @theme {
     --font-sans:
@@ -90,4 +106,26 @@ code,
 
 button {
     cursor: pointer;
+}
+
+/* 生成式 UI：showUI/askUI 工具调用在对话里内嵌的组件 */
+.od-genui-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0;
+    max-width: 100%;
+}
+
+.od-genui-host {
+    display: block;
+}
+
+.od-genui-widget {
+    max-width: 720px;
+}
+
+.od-genui-fallback {
+    font-size: var(--fs-sm, 11px);
+    color: var(--od-text-muted);
 }

@@ -120,6 +120,7 @@ import {
     normalizeGuiOutputMode,
     normalizeGuiReasonDisplayMode
 } from './taskview-output.js';
+import { installGenUi, setGenUiLocaleSource } from '../genui/index.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -137,11 +138,14 @@ const PROCESS_INNER_SCROLL_BOTTOM_THRESHOLD_PX = 24;
 // 是长任务下渲染进程 CPU 飙高的主因之一。
 const TASKVIEW_REASONING_PREVIEW_TAIL_CHARS = 2000;
 let taskViewT = createRendererTranslator();
+// showUI/askUI 工具调用渲染出的组件占位节点由生成式 UI 模块挂载成 React 组件
+installGenUi();
 let guiOutputMode = 'minimal';
 let guiReasonDisplayMode = 'inline';
 
 function updateTaskViewTranslator(setting) {
     taskViewT = createRendererTranslator(setting);
+    setGenUiLocaleSource(setting);
     const nextOutputMode = normalizeGuiOutputMode(setting?.gui_config?.output_mode);
     const nextReasonDisplayMode = normalizeGuiReasonDisplayMode(setting?.gui_config?.gui_reason_display);
     const outputModeChanged = nextOutputMode !== guiOutputMode;
@@ -1782,7 +1786,9 @@ class TaskView extends HTMLElement {
             parts: normalizedParts
         });
         const finalItem = visibleItems.find((item) => item.type === 'final');
-        const processItems = visibleItems.filter((item) => item !== finalItem);
+        // 界面组件始终展示，不随已完成的过程一起折叠
+        const widgetItems = visibleItems.filter((item) => item.type === 'widget');
+        const processItems = visibleItems.filter((item) => item !== finalItem && item.type !== 'widget');
         const hasProcessItem = processItems.some((item) => item.type === 'process');
         const renderItem = (item, showFinalLabel = true, runningProcessDetails = false) => {
             if (item.type === 'process') {
@@ -1798,6 +1804,9 @@ class TaskView extends HTMLElement {
                     isRunning: Boolean(options.isRunning),
                     doneStats
                 });
+            }
+            if (item.type === 'widget') {
+                return `<div class="od-genui-item" data-output-part-index="${item.partIndex}">${item.part.rendered || ''}</div>`;
             }
             if (item.type === 'final') {
                 const label =
@@ -1841,6 +1850,7 @@ class TaskView extends HTMLElement {
                         ${processItems.map((item) => renderItem(item)).join('')}
                     </div>
                 </section>
+                ${widgetItems.map((item) => renderItem(item)).join('')}
                 ${renderItem(finalItem, false)}`;
         } else {
             html = visibleItems

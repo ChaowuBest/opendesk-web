@@ -603,6 +603,11 @@ function exposeTaskManagerAPI() {
         }
     });
 
+    // 生成式 UI：askUI 组件直接渲染在对话里，用户操作后按请求 id 回传
+    safeExposeInMainWorld('genuiAPI', {
+        respond: (requestId, response) => ipcRenderer.invoke('genui:respond', requestId, response)
+    });
+
     // exitPlanMode 使用事件广播模式
     const exitPlanRequestCallbacks = new Set();
     const exitPlanDismissCallbacks = new Set();

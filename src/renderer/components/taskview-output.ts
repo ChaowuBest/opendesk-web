@@ -10,6 +10,7 @@
  */
 
 import type { OutputDisplayLevel } from '../../common/output-display.js';
+import { GENUI_ASK_TOOL, genUiToolBaseName, isGenUiTool } from '../../common/genui/protocol.js';
 
 export type GuiReasonDisplayMode = 'inline' | 'bubble';
 
@@ -19,6 +20,7 @@ export interface GuiToolCall {
     /** 工具自描述的显示名（string 或按语言映射），解析优先级高于 display_name_key。 */
     display_name?: string | Record<string, string>;
     requires_user_attention?: boolean;
+    status?: string;
 }
 
 export interface GuiAssistantPart {
@@ -46,7 +48,8 @@ export interface GuiProcessItem {
 }
 
 export interface GuiBodyItem {
-    type: 'body' | 'final' | 'error';
+    /** widget：showUI/askUI 渲染的界面组件，始终显示在对话里，不折叠进过程 */
+    type: 'body' | 'final' | 'error' | 'widget';
     key: string;
     partIndex: number;
     part: GuiAssistantPart;
@@ -76,6 +79,20 @@ export function getDefaultExpanded(mode: OutputDisplayLevel): boolean {
 
 function hasVisibleContent(part: GuiAssistantPart): boolean {
     return Boolean(String(part.rendered ?? part.text ?? '').trim());
+}
+
+function isWidgetPart(part: GuiAssistantPart): boolean {
+    return part.type === 'tool_call' && (part.toolcalls ?? []).some((tool) => isGenUiTool(tool.tool_name));
+}
+
+/** askUI 正在等用户操作：运行状态行只会重复卡片本身，不再显示。 */
+function isAwaitingWidget(item: GuiAssistantOutputItem | undefined): boolean {
+    return (
+        item?.type === 'widget' &&
+        (item.part.toolcalls ?? []).some(
+            (tool) => genUiToolBaseName(tool.tool_name) === GENUI_ASK_TOOL && tool.status === 'running'
+        )
+    );
 }
 
 export function buildAssistantOutputItems(
@@ -113,6 +130,12 @@ export function buildAssistantOutputItems(
                 partIndex,
                 part
             });
+            return;
+        }
+
+        if (isWidgetPart(part) && hasVisibleContent(part)) {
+            flushProcess();
+            items.push({ type: 'widget', key: `widget-${partIndex}`, partIndex, part });
             return;
         }
 
@@ -200,7 +223,7 @@ export function getVisibleAssistantOutputItems(
             return [item.part];
         });
     const status = buildRunningStatus(parts);
-    if (!status) return items;
+    if (!status || isAwaitingWidget(items.at(-1))) return items;
     if (!options.showRunningDetails) {
         const activeProcess = items.at(-1);
         if (activeProcess?.type === 'process' && activeProcess.requiresUserAttention) {
@@ -216,7 +239,7 @@ export function getVisibleAssistantOutputItems(
                 }
             ];
         }
-        const hasBody = items.some((item) => item.type === 'body' || item.type === 'error');
+        const hasBody = items.some((item) => item.type === 'body' || item.type === 'error' || item.type === 'widget');
         if (!hasBody) return [status];
 
         const committedItems = items.at(-1)?.type === 'process' ? items.slice(0, -1) : items;

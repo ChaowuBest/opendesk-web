@@ -44,7 +44,7 @@ const shared: Config = {
     setupFiles: ['<rootDir>/src/tests/test-env.ts'],
     // 过滤与被测行为无关的已知 console 噪音（如 KaTeX quirks mode 警告）
     setupFilesAfterEnv: ['<rootDir>/src/tests/console-noise-filter.ts'],
-    extensionsToTreatAsEsm: ['.ts'],
+    extensionsToTreatAsEsm: ['.ts', '.tsx'],
     moduleNameMapper: {
         // ?inline / ?raw 后缀（如 ace.css?inline）与裸 .css 一样映射为占位样式文本
         '^.+\\.css(?:\\?raw|\\?inline)?$': '<rootDir>/src/tests/ut/__mocks__/raw-style.ts',
@@ -54,7 +54,8 @@ const shared: Config = {
         '^@earendil-works/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
     },
     transform: {
-        '^.+\\.ts$': [
+        // .tsx：生成式 UI 的 React 组件（src/renderer/genui）
+        '^.+\\.tsx?$': [
             'ts-jest',
             {
                 useESM: true,
@@ -63,6 +64,7 @@ const shared: Config = {
                     module: 'ESNext',
                     moduleResolution: 'bundler',
                     target: 'ES2022',
+                    jsx: 'react-jsx',
                     esModuleInterop: true,
                     isolatedModules: true,
                     allowImportingTsExtensions: true,
