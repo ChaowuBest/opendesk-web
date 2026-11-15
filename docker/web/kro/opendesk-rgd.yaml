@@ -3,10 +3,11 @@
 #   kubectl apply -f opendesk-rgd.yaml
 #   kubectl get rgd opendesk            # STATE 为 Active 后即可创建 OpenDesk 实例（示例见 opendesk-instance.example.yaml）
 #
-# 每个 OpenDesk 实例 = 一个用户：Deployment（单副本，Recreate）+ Service + 存放 /home/opendesk 的 PVC。
+# 每个 OpenDesk 实例 = 一个用户：ServiceAccount（opendesk-<username>）+ Deployment（单副本，Recreate）
+# + Service + 存放 /home/opendesk 的 PVC；各资源都带 opendesk.io/username 标签。
 # - storage.existingClaim 为空时创建 <实例名>-home；填写时直接挂载已有 PVC，不创建也不删除它。
 #   为了不在修改 spec 时误删数据，existingClaim / storageClassName / accessMode 创建后不可修改。
-# - 访问令牌来自 Secret（auth.tokenSecret，默认 <实例名>-web-token，键 OPENDESK_WEB_TOKEN）；
+# - 访问令牌来自 Secret（auth.tokenSecret，默认 <实例名>-web-token，键 OPENDESK_WEB_TOKEN，经 envFrom 注入）；
 #   Secret 不存在时服务不做认证，只适合前面已有一层认证的部署。
 # - 不包含 HTTPRoute / NetworkPolicy，入口与访问控制由集群自行配置。
 apiVersion: kro.run/v1alpha1
@@ -17,13 +18,17 @@ spec:
     schema:
         apiVersion: v1alpha1
         kind: OpenDesk
+        types:
+            EnvVar:
+                name: string | required=true
+                value: string | default=""
         spec:
+            username: string | required=true immutable=true pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" maxLength=54 description="用户名；ServiceAccount 为 opendesk-<username>，并写入各资源的 opendesk.io/username 标签"
             image: string | default="ghcr.io/chaowubest/opendesk-web:genui" description="OpenDesk web 模式镜像"
             imagePullPolicy: string | default="IfNotPresent" enum="Always,IfNotPresent,Never"
             imagePullSecrets: '[]string | default=[] description="拉取镜像用的 Secret 名称（镜像私有时填写）"'
             auth:
                 tokenSecret: string | default="" description="存放访问令牌的 Secret；留空时使用 <实例名>-web-token，Secret 不存在则不启用认证"
-                tokenKey: string | default="OPENDESK_WEB_TOKEN" description="Secret 中令牌对应的键"
             storage:
                 existingClaim: string | default="" immutable=true description="已有 PVC 名称；留空时创建 <实例名>-home"
                 size: string | default="10Gi" description="新建 PVC 的容量（existingClaim 为空时生效）"
@@ -39,12 +44,18 @@ spec:
             service:
                 type: string | default="ClusterIP" enum="ClusterIP,NodePort,LoadBalancer"
                 port: integer | default=80 minimum=1 maximum=65535
+            extraEnv: '[]EnvVar | default=[] description="追加的环境变量"'
+            extraArgs: '[]string | default=[] description="追加给 opendesk 的启动参数"'
+            serviceAccount:
+                automountToken: boolean | default=false description="是否在 Pod 中挂载 ServiceAccount 令牌"
+            runtimeClassName: string | default="" description="Pod 的 RuntimeClass（如 gvisor、kata）；留空使用节点默认"
             nodeSelector: 'map[string]string | default={}'
             excludedNodes: '[]string | default=["k8s-single"] minItems=1 description="不调度到这些节点（kubernetes.io/hostname）"'
         status:
             availableReplicas: ${deployment.status.?availableReplicas.orValue(0)}
             claimName: ${deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName}
             serviceHost: '${service.metadata.name}.${service.metadata.namespace}.svc'
+            serviceAccountName: ${serviceAccount.metadata.name}
 
     resources:
         # 未指定 existingClaim 时创建 PVC；Deployment 只按名称引用它，使用已有 PVC 时不受影响。
@@ -61,6 +72,7 @@ spec:
                   labels:
                       app.kubernetes.io/name: opendesk
                       app.kubernetes.io/instance: ${schema.metadata.name}
+                      opendesk.io/username: ${schema.spec.username}
               spec:
                   storageClassName: '${schema.spec.storage.storageClassName != "" ? schema.spec.storage.storageClassName : omit()}'
                   accessModes:
@@ -68,6 +80,19 @@ spec:
                   resources:
                       requests:
                           storage: ${schema.spec.storage.size}
+
+        - id: serviceAccount
+          template:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                  name: opendesk-${schema.spec.username}
+                  namespace: ${schema.metadata.namespace}
+                  labels:
+                      app.kubernetes.io/name: opendesk
+                      app.kubernetes.io/instance: ${schema.metadata.name}
+                      opendesk.io/username: ${schema.spec.username}
+              automountServiceAccountToken: ${schema.spec.serviceAccount.automountToken}
 
         - id: deployment
           readyWhen:
@@ -81,6 +106,7 @@ spec:
                   labels:
                       app.kubernetes.io/name: opendesk
                       app.kubernetes.io/instance: ${schema.metadata.name}
+                      opendesk.io/username: ${schema.spec.username}
               spec:
                   # OpenDesk 有单实例锁，同一份数据只能跑一个副本
                   replicas: 1
@@ -95,7 +121,11 @@ spec:
                           labels:
                               app.kubernetes.io/name: opendesk
                               app.kubernetes.io/instance: ${schema.metadata.name}
+                              opendesk.io/username: ${schema.spec.username}
                       spec:
+                          serviceAccountName: ${serviceAccount.metadata.name}
+                          automountServiceAccountToken: ${schema.spec.serviceAccount.automountToken}
+                          runtimeClassName: '${schema.spec.runtimeClassName != "" ? schema.spec.runtimeClassName : omit()}'
                           imagePullSecrets: '${size(schema.spec.imagePullSecrets) > 0 ? schema.spec.imagePullSecrets.map(secret, {"name": secret}) : omit()}'
                           nodeSelector: '${size(schema.spec.nodeSelector) > 0 ? schema.spec.nodeSelector : omit()}'
                           affinity:
@@ -124,18 +154,13 @@ spec:
                                 ports:
                                     - name: http
                                       containerPort: 8080
-                                env:
-                                    - name: OPENDESK_WEB_PORT
-                                      value: '8080'
-                                    - name: OPENDESK_WEB_HOST
-                                      value: 0.0.0.0
-                                    - name: OPENDESK_WEB_TOKEN
-                                      valueFrom:
-                                          secretKeyRef:
-                                              name: '${schema.spec.auth.tokenSecret != "" ? schema.spec.auth.tokenSecret : schema.metadata.name + "-web-token"}'
-                                              key: ${schema.spec.auth.tokenKey}
-                                              # Secret 不存在时不设置该变量，服务不做认证
-                                              optional: true
+                                args: '${size(schema.spec.extraArgs) > 0 ? schema.spec.extraArgs : omit()}'
+                                env: '${[{"name": "OPENDESK_WEB_PORT", "value": "8080"}, {"name": "OPENDESK_WEB_HOST", "value": "0.0.0.0"}] + schema.spec.extraEnv.map(e, {"name": e.name, "value": e.value})}'
+                                envFrom:
+                                    # 令牌 Secret 不存在时跳过，服务不做认证
+                                    - secretRef:
+                                          name: '${schema.spec.auth.tokenSecret != "" ? schema.spec.auth.tokenSecret : schema.metadata.name + "-web-token"}'
+                                          optional: true
                                 securityContext:
                                     allowPrivilegeEscalation: false
                                     capabilities:
@@ -183,11 +208,13 @@ spec:
                   labels:
                       app.kubernetes.io/name: opendesk
                       app.kubernetes.io/instance: ${schema.metadata.name}
+                      opendesk.io/username: ${schema.spec.username}
               spec:
                   type: ${schema.spec.service.type}
                   selector:
                       app.kubernetes.io/name: opendesk
                       app.kubernetes.io/instance: ${schema.metadata.name}
+                      opendesk.io/username: ${schema.spec.username}
                   ports:
                       - name: http
                         port: ${schema.spec.service.port}

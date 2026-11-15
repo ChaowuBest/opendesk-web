@@ -1,14 +1,15 @@
 # OpenDesk 实例示例（先 kubectl apply -f opendesk-rgd.yaml）
 #
-# 1) 最简：自动创建 <实例名>-home（10Gi，集群默认 StorageClass），不启用访问令牌
+# 1) 最简：只填 username；自动创建 <实例名>-home（10Gi，集群默认 StorageClass）和 ServiceAccount opendesk-alice，不启用访问令牌
 apiVersion: kro.run/v1alpha1
 kind: OpenDesk
 metadata:
     name: alice
     namespace: opendesk
-spec: {}
+spec:
+    username: alice
 ---
-# 2) 挂载已有 PVC，启用访问令牌，从私有镜像仓库拉取
+# 2) 挂载已有 PVC，启用访问令牌，私有镜像，gVisor 运行时，追加环境变量与启动参数
 #    令牌 Secret：kubectl -n opendesk create secret generic bob-web-token --from-literal=OPENDESK_WEB_TOKEN=$(openssl rand -hex 24)
 #    拉取凭据：kubectl -n opendesk create secret docker-registry ghcr-pull --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>
 apiVersion: kro.run/v1alpha1
@@ -17,7 +18,13 @@ metadata:
     name: bob
     namespace: opendesk
 spec:
+    username: bob
     imagePullSecrets: [ghcr-pull]
+    runtimeClassName: gvisor
+    extraEnv:
+        - name: HTTPS_PROXY
+          value: http://proxy.internal:3128
+    extraArgs: [--lang=zh-CN]
     auth:
         tokenSecret: bob-web-token
     storage:
@@ -30,6 +37,7 @@ metadata:
     name: carol
     namespace: opendesk
 spec:
+    username: carol
     storage:
         size: 50Gi
         storageClassName: fast-ssd
