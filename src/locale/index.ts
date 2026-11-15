@@ -43,6 +43,11 @@ export function setRuntimePreferredSystemLanguages(languages: readonly unknown[]
     runtimePreferredSystemLanguages = normalized.length > 0 ? normalized : null;
 }
 
+/** 读取运行时注入的系统首选语言缓存；未注入时为 null */
+export function getRuntimePreferredSystemLanguages(): readonly string[] | null {
+    return runtimePreferredSystemLanguages;
+}
+
 /** 收集系统首选语言候选（注入值 > OpenHarmony bridge > Electron > Intl），供解析层做最佳匹配 */
 function getSystemPreferredLanguages(): string[] {
     if (runtimePreferredSystemLanguages) {
