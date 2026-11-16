@@ -146,6 +146,27 @@ describe('web ipc bridge', () => {
         expect(sent).toContainEqual({ t: 'open', url: '/__opendesk/fs/tmp/dir%20with%20space/a%23b.txt' });
     });
 
+    test('shell.openExternal from an IPC call opens only in the calling connection', async () => {
+        ipcMain.handle('test:open-external', async () => {
+            await (shell.openExternal as (url: string) => Promise<void>)('https://sso.example.com/authorize?x=1');
+        });
+        const caller = createClient();
+        const other = createClient();
+        await bridge.dispatchInvoke(caller.client, 'test:open-external', []);
+        expect(caller.sent).toContainEqual({ t: 'open', url: 'https://sso.example.com/authorize?x=1' });
+        expect(other.sent).not.toContainEqual(expect.objectContaining({ t: 'open' }));
+    });
+
+    test('shell.openExternal started in the background is sent to every connection', async () => {
+        // 插件或 worker 在后台发起授权，没有触发它的 IPC 调用
+        const a = createClient();
+        const b = createClient();
+        a.client.markActive();
+        await (shell.openExternal as (url: string) => Promise<void>)('https://sso.example.com/login');
+        expect(a.sent).toContainEqual({ t: 'open', url: 'https://sso.example.com/login' });
+        expect(b.sent).toContainEqual({ t: 'open', url: 'https://sso.example.com/login' });
+    });
+
     test('messages sent to the hidden main window are broadcast to every connection', () => {
         const win = new FakeBrowserWindow();
         bridge.attachHiddenMainWindow(win as never);

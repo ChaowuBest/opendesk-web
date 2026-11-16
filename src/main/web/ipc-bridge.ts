@@ -366,7 +366,11 @@ function patchNativeUi(): void {
         return '';
     };
     s.openExternal = async (url: string) => {
-        interactionClient()?.post({ t: 'open', url });
+        // 某个标签页的 IPC 调用触发的，就在它那里打开；插件或 worker 在后台发起的
+        // （如 SSO 授权）无法确定由谁触发，发给所有连接，保证用户能看到
+        const current = clientContext.getStore();
+        if (current && !current.isDestroyed()) current.post({ t: 'open', url });
+        else broadcastMessage({ t: 'open', url });
     };
     s.showItemInFolder = (filePath: string) => {
         interactionClient()?.post({ t: 'open', url: webFileUrl(path.dirname(filePath)) });

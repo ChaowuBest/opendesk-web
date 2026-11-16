@@ -36,6 +36,10 @@ const T = {
     openDirectory: t('renderer.webMode.openDirectoryTitle'),
     saveFile: t('renderer.webMode.saveFileTitle'),
     popupBlocked: t('renderer.webMode.popupBlocked'),
+    openLinkTitle: t('renderer.webMode.openLinkTitle'),
+    openLink: t('renderer.webMode.openLink'),
+    copyLink: t('renderer.webMode.copyLink'),
+    close: t('renderer.webMode.close'),
     empty: t('renderer.webMode.empty')
 };
 
@@ -135,12 +139,46 @@ export function showToast(content: Array<Node | string>, durationMs = 8000): voi
     });
 }
 
-/** 打开 URL；被浏览器拦截弹窗时给出可点击的提示 */
+function openInNewTab(url: string): boolean {
+    // 不带 noopener：带上它时 window.open 恒返回 null，无法判断是否被拦截；打开后再断开 opener
+    const opened = window.open(url, '_blank');
+    if (!opened) return false;
+    try {
+        opened.opener = null;
+    } catch {
+        // 跨源窗口不允许写 opener，忽略
+    }
+    return true;
+}
+
+/**
+ * 打开 URL。主进程转来的 shell.openExternal（如插件发起的 SSO 授权）不是用户手势，
+ * 常被浏览器拦截弹窗；此时弹出不会自动消失的对话框，由用户点击（真实手势）打开。
+ */
 export function openUrl(url: string): void {
-    const opened = window.open(url, '_blank', 'noopener');
-    if (opened !== null) return;
-    const link = el('a', { href: url, target: '_blank', rel: 'noopener', textContent: url });
-    showToast([T.popupBlocked, link]);
+    if (openInNewTab(url)) return;
+    let unmount = () => {};
+    const openButton = el('button', { className: 'primary', textContent: T.openLink });
+    openButton.addEventListener('click', () => {
+        openInNewTab(url);
+        unmount();
+    });
+    const copyButton = el('button', { textContent: T.copyLink });
+    copyButton.addEventListener('click', () => {
+        void navigator.clipboard?.writeText(url).catch(() => undefined);
+    });
+    const closeButton = el('button', { textContent: T.close });
+    closeButton.addEventListener('click', () => unmount());
+    const dialog = el('div', { className: 'dlg', tabIndex: -1 }, [
+        el('div', { className: 'hd', textContent: T.openLinkTitle }),
+        el('div', { className: 'msg', textContent: T.popupBlocked }),
+        el('div', { className: 'detail', textContent: url }),
+        el('div', { className: 'ft' }, [el('span', { className: 'sp' }), closeButton, copyButton, openButton])
+    ]);
+    whenDomReady(() => {
+        unmount = mount(dialog, () => unmount());
+        openButton.focus();
+    });
 }
 
 export function showAlert(title: string, message: string): void {

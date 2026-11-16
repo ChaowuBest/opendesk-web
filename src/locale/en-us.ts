@@ -3460,7 +3460,12 @@ export const enUs: Record<string, string> = {
     'renderer.webMode.openFileTitle': 'Choose files',
     'renderer.webMode.openDirectoryTitle': 'Choose folder',
     'renderer.webMode.saveFileTitle': 'Save file',
-    'renderer.webMode.popupBlocked': 'The browser blocked a new window. Click to open: ',
+    'renderer.webMode.popupBlocked':
+        'The browser blocked a window that opened automatically (for example a sign-in page). Use the button below to open it:',
+    'renderer.webMode.openLinkTitle': 'Open link in your browser',
+    'renderer.webMode.openLink': 'Open in new tab',
+    'renderer.webMode.copyLink': 'Copy link',
+    'renderer.webMode.close': 'Close',
     'renderer.webMode.empty': '(empty)',
     'renderer.genui.confirm': 'Confirm',
     'renderer.genui.next': 'Next',
