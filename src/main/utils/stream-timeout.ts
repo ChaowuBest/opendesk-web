@@ -24,7 +24,7 @@ export const STREAM_IDLE_TIMEOUT_MS = DEFAULT_MODEL_TIMEOUT_SECONDS * 1000;
  * 才发现，用户看到的就是长时间"运行中"不动；数据开始流动后用更短的间隔尽早断开重试。
  * 可用环境变量 OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS 调整，且不会超过模型的整体超时。
  */
-export const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 120;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 60;
 
 /** 已开始输出的流的空闲间隔：取环境变量或默认值，并以模型整体超时为上限。 */
 export function resolveStreamIdleTimeoutMs(

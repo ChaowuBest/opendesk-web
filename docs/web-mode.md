@@ -16,12 +16,13 @@ Web 模式让桌面版 OpenDesk 在服务器或容器中运行，并通过浏览
 OPENDESK_WEB_PORT=8080 OPENDESK_WEB_TOKEN=<随机令牌> ./opendesk --no-sandbox
 ```
 
-| 环境变量                  | 说明                                                                                                                                                                                                                                   |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENDESK_WEB_PORT`       | 监听端口；设置后进入 web 模式                                                                                                                                                                                                          |
-| `OPENDESK_WEB_HOST`       | 监听地址，默认 `0.0.0.0`                                                                                                                                                                                                               |
-| `OPENDESK_WEB_TOKEN`      | 访问令牌。设置后首次访问 `/?token=<令牌>` 写入 Cookie，API 也可用 `Authorization: Bearer`                                                                                                                                              |
-| `OPENDESK_EXTRA_CA_CERTS` | 仅容器镜像：额外信任的 CA，PEM 文件或目录（`*.pem`/`*.crt`）。启动时导入 Chromium 的 NSS 库（`~/.pki/nssdb`），并设置 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE` 等（系统根证书 + 额外 CA），用于公司 TLS 拦截等场景 |
+| 环境变量                               | 说明                                                                                                                                                                                                                                   |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENDESK_WEB_PORT`                    | 监听端口；设置后进入 web 模式                                                                                                                                                                                                          |
+| `OPENDESK_WEB_HOST`                    | 监听地址，默认 `0.0.0.0`                                                                                                                                                                                                               |
+| `OPENDESK_WEB_TOKEN`                   | 访问令牌。设置后首次访问 `/?token=<令牌>` 写入 Cookie，API 也可用 `Authorization: Bearer`                                                                                                                                              |
+| `OPENDESK_EXTRA_CA_CERTS`              | 仅容器镜像：额外信任的 CA，PEM 文件或目录（`*.pem`/`*.crt`）。启动时导入 Chromium 的 NSS 库（`~/.pki/nssdb`），并设置 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE` 等（系统根证书 + 额外 CA），用于公司 TLS 拦截等场景 |
+| `OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS` | 模型流开始输出后允许的最长静默（秒），默认 60，超过即断开并重试；不超过模型的 timeout                                                                                                                                                  |
 
 未设置 `OPENDESK_WEB_TOKEN` 时服务不做认证，只应在已有上层认证（如反向代理）的环境中这样部署。
 

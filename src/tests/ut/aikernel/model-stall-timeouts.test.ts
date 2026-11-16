@@ -61,15 +61,15 @@ beforeEach(() => setRuntimeLocale('en-US'));
 afterEach(() => setRuntimeLocale(null));
 
 describe('resolveStreamIdleTimeoutMs', () => {
-    test('defaults to 120 seconds and never exceeds the model timeout', () => {
-        expect(resolveStreamIdleTimeoutMs(STREAM_IDLE_TIMEOUT_MS, {})).toBe(120_000);
+    test('defaults to 60 seconds and never exceeds the model timeout', () => {
+        expect(resolveStreamIdleTimeoutMs(STREAM_IDLE_TIMEOUT_MS, {})).toBe(60_000);
         expect(resolveStreamIdleTimeoutMs(30_000, {})).toBe(30_000);
     });
 
     test('honours OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS and ignores invalid values', () => {
         expect(resolveStreamIdleTimeoutMs(300_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: '45' })).toBe(45_000);
-        expect(resolveStreamIdleTimeoutMs(300_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: '0' })).toBe(120_000);
-        expect(resolveStreamIdleTimeoutMs(300_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: 'x' })).toBe(120_000);
+        expect(resolveStreamIdleTimeoutMs(300_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: '0' })).toBe(60_000);
+        expect(resolveStreamIdleTimeoutMs(300_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: 'x' })).toBe(60_000);
         expect(resolveStreamIdleTimeoutMs(60_000, { OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS: '600' })).toBe(60_000);
     });
 });
