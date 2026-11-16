@@ -22,8 +22,6 @@ import { scanSupportedShells, selectSupportedShell } from './scan.js';
 import { Setting } from '../../utils/setting.js';
 
 export class TerminalApplication extends BaseApplication {
-    readonly shells = scanSupportedShells();
-
     constructor() {
         // 交互式终端挂载在 task-view 内，不作为独立应用展示。
         super('terminal', false);
@@ -36,7 +34,7 @@ export class TerminalApplication extends BaseApplication {
     async getToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('terminal');
         const taskConfig = Setting.getInstance().getData().task_config;
-        const shell = selectSupportedShell(this.shells, taskConfig, process.platform);
+        const shell = selectSupportedShell(scanSupportedShells(), taskConfig, process.platform);
         if (!shell) return [];
         // 无限制模式强制禁用所有 shell 沙箱：shell 直接以宿主权限执行，
         // 删除送回收站（依赖沙箱原生层拦截）也随之失效。
