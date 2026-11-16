@@ -14,6 +14,7 @@ import { logger } from './logger.js';
 import { isLogRawLlmRequestEnabled } from './setting.js';
 import { isLoopbackUrl } from './proxy.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from '../telemetry/operation.js';
+import { DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 
 export interface ModelNetworkConfig {
     base_url: string;
@@ -21,6 +22,25 @@ export interface ModelNetworkConfig {
     no_ssl?: boolean;
     /** embedding 响应包含大量向量，不纳入原始 LLM 响应日志。 */
     model_type?: 'chat' | 'embedding';
+    /** 模型整体超时（秒）；未配置时用 DEFAULT_MODEL_TIMEOUT_SECONDS。也用作等待响应头的上限。 */
+    timeout?: number;
+}
+
+/**
+ * 在时限内没有收到响应头。网关接受了连接却一直不回应时，没有这个上限请求会无限等待；
+ * 错误消息包含 "response timeout"，按网络错误归类为可重试。
+ */
+export class ModelResponseTimeoutError extends Error {
+    readonly timeoutMs: number;
+    constructor(timeoutMs: number) {
+        super(`Model response timeout: no response headers within ${timeoutMs}ms`);
+        this.name = 'ModelResponseTimeoutError';
+        this.timeoutMs = timeoutMs;
+    }
+}
+
+function modelResponseTimeoutMs(model: ModelNetworkConfig): number {
+    return (model.timeout && model.timeout > 0 ? model.timeout : DEFAULT_MODEL_TIMEOUT_SECONDS) * 1000;
 }
 
 type ModelFetchInput = string | URL | Request;
@@ -99,11 +119,38 @@ export async function fetchModelUrl(
 
         const logRaw = isLogRawLlmRequestEnabled() && model.model_type !== 'embedding';
 
-        const response = await getPlatform().fetch(url, requestInit, {
-            forceEnvironmentProxy: true,
-            bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
-            skipTlsVerification: !!model.no_ssl
-        });
+        // 只限制等待响应头的时间；拿到响应头后清除计时器，响应体由各适配器的流空闲超时管理。
+        // 调用方自己的 signal（停止任务等）在整个请求期间照常生效。
+        const timeoutMs = modelResponseTimeoutMs(model);
+        const controller = new AbortController();
+        const upstreamSignal = requestInit?.signal;
+        if (upstreamSignal) {
+            if (upstreamSignal.aborted) controller.abort(upstreamSignal.reason);
+            else
+                upstreamSignal.addEventListener('abort', () => controller.abort(upstreamSignal.reason), { once: true });
+        }
+        let timedOut = false;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            controller.abort(new ModelResponseTimeoutError(timeoutMs));
+        }, timeoutMs);
+        let response: Response;
+        try {
+            response = await getPlatform().fetch(
+                url,
+                { ...requestInit, signal: controller.signal },
+                {
+                    forceEnvironmentProxy: true,
+                    bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
+                    skipTlsVerification: !!model.no_ssl
+                }
+            );
+        } catch (err) {
+            if (timedOut) throw new ModelResponseTimeoutError(timeoutMs);
+            throw err;
+        } finally {
+            clearTimeout(timer);
+        }
 
         operation.setAttribute('http.response.status_code', response.status);
         operation.setAttribute('http.status_text', response.statusText);

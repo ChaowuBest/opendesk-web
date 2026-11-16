@@ -33,7 +33,7 @@ import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
-import { readWithIdleTimeout, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
+import { readWithIdleTimeout, resolveStreamIdleTimeoutMs, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
 import {
     ModelRequestError,
     normalizeModelRequestError,
@@ -751,12 +751,20 @@ export class AnthropicAdapter {
             const decoder = new TextDecoder();
             const state: AnthropicStreamState = { toolCalls: new Map(), usage: {} };
             let buffer = '';
+            // 首个分块前按模型整体超时等待（可能在思考），开始输出后中途静默超过空闲间隔就断开重试
+            const totalTimeoutMs = this.modelInstance.getTimeoutMs();
+            const idleTimeoutMs = resolveStreamIdleTimeoutMs(totalTimeoutMs);
+            let receivedChunk = false;
 
             while (true) {
-                const { done, value } = await readWithIdleTimeout(reader, this.modelInstance.getTimeoutMs());
+                const { done, value } = await readWithIdleTimeout(
+                    reader,
+                    receivedChunk ? idleTimeoutMs : totalTimeoutMs
+                );
                 if (done) {
                     break;
                 }
+                receivedChunk = true;
                 buffer += decoder.decode(value, { stream: true });
                 const events = buffer.split(/\r?\n\r?\n/);
                 buffer = events.pop() ?? '';

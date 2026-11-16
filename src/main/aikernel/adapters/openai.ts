@@ -28,7 +28,11 @@ import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
-import { StreamIdleTimeoutError, withStreamIdleTimeout } from '../../utils/stream-timeout.js';
+import {
+    StreamIdleTimeoutError,
+    resolveStreamIdleTimeoutMs,
+    withStreamIdleTimeout
+} from '../../utils/stream-timeout.js';
 import {
     classifyModelRequestError,
     normalizeModelRequestError,
@@ -703,8 +707,13 @@ export class OpenAIAdapter {
                 requestOptions
             );
 
-            for await (const chunk of withStreamIdleTimeout(stream, this.modelInstance.getTimeoutMs(), () =>
-                stream.controller?.abort()
+            // 首个分块前按模型整体超时等待（可能在思考），开始输出后中途静默超过空闲间隔就断开重试
+            const totalTimeoutMs = this.modelInstance.getTimeoutMs();
+            for await (const chunk of withStreamIdleTimeout(
+                stream,
+                resolveStreamIdleTimeoutMs(totalTimeoutMs),
+                () => stream.controller?.abort(),
+                { firstValueTimeoutMs: totalTimeoutMs }
             )) {
                 const parsed = OpenAIAdapter.parseResponse(chunk);
                 if (parsed.usage) {

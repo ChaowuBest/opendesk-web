@@ -301,7 +301,7 @@ export function isNetworkConnectionError(error: unknown): boolean {
             /\b(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EPIPE)\b/i.test(
                 message
             ) ||
-            /\b(?:fetch failed|socket hang up|getaddrinfo|network (?:connection )?error|connection (?:error|refused|reset|timed out)|stream idle timeout)\b/i.test(
+            /\b(?:fetch failed|socket hang up|getaddrinfo|network (?:connection )?error|connection (?:error|refused|reset|timed out)|stream idle timeout|response timeout)\b/i.test(
                 message
             )
         );

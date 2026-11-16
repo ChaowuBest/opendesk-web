@@ -19,6 +19,32 @@ import { DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 export const STREAM_IDLE_TIMEOUT_MS = DEFAULT_MODEL_TIMEOUT_SECONDS * 1000;
 
 /**
+ * 流开始输出后，相邻两段数据之间允许的最长间隔（秒）。
+ * 网关有时会让一条流中途静默（连接不断、也不再发数据），按整体超时（默认 300 秒）
+ * 才发现，用户看到的就是长时间"运行中"不动；数据开始流动后用更短的间隔尽早断开重试。
+ * 可用环境变量 OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS 调整，且不会超过模型的整体超时。
+ */
+export const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 120;
+
+/** 已开始输出的流的空闲间隔：取环境变量或默认值，并以模型整体超时为上限。 */
+export function resolveStreamIdleTimeoutMs(
+    totalTimeoutMs: number,
+    env: Record<string, string | undefined> = process.env
+): number {
+    const configured = Number(env.OPENDESK_STREAM_IDLE_TIMEOUT_SECONDS);
+    const seconds = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS;
+    return Math.min(totalTimeoutMs, seconds * 1000);
+}
+
+export interface StreamIdleTimeoutOptions {
+    /**
+     * 等待第一个值的超时。模型思考期间可能长时间不出第一个 token，
+     * 首个值之前用它（通常为模型整体超时），之后用 timeoutMs。
+     */
+    firstValueTimeoutMs?: number;
+}
+
+/**
  * 当流式响应在指定时间内未收到任何数据时抛出此错误。
  * 该错误会被 adapter 的 try-catch 捕获并转换为 AssistantResponse.richError，
  * 随后由任务级重试逻辑处理。
@@ -36,6 +62,7 @@ export class StreamIdleTimeoutError extends Error {
 /**
  * 用空闲超时包装 async iterable。每次 yield 值后重置计时器；
  * 若在 timeoutMs 内未收到下一个值则抛出 StreamIdleTimeoutError。
+ * 首个值之前的等待时间可用 options.firstValueTimeoutMs 单独指定。
  *
  * 超时、底层异常或调用方提前结束消费时，以 fire-and-forget 方式调用
  * iterator.return() 并触发可选的 cancel 回调，尝试清理底层资源。
@@ -43,7 +70,8 @@ export class StreamIdleTimeoutError extends Error {
 export async function* withStreamIdleTimeout<T>(
     iterable: AsyncIterable<T>,
     timeoutMs: number = STREAM_IDLE_TIMEOUT_MS,
-    cancel?: () => void
+    cancel?: () => void,
+    options: StreamIdleTimeoutOptions = {}
 ): AsyncIterable<T> {
     const iterator = iterable[Symbol.asyncIterator]();
     let sourceFinished = false;
@@ -67,11 +95,13 @@ export async function* withStreamIdleTimeout<T>(
         }
     };
 
+    let receivedValue = false;
     try {
         while (true) {
+            const waitMs = receivedValue ? timeoutMs : (options.firstValueTimeoutMs ?? timeoutMs);
             let timer: ReturnType<typeof setTimeout> | undefined;
             const timeoutPromise = new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new StreamIdleTimeoutError(timeoutMs)), timeoutMs);
+                timer = setTimeout(() => reject(new StreamIdleTimeoutError(waitMs)), waitMs);
             });
 
             let result: IteratorResult<T>;
@@ -85,6 +115,7 @@ export async function* withStreamIdleTimeout<T>(
                 sourceFinished = true;
                 return;
             }
+            receivedValue = true;
             yield result.value;
         }
     } finally {
