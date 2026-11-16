@@ -735,8 +735,10 @@ function countToolCallsInAssistantMessageFromPartIndex(message: AssistantMessage
 export function getLastSafeSessionMemoryCoverageAnchor(
     chatContext: ChatContext
 ): SessionMemoryCoverageAnchor | undefined {
-    const activeContext = getActiveContextForSessionMemory(chatContext);
+    return getLastSafeCoverageAnchor(getActiveContextForSessionMemory(chatContext));
+}
 
+function getLastSafeCoverageAnchor(activeContext: ActiveContextView): SessionMemoryCoverageAnchor | undefined {
     for (let index = activeContext.messages.length - 1; index >= 0; index--) {
         const message = activeContext.messages[index];
         if (isAssistantMessage(message)) {
@@ -1062,6 +1064,8 @@ export async function updateSessionMemoryFromChatContext(
     const startedState = SessionMemoryStates.recordExtractionStarted(normalizedState);
     const sessionMemoryFile = await ensureTaskSessionMemoryFile(taskId, { template: options.template });
     const activeContext = buildActiveContextView(chatContext);
+    // Capture the anchor from the same transcript used to build the prompt.
+    const coverageAnchor = getLastSafeCoverageAnchor(activeContext);
     const preferredLanguage = inferSessionMemoryPreferredLanguage(chatContext, startedState);
     const prompt = buildSessionMemoryUpdatePrompt(sessionMemoryFile.content, activeContext, startedState, {
         ...options,
@@ -1096,7 +1100,6 @@ export async function updateSessionMemoryFromChatContext(
             taskId,
             validation.content.endsWith('\n') ? validation.content : `${validation.content}\n`
         );
-        const coverageAnchor = getLastSafeSessionMemoryCoverageAnchor(chatContext);
         const successState = SessionMemoryStates.recordExtractionSuccess(startedState, {
             relativePath: writeResult.relativePath,
             currentTokens: decision.currentTokens,
