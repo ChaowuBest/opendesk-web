@@ -34,7 +34,11 @@ await build({
     platform: 'browser',
     target: 'chrome120',
     alias: { electron: './src/renderer/web/electron-shim.ts' },
-    inject: [path.join(root, 'src', 'renderer', 'web', 'process-shim.ts')],
+    // secure-context-polyfills 最先执行：http + 非 localhost 访问时补齐 crypto.randomUUID / navigator.clipboard
+    inject: [
+        path.join(root, 'src', 'renderer', 'web', 'secure-context-polyfills.ts'),
+        path.join(root, 'src', 'renderer', 'web', 'process-shim.ts')
+    ],
     minify: production,
     sourcemap: production ? false : 'inline',
     legalComments: 'none',
