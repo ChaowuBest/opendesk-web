@@ -18,6 +18,10 @@ if [ -z "${DISPLAY:-}" ]; then
     export DISPLAY=:99
 fi
 
+# OPENDESK_EXTRA_CA_CERTS：额外信任的 CA（如公司 TLS 拦截根证书），导入 Chromium NSS 库并设置 Node/curl 等的证书变量
+. /usr/local/lib/opendesk/trust-extra-ca.sh
+opendesk_trust_extra_ca
+
 # 容器内通常没有用户命名空间/SUID，Chromium 沙箱无法启用；主窗口只加载 about:blank
 exec /opt/opendesk/opendesk \
     --no-sandbox \

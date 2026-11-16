@@ -54,7 +54,7 @@ FROM ${RUNTIME_IMAGE} AS runtime
 # + agent 常用命令行工具 + 中文字体（服务端截图/导出 PDF 等渲染用）
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates tini xvfb xauth dbus \
+        ca-certificates libnss3-tools tini xvfb xauth dbus \
         libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libdrm2 libxkbcommon0 libatk-bridge2.0-0 \
         libatk1.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libxshmfence1 \
         libx11-xcb1 libxfixes3 libpango-1.0-0 libcairo2 libsecret-1-0 \
@@ -68,7 +68,8 @@ RUN apt-get update \
 
 COPY --from=package /opt/opendesk /opt/opendesk
 COPY docker/web/entrypoint.sh /usr/local/bin/opendesk-web
-RUN chmod 755 /usr/local/bin/opendesk-web
+COPY docker/web/trust-extra-ca.sh /usr/local/lib/opendesk/trust-extra-ca.sh
+RUN chmod 755 /usr/local/bin/opendesk-web && chmod 644 /usr/local/lib/opendesk/trust-extra-ca.sh
 
 ENV OPENDESK_WEB_PORT=8080 \
     OPENDESK_WEB_HOST=0.0.0.0 \
