@@ -84,6 +84,15 @@ describe('内置插件元数据声明', () => {
             // 目录名与插件 id 一致，构建产物目录同样以 id 命名
             expect(manifest.id).toBe(path.basename(directory));
 
+            if (!manifest.entry) {
+                // 纯静态插件（语言包等只声明 resources.* 的贡献）：无入口文件，
+                // 元数据天然只存在于 manifest；根目录不得偷放可运行的 index 入口
+                for (const filename of ['index.js', 'index.mjs', 'index.cjs']) {
+                    expect(fs.existsSync(path.join(directory, filename))).toBe(false);
+                }
+                return;
+            }
+
             expect(manifest.entry).toBeTruthy();
             const entryFile = path.resolve(directory, manifest.entry as string);
             expect(fs.existsSync(entryFile)).toBe(true);

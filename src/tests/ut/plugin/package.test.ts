@@ -205,6 +205,53 @@ describe('OpenDesk plugin package validator', () => {
         expect(() => validateOpenDeskPluginPackage(root)).toThrow('Unsafe plugin path');
     });
 
+    test('接受无入口的纯静态语言包插件', () => {
+        fs.mkdirSync(path.join(root, 'locales'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'locales', 'tr-TR.json'), JSON.stringify({ key: 'değer' }));
+        fs.writeFileSync(
+            path.join(root, 'opendesk.plugin.json'),
+            JSON.stringify({
+                apiVersion: 1,
+                capabilities: ['locale'],
+                resources: { locales: ['./locales'] }
+            })
+        );
+
+        const validated = validateOpenDeskPluginDirectory(root);
+        expect(validated.entry).toBeUndefined();
+        expect(validated.capabilities).toEqual(['locale']);
+    });
+
+    test('拒绝声明 locales 资源但缺 locale capability 的清单', () => {
+        fs.mkdirSync(path.join(root, 'locales'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'locales', 'tr-TR.json'), JSON.stringify({ key: 'v' }));
+        fs.writeFileSync(
+            path.join(root, 'opendesk.plugin.json'),
+            JSON.stringify({
+                apiVersion: 1,
+                capabilities: [],
+                resources: { locales: ['./locales'] }
+            })
+        );
+
+        expect(() => validateOpenDeskPluginDirectory(root)).toThrow(
+            'plugin locale resource requires the locale capability'
+        );
+    });
+
+    test('拒绝语言包声明的资源路径不存在', () => {
+        fs.writeFileSync(
+            path.join(root, 'opendesk.plugin.json'),
+            JSON.stringify({
+                apiVersion: 1,
+                capabilities: ['locale'],
+                resources: { locales: ['./missing-locales'] }
+            })
+        );
+
+        expect(() => validateOpenDeskPluginDirectory(root)).toThrow('plugin locale path not found: ./missing-locales');
+    });
+
     test('displayName 支持本地化对象形式并拒绝非法值', () => {
         fs.writeFileSync(
             path.join(root, 'package.json'),

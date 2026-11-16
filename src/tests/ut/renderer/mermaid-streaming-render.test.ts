@@ -13,7 +13,12 @@ const render = jest.fn<(id: string, code: string, container?: HTMLElement) => Pr
     () => pendingRender
 );
 const writeText = jest.fn<(text: string) => Promise<void>>(async () => {});
-let notifySettingChanged: ((setting: { resolved_locale: string }) => void) | undefined;
+// 生产 preload 的 setting:changed 是共享分发（settingChangedDispatcher 多播），
+// 桩需保存全部订阅者（previewer 与 locale.ts 都会订阅）并保留触发入口
+let settingChangedSubscribers: Array<(setting: { resolved_locale: string }) => void> = [];
+const notifySettingChanged = (setting: { resolved_locale: string }): void => {
+    for (const subscriber of [...settingChangedSubscribers]) subscriber(setting);
+};
 const customStyles = readFileSync(new URL('../../../renderer/styles/custom.css', import.meta.url), 'utf8');
 
 jest.unstable_mockModule('mermaid', () => ({
@@ -50,8 +55,10 @@ describe('Mermaid rendering during streaming updates', () => {
             settingAPI: {
                 loadSettingObject: async () => ({ resolved_locale: 'en-US' }),
                 onSettingChanged: (callback: (setting: { resolved_locale: string }) => void) => {
-                    notifySettingChanged = callback;
-                    return () => {};
+                    settingChangedSubscribers.push(callback);
+                    return () => {
+                        settingChangedSubscribers = settingChangedSubscribers.filter((item) => item !== callback);
+                    };
                 }
             }
         });

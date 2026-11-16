@@ -15,6 +15,7 @@ declare const __IS_DEV__: boolean;
 import { FileWatchService, type FileWatchSubscription } from './services/file-watch/service.js';
 import { TaskSearchService } from './services/task-search/service.js';
 import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../common/task-search.js';
+import { createRequire } from 'module';
 
 import {
     app,
@@ -98,6 +99,7 @@ import {
 } from '../platforms/electron.js';
 import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './utils/export.js';
 import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
+import { refreshRuntimePreferredSystemLanguages } from './utils/system-language-refresh.js';
 import * as taskTransfer from './aikernel/task/transfer.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
@@ -177,7 +179,8 @@ import { listGatewayListenHostOptions } from './applications/devicemgr/common.js
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import { registerElectronAccountIntegration } from './applications/account/electron.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
-import { getLocale, t } from '../locale/index.js';
+import { getLocale, getRuntimePreferredSystemLanguages, t } from '../locale/index.js';
+import { getLocalePackStore } from '../locale/packs.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 import { replaceTaskHarnessForWorkspace, switchTaskMode } from './aikernel/task/mode.js';
 import {
@@ -402,13 +405,87 @@ function restoreHuaweiLoginForWorkbenchWindow(reason: string): void {
         });
 }
 
+// ohos bridge 延迟 require：与 locale/index.ts、system-language-refresh.ts 的取值路径一致，
+// 避免非 ohos 平台启动时加载 bridge 模块链
+const require = createRequire(import.meta.url);
+
 function getPreferredSystemLanguagesForLocale(): string[] {
+    // 缓存优先：主进程与 Worker 共用同一份注入值（app ready 后注入、主窗口 focus 时刷新），
+    // 避免每次调用都跨 NAPI 查询系统语言
+    const injected = getRuntimePreferredSystemLanguages();
+    if (injected) {
+        return [...injected];
+    }
+    // 缓存未就绪时的回退链与 locale/index.ts getSystemPreferredLanguages 保持一致
+    // （bridge 缓存 > Electron），保证注入给 Worker 的值与 getLocale() 的解析来源一致
     try {
+        // Only available on OpenHarmony with bridge initialized;
+        // uses the same cache as system-theme.ts (warmed up by MainThemeService).
+        const { getCachedOhosSystemLanguage } = require('../platforms/bridges/harmonyos/system-theme.js') as {
+            getCachedOhosSystemLanguage?: () => string;
+        };
+        const lang = getCachedOhosSystemLanguage?.();
+        if (lang) {
+            return [lang];
+        }
+    } catch {
+        // bridge 模块不可用：退化 Electron API
+    }
+    try {
+        // 与 locale/index.ts 的防御一致：app 未 ready 时不查询系统语言（避免 pre-ready
+        // 行为差异被一次性固化进缓存）
+        if (app.isReady && !app.isReady()) {
+            return [];
+        }
         const languages = app.getPreferredSystemLanguages();
         return Array.isArray(languages) ? languages : [];
     } catch {
         return [];
     }
+}
+
+// app ready 后经 refreshRuntimePreferredSystemLanguages（bridge 优先，退化 Electron）注入
+// 系统首选语言缓存：与主窗口 focus 时的刷新共用同一取值路径，避免注入值与刷新值来源不一致
+// 导致首次 focus 产生纠正性广播。此后主进程 getLocale()/t() 的 auto 解析只读这份缓存，
+// 与 Worker 的注入机制保持一致；首次注入只预热缓存，不会触发变更广播。
+void app.whenReady().then(() => {
+    refreshRuntimePreferredSystemLanguages().catch((error: any) => {
+        logger.warn(`[locale] failed to inject system languages at startup: ${error?.message ?? error}`);
+    });
+});
+
+let systemLanguageRefreshInFlight: Promise<void> | null = null;
+
+/**
+ * 主窗口获得焦点时刷新系统语言：用户切出去修改系统语言再切回来时实时感知。
+ * 经 bridge（不可用时退化 Electron API）取一次最新语言更新注入缓存；
+ * 生效语言变化（语言设置为 auto，或为语言包卸载后按系统语言解析的残留值）时，
+ * 同步 Worker 并广播 setting:changed，各界面按新的 resolved_locale 一起切换语言。
+ */
+async function refreshSystemLanguageOnMainWindowFocus(): Promise<void> {
+    if (systemLanguageRefreshInFlight) {
+        return systemLanguageRefreshInFlight;
+    }
+    systemLanguageRefreshInFlight = refreshRuntimePreferredSystemLanguages()
+        .then(async (outcome) => {
+            if (!outcome.shouldBroadcast) {
+                return;
+            }
+            logger.info('[locale] system language changed, broadcasting locale switch to all windows');
+            try {
+                await notifyWorkerCurrentSettingUpdate();
+            } catch (error: any) {
+                logger.warn(`[locale] failed to sync system language to worker: ${error?.message ?? error}`);
+            }
+            broadcastSettingChangedToAllWindows();
+        })
+        .catch((error: any) => {
+            logger.warn(`[locale] failed to refresh system language on window focus: ${error?.message ?? error}`);
+        })
+        .finally(() => {
+            systemLanguageRefreshInFlight = null;
+        });
+    return systemLanguageRefreshInFlight;
 }
 
 async function notifyWorkerCurrentSettingUpdate(): Promise<void> {
@@ -972,7 +1049,12 @@ const createWindow = () => {
 
     // 悬浮窗（pill/card 模式）依赖主窗口是否处于前台的焦点状态。
     mainWindow.on('blur', () => setMainWindowFocused(false));
-    mainWindow.on('focus', () => setMainWindowFocused(true));
+    mainWindow.on('focus', () => {
+        setMainWindowFocused(true);
+        // 切出去修改系统语言再切回来时实时感知：每次获得焦点都刷新一次系统语言；
+        // 生效语言变化（auto 或语言包卸载后的残留设置）时广播 locale 切换，各界面一起切换语言
+        void refreshSystemLanguageOnMainWindowFocus();
+    });
 
     // Linux/Windows 透明窗口在显示、尺寸变化等时机合成层偶发丢失 alpha（同
     // electron/electron#40515 缺陷），导致自绘圆角外露出不透明底色；
@@ -2625,6 +2707,56 @@ const withResolvedLocale = (data: any) => ({
     resolved_locale: getLocale()
 });
 
+/**
+ * 向所有窗口推送语言包瘦身快照（仅生效语言 + 回退语言的增量）。
+ * 全量快照按语言数线性膨胀（多包时 >1MB），而每个窗口与子 frame 的 preload
+ * 都会持有一份克隆副本；瘦身把恒定内存与推送开销降到单语言体量。
+ */
+function pushLocalePackSnapshotToAllWindows(): void {
+    const snapshot = getLocalePackStore().getSlimSnapshot(getLocale());
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+            safeSendToWebContents(win.webContents, 'locale:packsChanged', snapshot);
+        }
+    }
+}
+
+// packsChanged 推送去抖：批量插件激活（启动时各语言包插件逐个注册）会产生连续
+// 多次 store 变更，合并为一次推送，避免多 MB 快照的克隆在启动期连续阻塞主线程
+let localePackPushTimer: NodeJS.Timeout | null = null;
+
+function scheduleLocalePackSnapshotPush(): void {
+    if (localePackPushTimer) return;
+    localePackPushTimer = setTimeout(() => {
+        localePackPushTimer = null;
+        pushLocalePackSnapshotToAllWindows();
+    }, 50);
+}
+
+// 上次随 setting:changed 下发的生效语言；null 表示尚未广播过（首播必带快照基线）
+let lastBroadcastResolvedLocale: string | null = null;
+
+/**
+ * 广播 setting:changed 到所有 renderer 窗口（含 resolved_locale）。
+ * Setting.setData 的 afterSetDataCallbacks 与主窗口 focus 的系统语言刷新共用
+ * 这一广播路径，保证所有窗口对语言切换的感知方式一致。
+ *
+ * 生效语言变化时先推新的语言包瘦身快照再广播设置：renderer 翻译器收到
+ * setting:changed 后立刻按新语言查增量，快照先行保证新语言词条已就位。
+ */
+function broadcastSettingChangedToAllWindows(): void {
+    const updatedData = withResolvedLocale(Setting.getInstance().getData());
+    if (lastBroadcastResolvedLocale !== updatedData.resolved_locale) {
+        lastBroadcastResolvedLocale = updatedData.resolved_locale;
+        pushLocalePackSnapshotToAllWindows();
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+            safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
+        }
+    }
+}
+
 const registerSettingAPIHandlers = () => {
     // 启动时按持久化配置同步调试日志级别（GUI 无 CLI 的 /debug 入口，靠设置项驱动）
     setDebugMode(isDebugLogEnabled());
@@ -2642,6 +2774,12 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:listShells', () => scanSupportedShells());
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
+    });
+    // 语言包快照（与激活语言解耦，按 tag 组织）：preload 启动时拉取，
+    // 之后由 packsChanged 推送刷新。下发瘦身快照（仅生效语言 + 回退语言增量），
+    // 每个窗口与子 frame 各持一份副本，全量快照会让内存与克隆耗时按语言数膨胀
+    ipcMain.handle('locale:getLocalePacks', () => {
+        return { status: 'ok', data: getLocalePackStore().getSlimSnapshot(getLocale()) };
     });
 
     ipcMain.handle('model:checkVisionSupport', (_event, models) => {
@@ -4364,12 +4502,13 @@ async function startApplication(): Promise<void> {
         // 这确保通过 callMainWorld 修改配置（如浮窗开关）时，主窗口能实时响应。
         // 这是 setting:changed 的唯一广播点，调用方（如设置保存）不要再自己广播一遍。
         Setting.afterSetDataCallbacks.push(() => {
-            const updatedData = withResolvedLocale(Setting.getInstance().getData());
-            for (const win of BrowserWindow.getAllWindows()) {
-                if (!win.isDestroyed()) {
-                    safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
-                }
-            }
+            broadcastSettingChangedToAllWindows();
+        });
+
+        // 语言包变更广播：插件宿主激活/停用语言包（LocaleStore 变更）后，
+        // 去抖合并为一次瘦身快照推送，各翻译器重建后立即生效
+        getLocalePackStore().subscribe(() => {
+            scheduleLocalePackSnapshotPush();
         });
 
         // 启动完成后异步清理过期日志，不阻塞主流程

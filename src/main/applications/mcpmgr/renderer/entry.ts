@@ -18,7 +18,7 @@ import { flattenSchemaParams } from '../../../../common/utils/schema-params.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
-import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForMcpMgr } from '../locale/renderer.js';
 import { mergeMcpRegistryTabState } from './registry-tabs.js';
 import type { McpBatchFailure, McpBatchOperationResult, McpServerState } from '../common.js';
@@ -862,7 +862,19 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             if (openOverlay) this.shadowRoot?.appendChild(openOverlay);
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

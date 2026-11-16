@@ -149,6 +149,15 @@ declare global {
             restart: () => Promise<boolean>;
             onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
         };
+        /** preload 注入的语言包 API：快照由 preload 缓存，供翻译器同步读取 */
+        localeAPI?: {
+            /** 当前语言包快照；首次拉取完成前或不可达时为 null */
+            getLocalePacks: () => import('./locale.js').RendererLocalePackSnapshot | null;
+            /** 订阅语言包变更（含首次拉取完成），返回取消函数 */
+            onLocalePacksChanged: (
+                callback: (snapshot: import('./locale.js').RendererLocalePackSnapshot | null) => void
+            ) => () => void;
+        };
         settingAPI: {
             listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
             loadSettingObject: () => Promise<LoadedSettingObject>;

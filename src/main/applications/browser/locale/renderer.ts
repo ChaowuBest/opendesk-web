@@ -31,5 +31,5 @@ export function createTranslatorForBrowser(
               resolved_locale?: string;
           }
 ): (key: string, params?: Record<string, string | number>) => string {
-    return createTranslator(translations, localeSetting);
+    return createTranslator(translations, localeSetting, 'browser');
 }

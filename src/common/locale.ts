@@ -9,11 +9,30 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export type SupportedLocale = 'zh-CN' | 'en-US';
+import { BUILTIN_LOCALES, normalizeLocaleTag } from './locale/pack.js';
+
+/** 宿主内置语言：词典全量、互不回退。常量定义于 locale/pack.ts（避免循环引用），此处转发保持既有导入路径 */
+export { BUILTIN_LOCALES };
+
+export type SupportedLocale = (typeof BUILTIN_LOCALES)[number];
 export type LocaleSetting = 'auto' | SupportedLocale;
 
 export function isSupportedLocale(locale: unknown): locale is SupportedLocale {
     return locale === 'zh-CN' || locale === 'en-US';
+}
+
+/**
+ * 值是否为格式合法的 BCP-47 语言 tag（如 zh-CN、tr-TR、pt-BR）。
+ * 只校验格式，不校验可用性：语言包可动态注册新语言，
+ * 可用性判定统一走 resolveLocaleSetting / resolvePreferredLocale 的 availableLocales。
+ */
+export function isValidLocaleTag(locale: unknown): locale is string {
+    return typeof locale === 'string' && normalizeLocaleTag(locale) !== undefined;
+}
+
+/** 'auto' 或任意合法语言 tag（含语言包注册的语言） */
+export function isValidLocaleSetting(locale: unknown): boolean {
+    return locale === 'auto' || isValidLocaleTag(locale);
 }
 
 export function isLocaleSetting(locale: unknown): locale is LocaleSetting {
@@ -28,17 +47,43 @@ export function isChineseLanguageTag(languageTag: unknown): boolean {
     return normalized === 'zh' || normalized.startsWith('zh-');
 }
 
-export function resolvePreferredLocale(preferredLanguages: readonly unknown[] = []): SupportedLocale {
+/**
+ * 按系统首选语言在可用语言集合中解析语言。
+ *
+ * 保持首标签语义：只看第一个非空 tag，避免系统语言顺序变化带来的抖动；
+ * tag 精确命中可用集合，或其主语言（tr -> tr-TR）命中时返回该语言，
+ * 否则回退 en-US。availableLocales 须传入已规范化的 tag 列表。
+ */
+export function resolvePreferredLocale(
+    preferredLanguages: readonly unknown[] = [],
+    availableLocales: readonly string[] = BUILTIN_LOCALES
+): string {
     const primaryLanguage = preferredLanguages.find((language) => typeof language === 'string' && language.trim());
-    return isChineseLanguageTag(primaryLanguage) ? 'zh-CN' : 'en-US';
+    const normalized = normalizeLocaleTag(primaryLanguage);
+    if (normalized) {
+        if (availableLocales.includes(normalized)) return normalized;
+        const primary = normalized.toLowerCase().split('-')[0];
+        const matched = availableLocales.find((tag) => tag.toLowerCase().split('-')[0] === primary);
+        if (matched) return matched;
+    }
+    return 'en-US';
 }
 
+/**
+ * 解析语言设置值：显式值命中可用集合时直接返回（已规范化）；
+ * auto、不可用（如语言包被卸载后的残留值）或非法值一律按系统语言解析。
+ */
 export function resolveLocaleSetting(
     localeSetting: unknown,
-    preferredLanguages: readonly unknown[] = []
-): SupportedLocale {
-    if (isSupportedLocale(localeSetting)) {
-        return localeSetting;
+    preferredLanguages: readonly unknown[] = [],
+    availableLocales: readonly string[] = BUILTIN_LOCALES
+): string {
+    if (localeSetting === 'auto') {
+        return resolvePreferredLocale(preferredLanguages, availableLocales);
     }
-    return resolvePreferredLocale(preferredLanguages);
+    const normalized = normalizeLocaleTag(localeSetting);
+    if (normalized && availableLocales.includes(normalized)) {
+        return normalized;
+    }
+    return resolvePreferredLocale(preferredLanguages, availableLocales);
 }

@@ -15,6 +15,7 @@ import {
     type PluginAuthor,
     type PluginCapability,
     type PluginDisplayName,
+    type PluginLocalePackDefinition,
     type PluginLocalizedText,
     type PluginMcpServerDefinition,
     type PluginPlatform,
@@ -23,11 +24,18 @@ import {
 import { isValidPluginIconUrl } from '../../../../../packages/plugin-sdk/src/package.js';
 import { AGENT_MANIFEST_ERROR_CODES, loadAgentsFromDirectory } from './agent-resource.js';
 import { isValidVersion } from '../../../utils/version.js';
+import { type LocalePackContent, LocalePackParseError, parseLocalePackJson } from '../../../../common/locale/pack.js';
 
 export interface PluginManifestResources {
     skills?: string[];
     mcpServers?: PluginMcpServerDefinition[];
     agents?: string[];
+    /**
+     * 语言包声明：插件根内的相对路径数组，元素为目录（收集目录顶层 *.json，文件名即
+     * 语言 tag，与 skills 目录的平铺收集一致）或单个 .json 语言包文件。
+     * 声明时必须同时声明 `locale` capability。
+     */
+    locales?: string[];
 }
 
 export interface PluginManifest {
@@ -263,10 +271,12 @@ function parseResources(value: unknown): PluginManifestResources | undefined {
         mcpServers = value.mcpServers.map(parseMcpServer);
     }
     const agents = optionalStringArray(value.agents, 'plugin.manifest_invalid_agents');
+    const locales = optionalStringArray(value.locales, 'plugin.manifest_invalid_locales');
     return {
         skills,
         mcpServers,
-        agents
+        agents,
+        locales
     };
 }
 
@@ -289,6 +299,9 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     }
     if (capabilities && resources?.agents?.length && !capabilities.includes('agent')) {
         throw new Error('plugin.manifest_resource_capability_missing:agent');
+    }
+    if (capabilities && resources?.locales?.length && !capabilities.includes('locale')) {
+        throw new Error('plugin.manifest_resource_capability_missing:locale');
     }
     return {
         entry: optionalString(value.entry, 'plugin.manifest_invalid_entry'),
@@ -418,6 +431,17 @@ export function readPluginManifest(entry: string, rootDir: string): PluginManife
     return manifestFromPackageJson(rootDir);
 }
 
+/**
+ * 读取纯静态插件（无可运行入口）的清单：仅认根级 opendesk.plugin.json 或
+ * package.json#opendesk 声明。语言包等纯声明贡献插件没有入口文件，
+ * 由 loader 据此合成最小插件对象，跳过动态 import。
+ */
+export function readStaticOnlyPluginManifest(rootDir: string): PluginManifest | undefined {
+    const directoryManifest = path.join(rootDir, 'opendesk.plugin.json');
+    if (fs.existsSync(directoryManifest)) return parsePluginManifest(readJson(directoryManifest));
+    return manifestFromPackageJson(rootDir);
+}
+
 export function applyPluginManifest(plugin: OpenDeskPlugin, manifest?: PluginManifest): OpenDeskPlugin {
     if (!manifest) return plugin;
     if (manifest.id && manifest.id !== plugin.id) throw new Error('plugin.manifest_id_mismatch');
@@ -509,6 +533,70 @@ function resolveManifestMcpServer(rootDir: string, definition: PluginMcpServerDe
     };
 }
 
+/**
+ * 单个语言包文件大小上限，与插件 appearance logo 上限（runtime/appearance.ts 的
+ * APPEARANCE_LOGO_MAX_BYTES = 2MB）对齐；超限跳过该文件并告警，不阻断整个插件。
+ */
+const LOCALE_PACK_MAX_BYTES = 2 * 1024 * 1024;
+
+/** 收集一个语言包声明路径下的语言包文件：单文件直接返回，目录收集 *.json（排序保证确定性） */
+function findLocalePackFiles(rootDir: string, declaredPath: string): string[] {
+    const resolved = resolveManifestPath(rootDir, declaredPath, 'plugin.manifest_locale_path_invalid');
+    const stat = fs.statSync(resolved);
+    if (stat.isFile()) {
+        if (!resolved.toLowerCase().endsWith('.json')) {
+            throw new Error('plugin.manifest_locale_path_invalid:not_json');
+        }
+        return [resolved];
+    }
+    if (!stat.isDirectory()) throw new Error('plugin.manifest_locale_path_invalid:not_directory');
+    const files = fs
+        .readdirSync(resolved, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.json'))
+        .map((entry) => path.join(resolved, entry.name))
+        .sort();
+    if (files.length === 0) throw new Error(`plugin.manifest_locale_not_found:${declaredPath}`);
+    return files;
+}
+
+/**
+ * 装载语言包：每个 JSON 文件的文件名即语言 tag（经 Intl.Locale 规范化），
+ * 文件内为扁平 string -> string 词条（结构校验见 parseLocalePackJson）。
+ * 同一插件内同一 tag 声明两次视为清单歧义，直接报错。
+ */
+function loadLocalePacks(rootDir: string, declaredPaths: string[]): PluginLocalePackDefinition[] {
+    const packs: PluginLocalePackDefinition[] = [];
+    const tagsBySource = new Map<string, string>();
+    for (const declaredPath of declaredPaths) {
+        for (const file of findLocalePackFiles(rootDir, declaredPath)) {
+            if (fs.statSync(file).size > LOCALE_PACK_MAX_BYTES) {
+                const relative = path.relative(rootDir, file).split(path.sep).join('/');
+                console.warn(
+                    `[pluginmgr] locale pack file exceeds ${LOCALE_PACK_MAX_BYTES} bytes, skipped: ${relative}`
+                );
+                continue;
+            }
+            let content: LocalePackContent;
+            try {
+                content = parseLocalePackJson(readJson(file), file);
+            } catch (error) {
+                if (error instanceof LocalePackParseError) throw error;
+                throw new LocalePackParseError('locale pack is not valid JSON', file);
+            }
+            const existing = tagsBySource.get(content.tag);
+            if (existing) throw new Error(`plugin.manifest_locale_tag_conflict:${content.tag} (${existing})`);
+            tagsBySource.set(content.tag, path.relative(rootDir, file).split(path.sep).join('/'));
+            packs.push({
+                tag: content.tag,
+                fallback: content.fallback,
+                entries: content.entries,
+                sourceFile: path.relative(rootDir, file).split(path.sep).join('/')
+            });
+        }
+    }
+    return packs;
+}
+
 export function loadPluginResources(manifest: PluginManifest | undefined, rootDir: string): PluginStaticResources {
     const skills = manifest?.resources?.skills?.flatMap((declaredPath) =>
         findManifestSkillDirectories(rootDir, declaredPath).map(loadManifestSkill)
@@ -519,9 +607,14 @@ export function loadPluginResources(manifest: PluginManifest | undefined, rootDi
     const agents = manifest?.resources?.agents?.flatMap((declaredPath) =>
         loadAgentsFromDirectory(rootDir, declaredPath, AGENT_MANIFEST_ERROR_CODES)
     );
+    const locales =
+        manifest?.resources?.locales && manifest.resources.locales.length > 0
+            ? loadLocalePacks(rootDir, manifest.resources.locales)
+            : undefined;
     return {
         skills,
         mcpServers,
-        agents
+        agents,
+        locales
     };
 }

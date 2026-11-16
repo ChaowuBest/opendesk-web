@@ -79,7 +79,7 @@
 
         <script type="module">
             import './components/logview.js';
-            import { createRendererTranslator, resolveRendererLocale } from './locale.ts';
+            import { createRendererTranslator, onLocalePacksChanged, resolveRendererLocale } from './locale.ts';
 
             (function () {
                 var currentTranslator = createRendererTranslator();
@@ -130,6 +130,13 @@
                     .then(applyLocalization)
                     .catch(function () {});
                 window.settingAPI.onSettingChanged?.(applyLocalization);
+                // 语言包安装/卸载后按最新设置重放一次本地化（与其他窗口的 packsChanged 处理一致）
+                onLocalePacksChanged?.(function () {
+                    window.settingAPI
+                        .loadSettingObject()
+                        .then(applyLocalization)
+                        .catch(function () {});
+                });
                 window.addEventListener('resize', updateMaximizeIcon);
             })();
         </script>

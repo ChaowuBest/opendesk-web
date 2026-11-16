@@ -151,6 +151,7 @@ class SideBar extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        this._initNavLabelsFit();
         this._initTaskSwipeDelete();
         this._initMultiSelect();
         this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
@@ -320,6 +321,10 @@ class SideBar extends HTMLElement {
         this._swipeDeleteController = null;
         this._multiSelectController?.destroy();
         this._multiSelectController = null;
+        if (this._navRowResizeObserver) {
+            this._navRowResizeObserver.disconnect();
+            this._navRowResizeObserver = null;
+        }
         this._dismissMultiSelectMenu();
         this._taskSearchDialog?.destroy();
         this._taskSearchDialog = null;
@@ -1182,6 +1187,54 @@ class SideBar extends HTMLElement {
         }
     }
 
+    /**
+     * 导航按钮（新任务/技能/应用）文案显隐自适应：
+     * 实测三个按钮含文案的真实内容宽度与导航行可用宽度，放不下时收起全部文案只留图标。
+     * 判定跟随界面语言文本与字体的真实度量，避免按单一语言估算的固定断点在长文本语言下溢出。
+     */
+    _initNavLabelsFit() {
+        const row = this.querySelector('.sb-nav-row');
+        if (!row) return;
+        this._navRowResizeObserver?.disconnect();
+        // 拖拽侧边栏宽度、折叠/展开（display:none 与恢复）都会触发重新判定
+        this._navRowResizeObserver = new ResizeObserver(() => {
+            this._updateNavLabelsFit();
+        });
+        this._navRowResizeObserver.observe(row);
+        // 字体加载完成会改变文本度量，需按新度量重新判定
+        document.fonts?.ready?.then(() => {
+            if (this.isConnected) this._updateNavLabelsFit();
+        });
+        this._updateNavLabelsFit();
+    }
+
+    _updateNavLabelsFit() {
+        const row = this.querySelector('.sb-nav-row');
+        if (!row) return;
+        const btns = row.querySelectorAll('.sb-nav-btn');
+        if (!btns.length) return;
+        // 无布局引擎的环境（单元测试的 DOM shim）clientWidth 为 undefined，
+        // 折叠态展开树 display:none 时为 0，两者都无法测量，直接跳过
+        if (!row.clientWidth) return;
+        const rowStyle = getComputedStyle(row);
+        const available = row.clientWidth - (parseFloat(rowStyle.paddingLeft) + parseFloat(rowStyle.paddingRight));
+        // clientWidth 是取整值而 getBoundingClientRect 是浮点值，临界宽度处有 ±1px 舍入差；
+        // 判定留出余量，避免拖拽经过临界宽度时显隐决策逐帧来回翻转导致文案闪烁
+        const FIT_SLACK = 2;
+        // 临时让按钮按内容宽度排布，实测含文案的真实所需宽度；测量态已禁用按钮过渡（见 custom.css），
+        // 且整个测量在同一任务内完成、不产生中间渲染帧，不会闪烁
+        row.classList.add('sb-nav-measure');
+        row.classList.remove('sb-nav-labels-hidden');
+        let required = (parseFloat(rowStyle.columnGap) || 0) * (btns.length - 1);
+        for (const btn of btns) {
+            required += btn.getBoundingClientRect().width;
+        }
+        row.classList.remove('sb-nav-measure');
+        if (required > available + FIT_SLACK) {
+            row.classList.add('sb-nav-labels-hidden');
+        }
+    }
+
     _updateLocalizedChrome() {
         const labelMap = {
             'new-task': this._t('renderer.sidebar.newTask'),
@@ -1235,6 +1288,8 @@ class SideBar extends HTMLElement {
         }
         // 界面语言可能已切换：本地化的插件应用名需按新语言重新解析
         this._loadAppearance();
+        // 文案文本已随语言更新，按新文本宽度重新判定导航按钮文案显隐
+        this._updateNavLabelsFit();
     }
 
     async reloadApplicationList() {

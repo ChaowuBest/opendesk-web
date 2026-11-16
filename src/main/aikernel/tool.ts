@@ -15,7 +15,7 @@ import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { zhCn } from '../../locale/zh-cn.js';
 import { enUs } from '../../locale/en-us.js';
-import { resolvePreferredLocale, type SupportedLocale } from '../../common/locale.js';
+import { isSupportedLocale, resolvePreferredLocale, type SupportedLocale } from '../../common/locale.js';
 import type { ToolDisplayName } from '../../common/tool-display-name.js';
 import type { ToolResultWriter } from './types/index.js';
 
@@ -30,7 +30,9 @@ function getToolValidationLocale(): SupportedLocale {
             ? [...globalThis.navigator.languages]
             : [];
     const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale;
-    return resolvePreferredLocale([...navigatorLanguages, intlLocale]);
+    // 工具校验文案只覆盖内置语言：语言包注册的语言（模型/工具面向协议层）不参与
+    const resolved = resolvePreferredLocale([...navigatorLanguages, intlLocale]);
+    return isSupportedLocale(resolved) ? resolved : 'en-US';
 }
 
 function translateToolValidation(key: string, params?: Record<string, string | number>): string {

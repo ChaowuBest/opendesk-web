@@ -41,7 +41,7 @@ import '../../main/applications/browser/renderer/entry.ts';
 import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
-import { createRendererTranslator } from '../locale.ts';
+import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
 import { installQuickCaptureInbox } from './quickcaptureInbox.ts';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
@@ -83,6 +83,16 @@ window.__odT = createRendererTranslator();
 window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
     updateUpdateReadyButton(latestUpdateState);
+});
+// 语言包安装/卸载后重建翻译器（按最新设置重取，避免语言覆盖丢失）
+onLocalePacksChanged?.(() => {
+    void window.settingAPI
+        ?.loadSettingObject?.()
+        .then((settings) => {
+            window.__odT = createRendererTranslator(settings);
+            updateUpdateReadyButton(latestUpdateState);
+        })
+        .catch(() => {});
 });
 
 // 启动时把持久化的快速截图开关同步给原生侧（原生侧不持久化，默认开启）

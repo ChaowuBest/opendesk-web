@@ -357,6 +357,9 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
             'askUserAPI',
             'exitPlanModeAPI',
             'settingAPI',
+            // 语言包快照与 settingAPI 同源借用：应用词典的翻译器经 createTranslator 读取
+            // window.localeAPI，缺失时应用内容永远只拿内置词典，语言包增量无法生效
+            'localeAPI',
             'modeAPI',
             'nodeAPI',
             'applicationRegistryAPI',

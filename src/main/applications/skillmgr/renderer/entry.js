@@ -6,7 +6,7 @@
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { neutralizeMarkdownHtml } from '../../../../common/markdown/markdown-html-safety.js';
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
-import { resolveRendererLocale } from '../../../../renderer/locale.js';
+import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { adoptDeferredSubscription } from '../../../../renderer/deferredSubscription.js';
 import { createTranslatorForSkillMgr } from '../locale/renderer.js';
 import { showDuplicateInstallModal } from './duplicateInstallModal.js';
@@ -1894,7 +1894,19 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (openOverlay) this.shadowRoot?.appendChild(openOverlay);
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

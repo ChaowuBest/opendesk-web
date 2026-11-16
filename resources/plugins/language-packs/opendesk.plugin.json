@@ -1,0 +1,17 @@
+{
+    "id": "language-packs",
+    "displayName": {
+        "en": "Built-in Language Packs",
+        "zh": "内置语言包"
+    },
+    "description": {
+        "en": "Built-in language packs for the OpenDesk main UI and applications: German (de-DE), French (fr-FR), Indonesian (id-ID) and Turkish (tr-TR). Locale packs built on the resources.locales contract; untranslated keys fall back to English.",
+        "zh": "OpenDesk 主界面与各应用的内置语言包：德语（de-DE）、法语（fr-FR）、印尼语（id-ID）与土耳其语（tr-TR）。基于 resources.locales 契约，未翻译的 key 回退英文。"
+    },
+    "version": "1.0.0",
+    "apiVersion": 1,
+    "capabilities": ["locale"],
+    "resources": {
+        "locales": ["locales"]
+    }
+}

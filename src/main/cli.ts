@@ -164,7 +164,11 @@ function parseCommandLineArgs() {
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'no permission check, every operation is allowed');
     prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
-    prog.option('--language <lang>', 'language to use (auto, zh-CN, en-US)', (v) => v);
+    prog.option(
+        '--language <lang>',
+        'language to use (auto, zh-CN, en-US, or any language provided by locale pack plugins)',
+        (v) => v
+    );
     prog.option('--render-interval <ms>', 'render throttle base interval in milliseconds (default: 100)', (v) =>
         parseInt(v, 10)
     );

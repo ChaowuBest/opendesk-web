@@ -25,7 +25,7 @@ import {
     type PluginVerification
 } from '../discovery/discovery.js';
 import { resolvePluginEntry } from '../discovery/loader.js';
-import { readPluginManifest } from '../discovery/manifest.js';
+import { readPluginManifest, readStaticOnlyPluginManifest } from '../discovery/manifest.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
 import {
@@ -603,7 +603,9 @@ export function listVisiblePlugins(options: { configDirectory?: string } = {}): 
         try {
             const spec = candidate?.spec ?? displayRecord.path;
             const resolved = resolvePluginEntry(spec, resolvedConfigDirectory);
-            const manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+            const manifest = resolved
+                ? readPluginManifest(resolved.entry, resolved.rootDir)
+                : readStaticOnlyPluginManifest(spec);
             if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
                 continue;
             }

@@ -87,6 +87,7 @@
             import './components/loading.js';
             import { guiShortcutManager } from './components/shortcutManager.ts';
             import { registerDisplayZoomShortcuts } from './scripts/display-zoom-shortcuts.ts';
+            import { createLocaleAppViewRefresher } from './scripts/application-locale-refresh.ts';
             import { createRendererTranslator, resolveRendererLocale } from './locale.ts';
 
             // 独立应用窗口与主窗口共用同一套界面缩放快捷键（Ctrl+{+,-,0}）：
@@ -105,6 +106,17 @@
             // iframe 初始没有 src，浏览器会先给出一张 about:blank 并触发一次 load；
             // 只有真正指向应用页之后的那次 load 才能当成"外部应用首屏就绪"
             var frameSrcAssigned = false;
+
+            // 应用 iframe 收不到主进程的 setting:changed / locale:packsChanged 广播
+            // （子 frame 不在 webContents.send 的送达范围），无法原地跟随语言。
+            // 生效语言变化或当前语言的语言包词条变化时，重挂 iframe 重新起界面：
+            // 重开的应用会主动拉取最新设置与语言包快照，按新语言全新渲染。
+            var appLocaleRefresher = createLocaleAppViewRefresher(function () {
+                var currentSrc = iframe.getAttribute('src');
+                if (currentSrc) {
+                    iframe.src = currentSrc;
+                }
+            });
 
             function labelButton(buttonId, key) {
                 var button = document.getElementById(buttonId);
@@ -185,11 +197,36 @@
             window.addEventListener('resize', updateMaximizeIcon);
 
             applyLocalization();
+            // 记录生效语言 / 语言包快照（启动基线只记录，变化时才触发重挂）
+            function recordLocaleState(setting) {
+                appLocaleRefresher.recordLocale(setting && setting.resolved_locale);
+            }
             window.settingAPI
                 .loadSettingObject()
-                .then(applyLocalization)
+                .then(function (setting) {
+                    applyLocalization(setting);
+                    recordLocaleState(setting);
+                })
                 .catch(function () {});
-            window.settingAPI.onSettingChanged?.(applyLocalization);
+            window.settingAPI.onSettingChanged?.(function (data) {
+                applyLocalization(data);
+                recordLocaleState(data);
+            });
+            // 语言包安装/卸载/更新后按最新设置重放一次本地化；
+            // 当前语言的词条实际变化时重挂应用 iframe（语言未变的词条修正也能生效）
+            window.localeAPI?.onLocalePacksChanged?.(function (snapshot) {
+                appLocaleRefresher.recordPackSnapshot(snapshot);
+                window.settingAPI
+                    .loadSettingObject()
+                    .then(function (setting) {
+                        applyLocalization(setting);
+                        recordLocaleState(setting);
+                    })
+                    .catch(function () {});
+            });
+            // 同 index.html：注册晚于 preload 首拉分发时会错过首播，
+            // 立即用 preload 已缓存快照补建基线（null 时 recordPackSnapshot 不动基线）
+            appLocaleRefresher.recordPackSnapshot(window.localeAPI?.getLocalePacks?.() ?? null);
 
             // 加载应用
             var params = new URLSearchParams(window.location.search);

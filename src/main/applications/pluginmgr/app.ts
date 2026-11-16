@@ -31,7 +31,12 @@ import { getPluginHost } from './runtime/host.js';
 import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
 import { getPluginToolLocalName } from './runtime/tool-names.js';
 import { resolvePluginEntry } from './discovery/loader.js';
-import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
+import {
+    loadPluginResources,
+    readPluginManifest,
+    readStaticOnlyPluginManifest,
+    type PluginManifest
+} from './discovery/manifest.js';
 import {
     installPlugin,
     isBuiltinPluginId,
@@ -413,15 +418,19 @@ export class PluginMgrApplication extends BaseApplication {
                         if (spec) {
                             try {
                                 const resolved = resolvePluginEntry(spec, configDirectory);
-                                manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+                                // 纯静态插件（无入口）直接读根级清单；manifestRootDir 即插件目录
+                                manifest = resolved
+                                    ? readPluginManifest(resolved.entry, resolved.rootDir)
+                                    : readStaticOnlyPluginManifest(spec);
+                                const manifestRootDir = resolved?.rootDir ?? spec;
                                 // 已安装插件的图标以 zip 解压后的清单为准；包内相对路径指向插件目录里的文件
                                 if (manifest) {
                                     manifestIconUrl = await resolveDisplayIconUrl(manifest.iconUrl, (icon) =>
-                                        path.join(resolved.rootDir, icon)
+                                        path.join(manifestRootDir, icon)
                                     );
                                 }
                                 if (skills.length === 0 && mcpServers.length === 0 && agents.length === 0) {
-                                    const resources = loadPluginResources(manifest, resolved.rootDir);
+                                    const resources = loadPluginResources(manifest, manifestRootDir);
                                     skills = resources.skills ?? [];
                                     mcpServers = resources.mcpServers ?? [];
                                     agents = resources.agents ?? [];
@@ -894,7 +903,9 @@ export class PluginMgrApplication extends BaseApplication {
     private readStagedPluginManifest(pluginDirectory: string): PluginManifest | undefined {
         try {
             const resolved = resolvePluginEntry(pluginDirectory, getOpendeskDirectory());
-            return readPluginManifest(resolved.entry, resolved.rootDir);
+            return resolved
+                ? readPluginManifest(resolved.entry, resolved.rootDir)
+                : readStaticOnlyPluginManifest(pluginDirectory);
         } catch {
             return undefined;
         }

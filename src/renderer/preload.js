@@ -1421,6 +1421,31 @@ if (shouldExposeMainWindowAPIs()) {
     // 分发，避免每个订阅者直接挂 ipcRenderer 触发 MaxListenersExceededWarning
     const settingChangedDispatcher = createSettingChangedDispatcher(ipcRenderer);
 
+    // 语言包快照：preload 侧缓存，供各翻译器同步读取（与激活语言解耦，按 tag 组织）。
+    // 主进程在任何语言包增删后推送 locale:packsChanged，preload 刷新缓存并分发给订阅者；
+    // 首次拉取完成前 getLocalePacks() 返回 null，翻译器自动退化为仅内置词典。
+    let localePackSnapshot = null;
+    const localePackListeners = new Set();
+    function dispatchLocalePackSnapshot(snapshot) {
+        localePackSnapshot = snapshot;
+        for (const listener of [...localePackListeners]) {
+            try {
+                listener(snapshot);
+            } catch (err) {
+                console.error('locale pack listener failed', err);
+            }
+        }
+    }
+    ipcRenderer
+        .invoke('locale:getLocalePacks')
+        .then((result) => {
+            if (result.status === 'ok') dispatchLocalePackSnapshot(result.data);
+        })
+        .catch((err) => console.error('loading locale packs failed', err));
+    ipcRenderer.on('locale:packsChanged', (_event, snapshot) => {
+        dispatchLocalePackSnapshot(snapshot);
+    });
+
     // 保存设置的两个 API 共用同一次 IPC 调用与失败处理，只是暴露的字段不同
     async function invokeSaveSettingObject(settingObject) {
         const result = await ipcRenderer.invoke('setting:saveSettingObject', settingObject);
@@ -1430,6 +1455,16 @@ if (shouldExposeMainWindowAPIs()) {
         }
         return result;
     }
+
+    safeExposeInMainWorld('localeAPI', {
+        /** 同步读取当前语言包快照（可能为 null：首次拉取完成前或主进程不可达） */
+        getLocalePacks: () => localePackSnapshot,
+        /** 订阅语言包变更（含首次拉取完成），回调收到最新快照 */
+        onLocalePacksChanged: (callback) => {
+            localePackListeners.add(callback);
+            return () => localePackListeners.delete(callback);
+        }
+    });
 
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
