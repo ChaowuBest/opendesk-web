@@ -13,8 +13,9 @@
  * 语言包（locale pack）纯函数层：解析、合并与展示名格式化。
  *
  * 语言包是插件以 resources.locales 声明的扁平 JSON 词典（string -> string），
- * 合并后作为"增量层"叠加在内置词典之上：增量优先于内置，同一语言允许多个
- * 插件部分提供，同 key 冲突按插件 ID 字典序后者胜。本模块不依赖 Electron/文件
+ * 合并后作为"增量层"叠加在内置词典之上：增量优先于内置（内置文案概念上为
+ * priority 0），同一语言允许多个插件部分提供，同 key 冲突按 @priority 优先级裁决
+ * （priority 缺省 1），平局按插件 ID 字典序后者胜。本模块不依赖 Electron/文件
  * 系统，宿主（loader / LocaleStore）与测试共用同一实现，保证口径一致。
  */
 
@@ -25,6 +26,10 @@ export const BUILTIN_LOCALES = ['zh-CN', 'en-US'] as const;
 const RESERVED_KEY_PREFIX = '@';
 /** 保留 key：该语言的回退语言 tag（仅非内置语言有意义，缺省 en-US） */
 export const LOCALE_PACK_FALLBACK_KEY = '@fallback';
+/** 保留 key：语言包合并优先级（0-999 整数，数值越大越优先，缺省 1） */
+export const LOCALE_PACK_PRIORITY_KEY = '@priority';
+/** @priority 的取值上界（含）；下界为 0（系统内置文案的概念层级） */
+export const LOCALE_PACK_PRIORITY_MAX = 999;
 
 /** 单个语言包文件的内容（已解析、tag 已规范化） */
 export interface LocalePackContent {
@@ -32,6 +37,11 @@ export interface LocalePackContent {
     tag: string;
     /** 回退语言 tag（已规范化）。非内置语言缺省 en-US，内置语言无回退 */
     fallback?: string;
+    /**
+     * 合并优先级（0-999 整数，数值越大越优先）。来自语言包文件的 @priority 保留 key，
+     * 未声明时缺省 1；合并顺序为 priority 升序、同 priority 按插件 ID 字典序，迭代后者胜。
+     */
+    priority: number;
     /** 参与查找的词条（保留 key 已剥离） */
     entries: Record<string, string>;
 }
@@ -82,9 +92,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * 解析语言包 JSON 数据（已 JSON.parse 的原始值）为 LocalePackContent。
  *
- * 结构要求：顶层扁平对象、key/value 均为字符串；`@` 前缀的保留 key 仅支持
- * @fallback（值必须是合法语言 tag），其余保留 key 忽略。任何结构问题都抛出
- * 带定位信息的 LocalePackParseError，不允许静默丢弃整个语言包。
+ * 结构要求：顶层扁平对象、词条 key/value 均为字符串；`@` 前缀的保留 key 支持
+ * @fallback（值必须是合法语言 tag）与 @priority（0-999 整数，字符串或数字形式均可），
+ * 其余保留 key 忽略。任何结构问题都抛出带定位信息的 LocalePackParseError，
+ * 不允许静默丢弃整个语言包。
  */
 export function parseLocalePackJson(raw: unknown, sourceFile?: string): LocalePackContent {
     // function 声明（而非箭头函数常量）：TS 只对函数声明的 never 返回做控制流收窄
@@ -94,16 +105,32 @@ export function parseLocalePackJson(raw: unknown, sourceFile?: string): LocalePa
     if (!isRecord(raw)) fail('locale pack must be a flat object');
     const entries: Record<string, string> = {};
     let fallback: string | undefined;
+    let priority = 1;
     for (const [key, value] of Object.entries(raw)) {
-        if (typeof value !== 'string') fail(`entry "${key}" must map to a string`);
+        // 保留 key 分支先于词条的字符串值校验：@priority 允许 JSON 数字形式，
+        // 不应被"词条必须为字符串"误伤
         if (key.startsWith(RESERVED_KEY_PREFIX)) {
             if (key === LOCALE_PACK_FALLBACK_KEY) {
                 const tag = normalizeLocaleTag(value);
                 if (!tag) fail(`reserved key ${LOCALE_PACK_FALLBACK_KEY} must be a valid language tag`);
                 fallback = tag;
+            } else if (key === LOCALE_PACK_PRIORITY_KEY) {
+                const parsed =
+                    typeof value === 'number'
+                        ? value
+                        : typeof value === 'string' && value.trim()
+                          ? Number(value.trim())
+                          : Number.NaN;
+                if (!Number.isInteger(parsed) || parsed < 0 || parsed > LOCALE_PACK_PRIORITY_MAX) {
+                    fail(
+                        `reserved key ${LOCALE_PACK_PRIORITY_KEY} must be an integer between 0 and ${LOCALE_PACK_PRIORITY_MAX}`
+                    );
+                }
+                priority = parsed;
             }
             continue;
         }
+        if (typeof value !== 'string') fail(`entry "${key}" must map to a string`);
         if (!key.trim()) fail('entry key must not be empty');
         entries[key] = value;
     }
@@ -112,6 +139,7 @@ export function parseLocalePackJson(raw: unknown, sourceFile?: string): LocalePa
     return {
         tag: tagFromFilename,
         fallback,
+        priority,
         entries
     };
 }
@@ -134,7 +162,7 @@ export interface LocalePackMergeConflict {
 export interface MergedLocalePack {
     /** 该语言下所有插件词条的合并结果（增量层最终形态） */
     entries: Record<string, string>;
-    /** 多包 fallback 的合并结果：字典序最后一个声明生效 */
+    /** 多包 fallback 的合并结果：合并顺序中最后一个声明生效（priority 最高者，平局按 ID 字典序） */
     fallback?: string;
     /** 同 key 多插件冲突报告（获胜者为合并后实际生效的插件） */
     conflicts: LocalePackMergeConflict[];
@@ -147,14 +175,20 @@ export interface LocalePackSource {
 }
 
 /**
- * 按插件 ID 字典序合并同一语言的多份语言包：后者覆盖前者。
+ * 合并同一语言的多份语言包：按 priority 升序、同 priority 按插件 ID 字典序排序后
+ * 迭代后者覆盖前者，因此 priority 高者胜、平局时 ID 大者胜。priority 来自语言包的
+ * @priority 声明（缺省 1）；系统内置文案概念上为 priority 0——包增量在查找链中恒
+ * 覆盖内置词典。
  *
- * 顺序与安装顺序、启动顺序无关——卸载重装不改变合并结果，冲突可复现、可解释。
+ * 平局裁决与安装顺序、启动顺序无关——卸载重装不改变合并结果，冲突可复现、可解释。
  * key 冲突不是错误：照常合并并写入 conflicts 报告（P2 插件中心展示）。
  */
 export function mergeLocalePacks(sources: readonly LocalePackSource[]): MergedLocalePack | undefined {
     if (sources.length === 0) return undefined;
-    const ordered = [...sources].sort((a, b) => (a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0));
+    const ordered = [...sources].sort((a, b) => {
+        if (a.content.priority !== b.content.priority) return a.content.priority - b.content.priority;
+        return a.pluginId < b.pluginId ? -1 : a.pluginId > b.pluginId ? 1 : 0;
+    });
     const entries: Record<string, string> = {};
     const owners = new Map<string, string[]>();
     const conflicts: LocalePackMergeConflict[] = [];

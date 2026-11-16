@@ -63,6 +63,23 @@ describe('parseLocalePackJson', () => {
         expect(() => parseLocalePackJson({ '@fallback': 'not a tag!' }, 'tr-TR.json')).toThrow(/@fallback/);
     });
 
+    test('@priority 解析合并优先级（字符串与数字形式均可，缺省为 1）', () => {
+        expect(parseLocalePackJson({ '@priority': '5', key: 'v' }, 'tr-TR.json').priority).toBe(5);
+        expect(parseLocalePackJson({ '@priority': 3, key: 'v' }, 'tr-TR.json').priority).toBe(3);
+        expect(parseLocalePackJson({ '@priority': '0', key: 'v' }, 'tr-TR.json').priority).toBe(0);
+        expect(parseLocalePackJson({ '@priority': '999', key: 'v' }, 'tr-TR.json').priority).toBe(999);
+        expect(parseLocalePackJson({ key: 'v' }, 'tr-TR.json').priority).toBe(1);
+    });
+
+    test('@priority 必须是 0-999 的整数', () => {
+        expect(() => parseLocalePackJson({ '@priority': '-1', key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+        expect(() => parseLocalePackJson({ '@priority': '1000', key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+        expect(() => parseLocalePackJson({ '@priority': '1.5', key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+        expect(() => parseLocalePackJson({ '@priority': 'abc', key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+        expect(() => parseLocalePackJson({ '@priority': 1000, key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+        expect(() => parseLocalePackJson({ '@priority': '', key: 'v' }, 'tr-TR.json')).toThrow(/@priority/);
+    });
+
     test('文件名不是语言 tag 时报错', () => {
         expect(() => parseLocalePackJson({ key: 'v' }, '123.json')).toThrow(/file name/);
     });
@@ -75,9 +92,9 @@ describe('parseLocalePackJson', () => {
 });
 
 describe('mergeLocalePacks', () => {
-    const pack = (pluginId: string, entries: Record<string, string>, fallback?: string) => ({
+    const pack = (pluginId: string, entries: Record<string, string>, fallback?: string, priority = 1) => ({
         pluginId,
-        content: { tag: 'tr-TR', fallback, entries }
+        content: { tag: 'tr-TR', fallback, priority, entries }
     });
 
     test('按插件 ID 字典序合并，后者覆盖前者', () => {
@@ -86,6 +103,37 @@ describe('mergeLocalePacks', () => {
             pack('alpha-plugin', { 'a.key': 'from-alpha', 'only-alpha': 'a' })
         ]);
         expect(merged?.entries).toEqual({ 'a.key': 'from-beta', 'only-beta': 'b', 'only-alpha': 'a' });
+    });
+
+    test('priority 高者胜，与插件 ID 无关', () => {
+        const merged = mergeLocalePacks([
+            pack('zeta-plugin', { 'a.key': 'from-zeta' }, undefined, 1),
+            pack('alpha-plugin', { 'a.key': 'from-alpha', 'only-alpha': 'a' }, undefined, 5)
+        ]);
+        expect(merged?.entries).toEqual({ 'a.key': 'from-alpha', 'only-alpha': 'a' });
+        expect(merged?.conflicts).toEqual([{ key: 'a.key', winner: 'alpha-plugin', losers: ['zeta-plugin'] }]);
+    });
+
+    test('priority 相同时回退插件 ID 字典序（后者胜）', () => {
+        const merged = mergeLocalePacks([
+            pack('beta-plugin', { 'a.key': 'from-beta' }, undefined, 2),
+            pack('alpha-plugin', { 'a.key': 'from-alpha' }, undefined, 2)
+        ]);
+        expect(merged?.entries['a.key']).toBe('from-beta');
+    });
+
+    test('混合 priority 下的冲突报告按合并顺序记录', () => {
+        const merged = mergeLocalePacks([
+            pack('alpha-plugin', { 'a.key': 'from-alpha' }, undefined, 1),
+            pack('beta-plugin', { 'a.key': 'from-beta' }, undefined, 2),
+            pack('gamma-plugin', { 'a.key': 'from-gamma' }, undefined, 1)
+        ]);
+        // 合并顺序：alpha(1) -> gamma(1) -> beta(2)，最终 beta 胜
+        expect(merged?.entries['a.key']).toBe('from-beta');
+        expect(merged?.conflicts).toEqual([
+            { key: 'a.key', winner: 'gamma-plugin', losers: ['alpha-plugin'] },
+            { key: 'a.key', winner: 'beta-plugin', losers: ['alpha-plugin', 'gamma-plugin'] }
+        ]);
     });
 
     test('同 key 冲突写入报告（获胜者与被覆盖方）', () => {
@@ -103,6 +151,11 @@ describe('mergeLocalePacks', () => {
     test('fallback 取字典序最后一个声明', () => {
         expect(mergeLocalePacks([pack('a', {}, 'zh-CN'), pack('b', {}, 'en-US')])?.fallback).toBe('en-US');
         expect(mergeLocalePacks([pack('a', {})])?.fallback).toBeUndefined();
+    });
+
+    test('fallback 由 priority 最高的声明决定，平局仍按 ID 字典序', () => {
+        expect(mergeLocalePacks([pack('a', {}, 'zh-CN', 9), pack('b', {}, 'en-US', 1)])?.fallback).toBe('zh-CN');
+        expect(mergeLocalePacks([pack('a', {}, 'zh-CN', 1), pack('b', {}, 'en-US', 1)])?.fallback).toBe('en-US');
     });
 
     test('空来源返回 undefined', () => {

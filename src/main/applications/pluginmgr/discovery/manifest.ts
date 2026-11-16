@@ -589,6 +589,7 @@ function loadLocalePacks(rootDir: string, declaredPaths: string[]): PluginLocale
             packs.push({
                 tag: content.tag,
                 fallback: content.fallback,
+                priority: content.priority,
                 entries: content.entries,
                 sourceFile: path.relative(rootDir, file).split(path.sep).join('/')
             });

@@ -1,4 +1,5 @@
 {
+    "@priority": "1",
     "@fallback": "en-US",
     "acp.permission.allow_always": "${scope} immer erlauben",
     "acp.permission.allow_once": "Nur einmal erlauben",
