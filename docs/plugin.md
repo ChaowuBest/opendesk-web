@@ -1104,10 +1104,9 @@ acme-langpack-ja/
   应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，裸 key 覆盖会同时
   影响所有应用，为单个应用贡献文案请使用 `<bundle>.<key>` 前缀条目。
 
-内置试点语言包见 `resources/plugins/opendesk-langpack-tr/`（土耳其语）、
-`resources/plugins/opendesk-langpack-de/`（德语）、`resources/plugins/opendesk-langpack-fr/`
-（法语）与 `resources/plugins/opendesk-langpack-id/`（印尼语），四者均全量覆盖主界面与
-各内置应用词条。
+内置语言包见 `resources/plugins/language-packs/`（插件「内置语言包」，单个插件在
+`locales/` 目录下同时携带土耳其语、德语、法语与印尼语四个语言文件），均全量覆盖
+主界面与各内置应用词条。
 
 ## 无 manifest 的本地插件
 

@@ -1,11 +1,11 @@
 # 语言包插件扩展设计规范（提案）
 
 > 状态：**已实施（P0 + P1）**——评审决策（第 10 章 5 项开放问题）均已按推荐方案落地；
-> 试点语言包以内置插件形式随宿主分发（`resources/plugins/opendesk-langpack-tr/` 土耳其语、
-> `resources/plugins/opendesk-langpack-id/` 印尼语，覆盖主界面 + todomgr 应用域的约 55 个
-> 核心 key，其余 key 沿 `@fallback` 回退英文）。本文保留原始设计论证，实现细节以
-> `docs/plugin.md`「语言包插件」章节与源码为准；P2（插件中心冲突报告视图、Worker 增量
-> 注入、SDK 校验命令）仍未实施。
+> 内置语言包以单个内置插件形式随宿主分发（`resources/plugins/language-packs/`，
+> 插件「内置语言包」，同时携带土耳其语、德语、法语与印尼语，已全量覆盖主界面与
+> 各内置应用词条，未覆盖 key 沿 `@fallback` 回退英文）。本文保留原始设计论证，
+> 实现细节以 `docs/plugin.md`「语言包插件」章节与源码为准；P2（插件中心冲突报告
+> 视图、Worker 增量注入、SDK 校验命令）仍未实施。
 
 ## 1. 背景
 
