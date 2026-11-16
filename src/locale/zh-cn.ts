@@ -2801,6 +2801,7 @@ export const zhCn: Record<string, string> = {
     'office.slides.error.programUnavailable': '当前 Office 包不支持演示文稿程序',
     'office.slides.error.outputPathRequired': '当前任务未打开 PPT 时必须提供输出 PPTX 路径',
     'office.slides.error.currentFileMissing': '作为当前文档的 PPTX 文件不存在',
+    'office.slides.error.unsupportedAsset': '不支持此演示文稿素材格式 (${path})',
     'office.slides.error.invalidOutputPath': '演示文稿输出路径必须以 .pptx 结尾',
     'office.slides.error.startRequired':
         "当前没有可用的演示文稿。新建时请使用 startFrom: 'blank'，读取或编辑已有 PPTX 时请先调用 open_presentation",

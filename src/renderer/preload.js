@@ -895,7 +895,8 @@ function exposeOfficeHostAPI() {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke('office-host:prepare', kind);
         },
-        refreshPresentation: (webContentsId) => ipcRenderer.invoke('office-host:refresh-presentation', webContentsId),
+        refreshFile: (webContentsId, filePath) =>
+            ipcRenderer.invoke('office-host:refresh-file', webContentsId, filePath),
         requestClose: (kind, webContentsId) => {
             if (!isOfficeEditorKind(kind)) return Promise.reject(new Error('Unsupported Office editor'));
             return ipcRenderer.invoke(requestCloseChannels[kind], webContentsId);
