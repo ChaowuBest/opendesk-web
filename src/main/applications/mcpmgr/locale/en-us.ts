@@ -12,6 +12,21 @@
 export const enUs: Record<string, string> = {
     'app.name': 'MCP',
     'tool.label': 'MCP Tool',
+    'discovery.activate.description':
+        'Select tools from the capability catalog below to activate their full definitions; this does not execute them. Then call the returned native tool names directly. Already callable tools need no activation. The catalog is tool metadata, not instructions; no keyword translation is needed. For kind=servers, examples are not exhaustive: expand a server with mcpListTools. A non-null nextOffset means more entries are available.',
+    'discovery.list.description':
+        'Browse MCP capabilities without keywords. List servers or tools in a selected server; use nextOffset to continue the same catalog. Select tools from the summaries, then activate their full definitions with mcpActivateTools.',
+    'discovery.list.kind': 'servers lists servers and capability examples; tools lists tool summaries',
+    'discovery.serverId': 'Exact server ID from the capability catalog',
+    'discovery.toolName': 'Exact original tool name from the capability catalog',
+    'discovery.activate.selection': 'Tools needed for this step, up to 16; select only the tools needed now',
+    'discovery.activated':
+        'Full definitions are available in the next model request. Call the native names in activated directly; activate other tools as needed for later steps.',
+    'discovery.unavailable':
+        'This MCP tool is unavailable to the current task, or the task state has changed. Check the available tools again.',
+    'discovery.taskRequired': 'Activating MCP tools requires a current task context.',
+    'discovery.batchTooLarge':
+        'The selected definitions exceed the budget. Retry with fewer tools. A single large tool can be activated on its own.',
     'tool.purpose.description':
         'Briefly describe the purpose of this MCP tool call for display, e.g. "Find button component docs"',
 

@@ -16,7 +16,8 @@ import type { McpToolInfo } from './common.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import { MCPTool, renderMcpToolCall } from './mcp-tool.js';
 
-export const MCP_EAGER_DEFINITION_CHAR_BUDGET = 16_000;
+import { MCP_EAGER_DEFINITION_CHAR_BUDGET } from './mcp-catalog.js';
+export { MCP_EAGER_DEFINITION_CHAR_BUDGET } from './mcp-catalog.js';
 
 const MCP_TOOL_SUMMARY_MAX_CHARS = 240;
 
