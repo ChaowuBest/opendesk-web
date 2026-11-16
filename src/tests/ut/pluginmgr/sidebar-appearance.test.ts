@@ -15,6 +15,11 @@ describe('sidebar appearance capability branding', () => {
                 observe() {}
                 disconnect() {}
             },
+            ResizeObserver: class {
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            },
             localStorage: {
                 getItem: () => null,
                 setItem: () => undefined,

@@ -9,7 +9,12 @@ const taskViewStyles = readFileSync(new URL('../../../renderer/styles/custom.css
     .replace(/\s+/g, '');
 
 describe('task-view GUI output modes', () => {
-    let onSettingChanged: ((setting: Record<string, any>) => void) | undefined;
+    // 生产 preload 的 setting:changed 是共享分发（settingChangedDispatcher 多播），
+    // 桩需保存全部订阅者（taskview 与 locale.ts 都会订阅）并保留触发入口
+    const settingChangedSubscribers: Array<(setting: Record<string, any>) => void> = [];
+    const notifySettingChanged = (setting: Record<string, any>): void => {
+        for (const subscriber of [...settingChangedSubscribers]) subscriber(setting);
+    };
     let TaskViewClass: any;
     const createdViews: any[] = [];
 
@@ -74,7 +79,7 @@ describe('task-view GUI output modes', () => {
         window.settingAPI = {
             loadSettingObject: async () => ({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } }),
             onSettingChanged: (callback: (setting: Record<string, any>) => void) => {
-                onSettingChanged = callback;
+                settingChangedSubscribers.push(callback);
             }
         };
 
@@ -87,7 +92,7 @@ describe('task-view GUI output modes', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' }
         });
@@ -287,7 +292,7 @@ describe('task-view GUI output modes', () => {
         );
 
         const enView = createView();
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'en-US',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' }
         });
@@ -295,11 +300,11 @@ describe('task-view GUI output modes', () => {
         expect((enView.querySelector('[data-completed-process-toggle]') as HTMLElement).textContent).toContain(
             'View process (took 1m 5s)'
         );
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'minimal', gui_reason_display: 'inline' } });
     });
 
     test('verbose output defaults every process segment and completed reasoning body open', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-2',
@@ -322,7 +327,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose completed output omits the final result label and separates the final body', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-verbose-final-divider',
@@ -357,7 +362,7 @@ describe('task-view GUI output modes', () => {
         const completedToggle = view.querySelector('[data-completed-process-toggle]') as HTMLElement;
         view._handleProcessToggleClick({ target: completedToggle, preventDefault() {}, stopPropagation() {} });
 
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
 
         expect(window.taskManagerAPI.getFullTask as jest.Mock).not.toHaveBeenCalled();
         expect(view.querySelector('#message-content-message-mode-switch')).toBe(messageContent);
@@ -365,14 +370,14 @@ describe('task-view GUI output modes', () => {
         // 切到详细模式后摘要折叠头消失，卡片直接铺开
         expect(view.querySelector('[data-process-toggle]')).toBeNull();
 
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'minimal' } });
 
         expect(view.querySelector('[data-completed-process-toggle]')?.getAttribute('aria-expanded')).toBe('true');
         view.remove();
     });
 
     test('bubble reasoning mode reuses the mainline reasoning card inside the process timeline', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
         });
@@ -393,7 +398,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('completed reasoning shows its persisted elapsed time', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' }
         });
@@ -407,7 +412,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('completed bubble reasoning can be pinned and unpinned without changing the process model', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
         });
@@ -432,7 +437,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose completed bubble reasoning stays expanded by default', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
         });
@@ -450,7 +455,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('a minimal-mode streaming bubble closes when reasoning completes', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
         });
@@ -493,7 +498,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('streaming reasoning patches the existing bubble and keeps the newest content visible', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'verbose', gui_reason_display: 'bubble' }
         });
@@ -554,7 +559,7 @@ describe('task-view GUI output modes', () => {
         const messageContent = view.querySelector('#message-content-message-reason-display-switch');
         expect(view.querySelector('.od-assistant-output-flow')?.getAttribute('data-reason-display')).toBe('inline');
 
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
         });
@@ -714,7 +719,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose running reasoning shows its full content without a duplicate thinking row', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view._renderAssistantOutputHtml(
             [{ type: 'reasoning', rendered: '这是详细模式中正在输出的完整思考内容' }],
@@ -731,7 +736,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose streaming reasoning keeps the expanded full text live during streaming', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' } });
         const view = createView();
         view.innerHTML = view._renderAssistantOutputHtml([{ type: 'reasoning', text: '第一段思考', streaming: true }], {
             isRunning: true,
@@ -1310,7 +1315,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose running output shows tool cards without a duplicate running status row', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         const doneTools = toolPart(1, 2);
         const runningTool = toolPart(3, 1);
@@ -1540,7 +1545,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('minimal running output preserves a pinned reasoning bubble while streaming', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'minimal', gui_reason_display: 'bubble' }
         });
@@ -1811,7 +1816,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('collapsing a process hides the mainline reasoning and tool cards together', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view.renderAssistantMessage({
             message_id: 'message-3',
@@ -1848,7 +1853,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('verbose mode keeps terminal tool cards expanded by default', () => {
-        onSettingChanged?.({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
+        notifySettingChanged({ locale: 'zh-CN', gui_config: { output_mode: 'verbose' } });
         const view = createView();
         view.innerHTML = view._renderAssistantOutputHtml([terminalToolPart(['tc-1', 'tc-2'])], {
             isRunning: false,
@@ -1956,7 +1961,7 @@ describe('task-view GUI output modes', () => {
     });
 
     test('a non-streaming snapshot freezes the finished reasoning block and its timer', () => {
-        onSettingChanged?.({
+        notifySettingChanged({
             locale: 'zh-CN',
             gui_config: { output_mode: 'verbose', gui_reason_display: 'inline' }
         });

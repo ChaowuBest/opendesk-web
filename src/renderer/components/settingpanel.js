@@ -176,12 +176,51 @@ class SettingPanel extends HTMLElement {
                 this.updateState = state;
                 this.refreshUpdateSection();
             });
-            // 语言包安装/卸载后语言选项与文案即时变化：重建翻译器并整体刷新
-            this._localePacksUnsubscribe = onLocalePacksChanged(() => {
-                this._t = createRendererTranslator(this.currentData);
-                this.refreshAll();
-            });
+            // 语言包安装/卸载、生效语言变化的订阅与刷新（含"自动"模式解析结果纠正）
+            this._subscribeLocaleChanges();
         })();
+    }
+
+    /**
+     * 订阅语言相关变化并同步刷新面板。
+     *
+     * - locale:packsChanged（语言包安装/卸载/词条更新）：拉取 main 权威 resolved_locale
+     *   后重建翻译器——不能直接用面板 currentData 里可能滞留的旧值，否则切到"自动"
+     *   时会按旧语言解析、面板不跟随（侧边栏用广播对象所以不受影响）。
+     * - setting:changed：main 广播的 locale / resolved_locale 是权威值；仅在语言字段
+     *   实际变化时重建刷新，避免无关配置项保存触发全面板重建。
+     */
+    _subscribeLocaleChanges() {
+        if (this._localePacksUnsubscribe) return;
+        this._localePacksUnsubscribe = onLocalePacksChanged(() => {
+            if (!this.isConnected) return;
+            void window.settingAPI
+                ?.loadSettingObject?.()
+                .then((data) => {
+                    if (!this.isConnected || !this.currentData) return;
+                    if (typeof data?.resolved_locale === 'string') {
+                        this.currentData.resolved_locale = data.resolved_locale;
+                    }
+                    this._t = createRendererTranslator(this.currentData);
+                    this.refreshAll();
+                })
+                .catch(() => {});
+        });
+        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((data) => {
+            if (!this.isConnected || !data || typeof data !== 'object' || !this.currentData) return;
+            let localeChanged = false;
+            if (typeof data.locale === 'string' && data.locale !== this.currentData.locale) {
+                this.currentData.locale = data.locale;
+                localeChanged = true;
+            }
+            if (typeof data.resolved_locale === 'string' && data.resolved_locale !== this.currentData.resolved_locale) {
+                this.currentData.resolved_locale = data.resolved_locale;
+                localeChanged = true;
+            }
+            if (!localeChanged) return;
+            this._t = createRendererTranslator(this.currentData);
+            this.refreshAll();
+        });
     }
 
     /**
@@ -215,6 +254,8 @@ class SettingPanel extends HTMLElement {
         this._updateStateUnsubscribe = null;
         this._localePacksUnsubscribe?.();
         this._localePacksUnsubscribe = null;
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
         this._scaleFactorChangeUnsub = null;
         if (this._modalEscHandler) {
@@ -337,7 +378,7 @@ class SettingPanel extends HTMLElement {
             .map((t) => {
                 const active = t.id === this._activeTab;
                 return `<button class="sp-nav-item ${active ? 'active' : ''}" data-tab="${t.id}">
-                ${t.iconSvg} ${t.label}
+                ${t.iconSvg} <span class="sp-nav-label">${t.label}</span>
             </button>`;
             })
             .join('');
@@ -404,7 +445,8 @@ class SettingPanel extends HTMLElement {
 
             /* ── Left sidebar navigation (Tabs) ── */
             .sp-nav {
-                width: 164px; flex: none;
+                /* 宽度跟随最长文案自适应（下限维持原 164px 设计宽度），上限封顶，超出部分由文案省略号收敛 */
+                width: auto; min-width: 164px; max-width: 220px; flex: none;
                 display: flex; flex-direction: column; gap: 2px;
             }
             .sp-nav-item {
@@ -418,6 +460,11 @@ class SettingPanel extends HTMLElement {
             }
             .sp-nav-item svg {
                 flex-shrink: 0;
+            }
+            .sp-nav-label {
+                /* 导航列达到上限仍放不下时省略号截断，避免长文本语言（如德语）溢出导航列 */
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
             .sp-nav-item:hover {
                 background: var(--sp-color-bg-hover, #F0EFEC);
@@ -3795,12 +3842,11 @@ class SettingPanel extends HTMLElement {
         // 语言选择
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
-            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-            this.refreshAll();
-            void this.saveImmediately().then(() => {
-                this._t = createRendererTranslator(this.currentData);
-                this.refreshAll();
-            });
+            // 不在本地立即重建翻译器：此刻瘦身快照仍是旧语言的，新语言词条尚未下发，
+            // 立即切换会先回退英文、等广播到位再切回（闪英文）。只保存设置，main 侧
+            // 检测到生效语言变化会先推送新语言快照（locale:packsChanged），connectedCallback
+            // 里订阅的 onLocalePacksChanged 随即重建翻译器并 refreshAll，一次性切到新语言
+            void this.saveImmediately();
         });
 
         // 字体预设
@@ -5174,12 +5220,9 @@ class SettingPanel extends HTMLElement {
     _bindGeneralSectionEvents() {
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
-            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-            this.refreshAll();
-            void this.saveImmediately().then(() => {
-                this._t = createRendererTranslator(this.currentData);
-                this.refreshAll();
-            });
+            // 同上：不在本地立即重建，等 main 推送新语言快照后的 onLocalePacksChanged
+            // 统一重建翻译器并 refreshAll，避免"先英文再切回"的中间态
+            void this.saveImmediately();
         });
         this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
             const preset = e.target.value;

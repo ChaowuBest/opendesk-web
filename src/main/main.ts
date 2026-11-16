@@ -2708,12 +2708,48 @@ const withResolvedLocale = (data: any) => ({
 });
 
 /**
+ * 向所有窗口推送语言包瘦身快照（仅生效语言 + 回退语言的增量）。
+ * 全量快照按语言数线性膨胀（多包时 >1MB），而每个窗口与子 frame 的 preload
+ * 都会持有一份克隆副本；瘦身把恒定内存与推送开销降到单语言体量。
+ */
+function pushLocalePackSnapshotToAllWindows(): void {
+    const snapshot = getLocalePackStore().getSlimSnapshot(getLocale());
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+            safeSendToWebContents(win.webContents, 'locale:packsChanged', snapshot);
+        }
+    }
+}
+
+// packsChanged 推送去抖：批量插件激活（启动时各语言包插件逐个注册）会产生连续
+// 多次 store 变更，合并为一次推送，避免多 MB 快照的克隆在启动期连续阻塞主线程
+let localePackPushTimer: NodeJS.Timeout | null = null;
+
+function scheduleLocalePackSnapshotPush(): void {
+    if (localePackPushTimer) return;
+    localePackPushTimer = setTimeout(() => {
+        localePackPushTimer = null;
+        pushLocalePackSnapshotToAllWindows();
+    }, 50);
+}
+
+// 上次随 setting:changed 下发的生效语言；null 表示尚未广播过（首播必带快照基线）
+let lastBroadcastResolvedLocale: string | null = null;
+
+/**
  * 广播 setting:changed 到所有 renderer 窗口（含 resolved_locale）。
  * Setting.setData 的 afterSetDataCallbacks 与主窗口 focus 的系统语言刷新共用
  * 这一广播路径，保证所有窗口对语言切换的感知方式一致。
+ *
+ * 生效语言变化时先推新的语言包瘦身快照再广播设置：renderer 翻译器收到
+ * setting:changed 后立刻按新语言查增量，快照先行保证新语言词条已就位。
  */
 function broadcastSettingChangedToAllWindows(): void {
     const updatedData = withResolvedLocale(Setting.getInstance().getData());
+    if (lastBroadcastResolvedLocale !== updatedData.resolved_locale) {
+        lastBroadcastResolvedLocale = updatedData.resolved_locale;
+        pushLocalePackSnapshotToAllWindows();
+    }
     for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) {
             safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
@@ -2740,9 +2776,10 @@ const registerSettingAPIHandlers = () => {
         return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
     });
     // 语言包快照（与激活语言解耦，按 tag 组织）：preload 启动时拉取，
-    // 之后由 packsChanged 推送刷新
+    // 之后由 packsChanged 推送刷新。下发瘦身快照（仅生效语言 + 回退语言增量），
+    // 每个窗口与子 frame 各持一份副本，全量快照会让内存与克隆耗时按语言数膨胀
     ipcMain.handle('locale:getLocalePacks', () => {
-        return { status: 'ok', data: getLocalePackStore().getSnapshot() };
+        return { status: 'ok', data: getLocalePackStore().getSlimSnapshot(getLocale()) };
     });
 
     ipcMain.handle('model:checkVisionSupport', (_event, models) => {
@@ -4469,13 +4506,9 @@ async function startApplication(): Promise<void> {
         });
 
         // 语言包变更广播：插件宿主激活/停用语言包（LocaleStore 变更）后，
-        // 推送最新快照到所有窗口，各翻译器重建后立即生效
-        getLocalePackStore().subscribe((snapshot) => {
-            for (const win of BrowserWindow.getAllWindows()) {
-                if (!win.isDestroyed()) {
-                    safeSendToWebContents(win.webContents, 'locale:packsChanged', snapshot);
-                }
-            }
+        // 去抖合并为一次瘦身快照推送，各翻译器重建后立即生效
+        getLocalePackStore().subscribe(() => {
+            scheduleLocalePackSnapshotPush();
         });
 
         // 启动完成后异步清理过期日志，不阻塞主流程

@@ -44,6 +44,11 @@ export interface LocalePackSnapshot {
     availableLocales: string[];
     /** 同 key 多插件冲突报告（key -> 获胜插件与被覆盖方） */
     conflicts: Record<string, LocalePackMergeConflict[]>;
+    /**
+     * 各 tag 的内容修订号：任何影响该 tag 的插件变更都自增。renderer 侧据此以 O(1)
+     * 检测"当前语言的词条是否变了"，避免对几百 KB 的增量做全量序列化比对。
+     */
+    revisionsByTag: Record<string, number>;
 }
 
 type LocalePackListener = (snapshot: LocalePackSnapshot) => void;
@@ -53,6 +58,8 @@ class LocaleStore {
     private mergedCache = new Map<string, MergedLocalePack>();
     private availableLocalesCache: string[] | undefined;
     private listeners = new Set<LocalePackListener>();
+    private revisionsByTag = new Map<string, number>();
+    private revisionCounter = 0;
 
     /** 整体替换某插件贡献的语言包（activate / 覆盖安装时调用） */
     replacePluginPacks(pluginId: string, packs: readonly PluginLocalePackDefinition[]): void {
@@ -66,6 +73,7 @@ class LocaleStore {
         }
         this.availableLocalesCache = undefined;
         this.invalidateTags(affectedTags);
+        this.bumpRevisions(affectedTags);
         logLocaleEvent(
             'info',
             `Registered locale packs from plugin ${pluginId}: ${[...new Set(packs.map((pack) => pack.tag))].join(', ')}`
@@ -79,9 +87,19 @@ class LocaleStore {
         if (!packs) return;
         this.packsByPlugin.delete(pluginId);
         this.availableLocalesCache = undefined;
-        this.invalidateTags(new Set(packs.map((pack) => pack.tag)));
+        const affectedTags = new Set(packs.map((pack) => pack.tag));
+        this.invalidateTags(affectedTags);
+        this.bumpRevisions(affectedTags);
         logLocaleEvent('info', `Removed locale packs from plugin ${pluginId}`);
         this.notify();
+    }
+
+    /** 受影响 tag 的修订号自增（修订号全局单调，保证任何变更都产生新指纹） */
+    private bumpRevisions(tags: Iterable<string>): void {
+        for (const tag of tags) {
+            this.revisionCounter += 1;
+            this.revisionsByTag.set(tag, this.revisionCounter);
+        }
     }
 
     /** 测试用：清空全部状态 */
@@ -89,6 +107,11 @@ class LocaleStore {
         this.packsByPlugin.clear();
         this.mergedCache.clear();
         this.availableLocalesCache = undefined;
+        // 修订号整体自增而不是清空：保证清空前后快照指纹必然不同
+        for (const tag of this.revisionsByTag.keys()) {
+            this.revisionCounter += 1;
+            this.revisionsByTag.set(tag, this.revisionCounter);
+        }
         this.notify();
     }
 
@@ -142,6 +165,46 @@ class LocaleStore {
         return this.getMergedPack(tag)?.fallback;
     }
 
+    /**
+     * 瘦身快照：只带"生效语言 + 其回退语言"的增量词条，供 IPC 下发 renderer。
+     *
+     * 渲染查找链只需要这两层；多装几个语言包时，全量快照体积按语言数线性膨胀
+     * （4 个全量包约 1.4MB），而瘦身后恒为单语言体量（~350KB），每个窗口 / 子
+     * frame 的 preload 都持有一份副本，节省的是 4 倍内存与每次推送的克隆耗时。
+     * availableLocales / fallbackByTag / revisionsByTag 仍是小对象，保持全量。
+     *
+     * 组装规则与 renderer 侧应用视图重建指纹 activeLocalePackKey
+     * （src/renderer/scripts/application-locale-refresh.ts）互为前提：指纹只跟踪
+     * fallbackByTag 中声明过的 fallback。未声明 @fallback 的语言在取词链
+     * resolveLocaleText 中虽缺省回退 en-US，但本快照不携带 en-US 增量，en-US
+     * 词条变化不可能影响其显示，指纹不含 en-US 才与取词口径一致。修改本组装
+     * 规则（如恒定带上 en-US）时必须同步修改指纹，locale-store.test.ts 锁有
+     * 该不变式的测试。
+     */
+    getSlimSnapshot(activeLocale: string): LocalePackSnapshot {
+        const incrementsByTag: Record<string, Record<string, string>> = {};
+        const fallbackByTag: Record<string, string> = {};
+        const conflicts: Record<string, LocalePackMergeConflict[]> = {};
+        const includedTags = new Set<string>([activeLocale]);
+        const activeFallback = this.getPackFallback(activeLocale);
+        if (activeFallback && activeFallback !== activeLocale) {
+            includedTags.add(activeFallback);
+        }
+        for (const tag of includedTags) {
+            const merged = this.getMergedPack(tag);
+            if (!merged) continue;
+            incrementsByTag[tag] = merged.entries;
+            if (merged.fallback !== undefined) fallbackByTag[tag] = merged.fallback;
+            if (merged.conflicts.length > 0) conflicts[tag] = merged.conflicts;
+        }
+        return this.withRevisions({
+            incrementsByTag,
+            fallbackByTag,
+            availableLocales: this.getAvailableLocales(),
+            conflicts
+        });
+    }
+
     /** 当前快照全量导出：main 下发 renderer（IPC 拉取 / packsChanged 推送共用） */
     getSnapshot(): LocalePackSnapshot {
         const incrementsByTag: Record<string, Record<string, string>> = {};
@@ -154,7 +217,20 @@ class LocaleStore {
             if (merged.fallback !== undefined) fallbackByTag[tag] = merged.fallback;
             if (merged.conflicts.length > 0) conflicts[tag] = merged.conflicts;
         }
-        return { incrementsByTag, fallbackByTag, availableLocales: this.getAvailableLocales(), conflicts };
+        return this.withRevisions({
+            incrementsByTag,
+            fallbackByTag,
+            availableLocales: this.getAvailableLocales(),
+            conflicts
+        });
+    }
+
+    private withRevisions(snapshot: Omit<LocalePackSnapshot, 'revisionsByTag'>): LocalePackSnapshot {
+        const revisionsByTag: Record<string, number> = {};
+        for (const [tag, revision] of this.revisionsByTag) {
+            revisionsByTag[tag] = revision;
+        }
+        return { ...snapshot, revisionsByTag };
     }
 
     /** 订阅语言包变更（main 据此向各窗口广播 locale:packsChanged），返回取消函数 */

@@ -148,6 +148,46 @@ describe('resolveLocaleText 查找链', () => {
     });
 });
 
+describe('resolveLocaleText 域前缀查找（应用歧义 key 按 <bundle>.<key> 覆盖）', () => {
+    // 模拟 notes 应用域：app.name 在多个应用同名不同义，语言包只能用 notes.app.name 表达
+    const domain = {
+        'zh-CN': { 'app.name': '笔记' },
+        'en-US': { 'app.name': 'Notes' }
+    };
+    const lookupPack = (tag: string) => {
+        if (tag === 'tr-TR') return { 'notes.app.name': 'Notlar', 'app.name': 'ShellName' };
+        return undefined;
+    };
+    const fallbackOf = (tag: string) => (tag === 'tr-TR' ? 'en-US' : undefined);
+
+    test('带前缀时优先命中 <bundle>.<key>，屏蔽同名的共享层 key', () => {
+        expect(resolveLocaleText('app.name', 'tr-TR', domain, lookupPack, fallbackOf, 'notes')).toBe('Notlar');
+    });
+
+    test('前缀未命中时回退裸 key（共享域覆盖语义保留）', () => {
+        const packWithoutPrefix = (tag: string) => (tag === 'tr-TR' ? { 'app.name': 'Ortak Ad' } : undefined);
+        expect(resolveLocaleText('app.name', 'tr-TR', domain, packWithoutPrefix, fallbackOf, 'notes')).toBe('Ortak Ad');
+    });
+
+    test('前缀与裸 key 都未命中时落到域词典', () => {
+        const emptyPack = () => undefined;
+        expect(resolveLocaleText('app.name', 'en-US', domain, emptyPack, fallbackOf, 'notes')).toBe('Notes');
+    });
+
+    test('前缀查找同样作用于 @fallback 回退链', () => {
+        // tr-TR 包未命中，回退 en-US 包中带前缀的词条
+        const packWithFallbackEntry = (tag: string) =>
+            tag === 'en-US' ? { 'notes.app.name': 'Notes (pack)' } : undefined;
+        expect(resolveLocaleText('app.name', 'tr-TR', domain, packWithFallbackEntry, fallbackOf, 'notes')).toBe(
+            'Notes (pack)'
+        );
+    });
+
+    test('不带前缀时行为与旧链完全一致（裸 key 优先于域词典）', () => {
+        expect(resolveLocaleText('app.name', 'tr-TR', domain, lookupPack, fallbackOf)).toBe('ShellName');
+    });
+});
+
 describe('applyLocaleParams', () => {
     test('替换已提供的参数、保留未提供的占位符', () => {
         expect(applyLocaleParams('ID ${taskId} 不存在', { taskId: 't-1' })).toBe('ID t-1 不存在');

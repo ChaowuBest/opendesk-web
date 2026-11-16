@@ -181,12 +181,15 @@ export function t(key: string, params?: Record<string, string | number>): string
  * @param domainTranslations - 所属域的词典（全局词典或某应用的 zh-CN/en-US 词典）
  * @param params - 可选插值参数
  * @param locale - 显式指定语言；缺省取当前有效语言
+ * @param bundleName - 应用域前缀（如 'notes'）。传入后语言包可按 <bundle>.<key>
+ *   提供该应用专属的覆盖（app.name / agent.instruct 等跨应用歧义 key 的解法）
  */
 export function translateWithDomain(
     key: string,
     domainTranslations: Record<string, Record<string, string>>,
     params?: Record<string, string | number>,
-    locale: string = getLocale()
+    locale: string = getLocale(),
+    bundleName?: string
 ): string {
     const store = getLocalePackStore();
     const text = resolveLocaleText(
@@ -194,7 +197,8 @@ export function translateWithDomain(
         locale,
         domainTranslations,
         (tag) => store.getMergedPack(tag)?.entries,
-        (tag) => store.getPackFallback(tag)
+        (tag) => store.getPackFallback(tag),
+        bundleName
     );
     return applyLocaleParams(text, params);
 }

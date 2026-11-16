@@ -19,5 +19,5 @@ const translations: Record<string, Record<string, string>> = {
  * @param params `${name}` 形式的占位参数
  */
 export function t(key: string, params?: Record<string, string | number>): string {
-    return translateWithDomain(key, translations, params);
+    return translateWithDomain(key, translations, params, undefined, 'pluginmgr');
 }

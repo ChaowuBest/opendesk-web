@@ -1086,6 +1086,12 @@ acme-langpack-ja/
   因此既可以补全缺失 key，也可以修正既有文案。
 - **部分提供**：同一语言允许多个插件各自贡献一部分 key，按 key 合并；同 key 冲突时按
   **插件 ID 字典序后者胜**，冲突不是错误但会记录告警（后续插件中心展示冲突报告）。
+- **应用域前缀覆盖**：应用域的 `t()`（main 与 renderer 均已接入）查找语言包时先查
+  `<bundle>.<key>`，再回退裸 key。这为跨应用歧义 key 提供了按应用覆盖的能力——例如
+  `app.name` 在各应用域的英文文案不同（Notes / Calendar / …），语言包写
+  `"notes.app.name": "Notlar"` 即可只改 Notes 的显示名；`agent.instruct`、
+  `error.channel*` 等歧义 key 同理。裸 key 未被前缀条目遮蔽时仍会命中所有应用
+  （共享域覆盖语义保留），内置试点语言包对歧义 key 一律使用前缀条目。
 - **新语言动态注册**：语言包声明的语言会自动出现在设置页 / TUI 语言选项中（显示名用
   `Intl.DisplayNames` 按语言自身书写形式生成，如 `Türkçe`）；`auto`（跟随系统）模式下按
   BCP-47 最佳匹配（精确 tag → 主语言 tag）。未翻译的 key 沿 `@fallback` 声明的回退语言
@@ -1095,11 +1101,13 @@ acme-langpack-ja/
 - **校验**：结构必须为扁平 `string -> string`；单文件上限 2MB；`@` 前缀是保留 key
   （当前仅支持 `@fallback`）；路径越界与结构非法都会让加载失败并携带文件与 key 定位。
 - **边界**：外部 iframe 应用与 browser 应用 `<webview>` 中的外部页面文案不受语言包控制；
-  应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，语言包覆盖它们会同时
-  影响所有应用，贡献应用文案时请使用带应用前缀的 key。
+  应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，裸 key 覆盖会同时
+  影响所有应用，为单个应用贡献文案请使用 `<bundle>.<key>` 前缀条目。
 
-内置试点语言包见 `resources/plugins/opendesk-langpack-tr/`（土耳其语）与
-`resources/plugins/opendesk-langpack-id/`（印尼语）。
+内置试点语言包见 `resources/plugins/opendesk-langpack-tr/`（土耳其语）、
+`resources/plugins/opendesk-langpack-de/`（德语）、`resources/plugins/opendesk-langpack-fr/`
+（法语）与 `resources/plugins/opendesk-langpack-id/`（印尼语），四者均全量覆盖主界面与
+各内置应用词条。
 
 ## 无 manifest 的本地插件
 

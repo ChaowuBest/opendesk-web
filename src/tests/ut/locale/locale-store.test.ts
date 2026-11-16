@@ -119,4 +119,80 @@ describe('LocaleStore', () => {
         // 插值经同一链路生效
         expect(translateWithDomain('app.greet', domain, { who: 'X' }, 'zh-CN')).toBe('你好');
     });
+
+    test('translateWithDomain 带 bundleName 时优先命中语言包的 <bundle>.<key>', () => {
+        getLocalePackStore().clear();
+        const domain = {
+            'zh-CN': { 'app.name': '笔记' },
+            'en-US': { 'app.name': 'Notes' }
+        };
+        getLocalePackStore().replacePluginPacks('pack-tr', [
+            {
+                tag: 'tr-TR',
+                fallback: 'en-US',
+                entries: { 'notes.app.name': 'Notlar', 'app.name': 'Ortak Ad' },
+                sourceFile: 'locales/tr-TR.json'
+            }
+        ]);
+        // 前缀命中：应用拿到自己的显示名，而不是共享层的 "Ortak Ad"
+        expect(translateWithDomain('app.name', domain, undefined, 'tr-TR', 'notes')).toBe('Notlar');
+        // 不带 bundle 的调用（全局 t()）仍走裸 key
+        expect(translateWithDomain('app.name', domain, undefined, 'tr-TR')).toBe('Ortak Ad');
+        // 前缀未命中时回退裸 key，再回退域词典
+        getLocalePackStore().replacePluginPacks('pack-tr', [
+            { tag: 'tr-TR', fallback: 'en-US', entries: { 'app.name': 'Ortak Ad' }, sourceFile: 'locales/tr-TR.json' }
+        ]);
+        expect(translateWithDomain('app.name', domain, undefined, 'tr-TR', 'notes')).toBe('Ortak Ad');
+        getLocalePackStore().replacePluginPacks('pack-tr', [
+            { tag: 'tr-TR', fallback: 'en-US', entries: {}, sourceFile: 'locales/tr-TR.json' }
+        ]);
+        expect(translateWithDomain('app.name', domain, undefined, 'tr-TR', 'notes')).toBe('Notes');
+    });
+
+    test('getSlimSnapshot 只带生效语言与回退语言的增量，availableLocales 保持全量', () => {
+        getLocalePackStore().clear();
+        getLocalePackStore().replacePluginPacks('pack-tr', [
+            { tag: 'tr-TR', fallback: 'en-US', entries: { greet: 'Merhaba' }, sourceFile: 'locales/tr-TR.json' }
+        ]);
+        getLocalePackStore().replacePluginPacks('pack-de', [
+            { tag: 'de-DE', fallback: 'en-US', entries: { greet: 'Hallo' }, sourceFile: 'locales/de-DE.json' }
+        ]);
+        const slim = getLocalePackStore().getSlimSnapshot('tr-TR');
+        // 只含生效语言 + 其回退语言（en-US 无增量则缺席）
+        expect(Object.keys(slim.incrementsByTag)).toEqual(['tr-TR']);
+        expect(slim.incrementsByTag['tr-TR']).toEqual({ greet: 'Merhaba' });
+        expect(slim.fallbackByTag['tr-TR']).toBe('en-US');
+        // 语言选择器需要的可用集合不受瘦身影响
+        expect(slim.availableLocales).toEqual(['de-DE', 'en-US', 'tr-TR', 'zh-CN']);
+        expect(slim.revisionsByTag['tr-TR']).toBeGreaterThan(0);
+    });
+
+    test('无 @fallback 的语言，瘦身快照不携带 en-US 增量（与重建指纹口径互洽）', () => {
+        getLocalePackStore().clear();
+        getLocalePackStore().replacePluginPacks('pack-tr', [pack('tr-TR', { greet: 'Merhaba' })]);
+        getLocalePackStore().replacePluginPacks('pack-en', [pack('en-US', { greet: 'Hello' })]);
+        // tr-TR 未声明 @fallback：取词链 resolveLocaleText 虽缺省回退 en-US，
+        // 但瘦身快照不携带 en-US 增量，en-US 词条变化不可能影响该语言显示；
+        // 应用视图重建指纹 activeLocalePackKey 据此只跟踪声明过的 fallback。
+        // 若破坏本不变式（如恒定带上 en-US），指纹将漏判 en-US 词条变化导致
+        // 应用视图滞留旧文案，必须与 activeLocalePackKey / getSlimSnapshot 同步修改
+        const slim = getLocalePackStore().getSlimSnapshot('tr-TR');
+        expect(slim.incrementsByTag['en-US']).toBeUndefined();
+        expect(Object.keys(slim.incrementsByTag)).toEqual(['tr-TR']);
+    });
+
+    test('修订号随插件变更单调自增，快照可据此检测词条变化', () => {
+        getLocalePackStore().clear();
+        getLocalePackStore().replacePluginPacks('alpha', [pack('tr-TR', { a: '1' })]);
+        const first = getLocalePackStore().getSnapshot().revisionsByTag['tr-TR'];
+        getLocalePackStore().replacePluginPacks('beta', [pack('tr-TR', { b: '1' })]);
+        const second = getLocalePackStore().getSnapshot().revisionsByTag['tr-TR'];
+        expect(second).toBeGreaterThan(first);
+        // 无关语言变更不影响本 tag 修订号
+        getLocalePackStore().replacePluginPacks('gamma', [pack('de-DE', { c: '1' })]);
+        expect(getLocalePackStore().getSnapshot().revisionsByTag['tr-TR']).toBe(second);
+        // 移除时再自增
+        getLocalePackStore().removePluginPacks('alpha');
+        expect(getLocalePackStore().getSnapshot().revisionsByTag['tr-TR']).toBeGreaterThan(second);
+    });
 });

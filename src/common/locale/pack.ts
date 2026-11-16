@@ -208,28 +208,43 @@ export function isBuiltinLocaleTag(tag: string): boolean {
  * createTranslator 共用同一顺序，保证各端对同一 key 的解析结果一致。
  *
  * 链序：
- *  1. pack[locale][key]
- *  2. domain[locale][key]（内置词典：全局词典或应用词典，由调用方传入）
- *  3. 非 builtin locale：pack[fallback][key] -> domain[fallback][key]，fallback 缺省 en-US
- *  4. locale === 'en-US'：domain['zh-CN'][key]（保持 renderer 既有兜底）
- *  5. 回显 key 本身
+ *  1. pack[locale][<prefix>.key]（仅 domainPrefix 存在时；应用歧义 key 的域专属覆盖）
+ *  2. pack[locale][key]
+ *  3. domain[locale][key]（内置词典：全局词典或应用词典，由调用方传入）
+ *  4. 非 builtin locale：<prefix>.key -> key（pack[fallback]）-> domain[fallback][key]，fallback 缺省 en-US
+ *  5. locale === 'en-US'：domain['zh-CN'][key]（保持 renderer 既有兜底）
+ *  6. 回显 key 本身
  *
  * @param lookupPack 由宿主注入的增量查询：返回该 tag 的合并增量词条
+ * @param domainPrefix 应用域前缀（如 'notes'）。传入后语言包可按 <prefix>.<key>
+ *   提供域专属覆盖（app.name / agent.instruct 等跨应用歧义 key 的解法），
+ *   未命中时回退裸 key，保持「共享域覆盖影响所有应用」的既有语义
  */
 export function resolveLocaleText(
     key: string,
     locale: string,
     domainTranslations: Record<string, Record<string, string>>,
     lookupPack: (tag: string) => Record<string, string> | undefined,
-    getPackFallback: (tag: string) => string | undefined
+    getPackFallback: (tag: string) => string | undefined,
+    domainPrefix?: string
 ): string {
     const packEntries = lookupPack(locale);
-    let text = packEntries?.[key] ?? domainTranslations[locale]?.[key];
+    // 前缀串拼接保持无条件：主语言无增量但回退语言的包可能携带前缀条目，
+    // 不能以主语言增量为存在条件（重复取词的开销已由 renderer 记忆化兜住）
+    const prefixedKey = domainPrefix ? `${domainPrefix}.${key}` : undefined;
+    let text =
+        (prefixedKey ? packEntries?.[prefixedKey] : undefined) ??
+        packEntries?.[key] ??
+        domainTranslations[locale]?.[key];
     if (text !== undefined) return text;
     if (!isBuiltinLocaleTag(locale)) {
         const fallback = getPackFallback(locale) ?? 'en-US';
         if (fallback !== locale) {
-            text = lookupPack(fallback)?.[key] ?? domainTranslations[fallback]?.[key];
+            const fallbackPack = lookupPack(fallback);
+            text =
+                (prefixedKey ? fallbackPack?.[prefixedKey] : undefined) ??
+                fallbackPack?.[key] ??
+                domainTranslations[fallback]?.[key];
             if (text !== undefined) return text;
         }
     }
@@ -245,7 +260,9 @@ export function applyLocaleParams(text: string, params?: Record<string, string |
     if (!params) return text;
     let result = text;
     for (const [name, value] of Object.entries(params)) {
-        result = result.replace(new RegExp(`\\$\\{${name}\\}`, 'g'), String(value));
+        // split/join 与 replace + 全局正则的替换语义一致（全部出现、字面匹配），
+        // 但免去每次调用的 RegExp 编译，也避免替换值中的 $ 序列被当作正则替换模式
+        result = result.split(`\${${name}}`).join(String(value));
     }
     return result;
 }

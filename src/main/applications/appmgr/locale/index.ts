@@ -19,5 +19,5 @@ const translations: Record<string, Record<string, string>> = {
 };
 
 export function t(key: string, params?: Record<string, string | number>): string {
-    return translateWithDomain(key, translations, params);
+    return translateWithDomain(key, translations, params, undefined, 'appmgr');
 }

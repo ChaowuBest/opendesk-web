@@ -26,6 +26,11 @@ describe('sidebar task info modal', () => {
                 observe() {}
                 disconnect() {}
             },
+            ResizeObserver: class {
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            },
             localStorage: {
                 getItem: () => null,
                 setItem: () => undefined,
