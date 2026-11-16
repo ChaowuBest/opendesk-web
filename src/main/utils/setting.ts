@@ -18,6 +18,7 @@ import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 import { OUTPUT_DISPLAY_LEVELS } from '../../common/output-display.js';
+import { getHostRuntime } from '../../platforms/runtime.js';
 import {
     getHarmonyHomeDirectory,
     getHarmonyRuntimeEnvironment,
@@ -1284,12 +1285,15 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
+ * - 宿主注入 defaultWorkspace 时优先使用；创建失败直接报错，不回退到其他存储。
  * - HarmonyOS PC: userHomeDir/Documents/OpenDesk（权限不足时回退到 userHomeDir/OpenDesk）
  * - HarmonyOS tablet: appDataDir/workspace
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
  */
 function getTempWorkspaceDirectory(): string {
+    const hostWorkspace = getHostRuntime().defaultWorkspace?.();
+    if (hostWorkspace !== undefined) return ensureDirectoryExists(hostWorkspace);
     let workspacePath: string;
     const harmonyRuntime = getHarmonyRuntimeEnvironment();
     if (harmonyRuntime) {
