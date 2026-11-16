@@ -13,8 +13,12 @@
                 if (localStorage.getItem('opendesk-sidebar-collapsed') === 'true') {
                     document.documentElement.classList.add('startup-sidebar-collapsed');
                 }
+                // web 模式下页面铺满浏览器标签页：没有原生窗口，不需要窗口阴影边距和窗口控制按钮
+                if (window.__OPENDESK_WEB__) {
+                    document.documentElement.classList.add('web-mode');
+                }
                 // Linux 无边框窗口由页面自绘圆角，需在首帧前挂类避免闪现方形窗口
-                if (window.systemInfo && window.systemInfo.isLinux) {
+                if (window.systemInfo && window.systemInfo.isLinux && !window.__OPENDESK_WEB__) {
                     document.documentElement.classList.add('window-rounded');
                     // 阴影边距（CSS 像素）要按 zoom factor 反算才能对齐 main 侧的
                     // DIP 边距，首帧前同步写入，避免边距先按未缩放值渲染再跳一下

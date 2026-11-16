@@ -322,3 +322,10 @@ html[data-theme='dark'] .drag-overlay .update-ready-btn:hover {
 .markdown-body {
     font-family: var(--font-sans);
 }
+
+/* web 模式：浏览器标签页没有可最小化/最大化/关闭的窗口 */
+html.web-mode #minimize-btn,
+html.web-mode #maximize-btn,
+html.web-mode #close-drag-overlay-btn {
+    display: none;
+}
