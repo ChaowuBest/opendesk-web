@@ -37,6 +37,16 @@ describe('侧边栏导航按钮窄态', () => {
         expect(declaration(ruleBody(css, '.sb-nav-btn'), 'white-space')).toBe('nowrap');
     });
 
+    it('导航按钮保留左右内边距，文案不贴边', () => {
+        // padding: 8px 0 时三个按钮并排，相邻文案几乎连在一起，看起来挤成一团；
+        // 左右内边距同时会被测量态的 getBoundingClientRect 计入，
+        // 因此空间不足时会先收起文案，而不是先把文案挤到贴边
+        const padding = declaration(ruleBody(css, '.sb-nav-btn'), 'padding') || '';
+        const horizontal = padding.trim().split(/\s+/)[1];
+        expect(horizontal).toBeTruthy();
+        expect(parseFloat(horizontal)).toBeGreaterThanOrEqual(8);
+    });
+
     it('导航按钮过渡只作用于颜色，布局属性不参与过渡', () => {
         // transition:all 会让测量态的临时宽度在恢复时被动画化：
         // 拖拽时按钮宽度在「内容宽/拉伸宽」间反复插值，视觉上间歇性变窄变宽。

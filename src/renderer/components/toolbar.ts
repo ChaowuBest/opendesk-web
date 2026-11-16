@@ -35,6 +35,7 @@ export class ElasticToolbarWidget extends HTMLElement {
     subtitleLabel?: string;
     layout: ToolbarLayout;
     _subtitleClickHandler?: () => void;
+    private _labelMeasureObserver?: ResizeObserver;
 
     /**
      * 创建一个弹性工具栏组件
@@ -52,10 +53,33 @@ export class ElasticToolbarWidget extends HTMLElement {
 
     connectedCallback() {
         this.render();
+        // 折叠态（display:none）下无法测量文案宽度，恢复出真实尺寸后需要补测一次
+        this._labelMeasureObserver?.disconnect();
+        this._labelMeasureObserver = new ResizeObserver(() => {
+            if (this.clientWidth) this._measureLabelWidths();
+        });
+        this._labelMeasureObserver.observe(this);
+        // 字体加载完成会改变文本度量，需要按新度量重新写入展开宽度
+        document.fonts?.ready?.then(() => {
+            if (this.isConnected) this._measureLabelWidths();
+        });
+    }
+
+    disconnectedCallback() {
+        this._labelMeasureObserver?.disconnect();
+        this._labelMeasureObserver = undefined;
     }
 
     setButtons(buttons: Button[]) {
-        this.buttons = buttons;
+        // setButtons 会整体重渲染（语言切换后按新文案重建按钮等），而激活态是工具栏自身的状态、
+        // 不是按钮配置的一部分：调用方通常不会在重建时重新声明谁被选中。若不沿用当前激活按钮，
+        // 任何无关的重渲染都会让激活态消失（如拖动侧边栏宽度触发设置保存 → setting:changed
+        // → 底部导航重建 → 当前页高亮丢失）。
+        const activeId = this.buttons.find((button) => button.active)?.id ?? null;
+        this.buttons = buttons.map((button) => ({
+            ...button,
+            active: button.active ?? button.id === activeId
+        }));
         this.render();
     }
 
@@ -150,6 +174,26 @@ export class ElasticToolbarWidget extends HTMLElement {
         } else {
             this.render();
         }
+    }
+
+    /**
+     * 实测文案宽度并据此决定整行的展开策略：
+     * 1. 把每个文案的真实内容宽度写入 --elastic-label-max，作为展开态的宽度上限。
+     *    收起态 max-width 为 0 且 overflow:hidden，scrollWidth 依然能读回文案宽度；
+     *    量不出宽度时（折叠态、无布局引擎的环境）跳过，交给 CSS 里 var() 的兜底值。
+     * 2. 按内容宽度整体量一次整行：放不下所有常显文案时加 elastic-labels-tight，
+     *    先收起次要的反馈文案，把宽度让给当前页文案。
+     */
+    private _measureLabelWidths() {
+        for (const label of this.querySelectorAll<HTMLElement>('.elastic-label')) {
+            const width = label.scrollWidth;
+            if (width > 0) label.style.setProperty('--elastic-label-max', `${width}px`);
+        }
+        if (!this.clientWidth) return;
+        this.classList.add('elastic-labels-measure');
+        const overflow = this.scrollWidth > this.clientWidth;
+        this.classList.remove('elastic-labels-measure');
+        this.classList.toggle('elastic-labels-tight', overflow);
     }
 
     render() {
@@ -249,6 +293,8 @@ export class ElasticToolbarWidget extends HTMLElement {
             </div>
         </header>
         `;
+        // 语言切换后文案长度会变，重渲染即按新文案重新测量展开宽度
+        this._measureLabelWidths();
     }
 
     private _bindButtons() {

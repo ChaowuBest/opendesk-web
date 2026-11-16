@@ -181,6 +181,8 @@ export function mergeLocalePacks(sources: readonly LocalePackSource[]): MergedLo
  * 语言 tag 的展示名：取该语言主语言的自身书写形式（如 tr-TR -> Türkçe、id-ID ->
  * Bahasa Indonesia），与设置页/TUI 下拉框对齐；不展示区域后缀（pt-BR/pt-PT 均
  * 显示 Português，语言包层面的区分交给插件 displayName）。
+ * 各语言对语言名的书写规范不一致（如 fr -> français 小写、de -> Deutsch 大写），
+ * 选项列表统一改为首字母大写，保证同一列表内大小写风格一致。
  * Intl.DisplayNames 不可用或解析失败时退回原始 tag。
  */
 export function formatLocaleDisplayName(tag: string): string {
@@ -188,11 +190,33 @@ export function formatLocaleDisplayName(tag: string): string {
         const primary = tag.trim().replace(/_/g, '-').split('-')[0];
         const displayNames = new Intl.DisplayNames([primary], { type: 'language' });
         const name = displayNames.of(primary);
-        if (name && name.toLowerCase() !== primary.toLowerCase()) return name;
+        if (name && name.toLowerCase() !== primary.toLowerCase()) return capitalizeFirstLetter(name);
     } catch {
         /* Intl.DisplayNames 不可用时退回 tag 本身 */
     }
     return tag;
+}
+
+function capitalizeFirstLetter(text: string): string {
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * 语言选项的展示顺序：中文紧随「自动/默认」项之后、先于其它语言，其余按字母序。
+ * 仅用于选项列表渲染，不改变 getAvailableLocales() 的字典序结果（查找链与
+ * BCP-47 匹配不关心顺序）。
+ */
+export function orderLocaleOptions(tags: readonly string[]): string[] {
+    return [...tags].sort((a, b) => {
+        const aChinese = isChineseLocaleTag(a);
+        const bChinese = isChineseLocaleTag(b);
+        if (aChinese !== bChinese) return aChinese ? -1 : 1;
+        return a < b ? -1 : a > b ? 1 : 0;
+    });
+}
+
+function isChineseLocaleTag(tag: string): boolean {
+    return tag.trim().toLowerCase().startsWith('zh');
 }
 
 /**

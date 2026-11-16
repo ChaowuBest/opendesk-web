@@ -12,7 +12,7 @@
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
-import { formatLocaleDisplayName } from '../../common/locale/pack.js';
+import { formatLocaleDisplayName, orderLocaleOptions } from '../../common/locale/pack.js';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
@@ -2359,11 +2359,13 @@ class SettingPanel extends HTMLElement {
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
         // 语言选项动态化：内置语言 + 已启用语言包注册的语言（preload 快照；不可用时退回内置）
+        // 顺序：默认（跟随系统）→ 中文 → 其余按字母序
         const builtinLocaleLabels = { 'zh-CN': '中文', 'en-US': 'English' };
-        const availableLocales =
+        const availableLocales = orderLocaleOptions(
             window.localeAPI?.getLocalePacks?.()?.availableLocales?.length > 0
                 ? window.localeAPI.getLocalePacks().availableLocales
-                : Object.keys(builtinLocaleLabels);
+                : Object.keys(builtinLocaleLabels)
+        );
         const localeOptionsHtml = availableLocales
             .map((tag) => {
                 const label = builtinLocaleLabels[tag] ?? formatLocaleDisplayName(tag);

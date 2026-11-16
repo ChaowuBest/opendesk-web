@@ -15,7 +15,7 @@ import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
 import { t, setLocale, getLocale } from '../../../../locale/index.js';
 import { getLocalePackStore } from '../../../../locale/packs.js';
-import { formatLocaleDisplayName, isBuiltinLocaleTag } from '../../../../common/locale/pack.js';
+import { formatLocaleDisplayName, isBuiltinLocaleTag, orderLocaleOptions } from '../../../../common/locale/pack.js';
 
 /**
  * Language setting page.
@@ -36,7 +36,8 @@ export class LanguageConfigPage implements Component {
         const currentLocale = data.locale;
 
         // 语言选项动态化：内置语言 + 已启用语言包注册的语言（显示名按语言自身书写形式）
-        const availableLocales = getLocalePackStore().getAvailableLocales();
+        // 顺序：默认（auto）→ 中文 → 其余按字母序
+        const availableLocales = orderLocaleOptions(getLocalePackStore().getAvailableLocales());
         const localeOptions = ['auto', ...availableLocales];
         const localeOptionLabels: Record<string, string> = {
             auto: t('config.language.option.auto')

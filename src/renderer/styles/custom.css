@@ -2087,7 +2087,10 @@ html[data-theme='dark'] .sb-chat-badge-failed {
     align-items: center;
     justify-content: center;
     gap: 5px;
-    padding: 8px 0;
+    /* 左右内边距保证文案不贴边：否则三个按钮并排时相邻文案几乎连在一起，
+       视觉上像挤成一团。内边距会被 _updateNavLabelsFit 的内容宽度实测计入，
+       所以空间不足时文案会更早收起，而不是先挤成贴边状态 */
+    padding: 8px 10px;
     white-space: nowrap;
     background: var(--od-bg-elevated);
     border: 1px solid var(--od-border);

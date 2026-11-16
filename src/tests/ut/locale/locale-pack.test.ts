@@ -5,6 +5,7 @@ import {
     isBuiltinLocaleTag,
     mergeLocalePacks,
     normalizeLocaleTag,
+    orderLocaleOptions,
     parseLocalePackJson,
     resolveLocaleText,
     tagFromPackFileName
@@ -210,5 +211,38 @@ describe('isBuiltinLocaleTag / formatLocaleDisplayName', () => {
         expect(formatLocaleDisplayName('tr-TR')).toBe('Türkçe');
         // CLDR 的印尼语环境把语言名写作 "Indonesia"（口语中Bahasa Indonesia 的缩略）
         expect(formatLocaleDisplayName('id-ID')).toMatch(/^(Bahasa Indonesia|Indonesia)$/);
+    });
+
+    test('展示名统一首字母大写（各语言自身书写规范大小写不一致）', () => {
+        // CLDR 的 fr 环境写作小写 français，选项列表统一为大写开头
+        expect(formatLocaleDisplayName('fr-FR')).toBe('Français');
+        expect(formatLocaleDisplayName('de-DE')).toBe('Deutsch');
+        for (const tag of ['de-DE', 'en-US', 'fr-FR', 'id-ID', 'tr-TR']) {
+            const label = formatLocaleDisplayName(tag);
+            expect(label.charAt(0)).toBe(label.charAt(0).toUpperCase());
+        }
+    });
+
+    test('无法生成展示名时退回原始 tag（不做大小写改写）', () => {
+        expect(formatLocaleDisplayName('')).toBe('');
+    });
+});
+
+describe('orderLocaleOptions', () => {
+    test('中文紧随默认项之后，其余按字母序', () => {
+        expect(orderLocaleOptions(['zh-CN', 'en-US', 'tr-TR', 'de-DE', 'fr-FR', 'id-ID'])).toEqual([
+            'zh-CN',
+            'de-DE',
+            'en-US',
+            'fr-FR',
+            'id-ID',
+            'tr-TR'
+        ]);
+    });
+
+    test('不修改入参，且保留同语言多区域 tag', () => {
+        const input = ['zh-TW', 'en-US', 'zh-CN'];
+        expect(orderLocaleOptions(input)).toEqual(['zh-CN', 'zh-TW', 'en-US']);
+        expect(input).toEqual(['zh-TW', 'en-US', 'zh-CN']);
     });
 });

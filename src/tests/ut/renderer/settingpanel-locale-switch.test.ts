@@ -151,6 +151,41 @@ describe('setting-panel locale switch', () => {
         expect(panel.querySelector('#tab-models')?.classList.contains('hidden')).toBe(true);
     });
 
+    test('语言选项：默认项之后紧跟中文，其余按字母序且首字母大写', () => {
+        (window as any).localeAPI = {
+            getLocalePacks: () => ({
+                incrementsByTag: {},
+                fallbackByTag: {},
+                availableLocales: ['de-DE', 'en-US', 'fr-FR', 'id-ID', 'tr-TR', 'zh-CN']
+            })
+        };
+        const panel = createPanel('zh-CN');
+        panel.render();
+
+        const options = Array.from(panel.querySelectorAll('#locale-select option')).map((option: any) => ({
+            value: option.value,
+            label: option.textContent?.trim() || ''
+        }));
+        delete (window as any).localeAPI;
+
+        expect(options.map((option) => option.value)).toEqual([
+            'auto',
+            'zh-CN',
+            'de-DE',
+            'en-US',
+            'fr-FR',
+            'id-ID',
+            'tr-TR'
+        ]);
+        expect(options[1].label).toBe('中文');
+        // 非中文项统一首字母大写（CLDR 里 fr 环境写作小写 français）
+        const otherLabels = options.slice(2).map((option) => option.label);
+        for (const label of otherLabels) {
+            expect(label.charAt(0)).toBe(label.charAt(0).toUpperCase());
+        }
+        expect(otherLabels).toContain('Français');
+    });
+
     test('locale-select change 只保存，不本地立即切换（等新语言快照就位后统一刷新）', () => {
         const panel = createPanel('zh-CN');
         const originalTranslator = panel._t;
