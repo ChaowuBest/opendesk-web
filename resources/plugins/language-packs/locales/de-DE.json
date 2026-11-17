@@ -1845,6 +1845,7 @@
     "office.slides.error.outputPathRequired": "Ist in der aktuellen Aufgabe keine PPT geöffnet, muss ein Ausgabe-PPTX-Pfad angegeben werden",
     "office.slides.error.programUnavailable": "Das aktuelle Office-Paket unterstützt keine Präsentationsprogramme",
     "office.slides.error.startRequired": "Es existiert keine aktuelle Präsentation. Verwenden Sie zum Neuanlegen startFrom: 'blank' oder rufen Sie open_presentation auf, bevor Sie eine bestehende PPTX lesen oder bearbeiten.",
+    "office.slides.error.unsupportedAsset": "Nicht unterstütztes Format des Präsentations-Assets (${path})",
     "output.artifactSaved": "Vollständige Ausgabe gespeichert unter",
     "output.truncated": "Ausgabe zu groß; Anzeige gekürzt",
     "permission.action.access": "Zugriff",

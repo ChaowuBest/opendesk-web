@@ -1845,6 +1845,7 @@
     "office.slides.error.outputPathRequired": "Bila tidak ada PPT yang terbuka di tugas saat ini, jalur PPTX keluaran wajib disediakan",
     "office.slides.error.programUnavailable": "Paket Office saat ini tidak mendukung program presentasi",
     "office.slides.error.startRequired": "Belum ada presentasi yang tersedia. Gunakan startFrom: 'blank' untuk membuat baru, atau panggil open_presentation sebelum membaca atau menyunting PPTX yang ada.",
+    "office.slides.error.unsupportedAsset": "Format aset presentasi tidak didukung (${path})",
     "output.artifactSaved": "Output lengkap disimpan ke",
     "output.truncated": "Output terlalu besar; tampilan dipangkas",
     "permission.action.access": "Akses",

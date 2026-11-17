@@ -1845,6 +1845,7 @@
     "office.slides.error.outputPathRequired": "Si aucune présentation n'est ouverte dans la tâche actuelle, un chemin PPTX de sortie est requis",
     "office.slides.error.programUnavailable": "Le pack Office actuel ne prend pas en charge les programmes de présentation",
     "office.slides.error.startRequired": "Aucune présentation actuelle n'existe. Utilisez startFrom: 'blank' pour en créer une, ou open_presentation avant de lire ou modifier une PPTX existante.",
+    "office.slides.error.unsupportedAsset": "Format de ressource de présentation non pris en charge (${path})",
     "output.artifactSaved": "Sortie complète enregistrée dans",
     "output.truncated": "Sortie trop volumineuse ; affichage tronqué",
     "permission.action.access": "Accès",
