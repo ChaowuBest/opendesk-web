@@ -56,6 +56,36 @@ describe('compact smoke: tool result budget', () => {
         cleanupTempAppDirectory();
     });
 
+    test('projects tool groups in first occurrence order across messages and parts', () => {
+        createTempAppDirectory();
+        const context = new ChatContext();
+        for (const [messageId, resultIds] of [
+            ['repeated', ['first', 'second']],
+            ['other', ['third']],
+            ['repeated', ['fourth']]
+        ] as const) {
+            const assistant = new AssistantMessage();
+            assistant.message_id = messageId;
+            for (const resultId of resultIds) {
+                if (assistant.content.length > 0) assistant.appendText('next round');
+                const call = new ToolCall(0, resultId, 'executePowerShell', '{}');
+                call.status = 'success';
+                call.result = 'original output';
+                call.ensureResultStorage({ result_id: resultId, replacement_text: 'saved ' + resultId });
+                const part = new ToolCallMessagePart();
+                part.push(call);
+                assistant.appendToolCallPart(part);
+            }
+            context.appendMessage(assistant);
+        }
+
+        const projection = buildToolResultBudgetProjectionForChatContext(context, 'task-group-order', undefined, {
+            persistArtifacts: false
+        });
+        expect(projection.stats.groupCount).toBe(3);
+        expect(projection.overrideRecords.map((record) => record.resultId)).toEqual(['first', 'fourth', 'second', 'third']);
+    });
+
     test('readFile 仍默认排除在 Step 4 tool result budget 之外，并兼容带 toolset 前缀的工具名', () => {
         createTempAppDirectory();
         const chatContext = new ChatContext();

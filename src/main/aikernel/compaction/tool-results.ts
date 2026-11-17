@@ -867,12 +867,8 @@ function groupToolResultBudgetCandidates(candidates: ToolResultBudgetCandidate[]
         });
     }
 
-    return Array.from(groups.values()).sort((a, b) => {
-        if (a.chatContextMessageIndex !== b.chatContextMessageIndex) {
-            return a.chatContextMessageIndex - b.chatContextMessageIndex;
-        }
-        return a.toolCallPartIndex - b.toolCallPartIndex;
-    });
+    // Candidates arrive in message and part order. Appending to a group preserves its first position.
+    return Array.from(groups.values());
 }
 
 function analyzeToolResultBudget(
