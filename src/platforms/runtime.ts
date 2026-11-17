@@ -10,6 +10,7 @@
  */
 
 import type { SupportedShell } from '../common/shells.js';
+import type { SystemCalendarPort } from '../main/applications/calendar/service/system-calendar.js';
 
 export type HostProcessKind = 'shell' | 'stdio';
 export interface HostProcessCommand {
@@ -23,6 +24,7 @@ export interface HostShell {
 
 /** Runtime-specific mechanics are configured before business modules or workers are started. */
 export interface HostRuntimeOptions {
+    systemCalendar?: SystemCalendarPort;
     prepareResource?: (resource: string) => void | Promise<void>;
     prepareProcess?: (kind: HostProcessKind) => void | Promise<void>;
     prepareSynchronousProcess?: (kind: HostProcessKind) => void;

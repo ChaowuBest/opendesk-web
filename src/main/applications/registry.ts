@@ -448,7 +448,7 @@ export class ApplicationRegistry {
             ApplicationRegistry.pendingRequests.delete(requestId);
             return { status: 'ok', data: data };
         } catch (error) {
-            return { status: 'error', message: String(error) };
+            return { status: 'error', ...serializeAppError(error), message: String(error) };
         }
     }
 }
@@ -804,7 +804,13 @@ export function dispatchWorkerMessage(event: any, worker: Worker): void {
                 if (event.status === 'ok') {
                     pending.resolve(event.data);
                 } else {
-                    pending.reject(new Error(event.message || 'unknown error'));
+                    pending.reject(
+                        Object.assign(new Error(event.message || 'unknown error'), {
+                            code: event.code,
+                            category: event.category,
+                            details: event.details
+                        })
+                    );
                 }
                 break;
             }

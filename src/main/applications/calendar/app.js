@@ -16,10 +16,25 @@ import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import CalendarWorker from './service/worker';
+import AndroidCalendarWorker from './service/android-worker.js';
 import { CalendarOverlay } from './tui';
 import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool, EditCalendarItemTool } from './tools';
 import { CALENDAR_SKILL } from './skills';
 import chalk from 'chalk';
+
+function systemCalendarConfigSchema() {
+    return z.object({
+        enabled: z.boolean().default(true).describe(t('config.dataSources.systemCalendar.enabled')),
+        defaultCalendarId: z.string().default('').describe(t('config.dataSources.systemCalendar.defaultCalendarId'))
+    });
+}
+
+function unwrapWorkerResponse(result) {
+    if (result?.status === 'ok') return result.data;
+    throw Object.assign(new Error(result?.message || t('system.error.unavailable')), {
+        code: result?.code || 'CALENDAR_UNAVAILABLE'
+    });
+}
 
 class CalendarApplication extends BaseApplication {
     constructor() {
@@ -62,13 +77,14 @@ class CalendarApplication extends BaseApplication {
     }
 
     static getWorkerClass() {
-        return CalendarWorker;
+        return process.env.OPENDESK_ANDROID_RUNTIME === '1' ? AndroidCalendarWorker : CalendarWorker;
     }
 
     static getConfigSchema() {
         return z.object({
             dataSources: z
                 .object({
+                    systemCalendar: systemCalendarConfigSchema().default({ enabled: true, defaultCalendarId: '' }),
                     outlook: z
                         .object({
                             enabled: z.boolean().default(false).describe(t('config.dataSources.outlook.enabled'))
@@ -77,6 +93,54 @@ class CalendarApplication extends BaseApplication {
                 })
                 .default({})
         });
+    }
+
+    async getCalendarIntegrationState() {
+        if (process.env.OPENDESK_ANDROID_RUNTIME === '1')
+            return unwrapWorkerResponse(await this.callWorker('getSystemCalendarState'));
+        const config = this.getConfig()?.dataSources?.systemCalendar;
+        return {
+            supported: false,
+            readGranted: false,
+            writeGranted: false,
+            calendars: [],
+            enabled: config?.enabled !== false,
+            defaultCalendarId: config?.defaultCalendarId ?? ''
+        };
+    }
+
+    async requestCalendarAccess() {
+        if (process.env.OPENDESK_ANDROID_RUNTIME !== '1') return this.getCalendarIntegrationState();
+        return unwrapWorkerResponse(await this.callWorker('requestCalendarAccess'));
+    }
+
+    async configureCalendarIntegration(patch) {
+        const changes = z
+            .object({ enabled: z.boolean().optional(), defaultCalendarId: z.string().optional() })
+            .strict()
+            .parse(patch);
+        const config = this.getConfig() ?? {};
+        const current = config.dataSources?.systemCalendar ?? {};
+        const next = systemCalendarConfigSchema().parse({ ...current, ...changes });
+        if (next.enabled && next.defaultCalendarId) {
+            const state = await this.getCalendarIntegrationState();
+            if (!state.supported)
+                throw Object.assign(new Error(t('system.error.unavailable')), { code: 'CALENDAR_UNAVAILABLE' });
+            if (!state.readGranted || !state.writeGranted)
+                throw Object.assign(new Error(t('system.error.permissionDenied')), {
+                    code: 'CALENDAR_PERMISSION_DENIED'
+                });
+            const calendar = state.calendars.find((candidate) => candidate.id === next.defaultCalendarId);
+            if (!calendar)
+                throw Object.assign(new Error(t('system.error.calendarMissing')), { code: 'CALENDAR_NOT_FOUND' });
+            if (!calendar.canWrite)
+                throw Object.assign(new Error(t('system.error.readOnly')), { code: 'CALENDAR_READ_ONLY' });
+        }
+        const updated = { ...config, dataSources: { ...config.dataSources, systemCalendar: next } };
+        this.setConfig(updated);
+        if (process.env.OPENDESK_ANDROID_RUNTIME === '1')
+            unwrapWorkerResponse(await this.callWorker('applicationConfigChanged', this.getConfig() ?? updated));
+        return this.getCalendarIntegrationState();
     }
 
     getCliSlashCommands(tui) {
