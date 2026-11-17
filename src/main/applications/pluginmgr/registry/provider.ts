@@ -14,7 +14,7 @@
  *
  * 内置的 `PlainPluginRegistry` 只认「一份 HTTP 上的 plugins.json」。未来出现别的市场协议时
  * （分页 RPC、需要认证的私有市场、增量索引进而拉详情……），不必改 `createPluginRegistries`
- * 与 app.ts：注册一个 provider，让它接管能认领的渠道即可，其余渠道照旧走内置实现。
+ * 与 app.ts：注册一个 provider，让它接管能认领的仓库即可，其余仓库照旧走内置实现。
  *
  * 与 mcpmgr / skillmgr 的 provider 机制同一套写法（register 返回退订函数、重复注册直接报错），
  * 但注册只发生在主进程：provider 是宿主侧能力，不跨线程传递。
@@ -34,7 +34,7 @@ export interface PluginRegistryProviderContext {
 export interface PluginRegistryProvider {
     /** 唯一标识，用于日志与排障 */
     id: string;
-    /** 这个 provider 是否接管该渠道（按地址/协议判定）；官方渠道同样可以被接管 */
+    /** 这个 provider 是否接管该仓库（按地址/协议判定）；官方仓库同样可以被接管 */
     supports(channel: PluginChannel): boolean;
     /** 构造 registry；返回 undefined 表示不接管，交给下一个 provider 或内置实现 */
     create(channel: PluginChannel, context: PluginRegistryProviderContext): BasePluginRegistry | undefined;
@@ -53,7 +53,7 @@ export function registerPluginRegistryProvider(provider: PluginRegistryProvider)
     };
 }
 
-/** 当前已注册的 provider，按注册顺序（先注册者优先接管渠道） */
+/** 当前已注册的 provider，按注册顺序（先注册者优先接管仓库） */
 export function listPluginRegistryProviders(): PluginRegistryProvider[] {
     return Array.from(providers.values());
 }

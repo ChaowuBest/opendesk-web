@@ -14,7 +14,8 @@ import type { UsageCompactRecovery } from '../compaction/full-compact.js';
 import { CompactError, ContextPreparationBlockedError } from '../compaction/compact-error.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
 import { estimateTextTokens } from '../../../utils/token-estimation.js';
-import { t } from '../../../locale/index.js';
+import { t, getLocale } from '../../../locale/index.js';
+import { formatLocaleDisplayName } from '../../../common/locale/pack.js';
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import {
     resolveContextWindow,
@@ -56,7 +57,7 @@ import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
-import { normalizeGeneratedTaskName, TASK_NAME_PROMPT_PLACEHOLDER, truncateTaskName } from '../../utils/task-name.js';
+import { buildTaskNamePrompt, normalizeGeneratedTaskName, truncateTaskName } from '../../utils/task-name.js';
 import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
 import { collectToolSystemPromptContributions } from '../tool-system-prompt.js';
 import { LLM } from '../llm.js';
@@ -350,6 +351,14 @@ export class TaskState {
      * 调用 setSystemPrompt() 设置的附加 prompt。它是任务数据的一部分，需要持久化。
      */
     custom_system_prompt?: string;
+
+    /**
+     * 任务当前对话语言（getLocale() 的解析值，永不为 'auto'），随 task JSON 持久化。
+     * undefined 表示该任务还没有任何用户消息；每次 submitUserMessage 时与当前有效语言
+     * 比对，不一致则在用户消息前注入一条对用户不可见的语言切换提醒
+     * （见 maybeInjectLocaleChangeReminder），使语言切换后已有任务也能自动跟随新语言。
+     */
+    currentLocale?: string;
 
     /**
      * 当前任务对应的 Agent ID，用于筛选 agent 专属工具。
@@ -1238,6 +1247,24 @@ export class TaskState {
         return userMessage;
     }
 
+    /**
+     * 语言切换提醒：系统当前有效语言（getLocale() 的解析结果，'auto' 已解析为具体语言）
+     * 与本任务记录的 currentLocale 不一致时（含首条消息，此时 currentLocale 为 undefined），
+     * 在即将追加的用户消息之前插入一条对用户不可见的 internal user message，
+     * 引导模型后续使用新语言回复，然后更新 currentLocale。语言未变化时不产生任何消息。
+     * 文案为 LLM 协议文本，对用户不可见，不参与本地化。
+     */
+    private maybeInjectLocaleChangeReminder(): void {
+        const locale = getLocale();
+        if (locale === this.currentLocale) return;
+        const displayName = formatLocaleDisplayName(locale);
+        const reminder =
+            `<system-reminder>The system language is now ${displayName} (${locale}); ` +
+            `please respond with ${displayName} language in the following conversation.</system-reminder>`;
+        this.appendInternalUserMessageToContext(reminder, { origin: { source: 'system', reason: 'locale_change' } });
+        this.currentLocale = locale;
+    }
+
     getNextTurnGeneration(): number {
         return this._turnGeneration + 1;
     }
@@ -2029,6 +2056,9 @@ export class TaskState {
         this._turnInteractionBinding = options.interactive === true ? { interactive: true } : null;
         const allToolsets = await this.buildToolsets();
         await this.rebuildSystemPrompt(allToolsets);
+        // 此时懒加载已确保完成（rebuildSystemPrompt 触发 ensureLoaded），可安全读取
+        // 磁盘恢复的 currentLocale；早于下方 persistLater，字段变更随本次落盘。
+        this.maybeInjectLocaleChangeReminder();
         this.task_status = 'running';
         this.resetPluginAbortSignal();
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
@@ -2679,12 +2709,11 @@ export class TaskState {
 
             const quickModel = Setting.getInstance().getData().default_quick_model;
             const model = quickModel || this.ensureValidModelOrFallback();
-            const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-                请输出一个简洁明了的任务名称，不要超过10个字符。
-                只输出单行内容，格式为 <taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>，其中的占位文字要替换成你生成的名字，不要输出任何其他内容。
-                `;
+            // 任务名语言跟随系统当前有效语言（与对话回复的语言一致），长度提示按书写系统区分；
+            // prompt 的文案与长度约定集中在 task-name 模块，避免与截断规则脱节
+            const prompt = buildTaskNamePrompt(user_message, getLocale());
 
-            const output = await LLM.ask(prompt.trim(), model, {
+            const output = await LLM.ask(prompt, model, {
                 // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
                 // （glm-5.3 等模型不支持关闭思考，'none' 会导致任务命名失败）
                 reasoningEffort: LLM.getMinimalReasoningEffort(model),

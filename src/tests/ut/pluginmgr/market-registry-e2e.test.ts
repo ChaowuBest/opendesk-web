@@ -5,7 +5,7 @@
  * 覆盖到的真实链路：
  * - PlainPluginRegistry 走 HTTP 拉清单（list 里声明的 categories / plugins）；
  * - getCatalog(categories) 的分类过滤；
- * - 渠道联网校验（fetchChannelCatalog）对 http 渠道放行 http 下载地址；
+ * - 仓库联网校验（fetchChannelCatalog）对 http 仓库放行 http 下载地址；
  * - installPlugin 流式下载 + 解包 + 校验 + 落盘，并回调下载进度。
  */
 

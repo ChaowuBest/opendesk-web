@@ -19,8 +19,8 @@ afterAll(() => setRuntimeLocale(null));
  * 关键约定：
  * - 只认 id + 归档包下载地址这两个必需字段；
  * - 单条容错（lenient）下写坏的条目跳过，严格模式下整体报错；
- * - 下载地址默认必须 https 且是 .zip / .tgz，非 https 渠道才放行明文 http；
- * - categories 来自清单自述，缺省表示该渠道不支持按分类显示。
+ * - 下载地址默认必须 https 且是 .zip / .tgz，非 https 仓库才放行明文 http；
+ * - categories 来自清单自述，缺省表示该仓库不支持按分类显示。
  */
 
 function entry(overrides: Record<string, unknown> = {}) {

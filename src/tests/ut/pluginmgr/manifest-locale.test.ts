@@ -73,6 +73,41 @@ describe('插件语言包清单契约', () => {
         expect(resources.locales?.[1].sourceFile).toBe('locales/tr-tr.json');
     });
 
+    test('@priority 并入语言包定义，未声明时缺省为 1', () => {
+        writePack(root, {
+            'opendesk.plugin.json': {
+                id: 'pack',
+                apiVersion: 1,
+                capabilities: ['locale'],
+                resources: { locales: ['locales'] }
+            },
+            'locales/tr-TR.json': { '@priority': '7', key: 'v' },
+            'locales/de-DE.json': { key: 'v' }
+        });
+        const manifest = parsePluginManifest(
+            JSON.parse(fs.readFileSync(path.join(root, 'opendesk.plugin.json'), 'utf-8'))
+        );
+        const resources = loadPluginResources(manifest, root);
+        expect(resources.locales?.find((pack) => pack.tag === 'tr-TR')?.priority).toBe(7);
+        expect(resources.locales?.find((pack) => pack.tag === 'de-DE')?.priority).toBe(1);
+    });
+
+    test('非法 @priority 使语言包装载失败并携带来源文件', () => {
+        writePack(root, {
+            'opendesk.plugin.json': {
+                id: 'pack',
+                apiVersion: 1,
+                capabilities: ['locale'],
+                resources: { locales: ['locales'] }
+            },
+            'locales/tr-TR.json': { '@priority': '1000', key: 'v' }
+        });
+        const manifest = parsePluginManifest(
+            JSON.parse(fs.readFileSync(path.join(root, 'opendesk.plugin.json'), 'utf-8'))
+        );
+        expect(() => loadPluginResources(manifest, root)).toThrow(/@priority/);
+    });
+
     test('语言包结构非法时报错并携带来源文件', () => {
         writePack(root, {
             'opendesk.plugin.json': {

@@ -91,6 +91,7 @@ export function serializeTask(task: TaskState): object {
         reasoningEffort: task.reasoningEffort,
         agentId: task.agentId ?? null,
         custom_system_prompt: task.custom_system_prompt ?? null,
+        current_locale: task.currentLocale ?? null,
         chat_context: task.chat_context.toJSON(),
         tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
         auto_compact_state: AutoCompactStates.serialize(task.auto_compact_state),
@@ -274,6 +275,7 @@ function applyTaskJson(task: TaskState, task_json: any): void {
     task.executionNodeId = typeof task_json.executionNodeId === 'string' ? task_json.executionNodeId : undefined;
     task.executionNodeLabel =
         typeof task_json.executionNodeLabel === 'string' ? task_json.executionNodeLabel : undefined;
+    task.currentLocale = typeof task_json.current_locale === 'string' ? task_json.current_locale : undefined;
     task._dirty = false;
     task.extensions.restore(task_json, wasRunningAtShutdown);
 }
@@ -440,6 +442,8 @@ export function forkTask(task: TaskState, upToMessageId?: string): TaskState {
         forkedTask.total_elapsed_ms = task.total_elapsed_ms;
     }
     forkedTask.internal = task.internal;
+    // fork 复制对话历史，语言状态保持一致，避免 fork 后首条消息出现多余的语言切换提醒。
+    forkedTask.currentLocale = task.currentLocale;
 
     // harnessContext 不落盘但 fork 时复制环境变量和权限引擎（便于工具继续使用）
     forkedTask.harnessContext.environ = { ...task.harnessContext.environ };

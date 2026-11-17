@@ -1046,6 +1046,11 @@ function messagesToApiFormat(
 ): OpenCodeMessageWithParts[] {
     let parentUserMessageID = '';
     return messages.flatMap((message, index): OpenCodeMessageWithParts[] => {
+        // internal 用户消息（语言切换提醒、goal/workflow 内部 prompt 等）不进入协议输出；
+        // 后续 assistant 消息的 parentID 由下方逻辑落到最近一条可见用户消息上。
+        if (message.role === 'user' && message.internal === true) {
+            return [];
+        }
         if (isCompactBoundaryMessage(message)) {
             const compactMessages = compactBoundaryToApiMessages(message, sessionID, workspace, modelInfo);
             parentUserMessageID = compactMessages[0].info.id as string;
@@ -1094,7 +1099,8 @@ function publishCompactionMessages(
 function getParentUserMessageIdForIndex(messages: any[], assistantIndex: number, sessionID: string): string {
     for (let i = assistantIndex - 1; i >= 0; i--) {
         const message = messages[i] as any;
-        if (message?.role === 'user') {
+        // internal 用户消息不进入协议输出，不能作为对外可见的父消息
+        if (message?.role === 'user' && message.internal !== true) {
             return getStableMessageId(message.message_id, `${sessionID}:message:${i}`);
         }
     }

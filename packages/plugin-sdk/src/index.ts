@@ -447,6 +447,12 @@ export interface PluginLocalePackDefinition {
     tag: string;
     /** 回退语言 tag（已规范化），未声明时宿主按 en-US 处理 */
     fallback?: string;
+    /**
+     * 合并优先级（0-999 整数，数值越大越优先）。来自语言包文件内的 @priority 保留 key，
+     * 未声明时为 1；系统内置文案视为 priority 0，内置语言包插件为 priority 1。
+     * 同 key 冲突按 priority 裁决，平局按插件 ID 字典序后者胜。
+     */
+    priority: number;
     /** 参与翻译查找的词条（@ 保留 key 已剥离） */
     entries: Record<string, string>;
     /** 来源文件相对插件根的路径，诊断与冲突报告用 */

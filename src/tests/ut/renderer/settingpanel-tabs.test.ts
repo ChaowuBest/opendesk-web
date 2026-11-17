@@ -1,6 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { readFileSync, readdirSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 import { createRendererTranslator } from '../../../renderer/locale.ts';
+import { enUs } from '../../../locale/en-us.ts';
+import { zhCn } from '../../../locale/zh-cn.ts';
 
 describe('setting-panel tabs', () => {
     let window: any;
@@ -66,7 +69,7 @@ describe('setting-panel tabs', () => {
         const order = tabOrder(panel);
         expect(order[0]).toBe('general');
         expect(order[order.indexOf('search') + 1]).toBe('registries');
-        // 插件渠道不单独占页签，和测评集渠道一起放在「渠道设置」里
+        // 插件仓库不单独占页签，和测评集仓库一起放在「仓库设置」里
         expect(order).not.toContain('pluginRegistries');
         expect(order).toEqual(['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard']);
     });
@@ -78,7 +81,7 @@ describe('setting-panel tabs', () => {
         const tab = panel.querySelector('#tab-registries');
         expect(tab).toBeTruthy();
         expect(tab.querySelector('benchmark-channel-settings')).toBeTruthy();
-        // 插件渠道与测评集渠道同属「渠道设置」页签
+        // 插件仓库与测评集仓库同属「仓库设置」页签
         expect(tab.querySelector('plugin-channel-settings')).toBeTruthy();
     });
 
@@ -115,20 +118,48 @@ describe('setting-panel tabs', () => {
     test('channel settings nav label is localized', () => {
         const zhPanel = createPanel('zh-CN');
         zhPanel.render();
-        expect(zhPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('渠道设置');
+        expect(zhPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('仓库设置');
 
         const enPanel = createPanel('en-US');
         enPanel.currentData.locale = 'en-US';
         enPanel.currentData.resolved_locale = 'en-US';
         enPanel._t = createRendererTranslator(enPanel.currentData);
         enPanel.render();
-        // 该页签同时管测评集渠道与插件渠道，因此英文名不限定在 benchmark 上
-        expect(enPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('Channels');
+        // 该页签同时管测评集仓库与插件仓库；英文不能再叫 Channels，否则和消息渠道页签重名
+        expect(enPanel.querySelector('[data-tab="registries"]')?.textContent?.trim()).toBe('Registries');
+    });
+
+    test('设置页签标签在每种语言下都互不重名', () => {
+        // 页签顺序见 settingpanel.js：少写或写错一项，侧边栏就会出现两个同名入口
+        const tabKeys = [
+            'general',
+            'models',
+            'tasks',
+            'channels',
+            'agents',
+            'search',
+            'registryChannels',
+            'wizard'
+        ].map((id) => `sp.tab.${id}`);
+        const localeDir = new URL('../../../../resources/plugins/language-packs/locales/', import.meta.url);
+        const dicts: Array<[string, Record<string, string>]> = [
+            ['zh-CN', zhCn],
+            ['en-US', enUs]
+        ];
+        for (const file of readdirSync(localeDir).filter((name) => name.endsWith('.json'))) {
+            dicts.push([file.replace(/\.json$/, ''), JSON.parse(readFileSync(new URL(file, localeDir), 'utf8'))]);
+        }
+
+        for (const [tag, dict] of dicts) {
+            const labels = tabKeys.map((key) => dict[key]);
+            expect([tag, labels.filter((label) => typeof label !== 'string')]).toEqual([tag, []]);
+            expect([tag, labels.length, new Set(labels).size]).toEqual([tag, tabKeys.length, tabKeys.length]);
+        }
     });
 
     test('saving aligns benchmark channels with the main process first', async () => {
-        // 渠道由「渠道设置」组件直接写进主进程配置，面板手里的副本会变旧；
-        // 保存整份配置前必须先对齐，否则刚加/删的渠道会被写回旧值。
+        // 仓库由「仓库设置」组件直接写进主进程配置，面板手里的副本会变旧；
+        // 保存整份配置前必须先对齐，否则刚加/删的仓库会被写回旧值。
         const panel = createPanel();
         const order: string[] = [];
         panel.currentData.applications = { benchmark: { channels: [{ id: 'stale', isEnabled: true }] } };

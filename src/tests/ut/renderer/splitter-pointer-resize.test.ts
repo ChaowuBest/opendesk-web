@@ -135,4 +135,15 @@ describe('分割线触摸拖动：其它面板接线', () => {
         expect(source).not.toContain("resizer.addEventListener('mousedown'");
         expect(source).toContain('data-od-no-longpress="1"');
     });
+
+    test('taskview 右侧面板分割线颜色跟随主题，不硬编码浅色', () => {
+        const source = read('src/renderer/components/taskview.js');
+        const tagStart = source.indexOf('class="resizer-group taskview-resizer');
+        const resizerTag = source.slice(tagStart, source.indexOf('>', tagStart));
+        // 硬编码的浅灰在深色模式下会变成一条刺眼的白线
+        expect(resizerTag).not.toMatch(/#e0e0e0|#e5e7eb/);
+        expect(read('src/renderer/styles/custom.css')).toMatch(
+            /\.taskview-resizer\s*\{[^}]*linear-gradient\([^)]*var\(--od-border\)/
+        );
+    });
 });

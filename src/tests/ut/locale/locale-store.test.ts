@@ -2,9 +2,10 @@ import { jest } from '@jest/globals';
 import { getLocalePackStore, type LocalePackSnapshot } from '../../../locale/packs.js';
 import { translateWithDomain } from '../../../locale/index.js';
 
-const pack = (tag: string, entries: Record<string, string>, fallback?: string) => ({
+const pack = (tag: string, entries: Record<string, string>, fallback?: string, priority = 1) => ({
     tag,
     fallback,
+    priority,
     entries,
     sourceFile: `locales/${tag}.json`
 });
@@ -37,6 +38,14 @@ describe('LocaleStore', () => {
         const merged = getLocalePackStore().getMergedPack('tr-TR');
         expect(merged?.entries).toEqual({ key: 'beta', only: 'alpha' });
         expect(merged?.conflicts).toEqual([{ key: 'key', winner: 'beta', losers: ['alpha'] }]);
+    });
+
+    test('同语言多插件按 priority 合并，高 priority 胜（与注册/ID 顺序无关）', () => {
+        getLocalePackStore().replacePluginPacks('zeta', [pack('tr-TR', { key: 'zeta' }, undefined, 1)]);
+        getLocalePackStore().replacePluginPacks('alpha', [pack('tr-TR', { key: 'alpha' }, undefined, 9)]);
+        const merged = getLocalePackStore().getMergedPack('tr-TR');
+        expect(merged?.entries.key).toBe('alpha');
+        expect(merged?.conflicts).toEqual([{ key: 'key', winner: 'alpha', losers: ['zeta'] }]);
     });
 
     test('合并冲突在缓存重建时输出 warn 日志（含 key 与胜负插件）', () => {
@@ -111,7 +120,13 @@ describe('LocaleStore', () => {
         expect(translateWithDomain('only.zh', domain, undefined, 'en-US')).toBe('仅中文');
         // 登记语言包后增量优先、未命中 key 沿 @fallback 回退 en-US
         getLocalePackStore().replacePluginPacks('alpha', [
-            { tag: 'tr-TR', fallback: 'en-US', entries: { 'app.greet': 'Merhaba' }, sourceFile: 'locales/tr-TR.json' }
+            {
+                tag: 'tr-TR',
+                fallback: 'en-US',
+                priority: 1,
+                entries: { 'app.greet': 'Merhaba' },
+                sourceFile: 'locales/tr-TR.json'
+            }
         ]);
         expect(translateWithDomain('app.greet', domain, undefined, 'tr-TR')).toBe('Merhaba');
         expect(translateWithDomain('extra', domain, undefined, 'tr-TR')).toBe('English extra');
@@ -130,6 +145,7 @@ describe('LocaleStore', () => {
             {
                 tag: 'tr-TR',
                 fallback: 'en-US',
+                priority: 1,
                 entries: { 'notes.app.name': 'Notlar', 'app.name': 'Ortak Ad' },
                 sourceFile: 'locales/tr-TR.json'
             }
@@ -140,11 +156,17 @@ describe('LocaleStore', () => {
         expect(translateWithDomain('app.name', domain, undefined, 'tr-TR')).toBe('Ortak Ad');
         // 前缀未命中时回退裸 key，再回退域词典
         getLocalePackStore().replacePluginPacks('pack-tr', [
-            { tag: 'tr-TR', fallback: 'en-US', entries: { 'app.name': 'Ortak Ad' }, sourceFile: 'locales/tr-TR.json' }
+            {
+                tag: 'tr-TR',
+                fallback: 'en-US',
+                priority: 1,
+                entries: { 'app.name': 'Ortak Ad' },
+                sourceFile: 'locales/tr-TR.json'
+            }
         ]);
         expect(translateWithDomain('app.name', domain, undefined, 'tr-TR', 'notes')).toBe('Ortak Ad');
         getLocalePackStore().replacePluginPacks('pack-tr', [
-            { tag: 'tr-TR', fallback: 'en-US', entries: {}, sourceFile: 'locales/tr-TR.json' }
+            { tag: 'tr-TR', fallback: 'en-US', priority: 1, entries: {}, sourceFile: 'locales/tr-TR.json' }
         ]);
         expect(translateWithDomain('app.name', domain, undefined, 'tr-TR', 'notes')).toBe('Notes');
     });
@@ -152,10 +174,22 @@ describe('LocaleStore', () => {
     test('getSlimSnapshot 只带生效语言与回退语言的增量，availableLocales 保持全量', () => {
         getLocalePackStore().clear();
         getLocalePackStore().replacePluginPacks('pack-tr', [
-            { tag: 'tr-TR', fallback: 'en-US', entries: { greet: 'Merhaba' }, sourceFile: 'locales/tr-TR.json' }
+            {
+                tag: 'tr-TR',
+                fallback: 'en-US',
+                priority: 1,
+                entries: { greet: 'Merhaba' },
+                sourceFile: 'locales/tr-TR.json'
+            }
         ]);
         getLocalePackStore().replacePluginPacks('pack-de', [
-            { tag: 'de-DE', fallback: 'en-US', entries: { greet: 'Hallo' }, sourceFile: 'locales/de-DE.json' }
+            {
+                tag: 'de-DE',
+                fallback: 'en-US',
+                priority: 1,
+                entries: { greet: 'Hallo' },
+                sourceFile: 'locales/de-DE.json'
+            }
         ]);
         const slim = getLocalePackStore().getSlimSnapshot('tr-TR');
         // 只含生效语言 + 其回退语言（en-US 无增量则缺席）

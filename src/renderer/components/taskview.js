@@ -6922,7 +6922,7 @@ class TaskView extends HTMLElement {
                 <div id="task-${this.task_id}-resizer"
                     class="resizer-group taskview-resizer relative shrink-0"
                     data-od-no-longpress="1"
-                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; touch-action: none; display: ${this._rightSidebarExpanded ? '' : 'none'};"
+                    style="width: 4px; cursor: col-resize; touch-action: none; display: ${this._rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                         <div class="resizer-handle-indicator resizer-blue" style="width: 2px; height: 3rem; border-radius: 9999px; background: #e5e7eb;"></div>

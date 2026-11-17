@@ -248,7 +248,7 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
             void this.loadRuns(false);
             if (this.detailRunId) void this.loadDetail(this.detailRunId, false);
         };
-        // 渠道（设置界面 → 渠道设置）变化后，Tab 条要立刻跟着变，不用等整窗重开
+        // 仓库（设置界面 → 仓库设置）变化后，Tab 条要立刻跟着变，不用等整窗重开
         this._onRegistriesChanged = () => {
             void this.reloadRegistries();
         };
@@ -389,10 +389,10 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
     }
 
     /**
-     * 渠道配置变化后的增量刷新：重新取 registry 列表、丢掉已消失渠道的本地状态，
+     * 仓库配置变化后的增量刷新：重新取 registry 列表、丢掉已消失仓库的本地状态，
      * 再重画一次界面。
      *
-     * 这里只重建 Tab 条与当前 Tab 的内容，不重启应用也不重开窗口：设置界面改完渠道
+     * 这里只重建 Tab 条与当前 Tab 的内容，不重启应用也不重开窗口：设置界面改完仓库
      * 关掉再切回测评应用时，用户看到的应该已经是新的一组 Tab。
      */
     private async reloadRegistries() {
@@ -401,14 +401,14 @@ class BenchmarkEntryWidget extends AgentOperableHTMLElement {
         for (const name of [...this.catalogs.keys()]) {
             if (!alive.has(name)) this.catalogs.delete(name);
         }
-        // 清单弹窗指向已被删除/禁用的渠道时，留着它只会画出一张空弹窗把整窗刷新挡住
+        // 清单弹窗指向已被删除/禁用的仓库时，留着它只会画出一张空弹窗把整窗刷新挡住
         if (this.catalogModal && !alive.has(this.catalogModal.registryName)) {
             this.catalogModal = null;
         }
         // 有弹窗打开时先不重建 DOM（会打断用户输入），弹窗关闭后的那次渲染会带上新 Tab
         this.renderUnlessModalOpen();
 
-        // 渠道地址可能刚被改过：重新取一次当前渠道的清单（主进程侧的 registry 已重建，
+        // 仓库地址可能刚被改过：重新取一次当前仓库的清单（主进程侧的 registry 已重建，
         // 地址变了就会走新的缓存文件重新下载）
         const registryName = this.activeRegistryName();
         if (registryName) await this.loadCatalog(registryName);

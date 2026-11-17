@@ -5,7 +5,7 @@ import { parseHTML } from 'linkedom';
  * 插件中心的「插件市场」页面。
  *
  * 关键约定：
- * - 市场列表来自主进程的插件渠道（registry），点开一个市场才去拉清单；
+ * - 市场列表来自主进程的插件仓库（registry），点开一个市场才去拉清单；
  * - 市场声明了 categories 时显示「全部插件 / 分类A / 分类B」切换，没声明就不显示；
  * - 搜索与技能中心一致：输入框 + 清除 + 搜索按钮，回车或点按钮才发起搜索；
  * - 每个插件卡片都有安装按钮，点击调用主进程的 installFromPluginRegistry。
@@ -812,7 +812,7 @@ describe('plugin marketplace renderer', () => {
         const widget = await createWidget();
         expect(marketTabIds(widget)).toEqual(['market:official', 'market:community']);
 
-        // 用户去设置里加了一个渠道，主进程广播 registriesChanged
+        // 用户去设置里加了一个仓库，主进程广播 registriesChanged
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];
             if (method === 'listPluginRegistries') {
@@ -823,7 +823,7 @@ describe('plugin marketplace renderer', () => {
         onRegistriesChanged?.();
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // 新增的渠道立刻多出一个 Tab，不需要切走再切回
+        // 新增的仓库立刻多出一个 Tab，不需要切走再切回
         expect(marketTabIds(widget)).toEqual(['market:official', 'market:community', 'market:team']);
     });
 
@@ -839,7 +839,7 @@ describe('plugin marketplace renderer', () => {
         await openMarket(widget);
         expect(marketPluginIds(widget)).toEqual(['dev-plugin', 'office-plugin']);
 
-        // 用户在设置里把官方渠道的地址改了：主进程重建了 registry 并广播
+        // 用户在设置里把官方仓库的地址改了：主进程重建了 registry 并广播
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];
             if (method === 'listPluginRegistries') return REGISTRIES;
@@ -861,8 +861,8 @@ describe('plugin marketplace renderer', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // 市场 Tab 还叫原来的名字，但卡片必须换成新渠道的清单：
-        // 留着旧清单会让用户以为自己装的是新渠道里的插件
+        // 市场 Tab 还叫原来的名字，但卡片必须换成新仓库的清单：
+        // 留着旧清单会让用户以为自己装的是新仓库里的插件
         expect(marketPluginIds(widget)).toEqual(['team-plugin']);
     });
 

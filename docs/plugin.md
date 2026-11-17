@@ -808,15 +808,15 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 ```
 
-## 插件市场与插件渠道
+## 插件市场与插件仓库
 
-插件中心按渠道拉取插件清单，每个启用的渠道都是一个独立市场，并在插件中心顶部**独占一个 Tab**
-（Tab 名用渠道展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
+插件中心按仓库拉取插件清单，每个启用的仓库都是一个独立市场，并在插件中心顶部**独占一个 Tab**
+（Tab 名用仓库展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
 搜索框、分类切换与插件卡片：
 
-- **设置 → 渠道设置 → 插件渠道**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
-  用户可以添加最多 20 个三方渠道，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
-- 渠道配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的渠道既不拉清单，
+- **设置 → 仓库设置 → 插件仓库**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
+  用户可以添加最多 20 个三方仓库，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
+- 仓库配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的仓库既不拉清单，
   也不在插件中心里占 Tab。
 - 环境变量 `OPENDESK_PLUGIN_CATEGORY` 可以把官方市场指向本地文件或自建 registry，便于调试。
 
@@ -884,7 +884,7 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 
 ### registry 扩展点
 
-每个渠道对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
+每个仓库对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
 `getCatalog(query?)` / `getPluginCount` / 可选 `invalidate`）。`getCatalog` 的查询参数是
 `{ startAt?, limit?, categories? }`：`startAt` / `limit` 与 benchmark 的
 `getCatalog(startAt, limit)` 同义（`startAt` 默认 0、省略 `limit` 表示取到末尾、`0` 表示不取，
@@ -893,13 +893,13 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 界面上目前一次取全量（与 benchmark 一致），大型市场接入后可以直接按页取而不改契约。
 
 未来出现别的市场协议时（分页 RPC、需要认证的私有市场、增量索引……），**不需要改
-`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应渠道即可，
+`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应仓库即可，
 与 mcpmgr / skillmgr 的 provider 机制同一套写法：
 
 ```ts
 registerPluginRegistryProvider({
     id: 'enterprise-rpc',
-    // 认领哪些渠道由 provider 自己判断；官方渠道同样可以被接管
+    // 认领哪些仓库由 provider 自己判断；官方仓库同样可以被接管
     supports: (channel) => channel.url.startsWith('https://market.corp.example/'),
     // 返回 undefined 表示不接管，交给后面的 provider 或内置实现
     create: (channel, { dataDirectory, fetchImpl }) => new MyRpcRegistry(channel, { dataDirectory, fetchImpl })
@@ -907,7 +907,7 @@ registerPluginRegistryProvider({
 ```
 
 未注册任何 provider 时行为与今天完全一致（全部走内置实现）；provider 的 `supports` / `create`
-抛错只会让该渠道回落到内置实现，不会把整个市场列表拖空。
+抛错只会让该仓库回落到内置实现，不会把整个市场列表拖空。
 
 ## 在 setup 中动态注册 Skill 和 MCP
 
@@ -1074,6 +1074,7 @@ acme-langpack-ja/
 
 ```json
 {
+    "@priority": "1",
     "@fallback": "en-US",
     "renderer.sidebar.apps": "アプリ",
     "sp.general.language": "言語"
@@ -1084,8 +1085,11 @@ acme-langpack-ja/
 
 - **覆盖内置**：语言包增量永远优先于内置词典（全局词典与各应用词典都先查增量层），
   因此既可以补全缺失 key，也可以修正既有文案。
-- **部分提供**：同一语言允许多个插件各自贡献一部分 key，按 key 合并；同 key 冲突时按
-  **插件 ID 字典序后者胜**，冲突不是错误但会记录告警（后续插件中心展示冲突报告）。
+- **部分提供**：同一语言允许多个插件各自贡献一部分 key，按 key 合并；同 key 冲突按
+  语言包 `@priority` 声明的**合并优先级**裁决（0-999 整数，数值越大越优先，缺省 1），
+  priority 相同时按**插件 ID 字典序后者胜**，冲突不是错误但会记录告警（后续插件中心
+  展示冲突报告）。系统内置文案视为 priority 0（语言包增量恒覆盖内置词典），内置语言包
+  插件的语言文件均声明 priority 1。
 - **应用域前缀覆盖**：应用域的 `t()`（main 与 renderer 均已接入）查找语言包时先查
   `<bundle>.<key>`，再回退裸 key。这为跨应用歧义 key 提供了按应用覆盖的能力——例如
   `app.name` 在各应用域的英文文案不同（Notes / Calendar / …），语言包写
@@ -1099,13 +1103,14 @@ acme-langpack-ja/
 - **即时生效**：安装 / 卸载 / 启停语言包即时广播刷新，无需重启；卸载提供当前语言的包后
   设置里的残留值自动回退为跟随系统。
 - **校验**：结构必须为扁平 `string -> string`；单文件上限 2MB；`@` 前缀是保留 key
-  （当前仅支持 `@fallback`）；路径越界与结构非法都会让加载失败并携带文件与 key 定位。
+  （`@fallback` 声明回退语言、`@priority` 声明合并优先级，`@priority` 接受字符串或数字形式
+  的 0-999 整数）；路径越界与结构非法都会让加载失败并携带文件与 key 定位。
 - **边界**：外部 iframe 应用与 browser 应用 `<webview>` 中的外部页面文案不受语言包控制；
   应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，裸 key 覆盖会同时
   影响所有应用，为单个应用贡献文案请使用 `<bundle>.<key>` 前缀条目。
 
 内置语言包见 `resources/plugins/language-packs/`（插件「内置语言包」，单个插件在
-`locales/` 目录下同时携带土耳其语、德语、法语与印尼语四个语言文件），均全量覆盖
+`locales/` 目录下同时携带土耳其语、德语、法语、印尼语、日语、韩语与俄语七个语言文件），均全量覆盖
 主界面与各内置应用词条。
 
 ## 无 manifest 的本地插件

@@ -168,7 +168,9 @@ describe('onTaskReview hook', () => {
         await task.submitUserMessage('new input');
 
         expect(processTurnSpy).toHaveBeenCalledTimes(1);
-        expect(task.chat_context.messages).toHaveLength(4);
+        // submitUserMessage 会先注入一条语言切换提醒（internal user message），随后才是
+        // 用户消息和 assistant 占位；review 起点记录在提醒之后，不含该提醒。
+        expect(task.chat_context.messages).toHaveLength(5);
         expect(callback).not.toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(99);
@@ -176,7 +178,7 @@ describe('onTaskReview hook', () => {
 
         await jest.advanceTimersByTimeAsync(1);
         expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 2 });
+        expect(callback).toHaveBeenCalledWith({ task, startMessageIndex: 3 });
     });
 
     test('review captures real input and output without request-only TailCard state', async () => {
@@ -205,7 +207,8 @@ describe('onTaskReview hook', () => {
 
         await jest.advanceTimersByTimeAsync(100);
 
-        expect(receivedStartIndex).toBe(2);
+        // 语言切换提醒（internal）先于用户消息落库，review 起点跳过它
+        expect(receivedStartIndex).toBe(3);
         expect(transcript).not.toContain('turn control prompt');
         expect(transcript).not.toContain('/workspace/opaque-source');
         expect(transcript).toContain('real user input');
