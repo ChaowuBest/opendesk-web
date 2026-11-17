@@ -3,6 +3,7 @@ import { LLM } from '../../../main/aikernel/llm.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { TASK_NAME_MAX_LENGTH, TASK_NAME_PROMPT_PLACEHOLDER } from '../../../main/utils/task-name.js';
 import { Setting } from '../../../main/utils/setting.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
 
 function configureModels(models: string[] = ['mock-a'], defaultModel = 'mock-a'): void {
     Setting.updateInstanceData({
@@ -245,6 +246,63 @@ describe('generateTaskName 输出解析鲁棒性', () => {
         expect(prompt).not.toContain('<taskname>{');
         // 格式占位文本必须取自 normalizeGeneratedTaskName 的同名常量，保证判定规则跟随 prompt 措辞
         expect(prompt).toContain(`<taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>`);
+    });
+});
+
+describe('generateTaskName 任务名语言跟随系统当前语言', () => {
+    beforeEach(() => {
+        configureModels();
+    });
+
+    afterEach(() => {
+        setRuntimeLocale(null);
+        jest.restoreAllMocks();
+        Setting.clearCache();
+    });
+
+    test('系统语言为中文时要求输出中文名', async () => {
+        setRuntimeLocale('zh-CN');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>修复登录bug</taskname>');
+        const task = createTask();
+
+        await task.generateTaskName('帮我修复登录页面的按钮错位问题');
+
+        const prompt = ask.mock.calls[0][0] as string;
+        expect(prompt).toContain('中文（zh-CN）');
+    });
+
+    test('系统语言为英文时要求输出英文名，30 字符以内的名字不被截断', async () => {
+        setRuntimeLocale('en-US');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>Fix login button misalignment</taskname>');
+        const task = createTask();
+
+        await task.generateTaskName('帮我修复登录页面的按钮错位问题');
+
+        const prompt = ask.mock.calls[0][0] as string;
+        expect(prompt).toContain('English（en-US）');
+        // 长度提示与截断上限的关系由 buildTaskNamePrompt 的单测覆盖，这里只验证端到端不截断
+        expect(task.task_name).toBe('Fix login button misalignment');
+    });
+
+    test('语言包注册的其它语言按自身展示名要求输出', async () => {
+        setRuntimeLocale('de-DE');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>Login-Button ausrichten</taskname>');
+        const task = createTask();
+
+        await task.generateTaskName('帮我修复登录页面的按钮错位问题');
+
+        const prompt = ask.mock.calls[0][0] as string;
+        expect(prompt).toContain('Deutsch（de-DE）');
+    });
+
+    test('非中文界面下模型复读英文标签前缀时剥掉前缀', async () => {
+        setRuntimeLocale('en-US');
+        jest.spyOn(LLM, 'ask').mockResolvedValue('<taskname>Task name: Fix login button misalignment</taskname>');
+        const task = createTask();
+
+        await task.generateTaskName('帮我修复登录页面的按钮错位问题');
+
+        expect(task.task_name).toBe('Fix login button misalignment');
     });
 });
 

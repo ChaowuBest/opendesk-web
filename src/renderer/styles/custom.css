@@ -3364,10 +3364,14 @@ html[data-theme='dark'] .od-retry-now-btn:active {
 /*
  * 分割线要压住两侧面板：面板里常见 position: relative 的卡片，没有层级时下面
  * 扩展出来的触摸命中区会被相邻面板的定位内容盖掉一半。
+ *
+ * 中间那 1px 细线用描边 token 绘制，跟随深浅色主题；硬编码浅灰会在深色模式下
+ * 变成一条刺眼的白线。
  */
 .taskview-resizer {
     position: relative;
     z-index: 1;
+    background: linear-gradient(to right, transparent 40%, var(--od-border) 50%, transparent 60%);
 }
 
 /*

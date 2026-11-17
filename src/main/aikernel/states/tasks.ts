@@ -57,7 +57,7 @@ import { runWithRenderWorkspace } from '../../utils/marked-file-link.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
 import type { MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
-import { normalizeGeneratedTaskName, TASK_NAME_PROMPT_PLACEHOLDER, truncateTaskName } from '../../utils/task-name.js';
+import { buildTaskNamePrompt, normalizeGeneratedTaskName, truncateTaskName } from '../../utils/task-name.js';
 import { BaseTool, BaseToolset, InteractiveToolset } from '../tool.js';
 import { collectToolSystemPromptContributions } from '../tool-system-prompt.js';
 import { LLM } from '../llm.js';
@@ -2709,12 +2709,11 @@ export class TaskState {
 
             const quickModel = Setting.getInstance().getData().default_quick_model;
             const model = quickModel || this.ensureValidModelOrFallback();
-            const prompt = `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-                请输出一个简洁明了的任务名称，不要超过10个字符。
-                只输出单行内容，格式为 <taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>，其中的占位文字要替换成你生成的名字，不要输出任何其他内容。
-                `;
+            // 任务名语言跟随系统当前有效语言（与对话回复的语言一致），长度提示按书写系统区分；
+            // prompt 的文案与长度约定集中在 task-name 模块，避免与截断规则脱节
+            const prompt = buildTaskNamePrompt(user_message, getLocale());
 
-            const output = await LLM.ask(prompt.trim(), model, {
+            const output = await LLM.ask(prompt, model, {
                 // 使用模型支持的最低推理档位，而非硬编码 'none' 强制关闭思考
                 // （glm-5.3 等模型不支持关闭思考，'none' 会导致任务命名失败）
                 reasoningEffort: LLM.getMinimalReasoningEffort(model),
