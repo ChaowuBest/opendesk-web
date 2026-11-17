@@ -56,7 +56,7 @@ async function verifyColdViteStartup(cacheDir: string): Promise<void> {
 
         await server.waitForRequestsIdle();
         await Promise.all(Object.values(optimizer.metadata.discovered).map((dependency) => dependency.processing));
-        assert.ok(Object.keys(optimizer.metadata.optimized).length, 'cold dependency optimization must complete');
+        assert.ok(optimizer.metadata.optimized.react, 'Word must receive React from the cold dependency optimizer');
         assert.match(await get('/'), /scripts\/index\.js/);
     } finally {
         await server.close();
