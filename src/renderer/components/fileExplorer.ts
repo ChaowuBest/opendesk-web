@@ -93,8 +93,10 @@ export interface PreviewPayload {
     dataUri?: string;
 }
 
-type ChildrenCache = FSEntry[] | 'loading' | { error: string };
+type ChildrenCache = FSEntry[] | { error: string };
 type ViewMode = 'tree' | 'grid';
+type DirectoryWatch = { dispose?: () => void; timer?: ReturnType<typeof setTimeout> };
+type DirectoryLoad = { reload: boolean; done: Promise<void> };
 
 // Ace 文本预览和编辑的单文件体积上限。
 const ACE_TEXT_MAX_BYTES = 10 * 1024 * 1024;
@@ -1250,6 +1252,10 @@ export class FileExplorer {
     private _viewMode: ViewMode = 'tree';
     private _expandedPaths: Set<string> = new Set();
     private _childrenCache: Map<string, ChildrenCache> = new Map();
+    private _directoryBrowserVisible = true;
+    private _directoryWatches = new Map<string, DirectoryWatch>();
+    private _directoryLoads = new Map<string, DirectoryLoad>();
+    private _workspaceLoadVersion = 0;
     private _gridPath: string | null = null;
     private _selectedFile: string | null = null;
     private _editorMode = false;
@@ -1345,12 +1351,10 @@ export class FileExplorer {
                     if (!host?.refreshFile) return;
                     await host.refreshFile(id, filePath);
                     await this._updatePreviewSize(filePath, version);
-                    if (version === this._fileWatchVersion) this.softRefresh();
                     return;
                 }
                 await this._loadPreview(filePath);
             }
-            if (version === this._fileWatchVersion) this.softRefresh();
         } catch (error) {
             console.warn('File preview refresh failed', error);
         } finally {
@@ -1377,26 +1381,73 @@ export class FileExplorer {
      * @param rootNode   shadow root（或 document），用于全局 querySelector
      */
     mount(container: HTMLElement, rootNode?: ParentNode): void {
+        const needsRender = this._container !== container;
         this._container = container;
         this._rootNode = rootNode ?? container;
+        if (needsRender) this._renderPanel();
         void this._ensureWorkspaceLoaded();
         if (this._selectedFile && this._watchedFilePath !== this._selectedFile) {
             this._watchSelectedFile(this._selectedFile);
         }
     }
 
-    /**
-     * 软刷新：保留当前展开/选中状态，仅重新加载已缓存目录的内容。
-     * 适用于文件编辑/写入后的增量更新。
-     */
-    softRefresh(): void {
-        if (!this._container || !this._workspaceRoot) return;
-        const dirs = [...this._childrenCache.keys()];
-        for (const dir of dirs) {
-            this._childrenCache.delete(dir);
+    setDirectoryBrowserVisible(visible: boolean): void {
+        this._directoryBrowserVisible = visible;
+        this._syncDirectoryWatches();
+    }
+
+    private _visibleDirectories(): string[] {
+        if (!this._directoryBrowserVisible || this._previewFullscreen || !this._workspaceRoot || !this._container) {
+            return [];
         }
-        for (const dir of dirs) {
-            void this._loadChildren(dir);
+        if (this._viewMode === 'grid') return this._gridPath ? [this._gridPath] : [];
+        return Array.from(
+            this._container.querySelectorAll<HTMLElement>('.ws-tree-children[data-dir]'),
+            (el) => el.dataset.dir!
+        );
+    }
+
+    private _stopDirectoryWatch(dir: string, watch: DirectoryWatch): void {
+        this._directoryWatches.delete(dir);
+        const load = this._directoryLoads.get(dir);
+        if (load) load.reload = false;
+        if (watch.timer !== undefined) clearTimeout(watch.timer);
+        watch.dispose?.();
+    }
+
+    private _syncDirectoryWatches(): void {
+        const visible = new Set(this._visibleDirectories());
+        for (const [dir, watch] of this._directoryWatches) {
+            if (!visible.has(dir)) this._stopDirectoryWatch(dir, watch);
+        }
+        const api = window.fsAPI;
+        if (!api?.listDirectory) return;
+        for (const dir of visible) {
+            if (this._directoryWatches.has(dir)) continue;
+            const watch: DirectoryWatch = {};
+            this._directoryWatches.set(dir, watch);
+            const isCurrent = () => this._directoryWatches.get(dir) === watch;
+            if (!api.watchDirectory) {
+                void this._loadChildren(dir);
+                continue;
+            }
+            // Register before listing so changes during the initial read aren't lost.
+            void api
+                .watchDirectory(dir, () => {
+                    if (!isCurrent() || watch.timer !== undefined) return;
+                    watch.timer = setTimeout(() => {
+                        watch.timer = undefined;
+                        if (isCurrent()) void this._loadChildren(dir);
+                    }, 100);
+                })
+                .then((dispose) => {
+                    if (isCurrent()) watch.dispose = dispose;
+                    else dispose();
+                })
+                .catch((error) => console.warn('Directory watch unavailable', error))
+                .then(() => {
+                    if (isCurrent()) void this._loadChildren(dir);
+                });
         }
     }
 
@@ -1408,6 +1459,9 @@ export class FileExplorer {
     refresh(workspace?: string): void {
         if (this._deferUntilOfficeCanClose(() => this.refresh(workspace))) return;
         this.stopWatchingFile();
+        for (const [dir, watch] of this._directoryWatches) this._stopDirectoryWatch(dir, watch);
+        this._directoryLoads.clear();
+        this._workspaceLoadVersion += 1;
         // 切换任务/工作空间时先关闭预览
         this._dismissBreadcrumbDropdown();
         this._selectedFile = null;
@@ -1478,6 +1532,7 @@ export class FileExplorer {
 
     private async _ensureWorkspaceLoaded(): Promise<void> {
         if (this._workspaceRequested) return;
+        const version = this._workspaceLoadVersion;
         this._workspaceRequested = true;
         try {
             let root: string | null;
@@ -1493,6 +1548,7 @@ export class FileExplorer {
                 }
                 root = await api.getEffectiveWorkspace();
             }
+            if (version !== this._workspaceLoadVersion) return;
             if (!root) {
                 this._workspaceError = t('renderer.fileExplorer.error.noWorkspacePath');
                 this._renderPanel();
@@ -1502,34 +1558,57 @@ export class FileExplorer {
             this._gridPath = this._workspaceRoot;
             this._expandedPaths.add(this._workspaceRoot);
             this._renderPanel();
-            await this._loadChildren(this._workspaceRoot);
         } catch (err) {
+            if (version !== this._workspaceLoadVersion) return;
             this._workspaceError = err instanceof Error ? err.message : String(err);
             this._renderPanel();
         }
     }
 
-    private async _loadChildren(dirPath: string): Promise<void> {
+    private _loadChildren(dirPath: string): Promise<void> {
         dirPath = normalizeExplorerFilePath(dirPath);
-        const cached = this._childrenCache.get(dirPath);
-        if (cached && cached !== 'loading' && !(cached as { error?: string }).error) return;
-        if (cached === 'loading') return;
-        this._childrenCache.set(dirPath, 'loading');
-        this._rerenderDirContent(dirPath);
-        try {
-            const api = window.fsAPI;
-            if (!api || typeof api.listDirectory !== 'function') {
-                throw new Error(t('renderer.fileExplorer.error.noListDir'));
-            }
-            const entries = await api.listDirectory(dirPath);
-            this._childrenCache.set(
-                dirPath,
-                entries.map((entry: FSEntry) => ({ ...entry, path: normalizeExplorerFilePath(entry.path) }))
-            );
-        } catch (err) {
-            this._childrenCache.set(dirPath, { error: err instanceof Error ? err.message : String(err) });
+        const current = this._directoryLoads.get(dirPath);
+        if (current) {
+            current.reload = true;
+            return current.done;
         }
-        this._rerenderDirContent(dirPath);
+        const load: DirectoryLoad = { reload: false, done: Promise.resolve() };
+        this._directoryLoads.set(dirPath, load);
+        load.done = this._readChildren(dirPath, load);
+        return load.done;
+    }
+
+    private async _readChildren(dirPath: string, load: DirectoryLoad): Promise<void> {
+        do {
+            load.reload = false;
+            let children: ChildrenCache;
+            try {
+                const api = window.fsAPI;
+                if (!api?.listDirectory) throw new Error(t('renderer.fileExplorer.error.noListDir'));
+                const entries = await api.listDirectory(dirPath);
+                children = entries.map((entry: FSEntry) => ({ ...entry, path: normalizeExplorerFilePath(entry.path) }));
+            } catch (err) {
+                children = { error: err instanceof Error ? err.message : String(err) };
+            }
+            if (this._directoryLoads.get(dirPath) !== load) return;
+            const previous = this._childrenCache.get(dirPath);
+            this._childrenCache.set(dirPath, children);
+            const sameRows =
+                Array.isArray(children) &&
+                Array.isArray(previous) &&
+                children.length === previous.length &&
+                children.every((entry, index) => {
+                    const old = previous[index];
+                    return (
+                        entry.path === old.path &&
+                        entry.name === old.name &&
+                        entry.isDirectory === old.isDirectory &&
+                        (entry.isDirectory || entry.size === old.size)
+                    );
+                });
+            if (!sameRows) this._rerenderDirContent(dirPath);
+        } while (load.reload);
+        this._directoryLoads.delete(dirPath);
     }
 
     // ----- incremental re-render helpers -----
@@ -1540,7 +1619,20 @@ export class FileExplorer {
         if (this._viewMode === 'tree') {
             const container = rn.querySelector<HTMLElement>(`.ws-tree-children[data-dir="${cssEscape(dirPath)}"]`);
             if (container) {
-                container.innerHTML = this._renderTreeChildrenHtml(dirPath, this._depthOf(dirPath));
+                const branches = new Map<string, HTMLElement>();
+                for (const row of container.children) {
+                    const branch = row.lastElementChild as HTMLElement | null;
+                    if (branch?.classList.contains('ws-tree-children') && branch.dataset.dir) {
+                        branches.set(branch.dataset.dir, branch);
+                    }
+                }
+                container.innerHTML = this._renderTreeChildrenHtml(dirPath, this._depthOf(dirPath), branches);
+                for (const row of container.children) {
+                    const branch = row.lastElementChild as HTMLElement | null;
+                    const retained = branches.get(branch?.dataset.dir ?? '');
+                    if (retained) branch?.replaceWith(retained);
+                }
+                this._syncDirectoryWatches();
             }
         } else if (this._viewMode === 'grid' && this._gridPath === dirPath) {
             const gridRoot = rn.querySelector<HTMLElement>('.ws-grid-body');
@@ -1558,6 +1650,7 @@ export class FileExplorer {
         );
         if (!container) return;
         container.innerHTML = this._renderTreeChildrenHtml(this._workspaceRoot, 0);
+        this._syncDirectoryWatches();
     }
 
     private _depthOf(dirPath: string): number {
@@ -1574,9 +1667,6 @@ export class FileExplorer {
         if (this._viewMode === mode) return;
         this._viewMode = mode;
         this._renderBrowserSection();
-        if (mode === 'grid' && this._gridPath) {
-            void this._loadChildren(this._gridPath);
-        }
     }
 
     private _toggleTreeNode(dirPath: string): void {
@@ -1584,10 +1674,6 @@ export class FileExplorer {
             this._expandedPaths.delete(dirPath);
         } else {
             this._expandedPaths.add(dirPath);
-            const cached = this._childrenCache.get(dirPath);
-            if (!cached || (cached as { error?: string }).error) {
-                void this._loadChildren(dirPath);
-            }
         }
         this._rerenderTree();
     }
@@ -1595,7 +1681,6 @@ export class FileExplorer {
     private _enterGridDir(dirPath: string): void {
         this._gridPath = dirPath;
         this._renderBrowserSection();
-        void this._loadChildren(dirPath);
     }
 
     /**
@@ -1944,7 +2029,6 @@ export class FileExplorer {
                 this._previewState = { status: 'idle' };
                 this._renderPreview();
             }
-            this.softRefresh();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             await showInfoModal({
@@ -2019,6 +2103,7 @@ export class FileExplorer {
         if (browserIcon) {
             browserIcon.className = `fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}`;
         }
+        this._syncDirectoryWatches();
     }
 
     private _renderBrowserSection(): void {
@@ -2030,6 +2115,7 @@ export class FileExplorer {
         });
         browserBody.innerHTML =
             this._viewMode === 'tree' ? this._renderTreeContainerHtml() : this._renderGridContainerHtml();
+        this._syncDirectoryWatches();
     }
 
     private _renderPanel(): void {
@@ -2111,7 +2197,7 @@ export class FileExplorer {
                         icon.style.transform = '';
                     }, 500);
                 }
-                this.softRefresh();
+                for (const dir of this._visibleDirectories()) void this._loadChildren(dir);
             });
         }
 
@@ -2198,6 +2284,7 @@ export class FileExplorer {
         this._attachMarkdownShadow(panel);
         this._attachHtmlPreview(panel);
         this._attachSvgPreview(panel);
+        this._syncDirectoryWatches();
     }
 
     /**
@@ -2238,9 +2325,13 @@ export class FileExplorer {
         </div>`;
     }
 
-    private _renderTreeChildrenHtml(dirPath: string, depth: number): string {
+    private _renderTreeChildrenHtml(
+        dirPath: string,
+        depth: number,
+        branches?: ReadonlyMap<string, HTMLElement>
+    ): string {
         const cached = this._childrenCache.get(dirPath);
-        if (cached === 'loading' || cached === undefined) {
+        if (cached === undefined) {
             return `<div class="ws-tree-loading" style="padding-left:${depth * 14 + 10}px">
                 <i class="fas fa-circle-notch fa-spin"></i>
                 <span>${t('renderer.fileExplorer.loading')}</span>
@@ -2256,10 +2347,10 @@ export class FileExplorer {
         if (entries.length === 0) {
             return `<div class="ws-tree-empty" style="padding-left:${depth * 14 + 10}px">${t('renderer.fileExplorer.emptyDir')}</div>`;
         }
-        return entries.map((e) => this._renderTreeEntryHtml(e, depth)).join('');
+        return entries.map((e) => this._renderTreeEntryHtml(e, depth, branches?.has(e.path))).join('');
     }
 
-    private _renderTreeEntryHtml(entry: FSEntry, depth: number): string {
+    private _renderTreeEntryHtml(entry: FSEntry, depth: number, retainBranch = false): string {
         const pad = depth * 14 + 8;
         if (entry.isDirectory) {
             const expanded = this._expandedPaths.has(entry.path);
@@ -2267,7 +2358,7 @@ export class FileExplorer {
             const icon = expanded ? 'fa-folder-open' : 'fa-folder';
             const childrenHtml = expanded
                 ? `<div class="ws-tree-children" data-dir="${escapeHtml(entry.path)}">
-                        ${this._renderTreeChildrenHtml(entry.path, depth + 1)}
+                        ${retainBranch ? '' : this._renderTreeChildrenHtml(entry.path, depth + 1)}
                     </div>`
                 : '';
             return `
@@ -2341,7 +2432,7 @@ export class FileExplorer {
     private _renderGridBodyHtml(): string {
         if (!this._gridPath) return '';
         const cached = this._childrenCache.get(this._gridPath);
-        if (cached === undefined || cached === 'loading') {
+        if (cached === undefined) {
             return `<div class="ws-grid-loading">
                 <i class="fas fa-circle-notch fa-spin"></i>
                 <span>${t('renderer.fileExplorer.loading')}</span>
@@ -2888,7 +2979,6 @@ export class FileExplorer {
                 this._editorDirty = false;
                 this._editorStatus = 'saved';
             }
-            this.softRefresh();
             return contentUnchanged;
         } catch (err: any) {
             this._editorDirty = true;
@@ -3160,7 +3250,7 @@ export class FileExplorer {
         const renderTree = (parentPath: string, depth: number): string => {
             const cached = this._childrenCache.get(parentPath);
 
-            if (!cached || cached === 'loading') {
+            if (!cached) {
                 return `<div class="ctx-item" style="pointer-events:none;padding-left:${12 + depth * BC_INDENT}px">
                     <span class="ctx-icon-sm"><i class="fas fa-circle-notch fa-spin"></i></span>
                     <span class="ctx-label">Loading…</span></div>`;
@@ -3218,17 +3308,12 @@ export class FileExplorer {
 
         renderAll();
 
-        // 首次加载
-        const cached = this._childrenCache.get(dirPath);
-        if (!cached || !Array.isArray(cached)) {
-            dropdown.innerHTML =
-                '<div class="ctx-item" style="pointer-events:none;"><span class="ctx-icon-sm"><i class="fas fa-circle-notch fa-spin"></i></span><span class="ctx-label">Loading…</span></div>';
-            void this._loadChildren(dirPath).then(() => {
-                if (this._breadcrumbDropdown === dropdown) {
-                    renderAll();
-                }
+        const refreshDropdown = (path: string): void => {
+            void this._loadChildren(path).then(() => {
+                if (this._breadcrumbDropdown === dropdown) renderAll();
             });
-        }
+        };
+        refreshDropdown(dirPath);
 
         // 定位：不超出视口
         const rect = anchorEl.getBoundingClientRect();
@@ -3258,18 +3343,8 @@ export class FileExplorer {
                     renderAll();
                 } else {
                     this._dropdownExpandedDirs.add(path);
-                    const dirCached = this._childrenCache.get(path);
-                    if (!dirCached || !Array.isArray(dirCached)) {
-                        // 先渲染 loading 态，等加载完再刷新
-                        renderAll();
-                        void this._loadChildren(path).then(() => {
-                            if (this._breadcrumbDropdown === dropdown) {
-                                renderAll();
-                            }
-                        });
-                    } else {
-                        renderAll();
-                    }
+                    renderAll();
+                    refreshDropdown(path);
                 }
             } else {
                 this._dismissBreadcrumbDropdown();

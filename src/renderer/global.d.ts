@@ -276,6 +276,7 @@ declare global {
                 filePath: string,
                 callback: (change: { path: string; type: 'changed' | 'missing' }) => void
             ) => Promise<() => void>;
+            watchDirectory: (dirPath: string, callback: () => void) => Promise<() => void>;
             readTextFile: (filePath: string, maxBytes?: number) => Promise<any>;
             writeTextFile: (filePath: string, content: string) => Promise<any>;
             fileExists: (filePath: string) => Promise<any>;

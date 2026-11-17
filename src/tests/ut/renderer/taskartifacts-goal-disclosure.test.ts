@@ -72,7 +72,7 @@ describe('task artifacts goal disclosure state', () => {
                 onWorkspaceFocusLayoutChange: ((state: { active: boolean; fullscreen: boolean }) => void) | null = null;
                 mount() {}
                 refresh() {}
-                softRefresh() {}
+                setDirectoryBrowserVisible() {}
                 stopWatchingFile() {}
                 selectFile(filePath: string) {
                     this.onWorkspaceFocusLayoutChange?.({ active: filePath.endsWith('.pptx'), fullscreen: true });

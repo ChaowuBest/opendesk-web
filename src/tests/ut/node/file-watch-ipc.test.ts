@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mock, test, type TestContext } from 'node:test';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { sliceBalancedBlock } from './fixtures/sourceText.js';
@@ -31,9 +32,18 @@ function setup(t: TestContext) {
         dispose: mock.fn()
     };
     const app = new EventEmitter();
+    const directoryWatcher = Object.assign(new EventEmitter(), { close: mock.fn() });
+    let directoryChange!: () => void;
+    const watchDirectory = mock.fn((_dir: string, callback: () => void) => {
+        directoryChange = callback;
+        return directoryWatcher;
+    });
     vm.runInNewContext(`${registrationCode}; registerFSAPIHandlers();`, {
         ipcMain: ipc,
         app,
+        fs: { watch: watchDirectory },
+        path,
+        safeSendToWebContents: (sender: typeof owner, ...args: unknown[]) => sender.send(...args),
         FileWatchService: function () {
             return service;
         }
@@ -49,6 +59,10 @@ function setup(t: TestContext) {
         subscription,
         event,
         start: () => handlers.get('fs:watchFile')!(event, 'watch', '/deck.pptx'),
+        startDirectory: () => handlers.get('fs:watchFile')!(event, 'watch-dir', '/workspace', true),
+        watchDirectory,
+        directoryWatcher,
+        notifyDirectory: () => directoryChange(),
         notify: () => notify({ path: '/deck.pptx', type: 'changed' })
     };
 }
@@ -65,6 +79,19 @@ test('forwards changes only while the owning renderer is subscribed', async (t) 
     assert.equal(s.owner.send.mock.callCount(), 1);
     assert.equal(s.subscription.dispose.mock.callCount(), 1);
     assert.equal(s.owner.listenerCount('did-start-navigation'), 0);
+});
+
+test('watches a single directory and stops forwarding when its renderer navigates', async (t) => {
+    const s = setup(t);
+    await s.startDirectory();
+    assert.equal(s.service.watch.mock.callCount(), 0);
+    assert.equal(s.watchDirectory.mock.calls[0].arguments[0], path.resolve('/workspace'));
+    s.notifyDirectory();
+    assert.deepEqual(s.owner.send.mock.calls[0].arguments, ['fs:fileChanged', 'watch-dir', undefined]);
+    s.owner.emit('did-start-navigation', {}, 'about:blank', false, true);
+    s.notifyDirectory();
+    assert.equal(s.owner.send.mock.callCount(), 1);
+    assert.equal(s.directoryWatcher.close.mock.callCount(), 1);
 });
 
 test('releases late registrations after cancellation, navigation or destruction', async (t) => {

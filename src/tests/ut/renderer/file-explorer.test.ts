@@ -86,6 +86,69 @@ describe('file explorer', () => {
 
     const officeFrame = (container: HTMLElement) => container.querySelector('.ws-office-editor-frame');
 
+    test('refreshes only the changed visible directory and resumes listings when revealed', async () => {
+        function entry(path: string, isDirectory = false) {
+            return { path, name: path.split('/').at(-1), isDirectory, size: 0, modifiedAt: null };
+        }
+        const root = '/workspace';
+        const child = root + '/child';
+        const nested = child + '/nested';
+        const callbacks = new Map<string, () => void>();
+        const listDirectory = jest.fn(async (dir: string) => {
+            if (dir === root) return [entry(child, true)];
+            if (dir === child) return [entry(nested, true)];
+            return [entry(nested + '/old.txt')];
+        });
+        (window as any).fsAPI = {
+            listDirectory,
+            watchDirectory: jest.fn(async (dir: string, callback: () => void) => {
+                callbacks.set(dir, callback);
+                return () => callbacks.delete(dir);
+            })
+        };
+        const { container, explorer } = mountExplorer();
+        await settle();
+        explorer._toggleTreeNode(child);
+        await settle();
+        explorer._toggleTreeNode(nested);
+        await settle();
+        expect(listDirectory.mock.calls).toEqual([[root], [child], [nested]]);
+
+        listDirectory.mockClear();
+        listDirectory.mockResolvedValueOnce([entry(nested + '/new.txt')]);
+        callbacks.get(nested)?.();
+        callbacks.get(nested)?.();
+        await waitFor(() => container.textContent?.includes('new.txt') === true, 'updated directory');
+        expect(listDirectory.mock.calls).toEqual([[nested]]);
+
+        const nestedBranch = container.querySelector(`[data-dir="${nested}"]`);
+        listDirectory.mockResolvedValueOnce([entry(child, true), entry(root + '/top.txt')]);
+        callbacks.get(root)?.();
+        await waitFor(() => container.textContent?.includes('top.txt') === true, 'updated root');
+        expect(container.querySelector(`[data-dir="${nested}"]`)).toBe(nestedBranch);
+        expect(listDirectory.mock.calls).toEqual([[nested], [root]]);
+
+        listDirectory.mockClear();
+        const staleCallback = callbacks.get(nested);
+        explorer._toggleTreeNode(child);
+        expect([...callbacks.keys()]).toEqual([root]);
+        explorer.setDirectoryBrowserVisible(false);
+        expect(callbacks.size).toBe(0);
+        staleCallback?.();
+        await refreshSettled();
+        expect(listDirectory).not.toHaveBeenCalled();
+        explorer.setDirectoryBrowserVisible(true);
+        await settle();
+        expect(listDirectory.mock.calls).toEqual([[root]]);
+        listDirectory.mockClear();
+        explorer._setViewMode('grid');
+        explorer._enterGridDir(child);
+        await settle();
+        expect([...callbacks.keys()]).toEqual([child]);
+        expect(listDirectory.mock.calls).toEqual([[child]]);
+        explorer.setDirectoryBrowserVisible(false);
+    });
+
     async function openWatchedOffice(ext: 'pptx' | 'docx' | 'xlsx') {
         const file = `/workspace/deck.${ext}`;
         let callback!: (change: unknown) => void;

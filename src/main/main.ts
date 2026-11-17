@@ -2410,7 +2410,7 @@ async function readFileMetadata(filePath: string): Promise<{ systemPath: string;
 
 const registerFSAPIHandlers = () => {
     const fileWatchService = new FileWatchService();
-    type WatchedFile = { subscription?: FileWatchSubscription };
+    type WatchedFile = { subscription?: Pick<FileWatchSubscription, 'dispose'> };
     // 每个窗口保存自己的订阅，最后一个订阅关闭时一并移除窗口清理回调。
     const fileWatchOwners = new Map<WebContents, { files: Map<string, WatchedFile>; dispose: () => void }>();
 
@@ -2422,7 +2422,7 @@ const registerFSAPIHandlers = () => {
         if (owner.files.size === 0) owner.dispose();
     };
 
-    ipcMain.handle('fs:watchFile', async (event, id: string, filePath: string) => {
+    ipcMain.handle('fs:watchFile', async (event, id: string, filePath: string, directory = false) => {
         const sender = event.sender;
         if (sender.isDestroyed() || event.senderFrame !== sender.mainFrame) {
             throw new Error('File watch requires the main frame');
@@ -2455,9 +2455,19 @@ const registerFSAPIHandlers = () => {
         const file: WatchedFile = {};
         files.set(id, file);
         try {
-            file.subscription = await fileWatchService.watch(filePath, (change) => {
-                if (files.get(id) === file && !sender.isDestroyed()) sender.send('fs:fileChanged', id, change);
-            });
+            const notify = (change?: unknown): void => {
+                if (files.get(id) === file) safeSendToWebContents(sender, 'fs:fileChanged', id, change);
+            };
+            if (directory === true) {
+                const watcher = fs.watch(path.resolve(filePath), () => notify());
+                file.subscription = { dispose: () => watcher.close() };
+                watcher.on('error', () => {
+                    notify();
+                    if (files.get(id) === file) stopFileWatch(sender, id);
+                });
+            } else {
+                file.subscription = await fileWatchService.watch(filePath, notify);
+            }
             if (files.get(id) !== file) file.subscription.dispose();
         } catch (error) {
             if (files.get(id) === file) stopFileWatch(sender, id);
