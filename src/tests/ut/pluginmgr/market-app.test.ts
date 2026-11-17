@@ -16,9 +16,9 @@ import {
 } from '../../../main/applications/pluginmgr/channels.js';
 
 /**
- * 插件渠道 + 插件市场的主进程接口（renderer 通过 callMainWorld 调的那一批）。
+ * 插件仓库 + 插件市场的主进程接口（renderer 通过 callMainWorld 调的那一批）。
  *
- * 覆盖：渠道增删改启停 → registry 重建 → 市场清单按分类/关键词过滤 → 从市场下载安装并回报进度。
+ * 覆盖：仓库增删改启停 → registry 重建 → 市场清单按分类/关键词过滤 → 从市场下载安装并回报进度。
  * 网络一律走注入的平台 fetch，避免测试真的联网。
  */
 
@@ -109,7 +109,7 @@ describe('plugin channels and marketplace (main process)', () => {
      * 生产环境由 ApplicationRegistry 在启动时完成（Setting.registerApplicationSettings）：
      * 它既让 `applications.pluginmgr` 的 schema 生效（未注册时 zod 会把整块配置裁掉），
      * 也把「配置变更 → onConfigChanged」的回调接上。测试里必须显式补上这一步，
-     * 否则渠道写进 Setting 后会被 schema 直接丢掉。
+     * 否则仓库写进 Setting 后会被 schema 直接丢掉。
      */
     function registerApp(): void {
         Setting.registerApplicationSettings(app, () => app.onConfigChanged());

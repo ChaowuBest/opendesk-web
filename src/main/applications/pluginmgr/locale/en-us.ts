@@ -7,7 +7,7 @@ export const enUs: Record<string, string> = {
     'app.name': 'Plugins',
     'app.event.pluginsChanged': 'Triggered after plugins are installed, uninstalled, enabled, disabled, or reloaded',
     'app.event.appearanceChanged': 'Triggered after a plugin changes the application appearance (e.g. name, logo)',
-    'app.event.registriesChanged': 'Triggered after plugin channels (plugin marketplace sources) change',
+    'app.event.registriesChanged': 'Triggered after plugin registries (plugin marketplace sources) change',
     'app.event.marketInstallProgress': 'Triggered while downloading and installing a plugin from the marketplace',
 
     // Plugin catalog parsing
@@ -41,14 +41,14 @@ export const enUs: Record<string, string> = {
     'error.installFailedDetail': 'Installation failed: ${reason} (${detail})',
 
     // Plugin channels
-    'error.channelNameMissing': 'Please enter a channel name',
-    'error.channelNameTooLong': 'Channel name must not exceed 80 characters',
+    'error.channelNameMissing': 'Please enter a registry name',
+    'error.channelNameTooLong': 'Registry name must not exceed 80 characters',
     'error.channelUrlMissing': 'Please enter the plugin catalog URL',
     'error.channelUrlInvalid': 'Invalid plugin catalog URL: ${url}',
-    'error.channelUrlExists': 'Another channel already uses this URL: ${url}',
-    'error.channelNameExists': 'Channel name is already in use: ${name}',
-    'error.channelLimit': 'At most ${count} custom plugin channels are allowed',
-    'error.channelNotFound': 'Plugin channel not found',
+    'error.channelUrlExists': 'Another registry already uses this URL: ${url}',
+    'error.channelNameExists': 'Registry name is already in use: ${name}',
+    'error.channelLimit': 'At most ${count} custom plugin registries are allowed',
+    'error.channelNotFound': 'Plugin registry not found',
     'error.channelDefaultReadonly':
         'The official marketplace cannot be renamed, re-pointed or deleted; it can only be enabled or disabled',
     'error.channelVerifyFailed': 'Plugin catalog verification failed for ${url}: ${message}',

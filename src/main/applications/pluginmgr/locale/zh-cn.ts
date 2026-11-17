@@ -7,7 +7,7 @@ export const zhCn: Record<string, string> = {
     'app.name': '插件',
     'app.event.pluginsChanged': '插件安装、卸载、启停或重载后触发',
     'app.event.appearanceChanged': '插件修改应用外观（如名称、Logo）后触发',
-    'app.event.registriesChanged': '插件渠道（插件市场来源）发生变化后触发',
+    'app.event.registriesChanged': '插件仓库（插件市场来源）发生变化后触发',
     'app.event.marketInstallProgress': '从插件市场下载并安装插件时触发，用于显示下载进度',
 
     // 插件市场清单解析
@@ -38,15 +38,15 @@ export const zhCn: Record<string, string> = {
     'error.installFailed': '安装失败：${reason}',
     'error.installFailedDetail': '安装失败：${reason}（${detail}）',
 
-    // 插件渠道
-    'error.channelNameMissing': '请填写渠道名称',
-    'error.channelNameTooLong': '渠道名称不能超过 80 个字符',
+    // 插件仓库
+    'error.channelNameMissing': '请填写仓库名称',
+    'error.channelNameTooLong': '仓库名称不能超过 80 个字符',
     'error.channelUrlMissing': '请填写插件清单地址',
     'error.channelUrlInvalid': '插件清单地址不合法：${url}',
-    'error.channelUrlExists': '该地址已被其它渠道使用：${url}',
-    'error.channelNameExists': '渠道名称已被使用：${name}',
-    'error.channelLimit': '自定义插件渠道最多只能添加 ${count} 个',
-    'error.channelNotFound': '未找到该插件渠道',
+    'error.channelUrlExists': '该地址已被其它仓库使用：${url}',
+    'error.channelNameExists': '仓库名称已被使用：${name}',
+    'error.channelLimit': '自定义插件仓库最多只能添加 ${count} 个',
+    'error.channelNotFound': '未找到该插件仓库',
     'error.channelDefaultReadonly': '官方插件市场不能改名、改地址或删除，只能启用或禁用',
     'error.channelVerifyFailed': '插件清单验证失败 ${url}：${message}',
     'error.channelEmpty': '该地址下没有任何插件：${url}'

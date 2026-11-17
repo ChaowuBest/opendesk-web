@@ -12,17 +12,17 @@
 /**
  * 插件市场清单（`plugins.json`）的解析。
  *
- * 清单由渠道自己托管，形状可能随渠道演进而变，因此这里的解析策略是：
+ * 清单由仓库自己托管，形状可能随仓库演进而变，因此这里的解析策略是：
  * - 只认必需的字段（id + 下载地址），其余字段缺失都按「没声明」处理；
  * - 声明了的展示字段与插件清单同一口径（`version` 是 SemVer、`author` 是对象且 name 必填、
  *   `apiVersion` 必须等于宿主支持的插件 API 版本、`platforms` 取自同一套枚举），
  *   免得市场显示的和装完之后的插件对不上；
  * - `lenient` 模式下单条写坏只跳过那一条，不让整个市场因为一条脏数据变成空白；
- * - 渠道级校验（用户点「确定」新增渠道时）用严格模式，任何一条写坏都要先修好。
+ * - 仓库级校验（用户点「确定」新增仓库时）用严格模式，任何一条写坏都要先修好。
  *
  * 下载地址只放行归档包（.zip / .tgz / .tar.gz）：插件安装走的是「下载归档 → 解包 → 校验」
  * 这条路径，地址若不是归档包，装下去只会得到一句莫名其妙的解包失败。下载地址允许写成相对于
- * 清单的地址（`plugins/demo.zip`）：渠道把包和清单放在同一个仓库里时不必写死绝对地址，
+ * 清单的地址（`plugins/demo.zip`）：仓库把包和清单放在同一个仓库里时不必写死绝对地址，
  * 换域名/换分支都不会让整份清单失效。
  */
 
@@ -70,7 +70,7 @@ export interface PluginCatalogEntry {
     maxOpenDeskVersion?: string;
     /** 支持平台：与插件清单同义，未声明表示全平台；不含当前平台的条目不会出现在市场上 */
     platforms?: PluginPlatform[];
-    /** 分类标签：与渠道声明的 categories 取值对应，未声明表示未分类 */
+    /** 分类标签：与仓库声明的 categories 取值对应，未声明表示未分类 */
     category?: string[];
     /** 插件归档包的下载地址 */
     downloadUrl: string;
@@ -87,7 +87,7 @@ export interface PluginCatalogEntry {
 
 /** 一份解析后的市场清单 */
 export interface PluginCatalogDocument {
-    /** 渠道声明的分类；缺省表示该渠道不支持按分类显示 */
+    /** 仓库声明的分类；缺省表示该仓库不支持按分类显示 */
     categories?: string[];
     entries: PluginCatalogEntry[];
 }
@@ -261,7 +261,7 @@ function optionalSemver(value: unknown): string | undefined {
 /**
  * 宿主版本上下界：与插件清单一致要求合法 SemVer。
  *
- * 单独一条文案是为了让渠道校验的报错能指出是哪个字段写坏了——`minOpenDeskVersion`
+ * 单独一条文案是为了让仓库校验的报错能指出是哪个字段写坏了——`minOpenDeskVersion`
  * 写成 `latest` 时不该只说「插件版本号不合法」，那会让人去翻 `version`。
  */
 function optionalHostVersion(value: unknown, field: 'minOpenDeskVersion' | 'maxOpenDeskVersion'): string | undefined {

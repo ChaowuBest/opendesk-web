@@ -134,7 +134,7 @@ describe('resolveLfsBatchUrl', () => {
             'https://codeberg.org/org/repo.git/info/lfs/objects/batch'
         );
         // 自建 Gitea 子路径部署（/{host}/{base}/{owner}/{repo}/…）无法从 URL 唯一确定
-        // owner/repo 的起点，这里不做猜测：返回 null，渠道地址请使用不带子路径前缀的形态
+        // owner/repo 的起点，这里不做猜测：返回 null，仓库地址请使用不带子路径前缀的形态
         expect(resolveLfsBatchUrl('https://git.example.com/base/org/repo/raw/main/a.zip')).toBeNull();
     });
 

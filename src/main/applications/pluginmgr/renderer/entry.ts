@@ -120,7 +120,7 @@ interface PluginListEntry {
 type InstallDialogMode = 'npm' | 'url';
 type ManagedInstallSource = InstallDialogMode | 'directory' | 'package';
 
-/** 插件市场里的一个市场（渠道） */
+/** 插件市场里的一个市场（仓库） */
 interface PluginMarketRegistryView {
     name: string;
     displayName: string;
@@ -168,7 +168,7 @@ type LeafRegion = 'notice' | 'install-dialog' | 'install-progress' | 'market';
 
 /**
  * 每个插件市场（registry）在插件中心占一个独立 Tab，与测评集应用的导航一致：
- * tab id 带前缀，名字直接用渠道展示名，而不是「插件市场 → 再选市场」两层。
+ * tab id 带前缀，名字直接用仓库展示名，而不是「插件市场 → 再选市场」两层。
  */
 const MARKET_TAB_PREFIX = 'market:';
 
@@ -1000,7 +1000,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
     private activeTab: PluginTab = 'installed';
     /** 首屏默认落点已应用：进入插件中心默认停在第一个市场，用户切走过之后不再抢焦点 */
     private initialTabApplied = false;
-    /** 插件市场（registry）列表：每个市场在顶部占一个 Tab，名字来自渠道展示名 */
+    /** 插件市场（registry）列表：每个市场在顶部占一个 Tab，名字来自仓库展示名 */
     private marketRegistries: PluginMarketRegistryView[] = [];
     private marketRegistriesLoading = false;
     /** 当前市场 Tab 的清单（含该市场自述的分类） */
@@ -1047,9 +1047,9 @@ export class PluginMgrEntryWidget extends HTMLElement {
      */
     private readonly onPluginsChanged = () => void this.refreshEntries();
     /**
-     * 插件渠道变了（设置里加/删/启停）：重新拉一次市场列表。
+     * 插件仓库变了（设置里加/删/启停）：重新拉一次市场列表。
      *
-     * 不重新拉的话，用户在设置里加完渠道回到插件中心，还得先切走再切回来才看得到新市场。
+     * 不重新拉的话，用户在设置里加完仓库回到插件中心，还得先切走再切回来才看得到新市场。
      * 打开着的市场被禁用/删除时由 ensureMarketRegistries 退回市场列表。
      */
     private readonly onRegistriesChanged = () => void this.ensureMarketRegistries(true);
@@ -1214,7 +1214,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
             (error) => console.warn('Failed to subscribe registriesChanged:', error)
         );
         await this.load();
-        // 每个插件市场占一个 Tab，所以首屏就要拿到渠道列表
+        // 每个插件市场占一个 Tab，所以首屏就要拿到仓库列表
         await this.ensureMarketRegistries();
     }
 
@@ -2017,8 +2017,8 @@ export class PluginMgrEntryWidget extends HTMLElement {
     /**
      * 拉一次插件市场列表：每个市场在顶部占一个 Tab，所以首屏就要拿到它。
      *
-     * 渠道配置变了（registriesChanged）会重新拉；当前停留的市场被删除或禁用时回落到「已安装」，
-     * 还在的话重新拉一次它的清单——渠道地址可能被改过，留着旧市场的卡片只会装出别处的插件。
+     * 仓库配置变了（registriesChanged）会重新拉；当前停留的市场被删除或禁用时回落到「已安装」，
+     * 还在的话重新拉一次它的清单——仓库地址可能被改过，留着旧市场的卡片只会装出别处的插件。
      */
     private async ensureMarketRegistries(force = false): Promise<void> {
         if (this.marketRegistriesLoading) return;
@@ -2029,7 +2029,7 @@ export class PluginMgrEntryWidget extends HTMLElement {
             const registries = await getAPI().callMainWorld('listPluginRegistries');
             this.marketRegistries = Array.isArray(registries) ? registries : [];
             // 进入插件中心默认落在第一个市场（官方市场固定排最前）而不是「已安装」；
-            // 首屏只应用一次，之后（含渠道变更触发的重拉）不再抢用户当前停留的 Tab
+            // 首屏只应用一次，之后（含仓库变更触发的重拉）不再抢用户当前停留的 Tab
             if (!this.initialTabApplied) {
                 this.initialTabApplied = true;
                 const firstMarket = this.marketRegistries[0];
@@ -2045,13 +2045,13 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 currentMarketSurvived = true;
             }
         } catch (error) {
-            // 市场列表只读本地渠道配置，失败通常是应用还没就绪：Tab 少几个不影响其它功能
+            // 市场列表只读本地仓库配置，失败通常是应用还没就绪：Tab 少几个不影响其它功能
             console.warn('Failed to list plugin registries:', error);
         } finally {
             this.marketRegistriesLoading = false;
             this.render();
         }
-        // 不清缓存地重取一次：主进程已经按新配置重建过 registry，这里拿到的是新渠道的清单
+        // 不清缓存地重取一次：主进程已经按新配置重建过 registry，这里拿到的是新仓库的清单
         if (currentMarketSurvived) await this.loadMarketCatalog();
     }
 

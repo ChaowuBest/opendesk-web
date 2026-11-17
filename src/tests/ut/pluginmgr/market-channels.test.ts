@@ -18,12 +18,12 @@ beforeAll(() => setRuntimeLocale('zh-CN'));
 afterAll(() => setRuntimeLocale(null));
 
 /**
- * 插件渠道（插件市场来源）的归一化与校验。
+ * 插件仓库（插件市场来源）的归一化与校验。
  *
  * 关键约定：
- * - 官方渠道永远排第一，地址取自常量，用户只能启停；
- * - 自定义渠道缺 id / 缺地址的直接丢弃，id 重复保留先出现的；
- * - 新增/编辑渠道时严格解析清单（任何一条写坏都要报错），避免存下不可用的渠道。
+ * - 官方仓库永远排第一，地址取自常量，用户只能启停；
+ * - 自定义仓库缺 id / 缺地址的直接丢弃，id 重复保留先出现的；
+ * - 新增/编辑仓库时严格解析清单（任何一条写坏都要报错），避免存下不可用的仓库。
  */
 
 function entry(overrides: Record<string, unknown> = {}) {
@@ -96,7 +96,7 @@ describe('channel name / url validation', () => {
     });
 
     test('rejects empty / overlong names and non-http urls', () => {
-        expect(() => normalizeChannelName('   ')).toThrow(/请填写渠道名称/);
+        expect(() => normalizeChannelName('   ')).toThrow(/请填写仓库名称/);
         expect(() => normalizeChannelName('x'.repeat(81))).toThrow(/80/);
         expect(() => normalizeChannelUrl('')).toThrow(/请填写插件清单地址/);
         expect(() => normalizeChannelUrl('file:///etc/passwd')).toThrow(/不合法/);
@@ -113,7 +113,7 @@ describe('channel name / url validation', () => {
         expect(() => assertChannelNameAvailable(channels, 'Alpha', '官方插件市场', 'a')).not.toThrow();
 
         expect(() => assertChannelUrlAvailable(channels, 'https://alpha.example.com/plugins.json')).toThrow(
-            /已被其它渠道使用/
+            /已被其它仓库使用/
         );
         expect(() => assertChannelUrlAvailable(channels, 'https://alpha.example.com/plugins.json', 'a')).not.toThrow();
     });

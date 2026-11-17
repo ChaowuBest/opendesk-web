@@ -12,8 +12,8 @@ import type { BasePluginRegistry } from '../../../main/applications/pluginmgr/re
  * registry provider 注入点。
  *
  * 内置实现只认 HTTP 上的 plugins.json；未来换协议（分页 RPC、需要认证的私有市场）时，
- * 注册一个 provider 认领对应渠道即可，createPluginRegistries 与 app.ts 都不用动。
- * 这些用例守住三件事：默认行为不变、认领只作用于自己的渠道、provider 出错不放大成空市场。
+ * 注册一个 provider 认领对应仓库即可，createPluginRegistries 与 app.ts 都不用动。
+ * 这些用例守住三件事：默认行为不变、认领只作用于自己的仓库、provider 出错不放大成空市场。
  */
 
 const OFFICIAL_CHANNEL = { id: 'official', name: '', url: 'https://official.example.com/plugins.json' };
@@ -30,7 +30,7 @@ function createRegistries(): BasePluginRegistry[] {
     return createPluginRegistries({ dataDirectory: 'C:/tmp/pluginmgr-test', channels: channels() });
 }
 
-/** 一个只认 `proto.example.com` 的假 registry：用来证明注入点真的接管了渠道 */
+/** 一个只认 `proto.example.com` 的假 registry：用来证明注入点真的接管了仓库 */
 function providedRegistry(name: string): BasePluginRegistry {
     return {
         name,
@@ -52,7 +52,7 @@ describe('plugin registry providers', () => {
         expect(registries.every((registry) => registry instanceof PlainPluginRegistry)).toBe(true);
     });
 
-    test('provider 只接管自己认领的渠道，其余仍走内置实现', () => {
+    test('provider 只接管自己认领的仓库，其余仍走内置实现', () => {
         registerPluginRegistryProvider({
             id: 'proto',
             supports: (channel) => channel.url.includes('proto.example.com'),
@@ -66,7 +66,7 @@ describe('plugin registry providers', () => {
         expect(registries[1]).not.toBeInstanceOf(PlainPluginRegistry);
     });
 
-    test('退订之后该渠道回到内置实现', () => {
+    test('退订之后该仓库回到内置实现', () => {
         const unregister = registerPluginRegistryProvider({
             id: 'proto',
             supports: (channel) => channel.url.includes('proto.example.com'),
@@ -79,7 +79,7 @@ describe('plugin registry providers', () => {
         expect(createRegistries()[1]).toBeInstanceOf(PlainPluginRegistry);
     });
 
-    test('同 id 重复注册直接报错，避免两个 provider 抢同一个渠道', () => {
+    test('同 id 重复注册直接报错，避免两个 provider 抢同一个仓库', () => {
         registerPluginRegistryProvider({ id: 'proto', supports: () => false, create: () => undefined });
 
         expect(() =>

@@ -138,7 +138,7 @@ select {
     border-radius: 10px;
     background: var(--chip);
     min-width: 0;
-    /* 测评集渠道可以有多个，Tab 条放不下时换行，别把右侧操作按钮挤出可视区 */
+    /* 测评集仓库可以有多个，Tab 条放不下时换行，别把右侧操作按钮挤出可视区 */
     flex-wrap: wrap;
 }
 

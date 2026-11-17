@@ -1,9 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
-// 插件渠道面板与测评集渠道面板共用 `RegistryChannelSettings`，差异全靠各自声明的配置
+// 插件仓库面板与测评集仓库面板共用 `RegistryChannelSettings`，差异全靠各自声明的配置
 // （应用包名、接口方法名、文案前缀、DOM id）。这些用例就是「配置没写歪」的守门人：
-// 少写/写错一项，按钮会指向不存在的方法，或文案串到测评集渠道上。
+// 少写/写错一项，按钮会指向不存在的方法，或文案串到测评集仓库上。
 
 const OFFICIAL = {
     id: 'official',
@@ -78,8 +78,8 @@ describe('plugin-channel-settings', () => {
         expect(officialRow.querySelector('[data-action="delete"]')).toBeNull();
         expect(officialRow.querySelector('[data-channel-toggle="official"]')).toBeTruthy();
         expect(officialRow.textContent).toContain('系统默认');
-        // 标题与提示文案来自插件渠道自己的前缀，不能串到测评集渠道上
-        expect(panel.textContent).toContain('插件渠道');
+        // 标题与提示文案来自插件仓库自己的前缀，不能串到测评集仓库上
+        expect(panel.textContent).toContain('插件仓库');
 
         const customRow = panel.querySelector('[data-channel-row="channel-1"]');
         expect(customRow.querySelector('[data-action="edit"]')).toBeTruthy();
