@@ -47,6 +47,7 @@
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
         "postinstall": "node scripts/setup-native-modules.cjs",
         "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
+        "pretest:unit": "tsx --test src/tests/ut/node/office/word-pdf-worker-vite.test.ts",
         "test:unit": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --selectProjects unit",
         "test:search": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --selectProjects search",
         "test:node": "tsx --test --import ./src/tests/test-env.ts \"src/tests/ut/node/**/*.test.js\" \"src/tests/ut/node/**/*.test.ts\"",
