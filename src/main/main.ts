@@ -709,12 +709,11 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         const src = params.src ?? '';
         if (isOpenDeskOfficePartition(webPreferences.partition)) {
             const officeEditorKind = getEmbeddedOpenDeskOfficeEditorKind(src, webPreferences.partition);
-            if (!officeEditorKind) {
+            if (!officeEditorKind || !configureOpenDeskOfficeWebPreferences(officeEditorKind, webPreferences)) {
                 logger.warn(`Blocked untrusted OpenDesk Office webview URL: ${src || '<empty>'}`);
                 event.preventDefault();
                 return;
             }
-            configureOpenDeskOfficeWebPreferences(officeEditorKind, webPreferences);
             return;
         }
 

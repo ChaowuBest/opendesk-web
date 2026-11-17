@@ -561,6 +561,52 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-preview-size')?.textContent).toBe(expected);
     });
 
+    test('opens and refreshes a local PDF through the Office host', async () => {
+        const readTextFile = jest.fn();
+        const prepare = jest.fn(async () => true);
+        const refreshFile = jest.fn(async () => {});
+        const requestClose = jest.fn(async () => true);
+        let change!: () => void;
+        const getFileSize = jest.fn(async () => 4096);
+        (window as any).officeHostAPI = { prepare, refreshFile, requestClose };
+        (window as any).fsAPI = {
+            getFileSize,
+            readTextFile,
+            watchFile: jest.fn(async (_path, callback: () => void) => {
+                change = callback;
+                return () => {};
+            })
+        };
+        const { container, explorer } = mountExplorer();
+        const filePath = '/workspace/报告 #.PDF';
+        explorer.openEditor(filePath);
+        await settle();
+
+        const preview = officeFrame(container) as HTMLElement & { getWebContentsId: () => number };
+        expect(prepare).toHaveBeenCalledWith('pdf');
+        expect(preview?.getAttribute('partition')).toBe('persist:opendesk-office');
+        const url = new URL(preview.getAttribute('src')!, 'http://localhost');
+        expect(url.pathname).toBe('/pdf_editor.html');
+        expect(url.searchParams.get('file')).toBe(filePath);
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe('4.0 KB');
+        expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
+        expect(readTextFile).not.toHaveBeenCalled();
+
+        preview.getWebContentsId = () => 123;
+        const readyEvent = new window.Event('ipc-message');
+        Object.assign(readyEvent, { channel: 'opendesk-office:document-ready' });
+        preview.dispatchEvent(readyEvent);
+        getFileSize.mockResolvedValue(8192);
+        change();
+        await waitFor(() => container.querySelector('.ws-preview-size')?.textContent === '8.0 KB', 'PDF refresh');
+        expect(refreshFile).toHaveBeenCalledWith(123, filePath);
+        expect(officeFrame(container)).toBe(preview);
+        explorer.closeEditor();
+        await settle();
+        expect(requestClose).toHaveBeenCalledWith('pdf', 123);
+        expect(officeFrame(container)).toBeNull();
+    });
+
     test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
         let finishPrepare: ((ready: boolean) => void) | undefined;
         const prepare = jest.fn(

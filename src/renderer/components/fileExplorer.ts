@@ -47,7 +47,7 @@ import {
 import type { WorkspaceFocusLayoutState } from './workspaceFocusLayout.js';
 import type { AgentInputRequest } from '../input/agentInputRequest.js';
 import { createSlidesSelectionInputRequest } from '../applications/office/slidesSelectionInput.js';
-import { OPENDESK_OFFICE_PARTITION } from '../../common/officeWebview.js';
+import { OPENDESK_OFFICE_PARTITION, type OfficeEditorKind } from '../../common/officeWebview.js';
 
 const t = createRendererTranslator();
 
@@ -205,8 +205,6 @@ function pickFileIcon(entry: FSEntry): string {
     }
 }
 
-type OfficeEditorKind = 'slides' | 'word' | 'sheets';
-
 interface OfficeEditorConfig {
     kind: OfficeEditorKind;
     extension: string;
@@ -240,6 +238,14 @@ const OFFICE_EDITOR_CONFIGS: readonly OfficeEditorConfig[] = [
         iconClass: 'fa-file-excel',
         titleKey: 'renderer.fileExplorer.xlsx.editor',
         unavailableKey: 'renderer.fileExplorer.xlsx.unavailable'
+    },
+    {
+        kind: 'pdf',
+        extension: '.pdf',
+        rendererPage: 'pdf_editor.html',
+        iconClass: 'fa-file-pdf',
+        titleKey: 'renderer.fileExplorer.pdf.title',
+        unavailableKey: 'renderer.fileExplorer.pdf.loadFailed'
     }
 ];
 
@@ -1762,7 +1768,10 @@ export class FileExplorer {
             this._notifyWorkspaceFocusLayoutChange();
         } catch (err) {
             if (this._selectedFile !== filePath || version !== this._fileWatchVersion) return;
-            this._previewState = { status: 'error', error: err instanceof Error ? err.message : String(err) };
+            this._previewState = {
+                status: 'error',
+                error: err instanceof Error ? err.message : String(err)
+            };
             this._previewFullscreen = false;
             this._notifyWorkspaceFocusLayoutChange();
         }
@@ -2976,6 +2985,14 @@ export class FileExplorer {
         webview.setAttribute('partition', OPENDESK_OFFICE_PARTITION);
         webview.setAttribute('src', editorUrl);
         webview.setAttribute('title', t(editorConfig.titleKey));
+        webview.addEventListener('did-fail-load', (event) => {
+            const failure = event as Event & { errorCode: number; isMainFrame: boolean };
+            if (!failure.isMainFrame || failure.errorCode === -3 || !webview.isConnected) return;
+            this._previewState = { status: 'error', error: t(editorConfig.unavailableKey) };
+            this._previewFullscreen = false;
+            this._notifyWorkspaceFocusLayoutChange();
+            this._renderPreview();
+        });
         let editorReadyHandled = false;
         const handleEditorMessage = (event: Event): void => {
             const ipcEvent = event as Event & { channel?: string; args?: unknown[] };
@@ -3375,10 +3392,9 @@ export class FileExplorer {
 
         let bodyHtml = '';
         if (this._previewState.status === 'loading') {
-            bodyHtml =
-                this._selectedFile && isOfficeDocument(this._selectedFile)
-                    ? `<div class="ws-office-editor-host ws-office-editor-loading">${renderOfficeEditorLoadingIndicator()}</div>`
-                    : `
+            bodyHtml = getOfficeEditorConfig(this._selectedFile)
+                ? `<div class="ws-office-editor-host ws-office-editor-loading">${renderOfficeEditorLoadingIndicator()}</div>`
+                : `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>
                 <span>${t('renderer.fileExplorer.preview.reading')}</span>

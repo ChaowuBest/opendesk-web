@@ -38,6 +38,7 @@ import { isOpenDeskOfficePartition, OPENDESK_OFFICE_PARTITION } from '../../comm
 export type OpenDeskOfficeEditorKind = OfficeTaskSessionKind;
 
 interface OpenDeskOfficeHost {
+    configureWebPreferences(preferences: WebPreferences): void;
     register(): void;
     attachWindow(window: BrowserWindow): void;
     activateContents(contents: WebContents): void;
@@ -98,6 +99,7 @@ interface OfficeEditorRuntime extends OfficeEditorDefinition {
     rendererDevUrl?: string;
     isTrustedUrl(url: string): boolean;
     hostPromise?: Promise<OpenDeskOfficeHost>;
+    host?: OpenDeskOfficeHost;
 }
 
 function getRendererDevUrl(rendererPageName: string): string | undefined {
@@ -127,6 +129,13 @@ const editorDefinitions: readonly OfficeEditorDefinition[] = [
         rendererPageName: 'sheets_editor.html',
         preloadName: 'sheetsPreload.js',
         requestCloseChannel: 'office-host:sheets:request-close'
+    },
+    {
+        kind: 'pdf',
+        extension: '.pdf',
+        rendererPageName: 'pdf_editor.html',
+        preloadName: 'pdfPreload.js',
+        requestCloseChannel: 'office-host:pdf:request-close'
     }
 ];
 
@@ -368,6 +377,7 @@ async function loadEditorHost(runtime: OfficeEditorRuntime): Promise<OpenDeskOff
         .then((host) => {
             host.register();
             if (attachedWindow && !attachedWindow.isDestroyed()) host.attachWindow(attachedWindow);
+            runtime.host = host;
             return host;
         })
         .catch((error: unknown) => {
@@ -401,14 +411,12 @@ export function getEmbeddedOpenDeskOfficeContentsKind(contents: WebContents): Op
 export function configureOpenDeskOfficeWebPreferences(
     kind: OpenDeskOfficeEditorKind,
     webPreferences: WebPreferences
-): void {
-    const runtime = getEditorRuntime(kind);
-    webPreferences.preload = runtime.preloadPath;
-    webPreferences.contextIsolation = true;
-    webPreferences.nodeIntegration = false;
-    webPreferences.sandbox = true;
-    webPreferences.backgroundThrottling = false;
+): boolean {
+    const host = getEditorRuntime(kind).host;
+    if (!host) return false;
+    host.configureWebPreferences(webPreferences);
     webPreferences.session = session.fromPartition(OPENDESK_OFFICE_PARTITION);
+    return true;
 }
 
 export function registerEmbeddedOpenDeskOffice(): void {
