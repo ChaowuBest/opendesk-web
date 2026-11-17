@@ -137,6 +137,9 @@ node {
                                         set -euo pipefail
 
                                         {
+	                                        echo "=== Word PDF worker cold Vite startup ==="
+	                                        npx tsx --test src/tests/ut/node/office/word-pdf-worker-vite.test.ts
+	                                        echo ""
 	                                        echo "=== docs freshness check ==="
 	                                        npm run check:docs
 	                                        echo ""
