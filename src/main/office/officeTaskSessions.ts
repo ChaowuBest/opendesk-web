@@ -9,7 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export type OfficeTaskSessionKind = 'slides' | 'word' | 'sheets';
+import type { OfficeEditorKind } from '../../common/officeWebview.js';
+
+export type OfficeTaskSessionKind = OfficeEditorKind;
 
 export interface OfficeSessionContents {
     readonly id: number;

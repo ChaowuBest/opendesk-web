@@ -62,6 +62,7 @@ jest.unstable_mockModule('electron', () => ({
 
 const officeHost = {
     getPresentationSnapshot: jest.fn(),
+    configureWebPreferences: jest.fn(),
     refreshFile: jest.fn(async () => {}),
     register: jest.fn(),
     attachWindow: jest.fn(),
@@ -92,6 +93,7 @@ Object.defineProperty(globalThis, '__dirname', {
 });
 
 const {
+    configureOpenDeskOfficeWebPreferences,
     getEmbeddedOpenDeskOfficeEditorKind,
     getOpenDeskOfficeEditorKind,
     registerEmbeddedOpenDeskOffice,
@@ -124,7 +126,7 @@ describe('OpenDesk Office webview ownership', () => {
         ).toBe('slides');
     });
 
-    it.each(['slides', 'word', 'sheets'])('passes the same host context when preparing %s', async (kind) => {
+    it.each(['slides', 'word', 'sheets', 'pdf'])('passes the same host context when preparing %s', async (kind) => {
         registerEmbeddedOpenDeskOffice();
         const prepare = ipcHandlers.get('office-host:prepare')!;
 
@@ -138,6 +140,15 @@ describe('OpenDesk Office webview ownership', () => {
             mainOutputDir: fileURLToPath(new URL('../../../main/', import.meta.url)),
             editorSession: officeSession
         });
+    });
+
+    it('delegates guest configuration to the prepared PDF host', async () => {
+        registerEmbeddedOpenDeskOffice();
+        await ipcHandlers.get('office-host:prepare')!({}, 'pdf');
+        const preferences = {};
+        expect(configureOpenDeskOfficeWebPreferences('pdf', preferences)).toBe(true);
+        expect(officeHost.configureWebPreferences).toHaveBeenCalledWith(preferences);
+        expect(preferences).toMatchObject({ session: officeSession });
     });
 
     it('provides embedded editor defaults only to trusted Office guests', () => {

@@ -2837,6 +2837,8 @@ export const enUs: Record<string, string> = {
     'renderer.fileExplorer.preview.btnPreview': 'Preview',
     'renderer.fileExplorer.preview.btnClose': 'Close',
     'renderer.fileExplorer.preview.loadingEditor': 'Loading editor…',
+    'renderer.fileExplorer.pdf.title': 'PDF preview',
+    'renderer.fileExplorer.pdf.loadFailed': 'Could not open PDF preview',
     'renderer.fileExplorer.preview.readFailed': 'Failed to read file',
     'renderer.fileExplorer.preview.editFile': 'Edit file',
     'renderer.fileExplorer.preview.readOnlyHint': 'Preview mode is read-only. Click the edit button to enable editing.',

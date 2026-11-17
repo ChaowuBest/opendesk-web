@@ -111,11 +111,14 @@ declare global {
             onExit: (callback: (event: { sessionId: string; exitCode: number; signal?: number }) => void) => () => void;
         };
         officeHostAPI: {
-            prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
-            requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
+            prepare: (kind: import('../common/officeWebview.js').OfficeEditorKind) => Promise<boolean>;
+            requestClose: (
+                kind: import('../common/officeWebview.js').OfficeEditorKind,
+                webContentsId: number
+            ) => Promise<boolean>;
             refreshFile: (webContentsId: number, filePath: string) => Promise<void>;
             bindOfficeTask: (
-                kind: 'slides' | 'word' | 'sheets',
+                kind: import('../common/officeWebview.js').OfficeEditorKind,
                 taskId: string,
                 filePath: string,
                 webContentsId: number
@@ -123,7 +126,7 @@ declare global {
             onOpenOfficeTaskFile: (
                 callback: (request: {
                     requestId: string;
-                    kind: 'slides' | 'word' | 'sheets';
+                    kind: import('../common/officeWebview.js').OfficeEditorKind;
                     taskId: string;
                     filePath: string;
                 }) => void

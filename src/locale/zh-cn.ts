@@ -2742,6 +2742,8 @@ export const zhCn: Record<string, string> = {
     'renderer.fileExplorer.preview.btnPreview': '预览',
     'renderer.fileExplorer.preview.btnClose': '关闭',
     'renderer.fileExplorer.preview.loadingEditor': '正在加载编辑器…',
+    'renderer.fileExplorer.pdf.title': 'PDF 预览',
+    'renderer.fileExplorer.pdf.loadFailed': '无法打开 PDF 预览',
     'renderer.fileExplorer.preview.readFailed': '读取文件失败',
     'renderer.fileExplorer.preview.editFile': '编辑文件',
     'renderer.fileExplorer.preview.readOnlyHint': '当前在预览状态下，点击右上角编辑按钮以修改文件',

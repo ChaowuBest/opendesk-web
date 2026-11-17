@@ -885,7 +885,8 @@ function exposeOfficeHostAPI() {
     const requestCloseChannels = Object.freeze({
         slides: 'office-host:slides:request-close',
         word: 'office-host:word:request-close',
-        sheets: 'office-host:sheets:request-close'
+        sheets: 'office-host:sheets:request-close',
+        pdf: 'office-host:pdf:request-close'
     });
     const isOfficeEditorKind = (kind) => Object.prototype.hasOwnProperty.call(requestCloseChannels, kind);
     const openOfficeTaskFileChannel = 'office-host:open-task-file';
