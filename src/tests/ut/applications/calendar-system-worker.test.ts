@@ -1,23 +1,27 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import Datastore from 'nedb-promises';
 import CalendarWorker from '../../../main/applications/calendar/service/worker.js';
-import AndroidCalendarWorker from '../../../main/applications/calendar/service/android-worker.js';
 import { CalendarApplication } from '../../../main/applications/calendar/app.js';
-import { configureHostRuntime } from '../../../platforms/runtime.js';
+import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 import type {
-    CalendarItem,
-    SystemCalendarPort,
-    SystemCalendarState
-} from '../../../main/applications/calendar/service/system-calendar.js';
+    CalendarEvent,
+    CalendarKit,
+    CalendarKitState,
+    CalendarKitChange
+} from '../../../platforms/bridges/common.js';
+import type { CalendarItem } from '../../../main/applications/calendar/service/system-calendar.js';
 
 const localInput = {
     subject: 'local',
     startTime: new Date('2026-11-17T10:00:00').getTime(),
     endTime: new Date('2026-11-17T11:00:00').getTime()
 };
-function nativeItem(patch: Partial<CalendarItem> = {}): CalendarItem {
+function nativeItem(patch: Partial<CalendarEvent> = {}): CalendarEvent {
     return {
-        uid: 'android:7:42:' + localInput.startTime,
+        uid: 'opaque-provider-event',
+        calendarId: '7',
+        canWrite: true,
+        recurring: false,
         ...localInput,
         subject: 'system',
         location: '',
@@ -28,11 +32,26 @@ function nativeItem(patch: Partial<CalendarItem> = {}): CalendarItem {
     };
 }
 
-describe('Android Calendar Worker keeps local storage separate from the system provider', () => {
-    let worker: AndroidCalendarWorker, state: SystemCalendarState, port: SystemCalendarPort;
+class TestCalendarPlatform extends AbstractPlatform {
+    getName() {
+        return 'test-calendar-host';
+    }
+    getEffectiveWorkspace() {
+        return process.cwd();
+    }
+    async initPlatformHarness() {}
+    async fetch(): Promise<Response> {
+        throw new Error('Unexpected network');
+    }
+}
+
+describe('shared Calendar Worker keeps local storage separate from the native kit', () => {
+    let worker: CalendarWorker, state: CalendarKitState, port: CalendarKit;
+    let changes: Set<(change: CalendarKitChange) => void>;
     let release: () => void;
     beforeEach(() => {
-        worker = new AndroidCalendarWorker('calendar', '/unused');
+        worker = new CalendarWorker('calendar', '/unused');
+        changes = new Set();
         worker.db = new Datastore({ inMemoryOnly: true });
         jest.spyOn(worker, 'emitEvent').mockResolvedValue(undefined);
         state = {
@@ -51,9 +70,23 @@ describe('Android Calendar Worker keeps local storage separate from the system p
             listEvents: jest.fn(async () => [nativeItem()]),
             addEvent: jest.fn(async (_id, input) => nativeItem(input)),
             updateEvent: jest.fn(async (uid, updates) => nativeItem({ uid, ...updates })),
-            deleteEvent: jest.fn(async (uid) => ({ deleted: true, uid }))
+            deleteEvent: jest.fn(async (uid) => ({ deleted: true, uid })),
+            ownsEvent: (uid) => uid === 'opaque-provider-event' || uid === 'provider-invalid',
+            onDidChange: jest.fn((listener) => {
+                changes.add(listener);
+                return jest.fn(() => {
+                    changes.delete(listener);
+                });
+            })
         };
-        release = configureHostRuntime({ systemCalendar: port });
+        const platform = new TestCalendarPlatform();
+        setPlatform(platform);
+        const bridge = jest
+            .spyOn(platform, 'getNativeBridge')
+            .mockReturnValue({ getCalendarKit: async () => port } as any);
+        release = () => {
+            bridge.mockReturnValue(null);
+        };
     });
     afterEach(async () => {
         await worker.finalize();
@@ -67,7 +100,7 @@ describe('Android Calendar Worker keeps local storage separate from the system p
         const items = await worker.getCalendarItems('2026-11-17');
         expect(items).toHaveLength(2);
         expect(items.find((item: CalendarItem) => item.uid === local.uid)).toEqual(local);
-        expect(items.find((item: CalendarItem) => item.uid.startsWith('android:'))).toMatchObject({
+        expect(items.find((item: CalendarItem) => item.source === 'system')).toMatchObject({
             source: 'system',
             sourceCalendarId: '7',
             canWrite: true
@@ -97,7 +130,7 @@ describe('Android Calendar Worker keeps local storage separate from the system p
         async (permission) => {
             if (permission === undefined) {
                 release();
-                release = configureHostRuntime();
+                release = () => {};
             } else state.readGranted = false;
             const local = await worker.addCalendarItem(localInput);
             expect(await worker.getCalendarItems('2026-11-17')).toEqual([local]);
@@ -176,21 +209,27 @@ describe('Android Calendar Worker keeps local storage separate from the system p
         expect(worker.emitEvent).not.toHaveBeenCalled();
     });
 
-    test('malformed native UIDs never route to the local calendar', async () => {
-        await expect(worker.updateCalendarItem('android:invalid', { subject: 'x' })).rejects.toMatchObject({
+    test('opaque native identities are delegated to the kit without platform parsing or local fallback', async () => {
+        const error = Object.assign(new Error('Invalid provider identity'), { code: 'CALENDAR_INVALID_ARGUMENT' });
+        (port.updateEvent as jest.Mock).mockRejectedValueOnce(error);
+        (port.deleteEvent as jest.Mock).mockRejectedValueOnce(error);
+        await expect(worker.updateCalendarItem('provider-invalid', { subject: 'x' })).rejects.toMatchObject({
             code: 'CALENDAR_INVALID_ARGUMENT'
         });
-        await expect(worker.deleteCalendarItem('android:invalid')).rejects.toMatchObject({
+        await expect(worker.deleteCalendarItem('provider-invalid')).rejects.toMatchObject({
             code: 'CALENDAR_INVALID_ARGUMENT'
         });
-        expect(port.updateEvent).not.toHaveBeenCalled();
-        expect(port.deleteEvent).not.toHaveBeenCalled();
+        expect(port.updateEvent).toHaveBeenCalledWith('provider-invalid', { subject: 'x' });
+        expect(port.deleteEvent).toHaveBeenCalledWith('provider-invalid');
     });
 
     test('recurring native instances remain readonly while native query errors remain visible', async () => {
         (port.listEvents as jest.Mock).mockResolvedValueOnce([nativeItem({ recurring: true })]);
         const item = (await worker.getCalendarItems('2026-11-17'))[0];
         expect(item).toMatchObject({ recurring: true, canWrite: false, source: 'system' });
+        const recurringError = Object.assign(new Error('Recurring event'), { code: 'CALENDAR_RECURRING_UNSUPPORTED' });
+        (port.updateEvent as jest.Mock).mockRejectedValueOnce(recurringError);
+        (port.deleteEvent as jest.Mock).mockRejectedValueOnce(recurringError);
         await expect(worker.updateCalendarItem(item.uid, { subject: 'blocked' })).rejects.toMatchObject({
             code: 'CALENDAR_RECURRING_UNSUPPORTED'
         });
@@ -206,14 +245,17 @@ describe('Android Calendar Worker keeps local storage separate from the system p
     });
 
     test('system changes debounce the shared refresh event and finalize cancels a pending refresh', async () => {
+        await worker.getSystemCalendarState();
         jest.useFakeTimers();
-        worker.systemCalendarChanged(1);
-        worker.systemCalendarChanged(2);
+        for (const listener of changes) {
+            listener({ revision: 1 });
+            listener({ revision: 2 });
+        }
         expect(worker.emitEvent).not.toHaveBeenCalled();
         await jest.advanceTimersByTimeAsync(250);
         expect(worker.emitEvent).toHaveBeenCalledTimes(1);
         expect(worker.emitEvent).toHaveBeenCalledWith('calendarItemsChanged');
-        worker.systemCalendarChanged(3);
+        for (const listener of changes) listener({ revision: 3 });
         await worker.finalize();
         await jest.advanceTimersByTimeAsync(250);
         expect(worker.emitEvent).toHaveBeenCalledTimes(1);
@@ -236,38 +278,150 @@ describe('Android Calendar Worker keeps local storage separate from the system p
         jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
         (port.getState as jest.Mock).mockRejectedValue(new Error('Java not ready'));
         const { OutlookUtils } = await import('../../../main/utils/outlook.js');
-        const outlook = jest
-            .spyOn(OutlookUtils, 'getOutlookCalendarItems')
-            .mockRejectedValue(new Error('COM must not run'));
+        const outlook = jest.spyOn(OutlookUtils, 'getOutlookCalendarItems').mockResolvedValue([]);
         await worker.applicationConfigChanged({ dataSources: { outlook: { enabled: true } } });
         await expect(worker.initialize()).resolves.toBeUndefined();
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(port.getState).not.toHaveBeenCalled();
-        expect(outlook).not.toHaveBeenCalled();
+        expect(outlook).toHaveBeenCalled();
         await worker.finalize();
         jest.clearAllTimers();
     });
+
+    test('repeated initialize and calls share one kit subscription, while finalize and reinitialize release/restore it once', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        await Promise.all([worker.initialize(), worker.initialize()]);
+        await worker.getSystemCalendarState();
+        expect(port.onDidChange).toHaveBeenCalledTimes(1);
+        expect(changes.size).toBe(1);
+        expect(jest.getTimerCount()).toBe(3);
+        await worker.finalize();
+        expect(changes.size).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+        await worker.initialize();
+        expect(port.onDidChange).toHaveBeenCalledTimes(2);
+        expect(changes.size).toBe(1);
+    });
+
+    test('a failed kit acquisition can recover and never prevents local initialization', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        const get = jest.fn(async () => port).mockRejectedValueOnce(new Error('bridge not ready'));
+        const platform = new TestCalendarPlatform();
+        jest.spyOn(platform, 'getNativeBridge').mockReturnValue({ getCalendarKit: get } as any);
+        setPlatform(platform);
+        await expect(worker.initialize()).resolves.toBeUndefined();
+        expect(await worker.getSystemCalendarState()).toMatchObject({ supported: true });
+        expect(get).toHaveBeenCalledTimes(2);
+        expect(port.onDidChange).toHaveBeenCalledTimes(1);
+    });
+
+    test('finalize during database loading prevents a late initialization from restoring timers or subscriptions', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        let finishDatabase!: () => void;
+        jest.spyOn(worker, 'loadDatabase').mockReturnValue(
+            new Promise<void>((resolve) => {
+                finishDatabase = resolve;
+            })
+        );
+        const initializing = worker.initialize();
+        await worker.finalize();
+        finishDatabase();
+        await initializing;
+        expect(port.onDidChange).not.toHaveBeenCalled();
+        expect(changes.size).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('finalize during kit acquisition leaves no subscription or timer when the getter settles', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        jest.spyOn(worker, 'loadDatabase').mockResolvedValue(undefined);
+        let finishKit!: (kit: CalendarKit) => void;
+        const get = jest.fn(
+            () =>
+                new Promise<CalendarKit>((resolve) => {
+                    finishKit = resolve;
+                })
+        );
+        const platform = new TestCalendarPlatform();
+        jest.spyOn(platform, 'getNativeBridge').mockReturnValue({ getCalendarKit: get } as any);
+        setPlatform(platform);
+        const initializing = worker.initialize();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(get).toHaveBeenCalledTimes(1);
+        await worker.finalize();
+        finishKit(port);
+        await initializing;
+        expect(port.onDidChange).not.toHaveBeenCalled();
+        expect(changes.size).toBe(0);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('reinitializing while the old kit getter is pending restores one lifecycle only', async () => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        jest.spyOn(worker, 'loadDatabase').mockResolvedValue(undefined);
+        let finishKit!: (kit: CalendarKit) => void;
+        const get = jest.fn(
+            () =>
+                new Promise<CalendarKit>((resolve) => {
+                    finishKit = resolve;
+                })
+        );
+        const platform = new TestCalendarPlatform();
+        jest.spyOn(platform, 'getNativeBridge').mockReturnValue({ getCalendarKit: get } as any);
+        setPlatform(platform);
+        const oldInitialization = worker.initialize();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await worker.finalize();
+        const newInitialization = worker.initialize();
+        finishKit(port);
+        await Promise.all([oldInitialization, newInitialization]);
+        expect(get).toHaveBeenCalledTimes(1);
+        expect(port.onDidChange).toHaveBeenCalledTimes(1);
+        expect(changes.size).toBe(1);
+        expect(jest.getTimerCount()).toBe(3);
+    });
+
+    test('switching host bridges cancels a queued change from the previous kit', async () => {
+        jest.useFakeTimers();
+        await worker.getSystemCalendarState();
+        for (const listener of changes) listener({ revision: 1 });
+        release();
+        await worker.getSystemCalendarState();
+        await jest.advanceTimersByTimeAsync(250);
+        expect(changes.size).toBe(0);
+        expect(worker.emitEvent).not.toHaveBeenCalled();
+    });
 });
 
-describe('CalendarApplication platform selection and integration main methods', () => {
+describe('CalendarApplication platform-neutral worker and integration main methods', () => {
     const previous = process.env.OPENDESK_ANDROID_RUNTIME;
     afterEach(() => {
         if (previous === undefined) delete process.env.OPENDESK_ANDROID_RUNTIME;
         else process.env.OPENDESK_ANDROID_RUNTIME = previous;
         jest.restoreAllMocks();
     });
-    test('only the exact Android runtime flag selects the subclass; other platforms retain the original worker', () => {
+    test('all runtime flags keep the same shared worker class', () => {
         delete process.env.OPENDESK_ANDROID_RUNTIME;
         expect(CalendarApplication.getWorkerClass()).toBe(CalendarWorker);
         process.env.OPENDESK_ANDROID_RUNTIME = 'true';
         expect(CalendarApplication.getWorkerClass()).toBe(CalendarWorker);
         process.env.OPENDESK_ANDROID_RUNTIME = '1';
-        expect(CalendarApplication.getWorkerClass()).toBe(AndroidCalendarWorker);
+        expect(CalendarApplication.getWorkerClass()).toBe(CalendarWorker);
     });
-    test('non-Android integration state is unsupported without a Worker round trip', async () => {
+    test('unsupported integration state also comes from the same worker on desktop', async () => {
         delete process.env.OPENDESK_ANDROID_RUNTIME;
         const app = new CalendarApplication(),
-            call = jest.spyOn(app, 'callWorker');
+            call = jest.spyOn(app, 'callWorker').mockResolvedValue({
+                status: 'ok',
+                data: {
+                    supported: false,
+                    readGranted: false,
+                    writeGranted: false,
+                    calendars: [],
+                    enabled: true,
+                    defaultCalendarId: ''
+                }
+            });
         expect(await app.getCalendarIntegrationState()).toEqual({
             supported: false,
             readGranted: false,
@@ -276,7 +430,7 @@ describe('CalendarApplication platform selection and integration main methods', 
             enabled: true,
             defaultCalendarId: ''
         });
-        expect(call).not.toHaveBeenCalled();
+        expect(call).toHaveBeenCalledWith('getSystemCalendarState');
     });
     test('main integration methods delegate to Android Worker and persist only the selected config fields', async () => {
         process.env.OPENDESK_ANDROID_RUNTIME = '1';
@@ -318,6 +472,17 @@ describe('CalendarApplication platform selection and integration main methods', 
         jest.spyOn(app, 'setConfig').mockImplementation((value) => {
             config = value;
         });
+        jest.spyOn(app, 'callWorker').mockImplementation(async (method) => ({
+            status: 'ok',
+            data:
+                method === 'applicationConfigChanged'
+                    ? undefined
+                    : {
+                          supported: false,
+                          enabled: config.dataSources.systemCalendar.enabled,
+                          defaultCalendarId: config.dataSources.systemCalendar.defaultCalendarId
+                      }
+        }));
         const state = await app.configureCalendarIntegration({ defaultCalendarId: '' });
         expect(state).toMatchObject({ supported: false, enabled: false, defaultCalendarId: '' });
         expect(config.dataSources.outlook.enabled).toBe(true);

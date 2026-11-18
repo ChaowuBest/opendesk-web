@@ -19,6 +19,9 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
+import { z } from 'zod';
+import { getPlatform } from '../../../../platforms/base.js';
+import { NaiveCalendarKit } from '../../../../platforms/bridges/common.js';
 
 /** @type {PQueue} */
 const task_queue = new PQueue({ concurrency: 1 });
@@ -27,6 +30,30 @@ const task_queue = new PQueue({ concurrency: 1 });
 const REMINDER_15_MIN = 15 * 60 * 1000;
 /** 提醒检查间隔：每5分钟检查一次 */
 const REMINDER_CHECK_INTERVAL = 5 * 60 * 1000;
+
+const systemInputSchema = z.object({
+    subject: z.string(),
+    startTime: z.number(),
+    endTime: z.number(),
+    location: z.string().optional(),
+    isAllDay: z.boolean().optional(),
+    type: z.string().optional()
+});
+const systemUpdateSchema = systemInputSchema.partial();
+const nativeErrorKeys = {
+    CALENDAR_PERMISSION_DENIED: 'system.error.permissionDenied',
+    CALENDAR_RECURRING_UNSUPPORTED: 'system.error.recurring',
+    CALENDAR_READ_ONLY: 'system.error.readOnly',
+    CALENDAR_NOT_FOUND: 'system.error.calendarMissing',
+    CALENDAR_EVENT_CHANGED: 'system.error.eventChanged',
+    CALENDAR_TYPE_UNSUPPORTED: 'system.error.typeUnsupported',
+    CALENDAR_INVALID_ARGUMENT: 'system.error.invalidItem',
+    CALENDAR_UNAVAILABLE: 'system.error.unavailable',
+    CALENDAR_PROVIDER_UNAVAILABLE: 'system.error.unavailable'
+};
+function calendarFailure(code, key) {
+    return Object.assign(new Error(t(key)), { code });
+}
 
 class CalendarWorker extends BaseWorker {
     constructor(bundleName, appDataDirectory) {
@@ -41,6 +68,137 @@ class CalendarWorker extends BaseWorker {
          * @type {Set<string>}
          */
         this._notifiedSet = new Set();
+        this._calendarKit = null;
+        this._calendarBridge = undefined;
+        this._calendarKitPromise = null;
+        this._calendarUnsubscribe = null;
+        this._calendarRefreshTimer = null;
+        this._initialReminderTimer = null;
+        this._calendarFinalized = false;
+        this._initializePromise = null;
+        this._lifecycleGeneration = 0;
+    }
+
+    _integrationConfig() {
+        const config = this.config?.dataSources?.systemCalendar;
+        return { enabled: config?.enabled !== false, defaultCalendarId: config?.defaultCalendarId ?? '' };
+    }
+
+    async _hostCalendar(operation) {
+        try {
+            return await operation();
+        } catch (error) {
+            const key = nativeErrorKeys[error?.code];
+            if (!key) throw error;
+            throw Object.assign(new Error(t(key), { cause: error }), {
+                code: error.code,
+                category: error.category,
+                details: error.details
+            });
+        }
+    }
+
+    _listenToCalendar(kit) {
+        if (this._calendarFinalized || this._calendarUnsubscribe || this._calendarKit !== kit) return;
+        this._calendarUnsubscribe = kit.onDidChange(() => {
+            if (this._calendarFinalized || this._calendarKit !== kit) return;
+            if (this._calendarRefreshTimer) clearTimeout(this._calendarRefreshTimer);
+            this._calendarRefreshTimer = setTimeout(() => {
+                this._calendarRefreshTimer = null;
+                void this.emitEvent('calendarItemsChanged').catch((error) =>
+                    logger.warn(`system calendar refresh delivery failed: ${String(error)}`)
+                );
+            }, 150);
+        });
+    }
+
+    async _getCalendarKit() {
+        let bridge = null;
+        try {
+            bridge = getPlatform().getNativeBridge();
+        } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'Platform is not set') throw error;
+        }
+        if (bridge !== this._calendarBridge || !this._calendarKitPromise) {
+            this._calendarUnsubscribe?.();
+            this._calendarUnsubscribe = null;
+            if (this._calendarRefreshTimer) clearTimeout(this._calendarRefreshTimer);
+            this._calendarRefreshTimer = null;
+            this._calendarKit = null;
+            this._calendarBridge = bridge;
+            const pending = Promise.resolve().then(() => (bridge ? bridge.getCalendarKit() : new NaiveCalendarKit()));
+            this._calendarKitPromise = pending;
+            pending.catch(() => {
+                if (this._calendarKitPromise === pending) this._calendarKitPromise = null;
+            });
+        }
+        const pending = this._calendarKitPromise;
+        const kit = await pending;
+        if (pending === this._calendarKitPromise) {
+            this._calendarKit = kit;
+            this._listenToCalendar(kit);
+        }
+        return kit;
+    }
+
+    async getSystemCalendarState() {
+        const kit = await this._getCalendarKit();
+        return { ...(await this._hostCalendar(() => kit.getState())), ...this._integrationConfig() };
+    }
+
+    async requestCalendarAccess() {
+        const kit = await this._getCalendarKit();
+        await this._hostCalendar(() => kit.requestAccess());
+        return this.getSystemCalendarState();
+    }
+
+    _systemItem(event, state, kit) {
+        if (typeof event.calendarId !== 'string' || !event.calendarId || !kit.ownsEvent(event.uid))
+            throw calendarFailure('CALENDAR_INVALID_ARGUMENT', 'system.error.invalidItem');
+        const item = CalendarItemSchema.parse(event);
+        return {
+            ...item,
+            source: 'system',
+            sourceCalendarId: event.calendarId,
+            recurring: event.recurring === true,
+            canWrite:
+                state.writeGranted &&
+                event.canWrite === true &&
+                !event.recurring &&
+                state.calendars.some((calendar) => calendar.id === event.calendarId && calendar.canWrite)
+        };
+    }
+
+    async _systemItems(start, end) {
+        if (!this._integrationConfig().enabled) return [];
+        const kit = await this._getCalendarKit();
+        const state = await this._hostCalendar(() => kit.getState());
+        if (!state.supported || !state.readGranted) return [];
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+            throw calendarFailure('CALENDAR_INVALID_ARGUMENT', 'system.error.invalidTime');
+        return (await this._hostCalendar(() => kit.listEvents(start, end))).map((event) =>
+            this._systemItem(event, state, kit)
+        );
+    }
+
+    _mergeCalendarItems(local, system) {
+        const items = new Map(local.map((item) => [item.uid, item]));
+        for (const item of system) items.set(item.uid, item);
+        return [...items.values()].sort((first, second) => first.startTime - second.startTime);
+    }
+
+    async _writableSystem(kit, calendarId) {
+        if (!this._integrationConfig().enabled) throw calendarFailure('CALENDAR_DISABLED', 'system.error.disabled');
+        const state = await this._hostCalendar(() => kit.getState());
+        if (!state.supported) throw calendarFailure('CALENDAR_UNAVAILABLE', 'system.error.unavailable');
+        if (!state.readGranted || !state.writeGranted)
+            throw calendarFailure('CALENDAR_PERMISSION_DENIED', 'system.error.permissionDenied');
+        if (calendarId !== undefined) {
+            const calendar = state.calendars.find((candidate) => candidate.id === calendarId);
+            if (!calendar) throw calendarFailure('CALENDAR_NOT_FOUND', 'system.error.calendarMissing');
+            if (!calendar.canWrite) throw calendarFailure('CALENDAR_READ_ONLY', 'system.error.readOnly');
+        }
+        return state;
     }
 
     async loadDatabase() {
@@ -96,7 +254,9 @@ class CalendarWorker extends BaseWorker {
             .sort({ startTime: 1 });
 
         const result = items.map((item) => CalendarItemSchema.parse(item));
-        return result;
+        const date = new Date(dateString.replace(/-/g, '/'));
+        const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime();
+        return this._mergeCalendarItems(result, await this._systemItems(dayTimestamp, end));
     }
 
     /**
@@ -110,7 +270,10 @@ class CalendarWorker extends BaseWorker {
                 startTime: { $gte: startTimestamp, $lte: endTimestamp }
             })
             .sort({ startTime: 1 });
-        return items.map((item) => CalendarItemSchema.parse(item));
+        return this._mergeCalendarItems(
+            items.map((item) => CalendarItemSchema.parse(item)),
+            await this._systemItems(startTimestamp, endTimestamp)
+        );
     }
 
     /**
@@ -119,6 +282,16 @@ class CalendarWorker extends BaseWorker {
      * @returns {Promise<z.output<CalendarItemSchema>>}
      */
     async updateCalendarItem(uid, updates) {
+        const kit = await this._getCalendarKit();
+        if (kit.ownsEvent(uid)) {
+            const input = systemUpdateSchema.parse(updates);
+            if (!Object.keys(input).length)
+                throw calendarFailure('CALENDAR_INVALID_ARGUMENT', 'system.error.invalidItem');
+            const state = await this._writableSystem(kit);
+            const item = this._systemItem(await this._hostCalendar(() => kit.updateEvent(uid, input)), state, kit);
+            await this.emitEvent('calendarItemsChanged');
+            return item;
+        }
         const existing = await this.db.findOne({ uid });
         if (!existing) {
             throw new Error(`未找到 uid 为 "${uid}" 的日程项`);
@@ -145,6 +318,21 @@ class CalendarWorker extends BaseWorker {
      * @returns {Promise<z.output<CalendarItemSchema>>}
      */
     async addCalendarItem(item) {
+        const calendarId = this._integrationConfig().defaultCalendarId;
+        if (calendarId) {
+            const kit = await this._getCalendarKit(),
+                input = systemInputSchema.parse(item);
+            if (input.endTime <= input.startTime)
+                throw calendarFailure('CALENDAR_INVALID_ARGUMENT', 'system.error.invalidTime');
+            const state = await this._writableSystem(kit, calendarId);
+            const result = this._systemItem(
+                await this._hostCalendar(() => kit.addEvent(calendarId, input)),
+                state,
+                kit
+            );
+            await this.emitEvent('calendarItemsChanged');
+            return result;
+        }
         const doc = CalendarItemSchema.parse({
             uid: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             subject: item.subject,
@@ -166,6 +354,13 @@ class CalendarWorker extends BaseWorker {
      * @returns {Promise<{deleted: boolean, uid: string}>}
      */
     async deleteCalendarItem(uid) {
+        const kit = await this._getCalendarKit();
+        if (kit.ownsEvent(uid)) {
+            await this._writableSystem(kit);
+            const result = await this._hostCalendar(() => kit.deleteEvent(uid));
+            if (result.deleted) await this.emitEvent('calendarItemsChanged');
+            return result;
+        }
         const numRemoved = await this.db.remove({ uid }, {});
         if (numRemoved === 0) {
             throw new Error(`未找到 uid 为 "${uid}" 的日程项`);
@@ -284,7 +479,8 @@ class CalendarWorker extends BaseWorker {
      */
     _startReminderChecker() {
         // 首次延迟 5 秒执行，等数据库加载完毕
-        setTimeout(() => {
+        this._initialReminderTimer = setTimeout(() => {
+            this._initialReminderTimer = null;
             this.checkAndNotifyUpcoming();
         }, 5000);
 
@@ -299,6 +495,10 @@ class CalendarWorker extends BaseWorker {
      * 停止日程提醒定时检查器
      */
     _stopReminderChecker() {
+        if (this._initialReminderTimer) {
+            clearTimeout(this._initialReminderTimer);
+            this._initialReminderTimer = null;
+        }
         if (this._reminderInterval) {
             clearInterval(this._reminderInterval);
             this._reminderInterval = null;
@@ -308,10 +508,30 @@ class CalendarWorker extends BaseWorker {
 
     // ──────────────────── 生命周期 ────────────────────
 
-    async initialize() {
+    initialize() {
+        if (this._initializePromise) return this._initializePromise;
+        this._calendarFinalized = false;
+        const generation = ++this._lifecycleGeneration;
+        const pending = this._initializeCalendar(generation);
+        this._initializePromise = pending;
+        pending.catch(() => {
+            if (this._initializePromise === pending) this._initializePromise = null;
+        });
+        return pending;
+    }
+
+    async _initializeCalendar(generation) {
         await this.loadDatabase();
+        if (this._calendarFinalized || generation !== this._lifecycleGeneration) return;
+        try {
+            await this._getCalendarKit();
+        } catch (error) {
+            logger.warn(`calendar kit initialization deferred: ${String(error)}`);
+        }
+        if (this._calendarFinalized || generation !== this._lifecycleGeneration) return;
         const syncImmediately = async () => {
             task_queue.add(async () => {
+                if (this._calendarFinalized || generation !== this._lifecycleGeneration) return;
                 if (this.config?.dataSources?.outlook?.enabled) {
                     await this.loadOutlookCalendarItems().catch((err) => {
                         logger.error(`error loading outlook calendar items: ${err}`);
@@ -321,6 +541,7 @@ class CalendarWorker extends BaseWorker {
         };
 
         await syncImmediately();
+        if (this._calendarFinalized || generation !== this._lifecycleGeneration) return;
         this._interval = setInterval(syncImmediately, 1000 * 60 * 2);
 
         // 启动日程提醒检查器
@@ -328,6 +549,13 @@ class CalendarWorker extends BaseWorker {
     }
 
     async finalize() {
+        this._calendarFinalized = true;
+        ++this._lifecycleGeneration;
+        this._initializePromise = null;
+        this._calendarUnsubscribe?.();
+        this._calendarUnsubscribe = null;
+        if (this._calendarRefreshTimer) clearTimeout(this._calendarRefreshTimer);
+        this._calendarRefreshTimer = null;
         // 停止同步定时器
         if (this._interval) {
             clearInterval(this._interval);

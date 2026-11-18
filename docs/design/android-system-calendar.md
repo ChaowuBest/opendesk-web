@@ -1,100 +1,69 @@
-# Android 系统日历接入
+# 系统日历与 CalendarKit
 
-本文记录 2026-11-17 本轮代码已经实现的接入方式。Android 原生代码和传输适配保留在独立的 `OpenDesk-Android` 壳仓；Core 保留共用界面、日历应用入口、业务路由与宿主端口合同。APK 构建及真机验收结果由壳仓对应版本的交付报告记录，以下单元测试不代表设备验收。
+本文说明 Core 的系统日历合同、业务调用链和宿主接入边界。Android 的 CalendarProvider、Java 权限及环回传输实现位于独立的 OpenDesk-Android 壳仓，具体原生行为见壳仓 `docs/system-calendar.md`。具体版本的构建、测试和设备验收范围以壳仓对应交付报告为准；本文说明接口和生命周期，不代替真机验收。
 
-## 平台与 Worker 选择
+## 分层与平台支持
 
-`src/main/applications/calendar/app.js` 的 `CalendarApplication.getWorkerClass()` 直接选择 Worker：
+所有平台的 `CalendarApplication.getWorkerClass()` 都返回同一个 `CalendarWorker`。本地日历、系统日历合并、默认目标、错误本地化和应用事件均在这一个业务 Worker 中处理。平台差异通过 `getPlatform().getNativeBridge().getCalendarKit()` 获取的 Kit 表达；业务层不按 Android 标记选择 Worker，也不解析平台事件 UID。
 
-| 运行条件                           | Worker                                                 | 本轮行为                                       |
-| ---------------------------------- | ------------------------------------------------------ | ---------------------------------------------- |
-| `OPENDESK_ANDROID_RUNTIME === '1'` | `service/android-worker.ts` 的 `AndroidCalendarWorker` | 组合本地数据库与 Android 系统日历              |
-| 其他运行环境                       | 原 `service/worker.js` 的 `CalendarWorker`             | 保持原本的本地日历、Outlook 配置及本地提醒行为 |
+| 层次             | 职责                                                           | 代码位置                                           |
+| ---------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| 公共原生合同     | CalendarKit、事件、日历、权限状态、变更监听                    | `src/platforms/bridges/common.ts`                  |
+| NativeBridge     | 为当前进程提供稳定的 CalendarKit 实例                          | `src/platforms/bridges/*`                          |
+| 日历业务         | 本地 NeDB、查询合并、读写路由、配置与应用事件                  | `src/main/applications/calendar/service/worker.js` |
+| 应用入口         | 提供 GUI 配置/授权方法及 Skill 工具                            | `src/main/applications/calendar/app.js`            |
+| Android 原生适配 | AndroidNativeBridge、AndroidCalendarKit、Java CalendarProvider | 独立 Android 壳仓                                  |
+| GUI              | 展示日程与状态，通过 applicationAPI 调用应用业务               | `src/main/applications/calendar/renderer/entry.js` |
 
-这是本轮批准采用的明确选择点，没有新增 `AndroidCalendarApplication`，也没有修改原 `CalendarWorker` 文件。`AndroidCalendarWorker` 继承原 Worker，复用本地存储和提醒；只扩展日历查询、写入路由及宿主变更通知，并覆盖 Outlook 导入方法为空实现，避免 Android 执行桌面的 PowerShell/Outlook COM 路径。
+Android 宿主提供实际 CalendarKit。macOS、Windows、Linux、OpenHarmony 在本轮使用 `NaiveCalendarKit`，尚未实现各自的原生日历接入。它返回 `supported: false`，`ownsEvent()` 返回 false，监听返回空清理函数，原生日历读取、授权和写入方法明确拒绝。原有本地日历及桌面 Outlook 业务继续保留；Windows 的 Outlook COM 导入不是 CalendarKit 的系统日历实现。
 
-Core 中的 macOS、Windows、Linux、OpenHarmony GUI 仍使用共用日历界面和原 Worker。本轮没有实现这些系统的原生日历端口。它们的 `getCalendarIntegrationState()` 返回 `supported: false`，界面不显示系统日历控制条，也不向原 Worker 调用 Android 专有方法。Windows 的现有 Outlook 导入不是这里的系统日历端口；其他桌面平台也不会因新增类型定义而自动具备原生日历能力。
+`NaiveNativeBridge` 和 renderer 的 `NativeBridgeProxy` 都保存稳定的 NaiveCalendarKit 实例。renderer 不通过此入口代理真实系统日历，不新增直接的 CalendarKit GUI IPC。Kit 在平台实例完成安装后由业务实例获取，不在模块顶层缓存平台能力。
 
-## 宿主端口
+## 公共合同
 
-合同定义在 `src/main/applications/calendar/service/system-calendar.ts`，通过 `src/platforms/runtime.ts` 的可选 `HostRuntimeOptions.systemCalendar` 注入：
+公共类型在 `src/platforms/bridges/common.ts` 中定义，不反向依赖日历应用类型：
 
 ```ts
-interface SystemCalendarPort {
-    getState(): Promise<SystemCalendarState>;
+interface CalendarKit {
+    getState(): Promise<CalendarKitState>;
     requestAccess(): Promise<void>;
-    listEvents(startTime: number, endTime: number): Promise<CalendarItem[]>;
-    addEvent(calendarId: string, item: CalendarItemInput): Promise<CalendarItem>;
-    updateEvent(uid: string, updates: CalendarItemUpdates): Promise<CalendarItem>;
+    listEvents(startTime: number, endTime: number): Promise<CalendarEvent[]>;
+    addEvent(calendarId: string, item: CalendarEventInput): Promise<CalendarEvent>;
+    updateEvent(uid: string, updates: CalendarEventUpdates): Promise<CalendarEvent>;
     deleteEvent(uid: string): Promise<{ deleted: boolean; uid: string }>;
+    ownsEvent(uid: string): boolean;
+    onDidChange(listener: (change: CalendarKitChange) => void): () => void;
 }
 ```
 
-`SystemCalendarState` 包含 `supported`、`readGranted`、`writeGranted`、`calendars` 及可选 `revision`。日历描述包含字符串 `id`、`name`、可选 `accountName`、`canWrite`、可选 `visible` 和 `primary`。Core 提供的界面不以操作系统名称判断支持与权限，以返回的状态为准。
+- `CalendarKitState` 包含 `supported`、`readGranted`、`writeGranted`、`calendars` 及可选 `revision`。`NativeCalendar` 包含字符串 id、名称、账户名、可写性和可选的可见/主日历属性。
+- `CalendarEvent` 包含不透明的 `uid` 和独立的 `calendarId`，以及标题、地点、开始/结束时间、全天、取消、分类、可写和重复属性。时间使用 epoch 毫秒。
+- `ownsEvent(uid)` 只判断该 Kit 是否拥有这种标识，不表示事件仍存在、当前授权有效或允许修改。实际操作必须重新检查权限、目标归属和冲突。
+- `requestAccess()` 表示宿主受理授权 UI 请求，不等于用户已授予权限。完成后通过状态查询或变更通知确认结果。
+- `onDidChange()` 返回幂等且只清理本监听者的 disposer。通知是重新查询的信号，不是事件数据，也不是持久化消息队列。
 
-`requestAccess()` 表示宿主接受了显示授权界面的请求，不能据此推断用户已经同意。用户完成选择后，通过变更通知或后续状态查询确认权限。只读权限与写权限分别表达；系统日历条目能否编辑还受日历自身的写权限和重复规则限制。
+系统返回的 UID 原样保留。Worker 将 `CalendarEvent.calendarId` 映射为业务项的 `sourceCalendarId`，添加 `source: 'system'`；本地项保持本地结构。源身份判断由 Kit 完成，Core 不从字符串前缀或分隔符推导日历 ID。
 
-Android 壳的 `bridge/bootstrap.ts` 在业务模块和 Worker 初始化前安装 `createAndroidHostRuntime()`。每个执行该入口的进程/Worker 安装自己的端口函数，端口对象不经 Worker IPC 序列化。`bridge/system-calendar.ts` 将合同映射到 Java 的六个命令：
+## 读取、写入与错误
 
-| 端口方法        | Java 命令               |
-| --------------- | ----------------------- |
-| `getState`      | `calendarState`         |
-| `requestAccess` | `calendarRequestAccess` |
-| `listEvents`    | `calendarListEvents`    |
-| `addEvent`      | `calendarAddEvent`      |
-| `updateEvent`   | `calendarUpdateEvent`   |
-| `deleteEvent`   | `calendarDeleteEvent`   |
-
-调用经本机 `4099` 的 `NodeBridgeServer` 到 `SystemCalendarBridge`，实际权限检查与 `CalendarContract` 访问都由 Java 完成。传输错误和结构不合法的返回值会拒绝调用，不会替换成空列表或成功响应，也不会重放写入。
-
-## GUI、Skill 与应用事件
-
-GUI 沿用 `applicationAPI.call()` 的日历读写方法；三个配置/授权入口使用 `applicationAPI.callMainWorld()`，所有平台的 `CalendarApplication` 都提供它们：
-
-- `getCalendarIntegrationState()`：返回宿主状态与当前日历应用配置合并后的平面对象。
-- `requestCalendarAccess()`：Android 转交 Worker 请求宿主授权，再返回状态；其他平台返回不支持的状态。
-- `configureCalendarIntegration(patch)`：校验并保存日历应用自己的配置，保留其他应用及日历配置字段，再同步 Android Worker。
-
-界面授权按钮直接调用请求入口，没有先执行状态查询再显示系统授权框。`calendarItemsChanged` 回调同时刷新宿主状态和可见范围日程；页面 focus、visibilitychange、pageshow 后也会重新查询。权限拒绝、日历不可写和服务失败会显示本地化提示；查询失败保留上一份日程，不能用“暂无日程”掩盖错误。日程和状态查询各自使用请求序号及组件生命周期检查，忽略过时返回。
-
-```mermaid
-sequenceDiagram
-    participant UI as 共用日历 GUI
-    participant Registry as ApplicationRegistry
-    participant Worker as AndroidCalendarWorker
-    participant Port as SystemCalendarPort
-    participant Java as Android CalendarProvider
-    UI->>Registry: applicationAPI.call(日历方法)
-    Registry->>Worker: requestId + method + args
-    Worker->>Port: 系统日历操作
-    Port->>Java: 本机原生命令
-    Java-->>Port: 结果或明确错误
-    Port-->>Worker: 保留错误语义的结果
-    Worker-->>Registry: response
-    Registry-->>UI: data 或失败
-    Worker-->>Registry: calendarItemsChanged
-    Registry-->>UI: 应用事件，重新查询
-```
-
-Skill 的 `GetCalendarItemsTool`、`AddCalendarItemTool`、`EditCalendarItemTool`、`DeleteCalendarItemTool` 通过同一个 `CalendarApplication.callWorker()` 调用上述 Worker 方法。工具会检查 `{status, data, message, code}` 响应，失败进入工具错误状态，不把错误响应 JSON 当作成功结果。通用 Worker/Registry 响应保留错误的 `code`、`category`、`details`；renderer 在缺失结构化错误码的路径也识别消息并本地化显示。
-
-外部日历应用的修改通过以下路径进入原有应用事件体系：
+GUI 的 `applicationAPI.call()`、Skill 的 `CalendarApplication.callWorker()` 和 TUI 的日历查询都进入同一个 CalendarWorker：
 
 ```text
-CalendarProvider ContentObserver / 权限回调 / Activity 恢复
-→ SystemCalendarBridge（300ms 合并通知）
-→ POST 4095/java-notify，android:calendarChanged
-→ bridge/system-calendar.ts 的 relayAndroidCalendarChange
-→ ApplicationRegistry.callWorker('calendar', 'systemCalendarChanged', revision)
-→ AndroidCalendarWorker（150ms 合并通知）
-→ emitEvent('calendarItemsChanged')
-→ Registry 校验日历声明的事件
-→ GUI 订阅者 + 应用事件监听者 + todomgr.handleApplicationEvent
+共用日历 GUI / Calendar Skill / TUI
+→ ApplicationRegistry.callWorker('calendar', 方法, 参数)
+→ CalendarWorker
+  → 本地 NeDB
+  → 当前 NativeBridge 的 CalendarKit
+→ 合并业务日程或返回明确错误
 ```
 
-`calendarItemsChanged` 是变更信号，不是日程增量列表，也不代表界面已经完成刷新。GUI 主动写入成功后也会重新查询；重复的查询不意味着重复写入。通知在后端未启动时可能无法送达，之后的实际查询仍直接读取 Provider，不依赖通知重建数据库。该机制不承诺通知持久化或离线补发。
+本地日程仍写 `apps/calendar/calendar.db`。已启用且获读权限时，查询合并本地与系统日程；系统行不复制到 NeDB。修改、删除先通过 `ownsEvent(uid)` 决定交给 Kit 还是本地数据库。新建仅由配置的默认目标决定：空 ID 写本地，非空 ID 写指定系统日历；系统目标写失败不回退为本地成功。
 
-## 配置和数据所有权
+未支持、未授权或关闭系统读取时，本地日历仍可初始化和查询。已经发起的原生查询失败、非法响应或写失败必须返回错误，不将其替换为成功的空数组。Skill 检查应用响应状态，错误进入工具失败状态。Worker/Registry 保留结构化错误码，GUI 在错误码缺失的路径也将已知消息转为本地化说明。
+
+系统日历的重复、可写和账户属性由 Kit 返回并在写入时重新检查。业务展示元数据不能代替平台校验，`ownsEvent()` 也不能证明数据版本未变。
+
+## 配置和 GUI
 
 配置位于 `applications.calendar.dataSources.systemCalendar`：
 
@@ -105,41 +74,67 @@ CalendarProvider ContentObserver / 权限回调 / Activity 恢复
 }
 ```
 
-`enabled` 默认 `true`，控制是否读取/使用系统日历；`defaultCalendarId` 默认空字符串，保留新日程写本地的旧行为。界面显示“显示系统日历”和“新日程保存到”，列表包含本地及系统日历，不能选择只读系统日历；已经配置但当前不可用的系统日历会明确显示不可用，不伪装成本地默认值。
+`enabled` 默认 true；`defaultCalendarId` 默认空字符串，保留新日程写本地的行为。迁移不重置设备上已选择的目标。日历应用提供三个共用主进程方法：
 
-| 数据               | 所有者和写入路径                                                              |
-| ------------------ | ----------------------------------------------------------------------------- |
-| 本地日程           | 原 NeDB `apps/calendar/calendar.db`，沿用原 Worker 方法                       |
-| 系统日程           | Android CalendarProvider，读取时与本地结果合并，不复制到 NeDB                 |
-| 系统日历账户及同步 | Android 系统/账户同步组件，本轮不创建账户、不实现远端账户同步协议             |
-| 系统日历访问权限   | Android 原生权限系统；Core 配置不能代替授权                                   |
-| 本地提醒           | 原本地数据库和提醒器                                                          |
-| 系统日程提醒       | 由系统日历管理；本轮不复制给 OpenDesk 本地提醒器，也不新增系统 Reminders 记录 |
+| 方法                                  | 行为                                                               |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `getCalendarIntegrationState()`       | 返回 Kit 状态与当前应用配置合并后的平面对象                        |
+| `requestCalendarAccess()`             | 通过业务 Worker 请求 Kit 授权，然后返回当前状态                    |
+| `configureCalendarIntegration(patch)` | 只更新日历应用的系统日历配置，保留 Outlook 等其他字段并同步 Worker |
 
-新建日程按 `defaultCalendarId` 路由；系统目标写失败时不回退成本地成功。修改、删除按原日程身份路由，不受当前新建默认目标影响。系统项带 `source: 'system'`、`sourceCalendarId`、`canWrite`、`recurring`；本地项保持原结构。
+GUI 通过 `applicationAPI.callMainWorld()` 使用这些方法。它不直接取得 Kit，不根据操作系统名称判断支持程度。`supported: false` 时不显示集成条。用户显式点击授权按钮后才请求授权；“显示系统日历”和“新日程保存到”只保存应用配置，不代替系统权限。
 
-Android UID 使用 `android:<calendarId>:<eventId>:<rawBEGIN>`。最后一段是 Provider 的原始开始值，全天展示转换后也不能拿本地时间替换它。Java 在修改/删除前核对原始身份，并在数据库操作条件中约束日历、事件与原始开始时间；已被其他应用移动或替换的事件返回冲突，不能覆盖新的事件状态。
+默认目标包含本地及系统日历，只读目标不可选；已选目标暂不可用时明确显示不可用，不伪装成本地默认。重复系统日程和只读系统日历条目禁用编辑、删除及拖动。查询失败保留已有日程，并显示友好错误。
 
-## 日期与首版限制
+GUI 在应用事件及 focus、visibilitychange、pageshow 后重查状态与日程。状态、日程查询分别使用请求序号和组件生命周期检查，防止旧月份结果或旧错误覆盖当前查询。标题、地点、日历名称及事件属性进入 HTML 模板时均作为纯文本转义。
 
-- 端口时间值均为 epoch 毫秒。Android 查询使用 Instances，并按与范围重叠筛选，过滤删除和取消项；只读取系统中可见的日历。Provider 返回空 cursor、权限异常及写失败都是失败。
-- 全天日程在 Provider 中按 UTC 日期存储，在共用界面中表现为对应的本地午夜，结束时间为排他的次日/后续日期午夜。GUI 新建全天使用 `new Date(y, m, d + 1)`；编辑已有多日全天按日历日期差保留跨度，改标题不缩短事件，改日期也不使用固定 24 小时移动结束时间。
-- 系统重复日程能查询，首版不在 OpenDesk 内修改或删除；GUI 禁用编辑、删除、拖动，Java 也独立拒绝相关写入。只读系统日历的普通事件同样不能写。
-- 系统日历不存储 OpenDesk 的 `type` 分类。系统新建/编辑表单只提供“未分类”，发送空 `type`；非空分类写入返回 `CALENDAR_TYPE_UNSUPPORTED`。本地日程分类保持原功能。
-- 本轮未实现参会者、会议邀请响应、附件、重复规则编辑及系统提醒配置。系统账户同步是否完成由系统组件决定。
-- 共用 GUI 仍主要按开始日期组织日程格；本轮保留多日事件的正确时间范围，没有扩展跨日事件在每一个日期格中的可视铺排。
-- Android Worker 保留本地查询、原 Outlook 配置结构和本地提醒继承；桌面的旧 Outlook 导入行为及其事件机制未在本轮重写。
+## 变更通知与生命周期
 
-## 接入另一个宿主
+业务 Worker 订阅本实例当前 Kit 的 `onDidChange`，将变化合并为声明过的 `calendarItemsChanged` 应用事件。该事件经 Registry 同时通知 GUI、应用事件监听者及 `todomgr.handleApplicationEvent`。GUI 随后按当前范围查询，todomgr 按已配置的应用事件触发器处理。
 
-新的宿主需要实现上述六个端口方法，定义可稳定往返的事件 UID，处理本机权限、日历写权限、日期边界、Provider 错误及身份冲突。端口必须在相应业务进程/Worker 初始化前通过 `configureHostRuntime()` 安装，原生变更也需要转交应用 Worker，再发布现有 `calendarItemsChanged`。
+```text
+原生 Provider / 权限与恢复变化
+→ 宿主 CalendarKit.onDidChange
+→ CalendarWorker
+→ emitEvent('calendarItemsChanged')
+→ ApplicationRegistry
+→ GUI 订阅者 / 应用监听者 / todomgr
+```
 
-仅注入 `systemCalendar` 还不能改变当前 Worker 选择：本轮选择点明确以 Android runtime 标记选择 `AndroidCalendarWorker`。另一个宿主还需提供适合其身份规则的 Worker/业务适配，并更新应用的选择入口，不能冒用 Android 标记或 Android UID 解析规则。共用 GUI、Skill 方法和应用事件合同可以复用；在该宿主的端口、选择入口和验收完成前，应保持 `supported: false`。
+Worker 拥有 Kit 的精确订阅 disposer、变更合并定时器、Outlook 同步定时器及本地提醒定时器；退出或重建时必须配对清理。Kit 在每个进程/Worker 中独立构造，函数对象不通过 Worker IPC 传送。
 
-## 本轮验证记录
+Android 主桥收到 Java 变化后，先发布本进程的 Kit 变化，再通过壳私有消息 `{ type: '__opendesk_android_calendar_changed', change: { revision? } }` 转发到全局 Worker 的 Kit。该消息不带 `bundleName`。Core 通用 Worker 请求分发器忽略没有应用 bundleName 的消息，不承担 Android 通知协议。AndroidKit 在首个订阅时安装自己的 parentPort 监听，在最后一个订阅释放时移除；重复初始化不能累计监听或业务定时器。
 
-- GUI 初轮和后续边界修复均先添加失败回归，再实现修复；覆盖权限、配置补丁、只读/重复事件、错误保留、异步交错和恶意系统日程文本。
-- 全天回归在 `TZ=America/New_York` 启动的真实 GUI 组件测试中检查实际提交 payload：2026-03-08 单日为 23 小时，跨 2026-11-01 的三日事件为 73 小时；本地及系统目标均覆盖新建、只改标题、改日期保留多日跨度。当前 GUI/既有刷新/locale 共 3 套 47 项通过。
-- 本轮 Android 壳全套测试 121 项通过、0 跳过，包含宿主端口、通知路由和 Java fixture 回归。该结果验证代码合同与本机测试，不代替真实 CalendarProvider 的设备验收。
-- 本机暂存日志：`/tmp/opendesk-system-calendar-ui-allday-red.log`、`/tmp/opendesk-system-calendar-ui-allday-dst-green.log`、`/tmp/opendesk-system-calendar-shell-full.log`。这些 `/tmp` 文件不是持久 CI 工件。
-- Core 相关 8 套 Jest 测试共 92 项通过，另有全天工具 DST 子进程测试 2 项通过；覆盖通用 Worker 的错误和流结束回归。完整日志由本轮壳仓诊断目录归档，构建和设备读写验证范围以该目录的交付报告为准。
+Java 的 Application context 单例和 ContentObserver 是另一个生命周期边界：有读取权限时注册，权限撤销时注销，Activity 重建不会创建额外的观察者。释放某个 Node Kit 监听者不等于销毁 Java 单例；Java 侧的具体约束由壳文档说明。
+
+通知不直接伪造 renderer 事件，不承诺重放后端退出期间的每次变化。恢复后的状态和范围查询仍读取真实 Provider。正常状态查询不能持续制造变化通知，Kit 变化也不表示 GUI 已完成刷新。
+
+## 数据所有权与限制
+
+| 数据/能力              | 所有者与边界                                                     |
+| ---------------------- | ---------------------------------------------------------------- |
+| 本地日程、分类、提醒   | 原 NeDB 和 CalendarWorker 的本地业务                             |
+| 系统日程和账户         | 操作系统 CalendarProvider；只在读取时合并，不写本地镜像          |
+| 权限和系统日历可写等级 | Kit 和原生系统实时校验；配置不能授予权限                         |
+| 账户同步、系统提醒     | 操作系统及账户组件；本轮不创建账户、Reminders 或参与人记录       |
+| Outlook 导入           | 保留桌面业务；Android 不执行 Outlook COM，即使导入的配置开启该项 |
+
+全天日期在界面按本地日历日处理，结束时间为排他的下一个午夜。新建使用本地 `new Date(y, m, d + 1)`；编辑多日全天保留原日历天数，改标题不缩短事件，改日期也不以固定 24 小时推算跨 DST 的结束时间。
+
+Android Kit 支持普通与全天事件的查询、添加、修改和删除；重复事件读取但不编辑系列或单次例外。系统事件不承载 OpenDesk 分类，系统表单仅提供“未分类”，发送空 type；非空分类明确报错。本地分类功能保留。
+
+本轮没有实现参会者、会议邀请响应、附件、重复规则编辑、系统提醒配置和独立的事件时区选择 UI。共用 GUI 仍主要按开始日期组织格子，没有展开多日事件在每个日期格的可视铺排。其他操作系统没有因增加公共合同而自动具备系统日历功能。
+
+## 为另一宿主实现 CalendarKit
+
+新宿主在自己的 NativeBridge 中提供稳定的 CalendarKit，按公共事件合同返回独立 calendarId，并在 ownsEvent 中识别自身 UID。实现六个状态/授权/读写方法以及变化订阅，负责本机权限、日历写权限、日期转换、取消/重复规则、身份冲突和错误语义。
+
+能力必须在业务 Worker 初始化前装到该进程的原生桥；主进程与 Worker 各自获得实例，并由宿主完成它们之间的变化转发。订阅须有精确、幂等的生命周期清理。通用 CalendarWorker、GUI、Skill 和应用事件合同可直接复用，不需要为平台另建日历应用或在 Core 中解析平台 UID。
+
+实现和验收完成前返回 NaiveCalendarKit。renderer 继续保持业务应用 API，不为新宿主直接暴露 CalendarKit 的读写和监听。
+
+## 验证范围
+
+回归范围包括公共 Kit 与 renderer 稳定 Naive 占位、原生 dispatcher、共用 Worker、日历 RPC 和 Outlook 边界，以及重复初始化、数据库或 Kit 等待期间 finalize、旧 Kit 等待期间重建、换桥清理旧变更定时器。GUI 回归还应覆盖配置、通知、XSS、查询交错和全天 DST 行为。
+
+具体版本的构建、测试和设备验收范围以壳仓对应交付报告为准；本文说明接口和生命周期，不代替真机验收。报告应记录对应源码与产物、真实 CalendarProvider CRUD、外部应用变化、权限撤销及未覆盖边界。

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, jest, test } from '@jest/globals';
 import Datastore from 'nedb-promises';
 import { CalendarApplication } from '../../../main/applications/calendar/app.js';
-import AndroidCalendarWorker from '../../../main/applications/calendar/service/android-worker.js';
+import CalendarWorker from '../../../main/applications/calendar/service/worker.js';
 import {
     GetCalendarItemsTool,
     AddCalendarItemTool,
@@ -10,14 +10,14 @@ import {
 } from '../../../main/applications/calendar/tools.js';
 import { ApplicationRegistry, dispatchWorkerMessage } from '../../../main/applications/registry.js';
 import { handleWorkerRequest } from '../../../main/applications/worker.js';
-import { configureHostRuntime } from '../../../platforms/runtime.js';
+import { AbstractPlatform, setPlatform } from '../../../platforms/base.js';
 import { t } from '../../../main/applications/calendar/locale/index.js';
 
-let app: CalendarApplication, worker: AndroidCalendarWorker;
+let app: CalendarApplication, worker: CalendarWorker;
 let oldApplications: typeof ApplicationRegistry.applications, oldWorker: typeof ApplicationRegistry.globalWorker;
 let release: () => void;
 const previousAndroid = process.env.OPENDESK_ANDROID_RUNTIME;
-const uid = 'android:7:42:1794880800000';
+const uid = 'opaque-provider-event';
 const failure = Object.assign(new Error('Native provider rejected the operation'), {
     code: 'CALENDAR_TYPE_UNSUPPORTED',
     category: 'provider',
@@ -26,37 +26,55 @@ const failure = Object.assign(new Error('Native provider rejected the operation'
 beforeEach(async () => {
     failure.code = 'CALENDAR_TYPE_UNSUPPORTED';
     process.env.OPENDESK_ANDROID_RUNTIME = '1';
-    worker = new AndroidCalendarWorker('calendar', '/unused');
+    worker = new CalendarWorker('calendar', '/unused');
     worker.db = new Datastore({ inMemoryOnly: true });
     jest.spyOn(worker, 'emitEvent').mockResolvedValue(undefined);
     await worker.applicationConfigChanged({
         dataSources: { systemCalendar: { enabled: true, defaultCalendarId: '7' } }
     });
-    release = configureHostRuntime({
-        systemCalendar: {
-            getState: async () => ({
-                supported: true,
-                readGranted: true,
-                writeGranted: true,
-                calendars: [{ id: '7', name: 'Work', canWrite: true }]
-            }),
-            requestAccess: async () => {
-                throw failure;
-            },
-            listEvents: async () => {
-                throw failure;
-            },
-            addEvent: async () => {
-                throw failure;
-            },
-            updateEvent: async () => {
-                throw failure;
-            },
-            deleteEvent: async () => {
-                throw failure;
-            }
+    const kit = {
+        getState: async () => ({
+            supported: true,
+            readGranted: true,
+            writeGranted: true,
+            calendars: [{ id: '7', name: 'Work', canWrite: true }]
+        }),
+        requestAccess: async () => {
+            throw failure;
+        },
+        listEvents: async () => {
+            throw failure;
+        },
+        addEvent: async () => {
+            throw failure;
+        },
+        updateEvent: async () => {
+            throw failure;
+        },
+        deleteEvent: async () => {
+            throw failure;
+        },
+        ownsEvent: (value: string) => value === uid,
+        onDidChange: () => () => {}
+    };
+    class Platform extends AbstractPlatform {
+        getName() {
+            return 'native-test';
         }
-    });
+        getEffectiveWorkspace() {
+            return process.cwd();
+        }
+        async initPlatformHarness() {}
+        async fetch(): Promise<Response> {
+            throw new Error('unexpected fetch');
+        }
+    }
+    const platform = new Platform();
+    setPlatform(platform);
+    const bridge = jest.spyOn(platform, 'getNativeBridge').mockReturnValue({ getCalendarKit: async () => kit } as any);
+    release = () => {
+        bridge.mockReturnValue(null);
+    };
     oldApplications = ApplicationRegistry.applications;
     oldWorker = ApplicationRegistry.globalWorker;
     app = new CalendarApplication();

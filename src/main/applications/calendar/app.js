@@ -16,7 +16,6 @@ import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import CalendarWorker from './service/worker';
-import AndroidCalendarWorker from './service/android-worker.js';
 import { CalendarOverlay } from './tui';
 import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool, EditCalendarItemTool } from './tools';
 import { CALENDAR_SKILL } from './skills';
@@ -77,7 +76,7 @@ class CalendarApplication extends BaseApplication {
     }
 
     static getWorkerClass() {
-        return process.env.OPENDESK_ANDROID_RUNTIME === '1' ? AndroidCalendarWorker : CalendarWorker;
+        return CalendarWorker;
     }
 
     static getConfigSchema() {
@@ -96,21 +95,10 @@ class CalendarApplication extends BaseApplication {
     }
 
     async getCalendarIntegrationState() {
-        if (process.env.OPENDESK_ANDROID_RUNTIME === '1')
-            return unwrapWorkerResponse(await this.callWorker('getSystemCalendarState'));
-        const config = this.getConfig()?.dataSources?.systemCalendar;
-        return {
-            supported: false,
-            readGranted: false,
-            writeGranted: false,
-            calendars: [],
-            enabled: config?.enabled !== false,
-            defaultCalendarId: config?.defaultCalendarId ?? ''
-        };
+        return unwrapWorkerResponse(await this.callWorker('getSystemCalendarState'));
     }
 
     async requestCalendarAccess() {
-        if (process.env.OPENDESK_ANDROID_RUNTIME !== '1') return this.getCalendarIntegrationState();
         return unwrapWorkerResponse(await this.callWorker('requestCalendarAccess'));
     }
 
@@ -138,8 +126,7 @@ class CalendarApplication extends BaseApplication {
         }
         const updated = { ...config, dataSources: { ...config.dataSources, systemCalendar: next } };
         this.setConfig(updated);
-        if (process.env.OPENDESK_ANDROID_RUNTIME === '1')
-            unwrapWorkerResponse(await this.callWorker('applicationConfigChanged', this.getConfig() ?? updated));
+        unwrapWorkerResponse(await this.callWorker('applicationConfigChanged', this.getConfig() ?? updated));
         return this.getCalendarIntegrationState();
     }
 
