@@ -236,6 +236,52 @@ export class NaiveCalendarKit implements CalendarKit {
     }
 }
 
+export interface SandboxKitState {
+    supported: boolean;
+    ready: boolean;
+    reason?: 'unsupported' | 'unavailable' | 'initializing';
+}
+
+export interface NativeSandboxRequest {
+    shellPath: string;
+    shellArgs: string[];
+    cwd: string;
+    policyPath: string;
+    endpoint: string;
+    logPath: string;
+    readOnly: boolean;
+    deleteToTrash?: boolean;
+    trashDir?: string;
+    trashExcludeDirs?: string[];
+}
+
+export interface NativeSandboxLaunch {
+    file: string;
+    args: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    detached?: boolean;
+    runtimePaths?: { readExecute: string[]; writable: string[] };
+    cleanup?: () => void | Promise<void>;
+}
+
+/** Native launch mechanics only; shared services own task policies, approvals and process execution. */
+export interface SandboxKit {
+    getState(): Promise<SandboxKitState>;
+    prepare(request: NativeSandboxRequest): Promise<NativeSandboxLaunch>;
+}
+
+export class NaiveSandboxKit implements SandboxKit {
+    async getState(): Promise<SandboxKitState> {
+        return { supported: false, ready: false, reason: 'unsupported' };
+    }
+
+    async prepare(_request: NativeSandboxRequest): Promise<NativeSandboxLaunch> {
+        // Internal capability error; terminal services localize it for the user.
+        throw Object.assign(new Error('Native shell sandbox is unavailable'), { code: 'SANDBOX_UNAVAILABLE' });
+    }
+}
+
 /**
  * 原生平台功能桥接的接口定义。这个桥接设计用于封装不同操作系统和硬件平台的差异。
  */
@@ -259,6 +305,7 @@ export interface NativeBridge {
     getHuaweiAccountKit(): Promise<HuaweiAccountKit>;
     getQuickCaptureKit(): Promise<QuickCaptureKit>;
     getCalendarKit(): Promise<CalendarKit>;
+    getSandboxKit(): Promise<SandboxKit>;
 }
 
 export class NaiveSpeechKit implements SpeechKit {
@@ -332,6 +379,7 @@ export class NaiveNativeBridge implements NativeBridge {
     _huaweiAccountKit: HuaweiAccountKit = new NaiveHuaweiAccountKit();
     _quickCaptureKit: QuickCaptureKit = new NaiveQuickCaptureKit();
     private readonly fallbackCalendarKit: CalendarKit = new NaiveCalendarKit();
+    private readonly fallbackSandboxKit: SandboxKit = new NaiveSandboxKit();
 
     async getPlatform(): Promise<string> {
         return process.platform;
@@ -363,6 +411,10 @@ export class NaiveNativeBridge implements NativeBridge {
 
     async getCalendarKit(): Promise<CalendarKit> {
         return this.fallbackCalendarKit;
+    }
+
+    async getSandboxKit(): Promise<SandboxKit> {
+        return this.fallbackSandboxKit;
     }
 }
 
