@@ -290,9 +290,9 @@ describe('plugin channels and marketplace (main process)', () => {
         const catalog = await app.getPluginCatalog(customId);
         // 只声明了别的平台的条目不上架
         expect(catalog.entries.map((entry) => entry.id)).toEqual(['desktop-plugin']);
-        // 即便直接调主进程 API，也不能安装平台不支持的条目
+        // 即便直接调主进程 API，也不能安装平台不支持的条目（文案与安装期平台闸门共用同一键）
         await expect(app.installFromPluginRegistry(customId, 'other-platform-plugin')).rejects.toThrow(
-            /不支持当前平台/
+            new RegExp(`不支持当前操作系统平台（仅支持 ${otherPlatform}）`)
         );
     });
 

@@ -27,12 +27,13 @@
 
 import path from 'path';
 import fs from 'fs';
-import type {
-    Channel,
-    ChannelAccount,
-    ChannelAccountLoginParam,
-    ChannelInboundMessage,
-    ChannelRuntimeContext
+import {
+    resolvePluginLocalizedText,
+    type Channel,
+    type ChannelAccount,
+    type ChannelAccountLoginParam,
+    type ChannelInboundMessage,
+    type ChannelRuntimeContext
 } from '../../../../packages/plugin-sdk/src/index.js';
 import type {
     ChannelPlugin,
@@ -43,6 +44,7 @@ import type {
 } from './types.js';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { getLocale } from '../../../locale/index.js';
 
 export interface NativeChannelHostDeps {
     /** 返回指定 channel 的 OpenDesk 侧配置（applications.channelmgr.<channelId>） */
@@ -75,8 +77,8 @@ interface CachedAccount {
 }
 
 function resolveDisplayLabel(label: string | Record<string, string>, fallback: string): string {
-    if (typeof label === 'string') return label;
-    return label.en || label.zh || fallback;
+    // 按当前界面语言解析（字符串原样；对象按 BCP-47 主标签匹配，无匹配回退第一个条目）
+    return resolvePluginLocalizedText(label, getLocale()) ?? fallback;
 }
 
 /** 将原生入站消息映射为内部 InboundChannelMessage，并记录 target → chatType。 */
@@ -109,8 +111,11 @@ function mapInboundMessage(
 
 export class NativeChannelAdapter implements ChannelPlugin {
     readonly id: string;
-    readonly meta: ChannelMeta;
     readonly capabilities: ChannelCapabilities;
+
+    /** 渠道原始 label（string 或本地化映射），meta.label 按读取时的界面语言动态解析 */
+    private readonly rawLabel: string | Record<string, string>;
+    private readonly rawMetaDescription: string | undefined;
 
     /** recipientId → 会话形态，入站时记录，出站时推断 chatType */
     private readonly targetTypes = new Map<string, { chatType: 'direct' | 'group'; groupId?: string }>();
@@ -123,16 +128,22 @@ export class NativeChannelAdapter implements ChannelPlugin {
         private readonly deps: NativeChannelHostDeps
     ) {
         this.id = channel.meta.id;
-        this.meta = {
-            label: resolveDisplayLabel(channel.meta.label, channel.meta.id),
-            description: channel.meta.description,
-            aliases: channel.meta.aliases
-        };
+        this.rawLabel = channel.meta.label;
+        this.rawMetaDescription = channel.meta.description;
         this.capabilities = {
             chatTypes: channel.capabilities.chatTypes,
             media: channel.capabilities.media,
             threading: channel.capabilities.threading,
             interactive: channel.capabilities.interactive
+        };
+    }
+
+    /** 每次访问按当前界面语言重新解析 label，语言切换后展示随之更新 */
+    get meta(): ChannelMeta {
+        return {
+            label: resolveDisplayLabel(this.rawLabel, this.id),
+            description: this.rawMetaDescription,
+            aliases: this.channel.meta.aliases
         };
     }
 
@@ -314,11 +325,18 @@ export class NativeChannelAdapter implements ChannelPlugin {
     // ── 参数登录（供 channelmgr 新增路径使用） ────────────────────────────────
 
     getLoginParams(): ChannelAccountLoginParam[] {
-        return this.channel.getAccountLoginParams?.() ?? [];
+        const locale = getLocale();
+        return (this.channel.getAccountLoginParams?.() ?? []).map((param) => {
+            // displayName 支持本地化映射：按当前界面语言解析后交给 UI 渲染
+            const displayName = resolvePluginLocalizedText(param.displayName, locale);
+            return { ...param, displayName: displayName ?? param.name };
+        });
     }
 
     supportParamsLogin(): boolean {
-        return typeof this.channel.loginAccountWithParams === 'function';
+        // 纯扫码渠道（如 whatsapp）也会实现 loginAccountWithParams（抛「不支持」错），
+        // 只看方法存在会把「参数登录」按钮渲染成一个点击必败的死入口，须再要求表单非空
+        return typeof this.channel.loginAccountWithParams === 'function' && this.getLoginParams().length > 0;
     }
 
     async loginWithParams(values: Record<string, string>): Promise<ChannelAccount> {
@@ -361,6 +379,10 @@ export class NativeChannelAdapter implements ChannelPlugin {
             channelId,
             accountId,
             config: Object.freeze({ ...(this.deps.getConfig(channelId)?.channels?.[channelId] ?? {}) }),
+            // 动态读取当前界面语言：语言切换后 channel 侧文案随之更新
+            get locale() {
+                return getLocale();
+            },
             dataDir,
             resolvePath: (input: string) => path.resolve(dataDir, input),
             dispatch: async (message: ChannelInboundMessage) => {

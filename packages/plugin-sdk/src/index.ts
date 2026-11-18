@@ -1204,7 +1204,8 @@ export interface ChannelQrLoginSession {
 /** 参数登录的表单字段描述，OpenDesk 据此渲染登录 UI */
 export interface ChannelAccountLoginParam {
     name: string;
-    displayName: string;
+    /** 表单字段显示名；支持本地化映射 { en, zh }，宿主按当前界面语言解析 */
+    displayName: string | PluginLocalizedText;
     required: boolean;
     /** password 时 UI 用掩码输入框 */
     type?: 'text' | 'password';
@@ -1224,6 +1225,13 @@ export interface ChannelRuntimeContext {
     readonly accountId?: string;
     /** OpenDesk 侧维护的非敏感配置（对应 Channel.configSchema，存于 settings.json） */
     readonly config: Readonly<Record<string, unknown>>;
+    /**
+     * 当前界面语言（BCP-47 tag，如 zh-CN / en-US），动态读取：语言切换后返回新值。
+     * 渠道用它解析自己的用户可见文案（连接状态、交互卡片/提示、登录错误提示等），
+     * 配合 resolvePluginLocalizedText({ en, zh }, ctx.locale) 使用；
+     * ctx 缺失或 locale 未知时由渠道自行决定回退语言。
+     */
+    readonly locale: string;
     /** channel 专属数据目录（<opendesk>/channels/<channelId>/），凭证持久化用 */
     readonly dataDir: string;
     /** 将相对路径解析到 dataDir 内 */

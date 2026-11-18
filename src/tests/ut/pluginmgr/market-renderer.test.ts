@@ -547,6 +547,33 @@ describe('plugin marketplace renderer', () => {
         expect(notifications).toHaveLength(0);
     });
 
+    test('a local package rejected by the platform gate opens a modal without a failure notice', async () => {
+        // 平台不匹配与宿主版本同款约定：主进程抛结构化串，界面解析后弹平台说明模态，
+        // 不发默认的失败系统通知（修复前走 describeInstallFailure 合成消息，只能落回通知）
+        callMainWorld.mockImplementation(async (method: string) => {
+            if (method === 'list') return [];
+            if (method === 'listPluginRegistries') return REGISTRIES;
+            if (method === 'getPluginCatalog') return catalog();
+            if (method === 'install') throw new Error('plugin.install_platform_unsupported:imessage:darwin');
+            return undefined;
+        });
+        const widget = await createWidget();
+        widget.install('some-plugin.zip');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const overlay = widget.shadowRoot.querySelector('.od-confirm-modal-overlay') as HTMLElement;
+        expect(overlay).not.toBeNull();
+        expect(overlay.textContent).toContain('安装失败');
+        // 文案带插件 id 与其支持的平台列表
+        expect(overlay.textContent).toContain('插件 imessage 不支持当前操作系统平台（仅支持 darwin）');
+        // 弹窗已经说明了原因，不再额外发系统通知
+        const notifications = (callMainWorld.mock.calls as unknown[][]).filter(
+            ([method]) => method === 'sendNotification'
+        );
+        expect(notifications).toHaveLength(0);
+    });
+
     test('an entry that needs a newer host is shown as not installable with the required range', async () => {
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'list') return [];

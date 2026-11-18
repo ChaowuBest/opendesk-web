@@ -1043,14 +1043,18 @@ describe('pluginmgr host version gate on installation', () => {
         fs.rmSync(configDirectory, { recursive: true, force: true });
     });
 
-    function writeLocalZip(zipPath: string, manifestExtras: Record<string, unknown> = {}): void {
+    function writeLocalZip(
+        zipPath: string,
+        manifestExtras: Record<string, unknown> = {},
+        pluginId = 'host-gated-plugin'
+    ): void {
         const archive = new AdmZip();
-        archive.addFile('package.json', Buffer.from(JSON.stringify({ name: 'host-gated-plugin', version: '1.0.0' })));
+        archive.addFile('package.json', Buffer.from(JSON.stringify({ name: pluginId, version: '1.0.0' })));
         archive.addFile(
             'opendesk.plugin.json',
             Buffer.from(
                 JSON.stringify({
-                    id: 'host-gated-plugin',
+                    id: pluginId,
                     entry: './index.mjs',
                     apiVersion: 1,
                     capabilities: [],
@@ -1058,7 +1062,7 @@ describe('pluginmgr host version gate on installation', () => {
                 })
             )
         );
-        archive.addFile('index.mjs', Buffer.from("export default { id: 'host-gated-plugin', setup() {} };\n"));
+        archive.addFile('index.mjs', Buffer.from(`export default { id: '${pluginId}', setup() {} };\n`));
         archive.writeZip(zipPath);
     }
 
@@ -1164,5 +1168,33 @@ describe('pluginmgr host version gate on installation', () => {
 
         expect(result).toEqual({ success: true, id: 'host-gated-plugin' });
         expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'host-gated-plugin'))).toBe(true);
+    });
+
+    test('本地 ZIP 声明的平台不含当前平台时在落盘前拒绝', async () => {
+        const zipPath = path.join(configDirectory, 'other-platform-plugin.zip');
+        writeLocalZip(zipPath, { platforms: ['openharmony'] }, 'other-platform-plugin');
+
+        const result = await installPlugin(zipPath, {
+            configDirectory,
+            runNpm: async () => {
+                throw new Error('npm should not run when the platform gate rejects the package');
+            }
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errorCode).toBe('platform_unsupported');
+        // 结构化串带插件 id 与平台列表：渲染层模态与 formatPluginInstallError 都要从它取参数
+        expect(result.error).toContain('plugin.install_platform_unsupported:other-platform-plugin:openharmony');
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'other-platform-plugin'))).toBe(false);
+    });
+
+    test('声明了包含当前平台的 platforms 时正常安装', async () => {
+        const zipPath = path.join(configDirectory, 'current-platform-plugin.zip');
+        writeLocalZip(zipPath, { platforms: ['openharmony', process.platform] }, 'current-platform-plugin');
+
+        const result = await installPlugin(zipPath, { configDirectory, runNpm: async () => undefined });
+
+        expect(result).toEqual({ success: true, id: 'current-platform-plugin' });
+        expect(fs.existsSync(path.join(getPluginsDirectory(configDirectory), 'current-platform-plugin'))).toBe(true);
     });
 });

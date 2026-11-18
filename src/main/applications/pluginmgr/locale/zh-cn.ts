@@ -20,7 +20,6 @@ export const zhCn: Record<string, string> = {
     'market.entryPlatformsInvalid':
         '插件声明的 platforms 不合法（只接受 win32 / darwin / linux / android / openharmony）',
     'market.entryAuthorInvalid': '插件作者信息不合法：需要 name，homepage 只接受 http(s) 地址',
-    'market.platformUnsupported': '插件 ${id} 不支持当前平台（仅支持 ${platforms}）',
     'market.hostVersionUnsupported': '插件 ${id} 需要 OpenDesk ${range}，当前版本 ${current}',
     'market.entryDownloadUrlMissing': '插件条目缺少下载地址',
     'market.entryDownloadUrlInvalid': '插件下载地址不合法：${url}',

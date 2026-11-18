@@ -39,9 +39,11 @@ import {
     formatPluginDiagnostic,
     isHostVersionCompatible,
     parsePluginHostVersionMessage,
+    parsePluginPlatformUnsupportedMessage,
     resolveMarketInstallState,
     type PluginMarketInstallOutcome,
-    type PluginMarketInstallState
+    type PluginMarketInstallState,
+    type PluginPlatformUnsupportedIssue
 } from '../catalog-common.js';
 
 interface PluginRuntimeEntry {
@@ -1583,16 +1585,23 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 this.installSpec = '';
                 this.syncInstallDialog();
             },
-            // 宿主版本不满足的失败弹模态引导升级，不再发默认的系统通知
+            // 宿主版本不满足 / 平台不支持的失败都弹模态给出明确引导，不再发默认的系统通知
             (message) => {
                 const issue = parsePluginHostVersionMessage(message);
-                if (!issue) return false;
-                void this.showInstallBlockedModal({
-                    direction: issue.direction,
-                    range: issue.range,
-                    current: issue.hostVersion
-                });
-                return true;
+                if (issue) {
+                    void this.showInstallBlockedModal({
+                        direction: issue.direction,
+                        range: issue.range,
+                        current: issue.hostVersion
+                    });
+                    return true;
+                }
+                const platformIssue = parsePluginPlatformUnsupportedMessage(message);
+                if (platformIssue) {
+                    void this.showPlatformUnsupportedModal(platformIssue);
+                    return true;
+                }
+                return false;
             }
         );
         if (source) {
@@ -2617,6 +2626,32 @@ export class PluginMgrEntryWidget extends HTMLElement {
                 variant: 'warn',
                 icon: 'fa-triangle-exclamation',
                 title: this.t('plugin.center.market.installBlockedTitle'),
+                message: escapeHtml(message),
+                confirmText: this.t('common.close'),
+                cancelText: null,
+                mountTarget: this.shadowRoot!
+            });
+        } catch {
+            this.setNotice(message, true);
+        }
+    }
+
+    /**
+     * 本地安装平台不匹配时弹模态：与宿主版本闸门同款交互。
+     *
+     * 这类失败在装完之前就被拦下，走默认的系统通知容易被忽略，模态能让用户当场看到
+     * 是哪个插件、需要哪个平台；模态弹不出来时回退页面提示条。
+     */
+    private async showPlatformUnsupportedModal(issue: PluginPlatformUnsupportedIssue): Promise<void> {
+        const message = this.t('plugin.install.error.platformUnsupported', {
+            id: issue.id,
+            platforms: issue.platforms
+        });
+        try {
+            await showConfirmModal({
+                variant: 'warn',
+                icon: 'fa-triangle-exclamation',
+                title: this.t('plugin.install.fail'),
                 message: escapeHtml(message),
                 confirmText: this.t('common.close'),
                 cancelText: null,

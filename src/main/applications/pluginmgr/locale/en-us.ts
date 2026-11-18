@@ -20,7 +20,6 @@ export const enUs: Record<string, string> = {
     'market.entryPlatformsInvalid':
         'Invalid plugin platforms (only win32 / darwin / linux / android / openharmony are accepted)',
     'market.entryAuthorInvalid': 'Invalid author: name is required and homepage must be an http(s) URL',
-    'market.platformUnsupported': 'Plugin ${id} does not support the current platform (only ${platforms})',
     'market.hostVersionUnsupported': 'Plugin ${id} requires OpenDesk ${range}; the current version is ${current}',
     'market.entryDownloadUrlMissing': 'Plugin entry is missing the download URL',
     'market.entryDownloadUrlInvalid': 'Invalid plugin download URL: ${url}',

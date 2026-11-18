@@ -1,11 +1,13 @@
 import { setRuntimeLocale } from '../../../locale/index.js';
-import { PluginHostVersionError } from '../../../main/applications/pluginmgr/catalog-common.js';
+import {
+    PluginHostVersionError,
+    parsePluginPlatformUnsupportedMessage
+} from '../../../main/applications/pluginmgr/catalog-common.js';
 import {
     classifyPluginInstallError,
     formatPluginInstallError,
     formatPluginInstallException,
-    formatPluginUninstallError,
-    isHostVersionInstallError
+    formatPluginUninstallError
 } from '../../../main/applications/pluginmgr/management/errors.js';
 
 describe('plugin installation error messages', () => {
@@ -85,13 +87,32 @@ describe('plugin installation error messages', () => {
         );
     });
 
+    test('平台不匹配时文案带插件 id 与平台列表', () => {
+        setRuntimeLocale('zh-CN');
+
+        expect(
+            formatPluginInstallError({
+                errorCode: 'platform_unsupported',
+                error: 'plugin.install_platform_unsupported:demo-plugin:win32, darwin'
+            })
+        ).toBe('插件 demo-plugin 不支持当前操作系统平台（仅支持 win32, darwin），无法安装。');
+    });
+
+    test('解析平台闸门结构化串', () => {
+        expect(
+            parsePluginPlatformUnsupportedMessage('plugin.install_platform_unsupported:demo-plugin:win32, darwin')
+        ).toEqual({ id: 'demo-plugin', platforms: 'win32, darwin' });
+        // 其它前缀 / 缺 id / 缺平台列表都不视为平台闸门错误
+        expect(parsePluginPlatformUnsupportedMessage('plugin.install_host_version:too_old:0.3.0')).toBeUndefined();
+        expect(parsePluginPlatformUnsupportedMessage('plugin.install_platform_unsupported:win32')).toBeUndefined();
+        expect(parsePluginPlatformUnsupportedMessage(undefined)).toBeUndefined();
+    });
+
     test('宿主版本错误即使发生在安装阶段也归类为版本问题', () => {
         // 分类顺序：先认版本错误再走 stage 兜底，否则界面拿不到升级引导的方向
         const error = new PluginHostVersionError('too_new', '≤ 0.3.0', '0.4.1');
         expect(classifyPluginInstallError(error, 'install')).toBe('host_version_too_new');
         expect(classifyPluginInstallError(error, 'validate')).toBe('host_version_too_new');
-        expect(isHostVersionInstallError('host_version_too_new')).toBe(true);
-        expect(isHostVersionInstallError('invalid_package')).toBe(false);
     });
 
     test('把宿主版本闸门的结构化异常翻译成本地化引导，其它错误交回调用方', () => {
