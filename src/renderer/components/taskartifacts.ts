@@ -900,9 +900,11 @@ class TaskArtifacts extends HTMLElement {
         if (tabId === 'workspace') {
             this._mountFileExplorer();
         } else if (tabId === 'browser') {
-            this.consumeInitialBrowserAutoReveal();
             this.restoreBrowserPanelLayout();
             this._mountBrowser();
+            if (this._browser?.hasActiveContent() && this._isHostTaskVisible()) {
+                this.consumeInitialBrowserAutoReveal();
+            }
         } else if (tabId === 'changes') {
             this.refreshChanges();
         }
@@ -1091,10 +1093,14 @@ class TaskArtifacts extends HTMLElement {
         return this._activeTab === 'browser' && this._browserVisible && this._isHostTaskVisible();
     }
 
-    /** Restore a recycled Browser only when this task already had that tab selected. */
+    /** Restore the selected Browser and record content shown after returning to the task. */
     restoreSelectedBrowser(): void {
-        if (this._activeTab === 'browser' && this._browserVisible && !this._browser) {
+        if (this._activeTab !== 'browser' || !this._browserVisible) return;
+        if (!this._browser) {
             this._mountBrowser();
+        }
+        if (this._browser?.hasActiveContent() && this._isHostTaskVisible()) {
+            this.consumeInitialBrowserAutoReveal();
         }
     }
 
@@ -1267,6 +1273,9 @@ class TaskArtifacts extends HTMLElement {
         const hasContent = this._browser.hasActiveContent();
         if (hasContent) {
             this._browserRevealPendingContent = false;
+            if (this._activeTab === 'browser' && this._isHostTaskVisible()) {
+                this.consumeInitialBrowserAutoReveal();
+            }
         } else if (this._browserRevealPendingContent) {
             // A newly mounted webview reports its initial about:blank asynchronously.
             // Do not let that transient event undo an explicit Browser reveal before

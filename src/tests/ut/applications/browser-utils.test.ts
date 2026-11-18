@@ -14,8 +14,8 @@ function installDom(html: string): Window {
     return window as unknown as Window;
 }
 
-function runScript(script: string): void {
-    new Function(script)();
+async function runScript(script: string): Promise<void> {
+    return new Function(script)();
 }
 
 describe('browser utils', () => {
@@ -24,7 +24,101 @@ describe('browser utils', () => {
         delete (globalThis as any).document;
     });
 
-    test('hidden task view gets offscreen rendering without activating foreground layout', () => {
+    test('waits for an asynchronous task view before revealing its browser', async () => {
+        const window = installDom('<div id="nonAppSlot"></div>');
+        const document = window.document;
+        const ensureRightSidebarOpen = jest.fn();
+        const consumeInitialBrowserAutoReveal = jest.fn(() => true);
+        const forceBrowserActive = jest.fn();
+        let finishLoading!: () => void;
+        const loading = new Promise<void>((resolve) => {
+            finishLoading = resolve;
+        });
+        const preparation = loading.then(() => {
+            document.getElementById('nonAppSlot')!.innerHTML = `
+                <task-view id="task-view">
+                    <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+                </task-view>
+            `;
+            Object.assign(document.getElementById('task-view')!, {
+                _ensureRightSidebarOpen: ensureRightSidebarOpen
+            });
+            Object.assign(document.getElementById('task-task-1-artifacts')!, {
+                consumeInitialBrowserAutoReveal,
+                forceBrowserActive
+            });
+        });
+        const ensureTaskViewExists = jest.fn(() => preparation);
+        (window as any).globalControlAPI = { ensureTaskViewExists };
+        const completed = jest.fn();
+        const execution = runScript(makeEnsureSidebarScript('task-1')).then(completed);
+
+        try {
+            await Promise.resolve();
+            expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
+            expect(completed).not.toHaveBeenCalled();
+            expect(document.getElementById('task-task-1-artifacts')).toBeNull();
+            expect(consumeInitialBrowserAutoReveal).not.toHaveBeenCalled();
+        } finally {
+            finishLoading();
+            await preparation;
+            await execution;
+        }
+
+        expect(ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
+        expect(consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(forceBrowserActive).toHaveBeenCalledTimes(1);
+    });
+
+    test('defers the reveal when the task moves to the background while its view loads', async () => {
+        const window = installDom(`
+            <div id="nonAppSlot">
+                <task-view id="task-view">
+                    <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+                </task-view>
+            </div>
+            <div id="app-frames-container" style="display:none"></div>
+        `);
+        const document = window.document;
+        const taskView = document.getElementById('task-view')!;
+        const artifacts = document.getElementById('task-task-1-artifacts')!;
+        const appFramesContainer = document.getElementById('app-frames-container')!;
+        const ensureRightSidebarOpen = jest.fn();
+        const consumeInitialBrowserAutoReveal = jest.fn(() => true);
+        const markPendingBrowserAutoReveal = jest.fn();
+        const ensureBrowserReady = jest.fn();
+        const forceBrowserActive = jest.fn();
+        Object.assign(taskView, { _ensureRightSidebarOpen: ensureRightSidebarOpen });
+        Object.assign(artifacts, {
+            consumeInitialBrowserAutoReveal,
+            markPendingBrowserAutoReveal,
+            ensureBrowserReady,
+            forceBrowserActive
+        });
+        let finishLoading!: () => void;
+        const preparation = new Promise<void>((resolve) => {
+            finishLoading = resolve;
+        });
+        (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn(() => preparation) };
+
+        const execution = runScript(makeEnsureSidebarScript('task-1'));
+        taskView.setAttribute('data-background', '1');
+        document.getElementById('nonAppSlot')!.style.display = 'none';
+        appFramesContainer.style.display = 'block';
+        finishLoading();
+        await execution;
+
+        expect(consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
+        expect(ensureRightSidebarOpen).not.toHaveBeenCalled();
+        expect(forceBrowserActive).not.toHaveBeenCalled();
+        expect(ensureBrowserReady).toHaveBeenCalledWith(false);
+        expect(taskView.getAttribute('data-background')).toBe('1');
+        expect(taskView.style.opacity).toBe('0');
+        expect(appFramesContainer.style.display).toBe('block');
+    });
+
+    test('hidden task view gets offscreen rendering without activating foreground layout', async () => {
         const window = installDom(`
             <div id="nonAppSlot" style="display:none">
                 <task-view id="task-view" style="display:none">
@@ -66,7 +160,7 @@ describe('browser utils', () => {
         artifacts.forceBrowserActive = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
         expect((document.getElementById('nonAppSlot') as HTMLElement).style.display).toBe('');
@@ -96,7 +190,7 @@ describe('browser utils', () => {
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
-    test('data-background task view stays offscreen without activating foreground layout', () => {
+    test('data-background task view stays offscreen without activating foreground layout', async () => {
         const window = installDom(`
             <div id="nonAppSlot" style="display:none">
                 <task-view id="task-view" data-background="1">
@@ -126,7 +220,7 @@ describe('browser utils', () => {
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
         expect(taskView.getAttribute('data-background')).toBe('1');
@@ -140,7 +234,7 @@ describe('browser utils', () => {
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
-    test('defers a background first-use reveal to the task-visible transition without repeating it', () => {
+    test('defers a background first-use reveal to the task-visible transition without repeating it', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" data-background="1">
@@ -174,7 +268,7 @@ describe('browser utils', () => {
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
 
         // 后台首次使用：保持离屏渲染，不激活任何前台布局，仅记录待应用的预览状态。
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
         expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
         expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
@@ -183,7 +277,7 @@ describe('browser utils', () => {
         // （大屏预览由 syncRightSidebarState 消费 pending 状态时统一应用）。
         taskView.removeAttribute('data-background');
         taskView.style.cssText = 'width:100%;height:100%;';
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(artifacts.consumeInitialBrowserAutoReveal).toHaveBeenCalledTimes(2);
         expect(artifacts.markPendingBrowserAutoReveal).toHaveBeenCalledTimes(1);
@@ -193,7 +287,7 @@ describe('browser utils', () => {
         expect(artifacts.ensureBrowserReady).toHaveBeenNthCalledWith(2, false);
     });
 
-    test('clears oversized artifact styles left by previous background preparation', () => {
+    test('clears oversized artifact styles left by previous background preparation', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" style="width:1280px;height:800px">
@@ -222,7 +316,7 @@ describe('browser utils', () => {
         artifacts.ensureBrowserReady = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(artifacts.style.width).toBe('420px');
         expect(artifacts.style.minWidth).toBe('');
@@ -231,7 +325,7 @@ describe('browser utils', () => {
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
 
-    test('keeps visible task view on the normal sidebar path', () => {
+    test('keeps visible task view on the normal sidebar path', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" style="width:1280px;height:800px">
@@ -259,7 +353,7 @@ describe('browser utils', () => {
         artifacts.markPendingBrowserAutoReveal = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
@@ -267,7 +361,7 @@ describe('browser utils', () => {
         expect(artifacts.markPendingBrowserAutoReveal).not.toHaveBeenCalled();
     });
 
-    test('keeps repeated browser use in the current task from changing the user layout', () => {
+    test('keeps repeated browser use in the current task from changing the user layout', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" style="width:1280px;height:800px">
@@ -294,7 +388,7 @@ describe('browser utils', () => {
         artifacts.forceBrowserActive = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts.forceBrowserActive).not.toHaveBeenCalled();
@@ -303,7 +397,7 @@ describe('browser utils', () => {
         expect(artifacts._suppressBrowserAutoSwitch).toBe(true);
     });
 
-    test('does not destroy browsers in other hidden task views before preparing a visible task browser', () => {
+    test('does not destroy browsers in other hidden task views before preparing a visible task browser', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="hidden-task" style="display:none">
@@ -334,13 +428,13 @@ describe('browser utils', () => {
         visibleArtifacts.ensureBrowserReady = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
 
-        runScript(makeEnsureSidebarScript('task-2'));
+        await runScript(makeEnsureSidebarScript('task-2'));
 
         expect(hiddenArtifacts.destroyBrowser).not.toHaveBeenCalled();
         expect(visibleArtifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
 
-    test('does not destroy other hidden browsers while preparing a hidden task browser', () => {
+    test('does not destroy other hidden browsers while preparing a hidden task browser', async () => {
         const window = installDom(`
             <div id="nonAppSlot" style="display:none">
                 <task-view id="other-task" style="display:none">
@@ -367,13 +461,13 @@ describe('browser utils', () => {
         currentArtifacts.ensureBrowserReady = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
 
-        runScript(makeEnsureSidebarScript('task-2'));
+        await runScript(makeEnsureSidebarScript('task-2'));
 
         expect(hiddenArtifacts.destroyBrowser).not.toHaveBeenCalled();
         expect(currentArtifacts.ensureBrowserReady).toHaveBeenCalledWith(false);
     });
 
-    test('switches to browser tab even when the visible sidebar is already expanded', () => {
+    test('switches to browser tab even when the visible sidebar is already expanded', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" style="width:1280px;height:800px">
@@ -405,13 +499,13 @@ describe('browser utils', () => {
         artifacts._suppressBrowserAutoSwitch = true;
         artifacts.ensureBrowserReady = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
 
-    test('prefers explicit browser activation when available', () => {
+    test('prefers explicit browser activation when available', async () => {
         const window = installDom(`
             <div id="nonAppSlot">
                 <task-view id="task-view" style="width:1280px;height:800px">
@@ -437,7 +531,7 @@ describe('browser utils', () => {
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
 
-        runScript(makeEnsureSidebarScript('task-1'));
+        await runScript(makeEnsureSidebarScript('task-1'));
 
         expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);

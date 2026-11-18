@@ -1,4 +1,8 @@
 import { DeepSeekSearchTool } from '../../../main/applications/search/tools/deepseek';
+import { setRuntimeLocale } from '../../../locale/index.js';
+
+beforeAll(() => setRuntimeLocale('zh-CN'));
+afterAll(() => setRuntimeLocale(null));
 
 const apiKey = process.env.DEEPSEEK_API_KEY;
 

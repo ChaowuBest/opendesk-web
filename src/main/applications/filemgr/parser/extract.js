@@ -19,7 +19,6 @@ import path from 'path';
 import { createRequire } from 'module';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
-import * as XLSX from 'xlsx';
 import WordExtractor from 'word-extractor';
 import { readOfd } from '@sharp9/ofdjs';
 import {
@@ -31,6 +30,8 @@ import {
     getTagName
 } from '@sharp9/ofdjs/xml-parser';
 import { logger as staticLogger } from '../../../utils/logger.js';
+import { xlsxLoader } from '../../../loader/xlsx.js';
+import { prepareHostResource } from '../../../../platforms/runtime.js';
 
 function getLogger() {
     return staticLogger;
@@ -272,12 +273,13 @@ function isXmlEntryReadable(filePath, ext) {
     });
 }
 
-function extractSpreadsheetText(buffer) {
+async function extractSpreadsheetText(buffer) {
+    const XLSX = await xlsxLoader.ensure();
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheets = [];
     for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
-        const lines = sheetToRowNumberedLines(sheet);
+        const lines = sheetToRowNumberedLines(XLSX, sheet);
         if (lines.length === 0) continue;
         const text = lines.join('\n');
         sheets.push(workbook.SheetNames.length > 1 ? `[${sheetName}]\n${text}` : text);
@@ -285,7 +287,7 @@ function extractSpreadsheetText(buffer) {
     return sheets.join('\n\n');
 }
 
-function sheetToRowNumberedLines(sheet) {
+function sheetToRowNumberedLines(XLSX, sheet) {
     if (!sheet['!ref']) return [];
     const range = XLSX.utils.decode_range(sheet['!ref']);
     const lines = [];
@@ -462,6 +464,7 @@ export async function extractText(filePath) {
         }
 
         if (OFFICE_PARSER_EXTS.has(ext)) {
+            await prepareHostResource('document-parser');
             if (!(await isXmlEntryReadable(filePath, ext))) {
                 (await getLogger()).warn(
                     `[parser] damaged xml entry in ${filePath}; skipped officeparser to avoid an uncaught stream error`
@@ -484,7 +487,7 @@ export async function extractText(filePath) {
 
         if (SPREADSHEET_EXTS.has(ext)) {
             const buffer = await fs.promises.readFile(filePath);
-            return extractSpreadsheetText(buffer);
+            return await extractSpreadsheetText(buffer);
         }
 
         if (ext === 'pptx') {

@@ -35,6 +35,7 @@ import { normalizeStaffLocalService, unwrapAgentOfficeCallResult, type StaffLoca
 import { StaffLocalServiceManager, type LocalServiceRuntime } from './local-service.js';
 import type { StoredServiceCertificate } from './service-cert.js';
 import { CustomAgent } from './custom-agent.js';
+import { recordAgentOfficeStartup, type StartupPhaseStatus } from './startup-timing.js';
 import type { AgentMcpRegistration, McpMgrApplication } from '../mcpmgr/app.js';
 import type { AgentDecl, ModeDecl } from '../../aikernel/agents/common.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
@@ -51,6 +52,7 @@ import type {
     StaffPermission,
     StaffSkillBatchImportResult,
     StaffSkillImportCandidate,
+    StaffStartupInfo,
     StaffTaskSource,
     StaffTaskRecord,
     StaffUpdateInput
@@ -387,38 +389,58 @@ export class AgentOfficeApplication extends BaseApplication {
      * Staff 通过 dispatchable=false 避免被主 Agent 派发。
      */
     async getAgents(): Promise<AgentDecl[]> {
-        await this.disposeStaffAgents();
-        const agentsDirectory = path.join(getOpendeskDirectory(), 'agents');
-        const agents: CustomAgent[] = [];
+        const startedAt = performance.now();
+        let ready = false;
+        let agentCount = 0;
+        try {
+            await this.disposeStaffAgents();
+            const agentsDirectory = path.join(getOpendeskDirectory(), 'agents');
+            const agents: CustomAgent[] = [];
 
-        if (fs.existsSync(agentsDirectory)) {
-            const entries = fs.readdirSync(agentsDirectory, { withFileTypes: true });
-            // 自定义 agent 目录彼此独立，并行加载避免数量多时串行磁盘 IO 拖慢启动
-            const loaded = await Promise.all(
-                entries
-                    .filter((entry) => entry.isDirectory())
-                    .map(async (entry) => {
-                        const agentDirectory = path.join(agentsDirectory, entry.name);
-                        try {
-                            return await CustomAgent.loadFromPath(agentDirectory);
-                        } catch (error) {
-                            logger.warn(`AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`);
-                            return undefined;
-                        }
-                    })
-            );
-            agents.push(...loaded.filter((agent): agent is CustomAgent => Boolean(agent)));
-        } else {
-            logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
+            if (fs.existsSync(agentsDirectory)) {
+                const entries = fs.readdirSync(agentsDirectory, { withFileTypes: true });
+                // 自定义 agent 目录彼此独立，并行加载避免数量多时串行磁盘 IO 拖慢启动
+                const loaded = await Promise.all(
+                    entries
+                        .filter((entry) => entry.isDirectory())
+                        .map(async (entry) => {
+                            const agentDirectory = path.join(agentsDirectory, entry.name);
+                            try {
+                                return await CustomAgent.loadFromPath(agentDirectory);
+                            } catch (error) {
+                                logger.warn(
+                                    `AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`
+                                );
+                                return undefined;
+                            }
+                        })
+                );
+                agents.push(...loaded.filter((agent): agent is CustomAgent => Boolean(agent)));
+            } else {
+                logger.info(`AgentOffice: custom agents directory not found: ${agentsDirectory}`);
+            }
+
+            this.customMcpRegistrations = agents.map((agent) => ({
+                agentId: agent.agentId,
+                config: agent.mcpConfig
+            }));
+            await this.loadStaffAgents();
+            const mcpStartedAt = performance.now();
+            let mcpReady = false;
+            try {
+                mcpReady = await this.syncAgentMcpServers();
+            } finally {
+                recordAgentOfficeStartup('agents.mcp', mcpStartedAt, mcpReady ? 'ready' : 'failed');
+            }
+            const result = [...agents, ...this.staffAgents.values()];
+            agentCount = result.length;
+            ready = true;
+            return result;
+        } finally {
+            recordAgentOfficeStartup('agents.construct', startedAt, ready ? 'ready' : 'failed', {
+                agents: agentCount
+            });
         }
-
-        this.customMcpRegistrations = agents.map((agent) => ({
-            agentId: agent.agentId,
-            config: agent.mcpConfig
-        }));
-        await this.loadStaffAgents();
-        await this.syncAgentMcpServers();
-        return [...agents, ...this.staffAgents.values()];
     }
 
     private agentsLoadedPromise?: Promise<void>;
@@ -432,8 +454,20 @@ export class AgentOfficeApplication extends BaseApplication {
     private async doEnsureLoaded(): Promise<void> {
         try {
             const agents = await this.getAgents();
-            for (const agent of agents) {
-                await AgentRegistry.replaceApplicationAgent('agentoffice', agent);
+            const registrationStartedAt = performance.now();
+            let registered = 0;
+            try {
+                for (const agent of agents) {
+                    await AgentRegistry.replaceApplicationAgent('agentoffice', agent);
+                    registered++;
+                }
+            } finally {
+                recordAgentOfficeStartup(
+                    'agents.register',
+                    registrationStartedAt,
+                    registered === agents.length ? 'ready' : 'failed',
+                    { registered, agents: agents.length }
+                );
             }
             if (agents.length > 0) {
                 logger.info(`AgentRegistry: registered ${agents.length} agent(s) from agentoffice (lazy)`);
@@ -444,16 +478,25 @@ export class AgentOfficeApplication extends BaseApplication {
     }
 
     private async loadStaffAgents(): Promise<void> {
-        let staffs: StaffListItem[];
+        const listStartedAt = performance.now();
+        let staffs: StaffStartupInfo[] = [];
+        let listed = false;
         try {
-            staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+            staffs = await this.callAgentOfficeWorker<StaffStartupInfo[]>('listStaffStartupInfo');
+            listed = true;
         } catch (error) {
             logger.warn(`AgentOffice: failed to list staff agents: ${error}`);
             return;
+        } finally {
+            recordAgentOfficeStartup('staff.metadata', listStartedAt, listed ? 'ready' : 'failed', {
+                staffs: staffs.length
+            });
         }
 
         // staff agent 互不依赖，并行构建，避免 staff 多时逐个读取磁盘
         const tasks: Promise<void>[] = [];
+        const constructionStartedAt = performance.now();
+        let failed = 0;
         for (const staff of staffs) {
             if (!staff.enabled) continue;
             tasks.push(
@@ -476,12 +519,18 @@ export class AgentOfficeApplication extends BaseApplication {
                             config: agent.mcpConfig
                         });
                     } catch (error) {
+                        failed++;
                         logger.warn(`AgentOffice: failed to load agent for staff ${staff.id}: ${error}`);
                     }
                 })()
             );
         }
         await Promise.all(tasks);
+        recordAgentOfficeStartup('staff.construct', constructionStartedAt, failed ? 'partial' : 'ready', {
+            attempted: tasks.length,
+            loaded: this.staffAgents.size,
+            failed
+        });
     }
 
     private createStaffAgent(staffId: string, staff: Pick<StaffListItem, 'name' | 'title'>): Promise<CustomAgent> {
@@ -577,18 +626,22 @@ export class AgentOfficeApplication extends BaseApplication {
         await Promise.allSettled(agents.map(async (agent) => await agent.dispose()));
     }
 
-    private async syncAgentMcpServers(): Promise<void> {
+    private async syncAgentMcpServers(): Promise<boolean> {
         const mcpMgr = this.registry?.getApplication?.('mcpmgr') as McpMgrApplication | undefined;
         const registrations = [...this.customMcpRegistrations, ...this.staffMcpRegistrations.values()];
         if (mcpMgr) {
             try {
                 await mcpMgr.replaceAgentServers(registrations);
+                return true;
             } catch (error) {
                 logger.warn(`AgentOffice: failed to register agent MCP servers: ${error}`);
+                return false;
             }
         } else if (registrations.length > 0) {
             logger.warn('AgentOffice: MCPMgr is unavailable; agent MCP servers were not registered');
+            return false;
         }
+        return true;
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
@@ -1481,13 +1534,20 @@ export class AgentOfficeApplication extends BaseApplication {
     /** 应用注册即恢复已开启的本地网络服务；启动早期 global worker 可能未就绪，按 5s 退避重试 */
     private async restoreLocalServices(attempt = 0): Promise<void> {
         if (this.schedulerStopping || this.localServiceRestoreDone) return;
+        const startedAt = performance.now();
+        let status: StartupPhaseStatus = 'failed';
+        let listed = 0;
+        let restored = 0;
         try {
-            const staffs = await this.callAgentOfficeWorker<StaffListItem[]>('listStaffs');
+            const staffs = await this.callAgentOfficeWorker<StaffStartupInfo[]>('listStaffStartupInfo');
+            listed = staffs.length;
             for (const staff of staffs) {
                 if (!staff.enabled || !staff.local_service?.enabled) continue;
                 await this.getLocalService().apply(staff.id, staff.local_service);
+                restored++;
             }
             this.localServiceRestoreDone = true;
+            status = 'ready';
         } catch (error) {
             const maxAttempts = 12;
             if (attempt >= maxAttempts) {
@@ -1498,6 +1558,9 @@ export class AgentOfficeApplication extends BaseApplication {
             }
             this.localServiceRestoreTimer = setTimeout(() => void this.restoreLocalServices(attempt + 1), 5000);
             this.localServiceRestoreTimer.unref?.();
+            status = 'retry';
+        } finally {
+            recordAgentOfficeStartup('services.restore', startedAt, status, { attempt, listed, restored });
         }
     }
 

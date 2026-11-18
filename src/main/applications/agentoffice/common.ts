@@ -106,6 +106,15 @@ export interface StaffMetadata {
     local_service?: StaffLocalService;
 }
 
+/** Startup discovery needs identity and service configuration, not history or UI statistics. */
+export interface StaffStartupInfo extends StaffDefinition {
+    id: string;
+    hired_at: string;
+    enabled: boolean;
+    model?: string;
+    local_service?: StaffLocalService;
+}
+
 export type StaffTaskSource = 'user' | 'scheduled' | 'flow';
 
 export interface StaffTaskRecord {

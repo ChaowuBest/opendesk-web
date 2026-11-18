@@ -24,8 +24,9 @@ import type { BrowserScriptGenerators } from '../../../common/embedBrowserUse/ma
 export function makeEnsureSidebarScript(taskId: string): string {
     const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `
+    return (async () => {
         if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
-            window.globalControlAPI.ensureTaskViewExists('${safeId}');
+            await window.globalControlAPI.ensureTaskViewExists('${safeId}');
         }
         var el = document.getElementById('task-${safeId}-artifacts');
         if (el) {
@@ -134,6 +135,7 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 setBrowserBox(el.shadowRoot && el.shadowRoot.querySelector('.tab-content[data-tab="browser"]'));
             }
         }
+    })();
     `;
 }
 
