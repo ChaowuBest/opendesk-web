@@ -7,7 +7,11 @@ import {
     OpenDeskPluginPackageError,
     type OpenDeskPluginPackageErrorCode
 } from '../../../../../packages/plugin-sdk/src/package.js';
-import { parsePluginHostVersionMessage, PluginHostVersionError } from '../catalog-common.js';
+import {
+    parsePluginHostVersionMessage,
+    parsePluginPlatformUnsupportedMessage,
+    PluginHostVersionError
+} from '../catalog-common.js';
 import { t } from '../../../../locale/index.js';
 
 export type PluginInstallErrorCode =
@@ -19,6 +23,7 @@ export type PluginInstallErrorCode =
     | 'incompatible_api'
     | 'invalid_structure'
     | 'builtin_conflict'
+    | 'platform_unsupported'
     | 'host_version_too_old'
     | 'host_version_too_new'
     | 'unknown';
@@ -51,6 +56,7 @@ const ERROR_LOCALE_KEYS: Record<PluginInstallErrorCode, string> = {
     incompatible_api: 'plugin.install.error.incompatibleApi',
     invalid_structure: 'plugin.install.error.invalidStructure',
     builtin_conflict: 'plugin.install.error.builtinConflict',
+    platform_unsupported: 'plugin.install.error.platformUnsupported',
     host_version_too_old: 'plugin.install.error.hostVersionTooOld',
     host_version_too_new: 'plugin.install.error.hostVersionTooNew',
     unknown: 'plugin.install.error.unknown'
@@ -68,6 +74,7 @@ export function classifyPluginInstallError(error: unknown, stage: PluginInstallS
     if (error instanceof OpenDeskPluginPackageError) return PACKAGE_ERROR_CODES[error.code];
 
     if (message.startsWith('plugin.install_builtin_conflict:')) return 'builtin_conflict';
+    if (message.startsWith('plugin.install_platform_unsupported:')) return 'platform_unsupported';
     if (
         message === 'plugin.install_package_not_found' ||
         message === 'plugin.install_package_ambiguous' ||
@@ -79,20 +86,16 @@ export function classifyPluginInstallError(error: unknown, stage: PluginInstallS
 }
 
 export function formatPluginInstallError(
-    result: Pick<PluginInstallResult, 'errorCode'>,
+    result: Pick<PluginInstallResult, 'errorCode' | 'error'>,
     translate: typeof t = t
 ): string {
-    return translate(ERROR_LOCALE_KEYS[result.errorCode ?? 'unknown']);
-}
-
-/**
- * 安装失败是否由「宿主版本不满足插件要求」导致。
- *
- * 这类失败要给用户升级 / 换版本的引导，而不是像其它错误那样只提示看日志，
- * 界面弹模态、工具与 CLI 组装文案都要用它区分。
- */
-export function isHostVersionInstallError(code: PluginInstallErrorCode | undefined): boolean {
-    return code === 'host_version_too_old' || code === 'host_version_too_new';
+    const key = ERROR_LOCALE_KEYS[result.errorCode ?? 'unknown'];
+    // 平台不匹配文案带插件 id 与平台列表（与市场预检共用同一键），参数取自闸门抛出的结构化串
+    if (result.errorCode === 'platform_unsupported') {
+        const issue = parsePluginPlatformUnsupportedMessage(result.error);
+        return translate(key, { id: issue?.id ?? '', platforms: issue?.platforms ?? '' });
+    }
+    return translate(key);
 }
 
 /**

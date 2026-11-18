@@ -199,6 +199,8 @@ export interface ValidatedOpenDeskPluginPackage {
     minOpenDeskVersion?: string;
     /** 插件要求的宿主版本上界（含）；未声明表示不限 */
     maxOpenDeskVersion?: string;
+    /** 插件支持的操作系统平台（win32 / darwin / linux 等）；未声明表示不限。安装期的平台闸门据此拦截 */
+    platforms?: string[];
 }
 
 function normalizePluginId(packageName: string): string {
@@ -407,7 +409,8 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
         apiVersion: declaration.apiVersion,
         capabilities: [...declaration.capabilities],
         minOpenDeskVersion: declaration.minOpenDeskVersion,
-        maxOpenDeskVersion: declaration.maxOpenDeskVersion
+        maxOpenDeskVersion: declaration.maxOpenDeskVersion,
+        platforms: declaration.platforms ? [...declaration.platforms] : undefined
     };
 }
 

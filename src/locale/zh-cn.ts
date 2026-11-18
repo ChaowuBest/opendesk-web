@@ -329,6 +329,7 @@ export const zhCn: Record<string, string> = {
     'plugin.install.error.incompatibleApi': '该插件使用了当前版本不支持的 OpenDesk 插件 API。',
     'plugin.install.error.invalidStructure': '插件缺少必要文件，或者包含不安全的文件路径。',
     'plugin.install.error.builtinConflict': '内置插件或附加插件目录中的插件已使用相同的插件 ID，无法覆盖。',
+    'plugin.install.error.platformUnsupported': '插件 ${id} 不支持当前操作系统平台（仅支持 ${platforms}），无法安装。',
     'plugin.install.error.hostVersionTooOld':
         '该插件要求的 OpenDesk 版本高于当前版本，无法安装。请将 OpenDesk 升级到最新版本后重试。',
     'plugin.install.error.hostVersionTooNew':

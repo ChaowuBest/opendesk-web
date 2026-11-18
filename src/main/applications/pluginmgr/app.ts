@@ -56,12 +56,7 @@ import type {
     PluginPlatform
 } from '../../../../packages/plugin-sdk/src/index.js';
 import { localePrimaryTag } from '../../../../packages/plugin-sdk/src/index.js';
-import {
-    formatPluginInstallError,
-    formatPluginUninstallError,
-    isHostVersionInstallError,
-    type PluginInstallResult
-} from './management/errors.js';
+import { formatPluginInstallError, formatPluginUninstallError, type PluginInstallResult } from './management/errors.js';
 import { validateOpenDeskPluginDirectory } from '../../../../packages/plugin-sdk/src/package.js';
 import { t } from './locale/index.js';
 import { t as translate, getLocale } from '../../../locale/index.js';
@@ -527,9 +522,16 @@ export class PluginMgrApplication extends BaseApplication {
         try {
             const result = await applyPluginInstall(targetId, () => installPlugin(spec));
             if (!result.success) {
-                if (isHostVersionInstallError(result.errorCode)) {
-                    // 结构化串原样抛给渲染层：界面据此识别「宿主版本不满足」并弹升级引导模态，
-                    // CLI / AI 工具不经过这条路径，仍用 result + formatPluginInstallError 组装文案
+                // 宿主版本 / 平台不满足的结构化串原样抛给渲染层：界面据此识别并弹对应模态
+                // （升级引导 / 平台说明），不走「文案 + 原始串」的合成消息——那样渲染层
+                // 解析不出结构化串，只能落回默认系统通知。CLI / AI 工具不经过这条路径，
+                // 仍用 result + formatPluginInstallError 组装文案
+                const code = result.errorCode;
+                if (
+                    code === 'host_version_too_old' ||
+                    code === 'host_version_too_new' ||
+                    code === 'platform_unsupported'
+                ) {
                     throw new Error(result.error ?? this.describeInstallFailure(result));
                 }
                 throw new Error(this.describeInstallFailure(result));
@@ -712,10 +714,11 @@ export class PluginMgrApplication extends BaseApplication {
         if (!id) throw new PluginMarketError(t('market.entryIdMissing'));
         const entry = (await registry.getCatalog()).find((item) => item.id === id);
         if (!entry) throw new PluginMarketError(t('market.entryNotFound', { id }));
-        // 界面不展示平台不匹配的条目，这里再拦一次：直接调主进程 API 也不该绕过这条规则
+        // 界面不展示平台不匹配的条目，这里再拦一次：直接调主进程 API 也不该绕过这条规则。
+        // 文案与安装期平台闸门共用同一键（全局词典），避免两个入口措辞漂移
         if (!isSupportedOnCurrentPlatform(entry)) {
             throw new PluginMarketError(
-                t('market.platformUnsupported', {
+                translate('plugin.install.error.platformUnsupported', {
                     id: entry.id,
                     platforms: (entry.platforms ?? []).join(', ')
                 })
@@ -786,7 +789,7 @@ export class PluginMgrApplication extends BaseApplication {
                 if (mismatchMessage) {
                     return { success: false as const, code: 'manifest_mismatch' as const, message: mismatchMessage };
                 }
-                if (isHostVersionInstallError(result.errorCode)) {
+                if (result.errorCode === 'host_version_too_old' || result.errorCode === 'host_version_too_new') {
                     // 包内清单声明的宿主版本范围不满足（市场条目未声明时由 manager 的闸门兜住）：
                     // 与条目级拦截一样返回结构化 outcome，界面弹「请升级 OpenDesk」的模态
                     const stagedIssue = parsePluginHostVersionMessage(result.error ?? '');

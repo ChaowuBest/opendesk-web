@@ -343,6 +343,8 @@ export const enUs: Record<string, string> = {
     'plugin.install.error.invalidStructure': 'The plugin has missing files or contains an unsafe file path.',
     'plugin.install.error.builtinConflict':
         'A built-in plugin or a plugin from an additional plugin directory already uses this plugin ID and cannot be replaced.',
+    'plugin.install.error.platformUnsupported':
+        'Plugin ${id} does not support the current operating system platform (only ${platforms}) and cannot be installed.',
     'plugin.install.error.hostVersionTooOld':
         'This plugin requires a newer version of OpenDesk and cannot be installed. Upgrade OpenDesk to the latest version and try again.',
     'plugin.install.error.hostVersionTooNew':

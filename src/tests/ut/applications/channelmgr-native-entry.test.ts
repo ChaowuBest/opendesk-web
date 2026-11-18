@@ -142,3 +142,43 @@ describe('参数登录 displayName 按界面语言解析', () => {
         expect(captured.ctx!.locale).toBe('en-US');
     });
 });
+
+describe('参数登录能力判定', () => {
+    function makeChannelWithLogin(loginParams: unknown[] | undefined, hasLoginMethod: boolean): { channel: Channel } {
+        const channel = {
+            meta: { id: 'demo', label: 'Demo' },
+            capabilities: { chatTypes: ['direct'] },
+            ...(loginParams !== undefined ? { getAccountLoginParams: () => loginParams } : {}),
+            ...(hasLoginMethod ? { loginAccountWithParams: async () => ({ accountId: 'a' }) } : {})
+        } as unknown as Channel;
+        return { channel };
+    }
+
+    test('有登录方法但表单字段为空时不视为支持参数登录（纯扫码渠道如 whatsapp）', () => {
+        const { channel } = makeChannelWithLogin([], true);
+        const entry = createNativeChannelPluginEntry(channel, deps);
+        const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
+        expect(adapter.supportParamsLogin()).toBe(false);
+    });
+
+    test('有登录方法且表单字段非空时支持参数登录', () => {
+        const { channel } = makeChannelWithLogin([{ name: 'appId', displayName: 'App ID', required: true }], true);
+        const entry = createNativeChannelPluginEntry(channel, deps);
+        const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
+        expect(adapter.supportParamsLogin()).toBe(true);
+    });
+
+    test('没有登录方法时即使有表单字段也不支持参数登录', () => {
+        const { channel } = makeChannelWithLogin([{ name: 'appId', displayName: 'App ID', required: true }], false);
+        const entry = createNativeChannelPluginEntry(channel, deps);
+        const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
+        expect(adapter.supportParamsLogin()).toBe(false);
+    });
+
+    test('完全未声明登录能力时不支持参数登录', () => {
+        const { channel } = makeChannelWithLogin(undefined, false);
+        const entry = createNativeChannelPluginEntry(channel, deps);
+        const adapter = entry.channelPlugin as unknown as NativeChannelAdapter;
+        expect(adapter.supportParamsLogin()).toBe(false);
+    });
+});

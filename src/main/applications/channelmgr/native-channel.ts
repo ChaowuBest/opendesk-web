@@ -334,7 +334,9 @@ export class NativeChannelAdapter implements ChannelPlugin {
     }
 
     supportParamsLogin(): boolean {
-        return typeof this.channel.loginAccountWithParams === 'function';
+        // 纯扫码渠道（如 whatsapp）也会实现 loginAccountWithParams（抛「不支持」错），
+        // 只看方法存在会把「参数登录」按钮渲染成一个点击必败的死入口，须再要求表单非空
+        return typeof this.channel.loginAccountWithParams === 'function' && this.getLoginParams().length > 0;
     }
 
     async loginWithParams(values: Record<string, string>): Promise<ChannelAccount> {
