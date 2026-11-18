@@ -18,6 +18,7 @@ import {
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { getHostRuntime } from '../../../platforms/runtime.js';
 import { resolveOpenHarmonySandboxExecutable } from './sandboxes/resolve-ohos.js';
 import { resolveLinuxSandboxExecutable, resolveLinuxSandboxLibrary } from './sandboxes/linux-sandbox.js';
 
@@ -53,6 +54,8 @@ export function scanSupportedShells(
     platform: NodeJS.Platform | string = process.platform,
     harmonyState: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
 ): SupportedShell[] {
+    const configured = getHostRuntime().shells?.(platform);
+    if (configured) return configured.map((shell) => ({ ...shell }));
     const shells: SupportedShell[] = [];
     const allowSandboxVariant = sandboxVariantsAvailable(platform);
     const add = (kind: SupportedShellKind, shellPath: string | null | undefined, sandboxed = false) => {

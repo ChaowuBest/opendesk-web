@@ -19,6 +19,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import fs from 'fs';
+import { getHostRuntime, resolveHostProcessCommand } from '../../platforms/runtime.js';
 import path from 'path';
 import { decodeShellOutput } from './shell-output-decoder.js';
 import { Setting, getOpendeskDirectory, type SettingData } from './setting.js';
@@ -217,6 +218,8 @@ export function clearDefaultShellCache(): void {
  * - 非 Windows: zsh 优先，回退到 bash
  */
 export function getDefaultShell(): ShellInfo {
+    const hostShell = getHostRuntime().defaultShell?.();
+    if (hostShell) return hostShell;
     if (_cachedDefaultShell) return _cachedDefaultShell;
 
     const isWindows = process.platform === 'win32';
@@ -702,7 +705,7 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
         const proxyEnv = getCachedProxyEnvVars();
         if (proxyEnv) Object.assign(env, proxyEnv);
     }
-    return env;
+    return getHostRuntime().transformProcessEnvironment?.(env, explicitEnv) ?? env;
 }
 
 /**
@@ -711,6 +714,14 @@ export function buildChildProcessEnv(explicitEnv?: NodeJS.ProcessEnv): NodeJS.Pr
  * 通过 spawn + 默认 shell 执行命令，兼容不支持 exec 的平台。
  */
 export function asyncShellExec(command: string, options: ShellExecOptions = {}): Promise<ShellExecResult> {
+    const prepare = getHostRuntime().prepareProcess;
+    if (!prepare) return spawnShellCommand(command, options);
+    return Promise.resolve()
+        .then(() => prepare('shell'))
+        .then(() => spawnShellCommand(command, options));
+}
+
+function spawnShellCommand(command: string, options: ShellExecOptions): Promise<ShellExecResult> {
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
         const env = buildChildProcessEnv(options.env);
@@ -721,7 +732,8 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
         // detached 让子进程在新会话中运行（POSIX setsid），使其没有控制终端。
         // 这样 open("/dev/tty") 直接失败（ENXIO），所有工具自动回退非交互模式，
         // 不依赖逐个工具的环境变量兼容性。Windows 无 /dev/tty 问题，跳过。
-        const proc = spawn(shellPath, [...shellArgs, command], {
+        const invocation = resolveHostProcessCommand(shellPath, [...shellArgs, command], 'shell');
+        const proc = spawn(invocation.command, [...invocation.args], {
             cwd: options.cwd,
             env: env,
             stdio: 'pipe',
@@ -806,6 +818,7 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
  * 通过 spawnSync + 默认 shell 执行命令，兼容不支持 execSync 的平台。
  */
 export function shellExec(command: string, options: ShellExecOptions = {}): ShellExecResult {
+    getHostRuntime().prepareSynchronousProcess?.('shell');
     const { shellPath, shellArgs } = getDefaultShell();
     const env = buildChildProcessEnv(options.env);
     if (options.stripNpmPrefix) {
@@ -813,7 +826,8 @@ export function shellExec(command: string, options: ShellExecOptions = {}): Shel
         delete env.npm_config_prefix;
     }
     // 不使用内置 encoding 以获取原始 Buffer，后续手动解码处理 Windows GBK 乱码
-    const result = spawnSync(shellPath, [...shellArgs, command], {
+    const invocation = resolveHostProcessCommand(shellPath, [...shellArgs, command], 'shell');
+    const result = spawnSync(invocation.command, [...invocation.args], {
         cwd: options.cwd,
         env: env,
         timeout: options.timeout,

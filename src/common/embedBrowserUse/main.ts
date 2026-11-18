@@ -573,10 +573,23 @@ export const LOCK_OP_TIMEOUT_MS = 180000;
  * operations. Each controller is associated with a unique instance ID
  * (typically a taskId) and a main BrowserWindow for renderer communication.
  */
+export interface BrowserRendererHost {
+    isDestroyed(): boolean;
+    webContents: {
+        executeJavaScript(script: string): Promise<any>;
+        send(channel: string, ...args: unknown[]): void;
+        // webview 首帧等待依赖宿主窗口的 attach 事件，外部宿主必须透传这两个方法。
+        on(event: 'did-attach-webview', listener: () => void): unknown;
+        removeListener(event: 'did-attach-webview', listener: () => void): unknown;
+    };
+}
+
+export type BrowserSessionManager = Pick<CDPSessionManager, 'getSession' | 'dispose' | 'disposeAll'>;
+
 export class BrowserController {
     public readonly id: string;
-    private _mainWindow: Electron.BrowserWindow | null;
-    private _cdpManager: CDPSessionManager;
+    private _mainWindow: BrowserRendererHost | null;
+    private _cdpManager: BrowserSessionManager;
     private _beforeCallRendererHooks: BrowserScriptGenerators | undefined;
 
     // Serialize all browser actions to prevent concurrent CDP conflicts
@@ -591,12 +604,13 @@ export class BrowserController {
 
     constructor(
         id: string,
-        mainWindow: Electron.BrowserWindow | null,
-        beforeCallRendererHooks?: BrowserScriptGenerators
+        mainWindow: BrowserRendererHost | null,
+        beforeCallRendererHooks?: BrowserScriptGenerators,
+        sessionManager: BrowserSessionManager = new CDPSessionManager()
     ) {
         this.id = id;
         this._mainWindow = mainWindow;
-        this._cdpManager = new CDPSessionManager();
+        this._cdpManager = sessionManager;
         this._beforeCallRendererHooks = beforeCallRendererHooks;
     }
 
@@ -659,7 +673,7 @@ export class BrowserController {
         console.warn(`[browser:${this.id}] recovered from stalled operation; CDP sessions reset`);
     }
 
-    setMainWindow(win: Electron.BrowserWindow | null): void {
+    setMainWindow(win: BrowserRendererHost | null): void {
         this._mainWindow = win;
     }
 
@@ -3314,7 +3328,7 @@ export class BrowserController {
  * executeJavaScript must fail instead of blocking the caller forever.
  */
 async function executeInRendererWithTimeout(
-    mainWindow: Electron.BrowserWindow,
+    mainWindow: BrowserRendererHost,
     script: string,
     timeoutMs: number,
     label: string
@@ -3337,6 +3351,25 @@ async function executeInRendererWithTimeout(
 export class BrowserManager {
     private static _controllers = new Map<string, BrowserController>();
     private static _mainWindow: Electron.BrowserWindow | null = null;
+    private static _rendererHost: BrowserRendererHost | null = null;
+    private static _sessionManagerFactory: () => BrowserSessionManager = () => new CDPSessionManager();
+
+    /** Configure host dependencies before creating controllers; existing sessions retain their owner. */
+    static setSessionManagerFactory(factory?: () => BrowserSessionManager): void {
+        if (BrowserManager._controllers.size)
+            throw new Error('Dispose browser controllers before replacing their host');
+        BrowserManager._sessionManagerFactory = factory ?? (() => new CDPSessionManager());
+    }
+
+    static get rendererHost(): BrowserRendererHost | null {
+        return BrowserManager._rendererHost;
+    }
+
+    static setRendererHost(host: BrowserRendererHost | null): void {
+        BrowserManager._rendererHost = host;
+        for (const ctrl of BrowserManager._controllers.values()) ctrl.setMainWindow(host);
+    }
+
     private static _browserSession: Electron.Session | null = null;
     private static _bound = false;
     private static _beforeCallRendererHooks: BrowserScriptGenerators | undefined;
@@ -3349,10 +3382,7 @@ export class BrowserManager {
     /** Set the main window reference used when creating new controllers. */
     static setMainWindow(win: Electron.BrowserWindow | null): void {
         BrowserManager._mainWindow = win;
-        // Update all existing controllers
-        for (const ctrl of BrowserManager._controllers.values()) {
-            ctrl.setMainWindow(win);
-        }
+        BrowserManager.setRendererHost(win);
     }
 
     /** Get or create a BrowserController for the given instance ID. */
@@ -3361,8 +3391,9 @@ export class BrowserManager {
         if (!ctrl) {
             ctrl = new BrowserController(
                 id,
-                mainWindow ?? BrowserManager._mainWindow,
-                BrowserManager._beforeCallRendererHooks
+                mainWindow ?? BrowserManager._rendererHost,
+                BrowserManager._beforeCallRendererHooks,
+                BrowserManager._sessionManagerFactory()
             );
             BrowserManager._controllers.set(id, ctrl);
         }
@@ -3472,10 +3503,10 @@ export class BrowserManager {
         BrowserManager._beforeCallRendererHooks = beforeCallRendererHooks;
 
         const runBeforeCallRendererHooks = async (taskId: string): Promise<void> => {
-            if (!BrowserManager._mainWindow || !BrowserManager._beforeCallRendererHooks) return;
+            if (!BrowserManager._rendererHost || !BrowserManager._beforeCallRendererHooks) return;
             for (const hook of BrowserManager._beforeCallRendererHooks.beforeCallRenderer) {
                 await executeInRendererWithTimeout(
-                    BrowserManager._mainWindow,
+                    BrowserManager._rendererHost,
                     `(() => { ${hook(taskId)} })()`,
                     RENDERER_CALL_TIMEOUT_MS,
                     'beforeCallRenderer hook'
@@ -3484,13 +3515,13 @@ export class BrowserManager {
         };
 
         const callBrowserOnTask = async (taskId: string, method: string, ...args: unknown[]): Promise<IPCResponse> => {
-            if (!BrowserManager._mainWindow) {
+            if (!BrowserManager._rendererHost) {
                 return { status: 'error', message: 'No main window' };
             }
             try {
                 await runBeforeCallRendererHooks(taskId);
                 const result = await executeInRendererWithTimeout(
-                    BrowserManager._mainWindow,
+                    BrowserManager._rendererHost,
                     makeCallBrowserScript(taskId, method, args),
                     RENDERER_CALL_TIMEOUT_MS,
                     `renderer call ${method}`
@@ -3513,13 +3544,13 @@ export class BrowserManager {
         });
 
         ipcMain.handle(Channels.executeScript, async (_event: any, taskId: string, script: string) => {
-            if (!BrowserManager._mainWindow) {
+            if (!BrowserManager._rendererHost) {
                 return { status: 'error', message: 'No main window' };
             }
             try {
                 await runBeforeCallRendererHooks(taskId);
                 const result = await executeInRendererWithTimeout(
-                    BrowserManager._mainWindow,
+                    BrowserManager._rendererHost,
                     makeExecuteScriptOnBrowser(taskId, script),
                     RENDERER_CALL_TIMEOUT_MS,
                     'browserExecuteScript'

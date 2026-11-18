@@ -824,11 +824,8 @@ export class TaskState {
     }
 
     get needsHtmlRender(): boolean {
-        try {
-            return getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
-        } catch {
-            return false;
-        }
+        // Rendering is requested by the subscriber, including hosts supplied by another repository.
+        return this.subscribers.some((subscriber) => subscriber.wantsHtmlRender);
     }
 
     private publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {

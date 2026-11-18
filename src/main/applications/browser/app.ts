@@ -16,7 +16,6 @@ import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
-import { safeSendToWebContents } from '../../utils/electron-ipc.js';
 import { Setting } from '../../utils/setting.js';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -276,9 +275,13 @@ class BrowserApplication extends BaseApplication {
 
     /** 向渲染进程广播下载状态更新 */
     private _broadcastDownloadUpdate(download: DownloadState): void {
-        const mainWindow = BrowserManager.mainWindow;
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.downloadUpdate, download);
+        const host = BrowserManager.rendererHost;
+        if (!host || host.isDestroyed()) return;
+        try {
+            host.webContents.send(EmbedBrowserChannels.downloadUpdate, download);
+        } catch (error) {
+            logger.warn(`Failed to publish browser download update: ${error}`);
+        }
     }
 
     private _forgetAutomatedDownloadWebContents(webContentsId: number): void {

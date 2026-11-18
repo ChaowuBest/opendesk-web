@@ -30,6 +30,10 @@ jest.unstable_mockModule('../../../platforms/worker.js', () => ({
     WorkerPlatform: class {}
 }));
 
+jest.unstable_mockModule('../../../platforms/applications.js', () => ({
+    getGuiApplicationClasses: () => []
+}));
+
 jest.unstable_mockModule('../../../main/aikernel/states/tasks.js', () => ({
     BaseTaskManagerUpdateSubscriber: class {},
     BaseTaskUpdateSubscriber: class {
