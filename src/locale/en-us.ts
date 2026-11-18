@@ -2170,7 +2170,11 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.status.initializing': 'Starting',
     'renderer.filemgr.status.running': 'Running',
     'renderer.filemgr.status.readonly': 'Query Mode',
+    'renderer.filemgr.status.disabled': 'Disabled',
     'renderer.filemgr.status.error': 'Error',
+    // Plugin feature gating (ctx.features.disable / ctx.features.disableApplication)
+    'feature.memory.disabled': 'Memory has been disabled by a plugin',
+    'feature.application.disabled': 'Application ${bundleName} has been disabled by a plugin',
     'renderer.filemgr.mode.full': 'Full Index',
     'renderer.filemgr.mode.baseOnly': 'Basic Index',
     'renderer.filemgr.selection.reconcileFailed':

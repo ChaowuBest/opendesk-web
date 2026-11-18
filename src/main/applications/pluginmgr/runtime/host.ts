@@ -52,6 +52,9 @@ import {
 import { ensurePluginDataDirectory } from '../management/paths.js';
 import type { PluginSourceKind } from '../management/registry.js';
 import { describeHostVersionIssue } from '../catalog-common.js';
+import { getFeatureDefinition } from '../../../../common/features/registry.js';
+import { getFeatureManager } from '../../../../common/features/manager.js';
+import { ApplicationRegistry } from '../../registry.js';
 import { AGENT_RUNTIME_ERROR_CODES, loadAgentsFromDirectory } from '../discovery/agent-resource.js';
 import { compileHintPattern, validateBrowserHint } from './browser-hints.js';
 import { resolveAppearanceLogoValues } from './appearance.js';
@@ -1250,6 +1253,26 @@ export class PluginHost {
                     return this.registerAppearanceOverride(entry, 'appLogo', values, track);
                 }
             },
+            features: {
+                disable: (featureId: string) => {
+                    addCapability('features');
+                    const normalizedFeatureId = typeof featureId === 'string' ? featureId.trim() : '';
+                    if (!normalizedFeatureId || !getFeatureDefinition(normalizedFeatureId)) {
+                        throw new Error(`features.unknown_feature:${featureId}`);
+                    }
+                    return this.registerFeatureDisable(entry, normalizedFeatureId, track);
+                },
+                disableApplication: (bundleName: string) => {
+                    addCapability('features');
+                    const normalizedBundleName = typeof bundleName === 'string' ? bundleName.trim() : '';
+                    // 应用在插件宿主初始化前已注册（main/cli 均先 initializeRegistry 再 initializePluginHost），
+                    // 这里按当前注册表校验 bundleName，防止插件禁用不存在的应用
+                    if (!normalizedBundleName || !ApplicationRegistry.getApplication(normalizedBundleName)) {
+                        throw new Error(`features.unknown_application:${bundleName}`);
+                    }
+                    return this.registerApplicationDisable(entry, normalizedBundleName, track);
+                }
+            },
             registry: {
                 fetch: (input: string | URL, init?: RequestInit) => {
                     addCapability('registry');
@@ -1304,6 +1327,30 @@ export class PluginHost {
                 }
             })
         );
+    }
+
+    /**
+     * 记录插件对 OpenDesk 内置特性的禁用。状态保存在全局 FeatureManager 中，
+     * registration 释放（插件停用/卸载/宿主重载）时移除本插件持有的那次禁用；
+     * 其它插件、以及本插件其它未释放的 disable 调用都不受影响（按持有次数计数）。
+     */
+    private registerFeatureDisable(
+        entry: ActivePlugin,
+        featureId: string,
+        track: (registration: PluginRegistration) => PluginRegistration
+    ): PluginRegistration {
+        const release = getFeatureManager().acquireFeatureDisable(featureId, entry.id);
+        return track(new HostRegistration(release));
+    }
+
+    /** 记录插件对 OpenDesk 应用（bundleName）的禁用，回退语义同 registerFeatureDisable */
+    private registerApplicationDisable(
+        entry: ActivePlugin,
+        bundleName: string,
+        track: (registration: PluginRegistration) => PluginRegistration
+    ): PluginRegistration {
+        const release = getFeatureManager().acquireApplicationDisable(bundleName, entry.id);
+        return track(new HostRegistration(release));
     }
 
     private notifyAppearanceChanged(): void {

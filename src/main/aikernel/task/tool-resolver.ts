@@ -17,6 +17,7 @@ import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from '../task/tools.js';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import type { TaskState } from '../states/tasks.js';
 
 /**
@@ -44,10 +45,11 @@ export async function buildToolsetsForTask(
 ): Promise<BaseToolset[]> {
     const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets(task);
     const skillToolset = SkillRegistry.getInstance().getToolset();
-    const memoryToolset = createMemoryToolset();
+    // 记忆特性被插件禁用（ctx.features.disable('memory')）时不注入记忆工具集
+    const memoryToolset = getFeatureManager().isFeatureDisabled('memory') ? null : createMemoryToolset();
     const planningToolset = task.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
 
-    const base = [...appToolsets, skillToolset, memoryToolset, planningToolset];
+    const base = [...appToolsets, skillToolset, ...(memoryToolset ? [memoryToolset] : []), planningToolset];
     if (task.parent_id === null) {
         base.push(createTaskInfoToolset(task.task_manager_state));
     }

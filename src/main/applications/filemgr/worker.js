@@ -715,6 +715,11 @@ class FileManagerWorker extends BaseWorker {
         /** @type {boolean} — true when a scan task has been queued but not yet started */
         this._scanPending = false;
         this._readonlyMode = false;
+        /**
+         * @type {boolean} — AI 索引被插件门控时为 true（索引与语义搜索关闭）：
+         * ctx.features.disable('filesystem') 或本应用自身被 ctx.features.disableApplication 禁用
+         */
+        this._filesystemFeatureDisabled = false;
         this._releaseScanLock = null;
         this._initError = null;
         this._statusPushHooksAttached = false;
@@ -1012,6 +1017,14 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async initialize() {
+        // 插件通过 ctx.features.disable('filesystem') 禁用 AI 文件系统时，
+        // 跳过索引/嵌入初始化，仅保持 worker 存活以服务 @ 添加文件等纯文件搜索
+        if (this._filesystemFeatureDisabled) {
+            this._initializing = false;
+            this._initError = null;
+            this._setStatus('disabled', 'initialize-skipped-feature-disabled');
+            return;
+        }
         this.config = this._normalizeConfig(this.config);
         this._ensureStatusPushHooks();
         this._startStatusTick();
@@ -1257,6 +1270,30 @@ class FileManagerWorker extends BaseWorker {
         };
         void promise.then(release, release);
         return operation;
+    }
+
+    /**
+     * 特性门控入口：主进程维护禁用状态，由 worker 线程统一转发（启动时 workerData 注入、
+     * 运行时经 __updateDisabledFeatures 同步）。
+     * `filesystem` 特性被禁用，或本应用自身被 ctx.features.disableApplication 禁用时，
+     * 停止全部扫描器并释放索引存储（进入 disabled 状态）；重新启用时回到 initialize() 重建索引。
+     * @param {string[]} disabledFeatures - 当前被禁用的特性 id 列表
+     * @param {string[]} [disabledApplications] - 当前被禁用的应用 bundleName 列表
+     */
+    async setDisabledFeatures(disabledFeatures, disabledApplications) {
+        const features = Array.isArray(disabledFeatures) ? disabledFeatures : [];
+        const applications = Array.isArray(disabledApplications) ? disabledApplications : [];
+        const disabled = features.includes('filesystem') || applications.includes(this.bundleName);
+        if (disabled === this._filesystemFeatureDisabled) return;
+        this._filesystemFeatureDisabled = disabled;
+        if (disabled) {
+            await this.runSequentially(async () => {
+                await this._teardownRuntime('filesystem feature disabled');
+                this._setStatus('disabled', 'feature-disabled');
+            });
+        } else {
+            await this.initialize();
+        }
     }
 
     async applicationConfigChanged(config) {

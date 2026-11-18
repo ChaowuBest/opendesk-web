@@ -1308,6 +1308,11 @@
                     showNonApp();
                 },
                 openMemory: function () {
+                    // 记忆特性被插件禁用时不再挂载面板（侧栏入口已隐藏，这里堵住旁路调用）
+                    if (disabledFeatureIds.memory) {
+                        openHomePage(true);
+                        return;
+                    }
                     ensureSlots();
                     closeAllEditorOverlays();
                     hideAllNonAppChildren();
@@ -1497,6 +1502,78 @@
                         console.warn('[app-update] failed to check app version update:', err);
                     }
                 });
+            }
+
+            /**
+             * 插件通过 ctx.features.disableApplication 禁用应用后，卸载其已挂载的 iframe：
+             * 应用页不会自己退出，留着会持续收到「应用已被插件停用」错误并误导用户。
+             * 当前正在查看的应用被禁用时，关闭后回到首页。
+             */
+            function closeDisabledApplicationFrames(disabledApplications) {
+                if (!Array.isArray(disabledApplications) || disabledApplications.length === 0) return;
+                var disabledSet = {};
+                disabledApplications.forEach(function (name) {
+                    disabledSet[name] = true;
+                });
+                var closedCurrentView = false;
+                Object.keys(appFrameCache).forEach(function (name) {
+                    if (!disabledSet[name]) return;
+                    appFrameCache[name].remove();
+                    delete appFrameCache[name];
+                    if (currentOpenAppBundleName === name) closedCurrentView = true;
+                });
+                if (closedCurrentView) openHomePage(true);
+            }
+
+            // 插件特性禁用状态（features:getState 拉取 + features:changed 推送）。
+            // 记忆面板是 index.html 自己挂载的视图，无法自己响应门控，这里统一处理。
+            var disabledFeatureIds = Object.create(null);
+
+            /**
+             * 记忆特性被插件禁用后关闭已打开的记忆面板并回到首页：
+             * 面板内的数据 IPC 已全部拒绝，留着只会显示错误。
+             */
+            function closeMemoryPanelWhenDisabled(disabledFeatures) {
+                if (disabledFeatures.indexOf('memory') < 0) return;
+                if (currentNonAppContent !== 'memory') return;
+                openHomePage(true);
+            }
+
+            function applyFeatureState(state) {
+                var disabledFeatures = (state && state.disabledFeatures) || [];
+                disabledFeatureIds = Object.create(null);
+                disabledFeatures.forEach(function (id) {
+                    disabledFeatureIds[id] = true;
+                });
+                closeMemoryPanelWhenDisabled(disabledFeatures);
+                closeDisabledApplicationFrames((state && state.disabledApplications) || []);
+            }
+
+            /**
+             * 首屏拉取一次特性状态。主进程的 features:getState handler 与窗口创建几乎同时就绪，
+             * 早期调用可能拿到 "No handler registered"，这里按退避重试几次，避免状态永久缺省。
+             */
+            function loadFeatureState(attempt) {
+                if (!window.featuresAPI || typeof window.featuresAPI.getState !== 'function') return;
+                window.featuresAPI
+                    .getState()
+                    .then(applyFeatureState)
+                    .catch(function (error) {
+                        var delays = [50, 200, 500];
+                        var delay = delays[attempt];
+                        if (delay === undefined) {
+                            console.warn('loading feature state failed', error);
+                            return;
+                        }
+                        setTimeout(function () {
+                            loadFeatureState(attempt + 1);
+                        }, delay);
+                    });
+            }
+
+            loadFeatureState(0);
+            if (window.featuresAPI?.onChanged) {
+                window.featuresAPI.onChanged(applyFeatureState);
             }
 
             // 监听来自 iframe（应用页）的 postMessage，支持应用内导航到任务、浮窗重置

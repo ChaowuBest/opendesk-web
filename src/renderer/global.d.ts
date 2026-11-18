@@ -259,6 +259,8 @@ declare global {
             ensureApplicationLoaded: (bundleName: string) => Promise<void>;
             getApplicationGUIConfig: (bundleName: string) => Promise<any>;
             getApplicationList: () => Promise<any>;
+            /** 应用列表变更（含插件禁用应用）回调，返回取消订阅函数 */
+            onApplicationListChanged?: (callback: (apps: unknown) => void) => () => void;
         };
         fsAPI: {
             searchFilesByKeyword: (keyword: string) => Promise<any>;

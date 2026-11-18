@@ -2095,7 +2095,11 @@ export const zhCn: Record<string, string> = {
     'renderer.filemgr.status.initializing': '正在启动',
     'renderer.filemgr.status.running': '运行中',
     'renderer.filemgr.status.readonly': '查询模式',
+    'renderer.filemgr.status.disabled': '已停用',
     'renderer.filemgr.status.error': '异常',
+    // 插件特性门控（ctx.features.disable / ctx.features.disableApplication）
+    'feature.memory.disabled': '记忆功能已被插件停用',
+    'feature.application.disabled': '应用 ${bundleName} 已被插件停用',
     'renderer.filemgr.mode.full': '完整索引',
     'renderer.filemgr.mode.baseOnly': '基础索引',
     'renderer.filemgr.selection.reconcileFailed': '设置已保存，但文件管理服务更新失败；请稍后重新打开页面核对。',

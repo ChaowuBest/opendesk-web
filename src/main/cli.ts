@@ -21,6 +21,7 @@ import {
     reloadLoggerFileTransport
 } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
+import { getFeatureManager } from '../common/features/manager.js';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
 import { initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
@@ -97,6 +98,15 @@ function outputFatalError(title: string, details: string): void {
 // 可恢复错误只提示不退出：此时 logger 可能尚未初始化，直接写 stderr
 function warnToStderr(message: string): void {
     process.stderr.write(message + '\n');
+}
+
+/** worker 启动时注入插件已禁用的特性/应用（worker 侧门控的初始状态；运行时变更由 registry 推送） */
+function collectWorkerDisableOptions() {
+    const manager = getFeatureManager();
+    return {
+        disabledFeatures: manager.getDisabledFeatures(),
+        disabledApplications: manager.getDisabledApplications()
+    };
 }
 
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
@@ -447,7 +457,7 @@ async function main(args: CommandLineArgs) {
         registerGoalHooks();
         initializeHarnesses();
 
-        initializeRegistryWorker();
+        initializeRegistryWorker(collectWorkerDisableOptions());
         await ApplicationRegistry.ensureFullyLoaded();
         // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
         await syncPluginSkillServers();
@@ -488,7 +498,7 @@ async function main(args: CommandLineArgs) {
             process.stdout.write(FULL_CLEAR);
         }
 
-        initializeRegistryWorker();
+        initializeRegistryWorker(collectWorkerDisableOptions());
         await ApplicationRegistry.ensureFullyLoaded();
         // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
         await syncPluginSkillServers();

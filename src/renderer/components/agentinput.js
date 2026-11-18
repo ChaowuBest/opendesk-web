@@ -28,6 +28,7 @@ import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js'
 import { notifySettingSaveFailed, notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
 import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draft-storage.ts';
 import { getModelIconTile, getEffortIconSVG } from '../utils/model-picker-icons.js';
+import { initFeatureState, isApplicationDisabledByFeature, isFeatureDisabled, onFeaturesChanged } from '../features.js';
 
 /** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
 const TASK_DRAFT_SAVE_DEBOUNCE_MS = 500;
@@ -375,6 +376,11 @@ class AgentInput extends HTMLElement {
         this.addEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         // 先立即渲染基础 UI，避免等待异步数据加载导致长时间白屏
         this.render();
+        // 插件禁用文件系统特性时隐藏"搜索文件"按钮；状态就绪/变化后重渲染
+        initFeatureState();
+        this._unsubFeaturesChanged = onFeaturesChanged(() => {
+            if (this.isConnected) this.render();
+        });
         // 后台异步加载数据，完成后重新渲染以更新下拉列表等内容。
         // 注意：推理档位映射（loadReasoningEffortSupport）不在此并发列表里，
         // 它依赖 availableModels 已就绪，必须在 loadSettings 完成模型列表后加载，
@@ -880,6 +886,7 @@ class AgentInput extends HTMLElement {
         this._unsubTaskModeChanged?.();
         this._unsubExecutionNodesChanged?.();
         this._unsubPluginCommandsChanged?.();
+        this._unsubFeaturesChanged?.();
         if (!this.taskId) {
             _homeDraft = {
                 text: this.getCurrentText(),
@@ -1457,7 +1464,10 @@ class AgentInput extends HTMLElement {
         const searchToggleTitle = this.t('renderer.agentInput.searchToggle.title');
         const searchToggleLabel = this.t('renderer.agentInput.searchToggle.label');
         const searchButton =
-            this.getAttribute('hide-search') !== null
+            // 插件禁用 filesystem 特性或整个 filemgr 应用时语义搜索不可用，与 hide-search 属性一样隐藏入口
+            this.getAttribute('hide-search') !== null ||
+            isFeatureDisabled('filesystem') ||
+            isApplicationDisabledByFeature('filemgr')
                 ? ''
                 : `
                         <button

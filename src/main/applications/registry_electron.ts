@@ -17,6 +17,8 @@
 import { openDeskOfficeMediaSchemes } from '@bitclub.ai/opendesk-office/host-security';
 import { ApplicationRegistry } from './registry.js';
 import { toErrorMessage } from '../../common/utils/error.js';
+import { getFeatureManager } from '../../common/features/manager.js';
+import { t } from '../../locale/index.js';
 import { app, BrowserWindow, protocol } from 'electron';
 import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
@@ -198,6 +200,10 @@ export function registerApplicationRegistryHandlers(
     });
     ipcMain.handle('applicationRegistry:ensureApplicationLoaded', async (_event, bundleName) => {
         try {
+            // 被插件禁用的应用拒绝加载，防止渲染进程旁路打开（列表已隐藏其图标）
+            if (getFeatureManager().isApplicationDisabled(bundleName)) {
+                return { status: 'error', message: t('feature.application.disabled', { bundleName }) };
+            }
             await ensureApplicationLoaded(bundleName);
             return { status: 'ok' };
         } catch (error) {
@@ -216,6 +222,9 @@ export function registerApplicationRegistryHandlers(
     });
     ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);
+        if (getFeatureManager().isApplicationDisabled(bundleName)) {
+            return { status: 'error', message: t('feature.application.disabled', { bundleName }) };
+        }
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` };
         }

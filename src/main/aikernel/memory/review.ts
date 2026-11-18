@@ -45,6 +45,8 @@ export const MEMORY_REVIEW_ALLOWED_TOOLS = [
 const MAX_REVIEW_TRANSCRIPT_CHARS = 24_000;
 
 let reviewHookRegistered = false;
+let reviewQueue: MemoryReviewQueue | null = null;
+let reviewHookUnregister: (() => void) | null = null;
 
 export interface RegisterMemoryReviewHookOptions {
     taskManagerState: TaskManagerState;
@@ -274,6 +276,12 @@ export class MemoryReviewQueue {
         }
     }
 
+    /** 清空待处理的回顾请求；已开始执行的回顾任务正常跑完（特性禁用时由 unregisterMemoryReviewHook 调用） */
+    cancelAll(): void {
+        this.pendingRequests.length = 0;
+        this.pendingRequestsByTaskId.clear();
+    }
+
     private ensureProcessing(): void {
         if (this.processingPromise) {
             return;
@@ -314,8 +322,24 @@ export function registerMemoryReviewHook(options: RegisterMemoryReviewHookOption
     }
     reviewHookRegistered = true;
 
-    const reviewQueue = new MemoryReviewQueue(options);
-    GlobalHooks.onTaskReview(({ task, startMessageIndex }) => {
-        reviewQueue.enqueue(task, startMessageIndex);
+    const queue = new MemoryReviewQueue(options);
+    reviewQueue = queue;
+    reviewHookUnregister = GlobalHooks.onTaskReview(({ task, startMessageIndex }) => {
+        queue.enqueue(task, startMessageIndex);
     });
+}
+
+/**
+ * 注销任务回顾钩子并丢弃尚未处理的回顾请求。
+ * ctx.features.disable('memory') 禁用记忆特性时由 main 调用；重新启用时再次 register 即可。
+ */
+export function unregisterMemoryReviewHook(): void {
+    if (!reviewHookRegistered) {
+        return;
+    }
+    reviewHookUnregister?.();
+    reviewHookUnregister = null;
+    reviewQueue?.cancelAll();
+    reviewQueue = null;
+    reviewHookRegistered = false;
 }
