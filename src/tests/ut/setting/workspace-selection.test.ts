@@ -54,9 +54,10 @@ describe('shared workspace selection', () => {
 
         const setting = Setting.getInstance();
         expect(setting.getEffectiveWorkspace()).toBe(nextWorkspace);
-        expect(save.mock.calls[0][0]).toMatchObject({
-            applications: { filemgr: { entries: [{ root: nextWorkspace }] } }
-        });
+        const entries = (save.mock.calls[0][0] as { applications: { filemgr: { entries: Array<{ root: string }> } } })
+            .applications.filemgr.entries;
+        expect(entries).toHaveLength(2);
+        expect(entries.map((entry) => entry.root).sort()).toEqual([oldWorkspace, nextWorkspace].sort());
         expect(callWorker).toHaveBeenCalledWith('filemgr', 'workspaceChanged', nextWorkspace);
     });
 

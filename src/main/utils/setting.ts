@@ -451,7 +451,9 @@ const AccountConfigSchema = z
 
 export type AccountConfig = z.infer<typeof AccountConfigSchema>;
 
-let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
+// Settings are loaded and may be saved before every application has registered its schema.
+// Retain those sections until registration can validate them, including apps unavailable on this host.
+let ApplicationConfigSchema = z.object({}).catchall(z.unknown());
 
 function getSettingSchema() {
     return z.object({
@@ -899,7 +901,7 @@ export class Setting {
         ).getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: applicationConfigSchema.optional()
-        }) as z.ZodObject<z.ZodRawShape>;
+        });
         Setting.applicationConfigChangedCallbacks.set(application.bundleName, configChangedCallback);
     }
 
