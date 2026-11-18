@@ -22,7 +22,23 @@ jest.unstable_mockModule('../../../main/applications/registry.js', () => ({ Appl
 jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }
 }));
-jest.unstable_mockModule('../../../locale/index.js', () => ({ getLocale: () => 'zh-CN' }));
+jest.unstable_mockModule('../../../locale/index.js', () => {
+    // 包装层 t 经 translateWithDomain 走统一查找链；这里按 zh-CN 内联等价实现，保持用例断言稳定
+    const translateWithDomain = (
+        key: string,
+        domain: Record<string, Record<string, string>>,
+        params?: Record<string, string | number>
+    ): string => {
+        let text = domain['zh-CN']?.[key] ?? key;
+        if (params) {
+            for (const [name, value] of Object.entries(params)) {
+                text = text.replace(new RegExp(`\\$\\{${name}\\}`, 'g'), String(value));
+            }
+        }
+        return text;
+    };
+    return { getLocale: () => 'zh-CN', translateWithDomain };
+});
 jest.unstable_mockModule('../../../main/tui/theme.js', () => ({ getAdaptiveGreen: () => '#00ff00' }));
 jest.unstable_mockModule('../../../main/aikernel/tool.js', () => ({ BaseToolset: class {} }));
 jest.unstable_mockModule('../../../main/aikernel/skill.js', () => ({ Skill: class {} }));

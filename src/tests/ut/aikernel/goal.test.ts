@@ -1689,8 +1689,9 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.status).toBe('paused');
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        expect((task.chat_context.messages[0] as any).internal).not.toBe(true);
-        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('continue');
+        // submitUserMessage 先注入语言切换提醒（internal），随后才是用户消息
+        expect((task.chat_context.messages[1] as any).internal).not.toBe(true);
+        expect((task.chat_context.messages[1] as any).getPlainText()).toBe('continue');
     });
 
     test('resume restores paused status when scheduler fails to start', async () => {
@@ -2742,7 +2743,8 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pendingContinuation?.consumedAt).toBeUndefined();
         expect(task.task_status).toBe('running');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        expect((task.chat_context.messages[0] as any).internal).not.toBe(true);
-        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('resume');
+        // submitUserMessage 先注入语言切换提醒（internal），随后才是用户消息
+        expect((task.chat_context.messages[1] as any).internal).not.toBe(true);
+        expect((task.chat_context.messages[1] as any).getPlainText()).toBe('resume');
     });
 });

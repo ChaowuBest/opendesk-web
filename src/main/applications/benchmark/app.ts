@@ -53,7 +53,7 @@ import { NotificationManager } from '../../utils/notificationmgr.js';
 import { toErrorMessage } from '../../../common/utils/error.js';
 import { openTaskInMainWindow } from '../../utils/system-notification.js';
 
-/** 单个测评集渠道的配置形状；系统默认渠道只有 isEnabled 会被采用 */
+/** 单个测评集仓库的配置形状；系统默认仓库只有 isEnabled 会被采用 */
 const BenchmarkChannelSchema = z.object({
     id: z.string().default(''),
     name: z.string().default(''),
@@ -63,7 +63,7 @@ const BenchmarkChannelSchema = z.object({
 
 export const BenchmarkConfigSchema = z.object({
     enabled: z.boolean().default(true).describe('是否启用测评'),
-    channels: z.array(BenchmarkChannelSchema).default([]).describe('测评集渠道')
+    channels: z.array(BenchmarkChannelSchema).default([]).describe('测评集仓库')
 });
 
 /** 平台 fetch 只接受字符串/URL，把 Request 对象也归一化掉，免得被当成 "[object Request]" */
@@ -95,7 +95,7 @@ export class BenchmarkApplication extends BaseApplication {
             { eventName: 'datasetsChanged', eventDescription: '测评集列表发生变化' },
             { eventName: 'downloadsChanged', eventDescription: '测评集下载进度发生变化' },
             { eventName: 'runsChanged', eventDescription: '测评运行状态发生变化' },
-            { eventName: 'registriesChanged', eventDescription: '测评集渠道（registry）发生变化' }
+            { eventName: 'registriesChanged', eventDescription: '测评集仓库（registry）发生变化' }
         ];
     }
 
@@ -104,7 +104,7 @@ export class BenchmarkApplication extends BaseApplication {
     }
 
     /**
-     * 渠道配置变更（新增 / 删除 / 改名 / 启停）后重建 registry 列表，并通知已打开的
+     * 仓库配置变更（新增 / 删除 / 改名 / 启停）后重建 registry 列表，并通知已打开的
      * 测评应用刷新 Tab。
      *
      * 由 Setting.setData 触发（见 commitChannels），所以这里拿到的一定是最新配置。
@@ -155,20 +155,20 @@ export class BenchmarkApplication extends BaseApplication {
         }));
     }
 
-    // ── 测评集渠道（设置界面 → 渠道设置） ───────────────────────────────────
+    // ── 测评集仓库（设置界面 → 仓库设置） ───────────────────────────────────
 
-    /** 全部渠道（含已禁用的），系统默认渠道排第一 */
+    /** 全部仓库（含已禁用的），系统默认仓库排第一 */
     async listBenchmarkChannels(): Promise<BenchmarkChannelView[]> {
         return this.resolveChannels().map((channel) => this.toChannelView(channel));
     }
 
     /**
-     * 新增渠道：先校验输入、再联网验证清单确实可解析，最后才落配置。
+     * 新增仓库：先校验输入、再联网验证清单确实可解析，最后才落配置。
      *
-     * 验证放在主进程（而不是设置界面）里做，是为了保证「配置里存在的渠道一定验证过」，
+     * 验证放在主进程（而不是设置界面）里做，是为了保证「配置里存在的仓库一定验证过」，
      * 并且能复用主进程的代理设置。
      *
-     * @returns 变更后的完整渠道列表，便于界面就地重绘
+     * @returns 变更后的完整仓库列表，便于界面就地重绘
      */
     async addBenchmarkChannel(input: { name?: unknown; url?: unknown }): Promise<BenchmarkChannelView[]> {
         const name = normalizeChannelName(input?.name);
@@ -185,7 +185,7 @@ export class BenchmarkApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 编辑渠道：同样先联网验证；系统默认渠道不可编辑 */
+    /** 编辑仓库：同样先联网验证；系统默认仓库不可编辑 */
     async updateBenchmarkChannel(
         id: string,
         input: { name?: unknown; url?: unknown }
@@ -197,7 +197,7 @@ export class BenchmarkApplication extends BaseApplication {
         this.assertChannelFree(before, name, url, id);
         await fetchChannelCatalog(url, { fetchImpl: this.platformFetch() });
 
-        // 同样按最新配置重来一遍：验证期间这条渠道可能已经被删除
+        // 同样按最新配置重来一遍：验证期间这条仓库可能已经被删除
         const channels = this.resolveChannels();
         const target = this.requireEditableChannel(channels, id);
         this.assertChannelFree(channels, name, url, id);
@@ -208,7 +208,7 @@ export class BenchmarkApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 删除渠道；系统默认渠道不可删除 */
+    /** 删除仓库；系统默认仓库不可删除 */
     async deleteBenchmarkChannel(id: string): Promise<BenchmarkChannelView[]> {
         const channels = this.resolveChannels();
         const target = this.requireEditableChannel(channels, id);
@@ -218,7 +218,7 @@ export class BenchmarkApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 启用 / 禁用渠道：系统默认渠道也允许禁用 */
+    /** 启用 / 禁用仓库：系统默认仓库也允许禁用 */
     async setBenchmarkChannelEnabled(id: string, isEnabled: boolean): Promise<void> {
         const channels = this.resolveChannels();
         if (!channels.some((channel) => channel.id === id)) {
@@ -425,13 +425,13 @@ export class BenchmarkApplication extends BaseApplication {
 
     // ── 内部 ──────────────────────────────────────────────────────────────
 
-    /** 按当前配置解析出渠道列表（系统默认渠道 + 用户渠道） */
+    /** 按当前配置解析出仓库列表（系统默认仓库 + 用户仓库） */
     private resolveChannels(): BenchmarkChannel[] {
         const config = this.getConfig() as { channels?: unknown } | undefined;
         return normalizeBenchmarkChannels(config?.channels);
     }
 
-    /** 系统默认渠道按当前语言取显示名 */
+    /** 系统默认仓库按当前语言取显示名 */
     private officialChannelName(): string {
         return resolveBenchmarkRegistryDisplayName(OFFICIAL_REGISTRY_DISPLAY_NAME, getLocale());
     }
@@ -447,7 +447,7 @@ export class BenchmarkApplication extends BaseApplication {
         };
     }
 
-    /** 取一个可以改/删的渠道（系统默认渠道只能启停）；不存在或不可改时抛错 */
+    /** 取一个可以改/删的仓库（系统默认仓库只能启停）；不存在或不可改时抛错 */
     private requireEditableChannel(channels: readonly BenchmarkChannel[], id: string): BenchmarkChannel {
         const target = channels.find((channel) => channel.id === id);
         if (!target) {
@@ -459,7 +459,7 @@ export class BenchmarkApplication extends BaseApplication {
         return target;
     }
 
-    /** 名字与地址没有和别的渠道撞车；`exceptId` 是正在编辑的那条，允许保留自身取值 */
+    /** 名字与地址没有和别的仓库撞车；`exceptId` 是正在编辑的那条，允许保留自身取值 */
     private assertChannelFree(
         channels: readonly BenchmarkChannel[],
         name: string,
@@ -470,7 +470,7 @@ export class BenchmarkApplication extends BaseApplication {
         assertChannelUrlAvailable(channels, url, exceptId);
     }
 
-    /** 新增渠道的写前校验：自定义渠道数量没超限，且名字与地址不与他人冲突 */
+    /** 新增仓库的写前校验：自定义仓库数量没超限，且名字与地址不与他人冲突 */
     private assertChannelAddable(channels: readonly BenchmarkChannel[], name: string, url: string): void {
         const customCount = channels.filter((channel) => channel.id !== OFFICIAL_CHANNEL_ID).length;
         if (customCount >= MAX_BENCHMARK_CHANNELS) {
@@ -485,7 +485,7 @@ export class BenchmarkApplication extends BaseApplication {
     }
 
     /**
-     * 把渠道列表写回应用配置。
+     * 把仓库列表写回应用配置。
      *
      * 走 Setting.setData（而不是 BaseApplication.setConfig）是必须的：只有 setData 会
      * 比对新旧应用配置并触发 onConfigChanged，registry 列表与界面 Tab 才能立刻跟着变。
@@ -514,7 +514,7 @@ export class BenchmarkApplication extends BaseApplication {
         });
     }
 
-    /** 删掉某个渠道（旧地址）的清单缓存文件；失败只记日志，不影响渠道配置本身 */
+    /** 删掉某个仓库（旧地址）的清单缓存文件；失败只记日志，不影响仓库配置本身 */
     private dropChannelCache(channel: BenchmarkChannel): void {
         if (channel.id === OFFICIAL_CHANNEL_ID) return;
         const cacheFile = customChannelCacheFile(this.getDataDirectory(), channel.id, channel.url);

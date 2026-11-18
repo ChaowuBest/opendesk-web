@@ -2140,13 +2140,15 @@ class MailboxWorker extends BaseWorker {
                         logger.warn(`no valid inbox protocol configured for profile: ${id}`);
                     }
                     if (newEmailCount > 0) {
-                        // 只有当 isMailboxOpened 为true且currentProfileId = id 时，才认为用户正在查看该账号，不增加计数
+                        // 用户正在查看该账号时不累加未读计数（不给自己记红点），但新邮件事件必须
+                        // 照常派发：事件型待办（如"新邮件智能摘要"）依赖它。把计数判断和事件派发
+                        // 绑在同一个 if 里的写法会导致"开着邮件应用收信永远不触发"。
                         const isViewingThisAccount = this.isMailboxOpened === true && this.currentProfileId === id;
                         if (!isViewingThisAccount) {
                             const currentNewCount = this.newEmailCounts.get(id) || 0;
                             this.newEmailCounts.set(id, currentNewCount + newEmailCount);
-                            this.emitEvent('newEmailCountsUpdated', this.getAllNewEmailCounts());
                         }
+                        this.emitEvent('newEmailCountsUpdated', this.getAllNewEmailCounts());
                         this.notifyEmailListUpdated(id);
                     }
                     this.syncStatus.lastSyncResults[id] = {
@@ -2293,6 +2295,9 @@ class MailboxWorker extends BaseWorker {
     }
 
     notifyMailboxOpened() {
+        // 同一轮打开会被通知两次：主窗口 openApplication 先代通知一次，iframe 内的邮件组件
+        // 挂载后又自己通知一次。已处于打开状态时直接返回，避免重复清理并重复派发事件。
+        if (this.isMailboxOpened) return;
         this.isMailboxOpened = true;
         this.clearNewEmailCount(this.currentProfileId);
     }
@@ -2488,9 +2493,13 @@ class MailboxWorker extends BaseWorker {
     }
 
     clearNewEmailCount(username) {
+        const prevCount = this.newEmailCounts.get(username) || 0;
         // 无论该账号是否在 Map 中，都设置为 0（确保清除标记）
         this.newEmailCounts.set(username, 0);
-        // 无论之前是否有数量，都通知前端更新标记（确保标记被清除）
+        // 计数本来就是 0 时没有任何"更新"可言，不能派发事件：否则打开邮件、切换账号这类
+        // 纯 UI 动作会反复发出 newEmailCountsUpdated，事件型待办（如"新邮件智能摘要"）
+        // 会被无谓拉起多次。
+        if (prevCount === 0) return;
         const allCounts = this.getAllNewEmailCounts();
         this.emitEvent('newEmailCountsUpdated', allCounts);
     }

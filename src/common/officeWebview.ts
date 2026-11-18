@@ -10,6 +10,7 @@
  */
 
 export const OPENDESK_OFFICE_PARTITION = 'persist:opendesk-office';
+export type OfficeEditorKind = 'slides' | 'word' | 'sheets' | 'pdf';
 
 export function isOpenDeskOfficePartition(partition: string | undefined): boolean {
     return partition === OPENDESK_OFFICE_PARTITION;

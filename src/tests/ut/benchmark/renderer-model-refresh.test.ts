@@ -29,7 +29,7 @@ describe('benchmark model configuration refresh', () => {
     let models: ModelOption[];
     let callMainWorld: jest.Mock<(method: string) => Promise<unknown>>;
     let notifySettingChanged: (setting: unknown) => void;
-    let unsubscribeSetting: jest.Mock<() => void>;
+    let settingCallbacks: Array<(setting: unknown) => void>;
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -71,13 +71,21 @@ describe('benchmark model configuration refresh', () => {
             subscribe: jest.fn(),
             unsubscribe: jest.fn()
         };
-        unsubscribeSetting = jest.fn();
+        settingCallbacks = [];
+        // 与 preload 的 settingChangedDispatcher 一致：一个通道允许多个订阅者，
+        // 后订阅者不会顶掉先订阅者（locale 翻译器也会自行订阅 setting:changed）
         (window as any).settingAPI = {
             loadSettingObject: async () => ({ locale: 'zh-CN' }),
-            onSettingChanged: (callback: typeof notifySettingChanged) => {
-                notifySettingChanged = callback;
-                return unsubscribeSetting;
+            onSettingChanged: (callback: (setting: unknown) => void) => {
+                settingCallbacks.push(callback);
+                return () => {
+                    const index = settingCallbacks.indexOf(callback);
+                    if (index >= 0) settingCallbacks.splice(index, 1);
+                };
             }
+        };
+        notifySettingChanged = (setting) => {
+            for (const callback of [...settingCallbacks]) callback(setting);
         };
         widget = document.createElement('benchmark-entry-widget');
         // 手动等待完整挂载，避免 custom element 的异步生命周期在断言之后继续运行。

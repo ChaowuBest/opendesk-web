@@ -488,7 +488,7 @@ describe('benchmark 测评集下载中心', () => {
         const communityTab = tabButton(widget, 'registry:community');
         expect(officialTab?.textContent).toContain('官方测评集');
         expect(communityTab?.textContent).toContain('社区测评集');
-        // 渠道 Tab 后面不再跟测评集数量角标
+        // 仓库 Tab 后面不再跟测评集数量角标
         expect(communityTab?.querySelector('.seg-badge')).toBeNull();
         expect(officialTab?.querySelector('.seg-badge')).toBeNull();
         // 内置 Tab 仍在

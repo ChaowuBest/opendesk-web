@@ -430,6 +430,10 @@
         import { registerApplicationFrameProxyHost } from './scripts/application-frame-proxy.ts';
         import { isExperimentalApplicationEnabled } from './utils/application-visibility.ts';
         import { selectTaskViewsToEvict, MAX_RESIDENT_TASK_VIEWS } from './utils/task-view-release.ts';
+        import {
+            closeAllOpenApplicationViews,
+            createLocaleAppViewRefresher
+        } from './scripts/application-locale-refresh.ts';
 
         registerApplicationFrameProxyHost();
         initRendererTheme().catch((err) => console.warn('[theme] init failed', err));
@@ -1308,6 +1312,11 @@
                     showNonApp();
                 },
                 openMemory: function () {
+                    // 记忆特性被插件禁用时不再挂载面板（侧栏入口已隐藏，这里堵住旁路调用）
+                    if (disabledFeatureIds.memory) {
+                        openHomePage(true);
+                        return;
+                    }
                     ensureSlots();
                     closeAllEditorOverlays();
                     hideAllNonAppChildren();
@@ -1499,6 +1508,78 @@
                 });
             }
 
+            /**
+             * 插件通过 ctx.features.disableApplication 禁用应用后，卸载其已挂载的 iframe：
+             * 应用页不会自己退出，留着会持续收到「应用已被插件停用」错误并误导用户。
+             * 当前正在查看的应用被禁用时，关闭后回到首页。
+             */
+            function closeDisabledApplicationFrames(disabledApplications) {
+                if (!Array.isArray(disabledApplications) || disabledApplications.length === 0) return;
+                var disabledSet = {};
+                disabledApplications.forEach(function (name) {
+                    disabledSet[name] = true;
+                });
+                var closedCurrentView = false;
+                Object.keys(appFrameCache).forEach(function (name) {
+                    if (!disabledSet[name]) return;
+                    appFrameCache[name].remove();
+                    delete appFrameCache[name];
+                    if (currentOpenAppBundleName === name) closedCurrentView = true;
+                });
+                if (closedCurrentView) openHomePage(true);
+            }
+
+            // 插件特性禁用状态（features:getState 拉取 + features:changed 推送）。
+            // 记忆面板是 index.html 自己挂载的视图，无法自己响应门控，这里统一处理。
+            var disabledFeatureIds = Object.create(null);
+
+            /**
+             * 记忆特性被插件禁用后关闭已打开的记忆面板并回到首页：
+             * 面板内的数据 IPC 已全部拒绝，留着只会显示错误。
+             */
+            function closeMemoryPanelWhenDisabled(disabledFeatures) {
+                if (disabledFeatures.indexOf('memory') < 0) return;
+                if (currentNonAppContent !== 'memory') return;
+                openHomePage(true);
+            }
+
+            function applyFeatureState(state) {
+                var disabledFeatures = (state && state.disabledFeatures) || [];
+                disabledFeatureIds = Object.create(null);
+                disabledFeatures.forEach(function (id) {
+                    disabledFeatureIds[id] = true;
+                });
+                closeMemoryPanelWhenDisabled(disabledFeatures);
+                closeDisabledApplicationFrames((state && state.disabledApplications) || []);
+            }
+
+            /**
+             * 首屏拉取一次特性状态。主进程的 features:getState handler 与窗口创建几乎同时就绪，
+             * 早期调用可能拿到 "No handler registered"，这里按退避重试几次，避免状态永久缺省。
+             */
+            function loadFeatureState(attempt) {
+                if (!window.featuresAPI || typeof window.featuresAPI.getState !== 'function') return;
+                window.featuresAPI
+                    .getState()
+                    .then(applyFeatureState)
+                    .catch(function (error) {
+                        var delays = [50, 200, 500];
+                        var delay = delays[attempt];
+                        if (delay === undefined) {
+                            console.warn('loading feature state failed', error);
+                            return;
+                        }
+                        setTimeout(function () {
+                            loadFeatureState(attempt + 1);
+                        }, delay);
+                    });
+            }
+
+            loadFeatureState(0);
+            if (window.featuresAPI?.onChanged) {
+                window.featuresAPI.onChanged(applyFeatureState);
+            }
+
             // 监听来自 iframe（应用页）的 postMessage，支持应用内导航到任务、浮窗重置
             window.addEventListener('message', function (event) {
                 if (event.data && event.data.type === 'openTask' && event.data.taskId) {
@@ -1526,10 +1607,37 @@
                 }
             });
 
+            // 应用视图的语言跟随（关闭重建策略）：应用 iframe 是主窗口的子 frame，收不到
+            // 主进程的 setting:changed / locale:packsChanged 广播（应用内 settingAPI 订阅
+            // 永不触发，见 agentgate 的 LOCALE_CHANGED postMessage 桥），无法原地跟随语言。
+            // 生效语言变化或当前语言的语言包词条变化时，关闭所有已打开的应用视图回主页，
+            // 下次打开应用时按最新语言与语言包快照重新起界面。
+            var appLocaleRefresher = createLocaleAppViewRefresher(function () {
+                closeAllOpenApplicationViews({
+                    appFrameCache: appFrameCache,
+                    nonAppSlot: nonAppSlot,
+                    currentOpenAppBundleName: currentOpenAppBundleName,
+                    openHomePage: openHomePage
+                });
+                // 沉浸桌面的应用卡片同为 application.html 子 frame，一并关闭（重开时重建）
+                if (window.openDeskDesktop) {
+                    window.openDeskDesktop.close();
+                }
+            });
+            // 启动基线：首次广播只记录，不触发关闭
+            window.settingAPI
+                .loadSettingObject()
+                .then(function (setting) {
+                    appLocaleRefresher.recordLocale(setting && setting.resolved_locale);
+                })
+                .catch(function () {});
+
             // 监听 setting locale 变化，向所有已打开的应用 iframe 发送 LOCALE_CHANGED
             if (window.settingAPI && window.settingAPI.onSettingChanged) {
                 window.settingAPI.onSettingChanged(async function (data) {
                     var resolvedLocale = data && data.resolved_locale;
+                    // 生效语言变化：先关闭全部应用视图（被移除的 iframe 无需再收广播）
+                    appLocaleRefresher.recordLocale(resolvedLocale);
                     if (resolvedLocale) {
                         Object.keys(appFrameCache).forEach(function (bundleName) {
                             var cw = getAppSubFrameWindow(appFrameCache[bundleName]);
@@ -1561,6 +1669,18 @@
                         }
                     }
                 });
+            }
+
+            // 语言包安装/卸载/更新：当前语言（含回退链）词条实际变化时同样关闭重建
+            if (window.localeAPI && window.localeAPI.onLocalePacksChanged) {
+                window.localeAPI.onLocalePacksChanged(function (snapshot) {
+                    appLocaleRefresher.recordPackSnapshot(snapshot);
+                });
+                // preload 首拉快照的分发可能早于本脚本执行而错过首播，监听器注册后
+                // 立即用 preload 已缓存的快照补建基线；首播尚未发生时缓存为 null
+                // （recordPackSnapshot 对 null 不动基线），稍后到达的首播仍会建基线，
+                // 两条路径都保证首次真实词条变更不被误当成基线吞掉
+                appLocaleRefresher.recordPackSnapshot(window.localeAPI.getLocalePacks?.() ?? null);
             }
 
             // 初始化时检查是否需要引导

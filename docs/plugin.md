@@ -588,8 +588,9 @@ export default {
 ```
 
 manifest 中的 `id` 必须与入口导出的插件 `id` 一致。`capabilities` 可使用：
-`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`account`。声明静态 Skill、MCP
-或 Agent 时，必须同时声明对应的 `skill`、`mcp` 或 `agent` capability。
+`hook`、`tool`、`skill`、`mcp`、`command`、`event`、`agent`、`browser`、`channel`、`account`、
+`appearance`、`features`、`locale`、`registry`。声明静态 Skill、MCP、Agent 或语言包时，必须同时声明对应的
+`skill`、`mcp`、`agent` 或 `locale` capability。
 
 清单里**没有** `schemaVersion` 字段：它不参与任何版本协商，写与不写解析结果一样
 （旧清单里残留的这个键会按未知字段忽略）。
@@ -752,6 +753,11 @@ warning 并忽略它们，开关仍由用户控制。字段类型必须是布尔
 `displayName`（支持本地化对象形式，按当前界面语言解析），未声明时回退到插件 ID。
 这类配置由插件拥有，因此在 MCP 管理器中只读；应通过插件中心启停插件或修改插件配置。
 
+### 语言包路径
+
+`resources.locales` 声明语言包目录或文件，目录顶层的每个 `*.json` 文件就是一份语言词典
+（子目录不递归收集），**文件名即 BCP-47 语言 tag**（如 `tr-TR.json`）。必须同时声明 `locale` capability。
+
 ## 使用 package.json#opendesk
 
 npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `opendesk.plugin.json`，
@@ -802,15 +808,15 @@ npm 插件包必须包含标准 `package.json`。它既可以保留独立的 `op
 opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 ```
 
-## 插件市场与插件渠道
+## 插件市场与插件仓库
 
-插件中心按渠道拉取插件清单，每个启用的渠道都是一个独立市场，并在插件中心顶部**独占一个 Tab**
-（Tab 名用渠道展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
+插件中心按仓库拉取插件清单，每个启用的仓库都是一个独立市场，并在插件中心顶部**独占一个 Tab**
+（Tab 名用仓库展示名，与「已安装」「内置插件」并列，和测评集应用的导航一致）；Tab 下面是该市场的
 搜索框、分类切换与插件卡片：
 
-- **设置 → 渠道设置 → 插件渠道**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
-  用户可以添加最多 20 个三方渠道，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
-- 渠道配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的渠道既不拉清单，
+- **设置 → 仓库设置 → 插件仓库**：官方市场固定排第一（地址写死，只能启用或禁用，不能改名、改地址、删除）；
+  用户可以添加最多 20 个三方仓库，添加/编辑时主进程会把清单完整解析一遍，验证不过不落配置。
+- 仓库配置保存在 `setting.json` 的 `applications.pluginmgr.channels`；被禁用的仓库既不拉清单，
   也不在插件中心里占 Tab。
 - 环境变量 `OPENDESK_PLUGIN_CATEGORY` 可以把官方市场指向本地文件或自建 registry，便于调试。
 
@@ -878,7 +884,7 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 
 ### registry 扩展点
 
-每个渠道对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
+每个仓库对应一个 registry 实现（`BasePluginRegistry`：`name` / `displayName` / 可选 `categories` /
 `getCatalog(query?)` / `getPluginCount` / 可选 `invalidate`）。`getCatalog` 的查询参数是
 `{ startAt?, limit?, categories? }`：`startAt` / `limit` 与 benchmark 的
 `getCatalog(startAt, limit)` 同义（`startAt` 默认 0、省略 `limit` 表示取到末尾、`0` 表示不取，
@@ -887,13 +893,13 @@ opendesk-plugin-sdk validate ./opendesk-plugin-review-helper
 界面上目前一次取全量（与 benchmark 一致），大型市场接入后可以直接按页取而不改契约。
 
 未来出现别的市场协议时（分页 RPC、需要认证的私有市场、增量索引……），**不需要改
-`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应渠道即可，
+`createPluginRegistries` 或应用层**：在主进程里注册一个 provider 认领对应仓库即可，
 与 mcpmgr / skillmgr 的 provider 机制同一套写法：
 
 ```ts
 registerPluginRegistryProvider({
     id: 'enterprise-rpc',
-    // 认领哪些渠道由 provider 自己判断；官方渠道同样可以被接管
+    // 认领哪些仓库由 provider 自己判断；官方仓库同样可以被接管
     supports: (channel) => channel.url.startsWith('https://market.corp.example/'),
     // 返回 undefined 表示不接管，交给后面的 provider 或内置实现
     create: (channel, { dataDirectory, fetchImpl }) => new MyRpcRegistry(channel, { dataDirectory, fetchImpl })
@@ -901,7 +907,7 @@ registerPluginRegistryProvider({
 ```
 
 未注册任何 provider 时行为与今天完全一致（全部走内置实现）；provider 的 `supports` / `create`
-抛错只会让该渠道回落到内置实现，不会把整个市场列表拖空。
+抛错只会让该仓库回落到内置实现，不会把整个市场列表拖空。
 
 ## 在 setup 中动态注册 Skill 和 MCP
 
@@ -1039,6 +1045,74 @@ ctx.skills.register({
   改为在 `setup` 中用 `ctx.skills.register` 动态注册。
 - 内部工具的执行结果会以 `CallSkillTool` 的调用记录呈现，内部 MCP 工具的执行统一经由 MCPMgr worker。
 
+## 语言包插件（纯静态 locale）
+
+语言包插件让第三方为 OpenDesk 提供新语言或修正既有文案，覆盖主界面与各应用的 locale 词条。
+它是**纯静态插件**：只声明 `resources.locales`，**不需要入口文件**（没有 `index.js`，宿主不执行
+任何插件代码），manifest 即全部契约：
+
+```json
+{
+    "id": "acme-langpack-ja",
+    "displayName": { "en": "Japanese Language Pack" },
+    "version": "1.0.0",
+    "apiVersion": 1,
+    "capabilities": ["locale"],
+    "resources": { "locales": ["locales"] }
+}
+```
+
+```text
+acme-langpack-ja/
+├── opendesk.plugin.json
+└── locales/
+    └── ja-JP.json        ← 文件名即语言 tag（经 Intl.Locale 规范化）
+```
+
+词典文件为扁平 `key -> 文案` 的 JSON（与内置词典同一种扁平 key，如 `renderer.sidebar.apps`、
+`notes.app.name`），插值沿用 `${param}` 约定：
+
+```json
+{
+    "@priority": "1",
+    "@fallback": "en-US",
+    "renderer.sidebar.apps": "アプリ",
+    "sp.general.language": "言語"
+}
+```
+
+规则与语义：
+
+- **覆盖内置**：语言包增量永远优先于内置词典（全局词典与各应用词典都先查增量层），
+  因此既可以补全缺失 key，也可以修正既有文案。
+- **部分提供**：同一语言允许多个插件各自贡献一部分 key，按 key 合并；同 key 冲突按
+  语言包 `@priority` 声明的**合并优先级**裁决（0-999 整数，数值越大越优先，缺省 1），
+  priority 相同时按**插件 ID 字典序后者胜**，冲突不是错误但会记录告警（后续插件中心
+  展示冲突报告）。系统内置文案视为 priority 0（语言包增量恒覆盖内置词典），内置语言包
+  插件的语言文件均声明 priority 1。
+- **应用域前缀覆盖**：应用域的 `t()`（main 与 renderer 均已接入）查找语言包时先查
+  `<bundle>.<key>`，再回退裸 key。这为跨应用歧义 key 提供了按应用覆盖的能力——例如
+  `app.name` 在各应用域的英文文案不同（Notes / Calendar / …），语言包写
+  `"notes.app.name": "Notlar"` 即可只改 Notes 的显示名；`agent.instruct`、
+  `error.channel*` 等歧义 key 同理。裸 key 未被前缀条目遮蔽时仍会命中所有应用
+  （共享域覆盖语义保留），内置试点语言包对歧义 key 一律使用前缀条目。
+- **新语言动态注册**：语言包声明的语言会自动出现在设置页 / TUI 语言选项中（显示名用
+  `Intl.DisplayNames` 按语言自身书写形式生成，如 `Türkçe`）；`auto`（跟随系统）模式下按
+  BCP-47 最佳匹配（精确 tag → 主语言 tag）。未翻译的 key 沿 `@fallback` 声明的回退语言
+  展示（缺省 `en-US`），全链未命中时回显 key 本身。
+- **即时生效**：安装 / 卸载 / 启停语言包即时广播刷新，无需重启；卸载提供当前语言的包后
+  设置里的残留值自动回退为跟随系统。
+- **校验**：结构必须为扁平 `string -> string`；单文件上限 2MB；`@` 前缀是保留 key
+  （`@fallback` 声明回退语言、`@priority` 声明合并优先级，`@priority` 接受字符串或数字形式
+  的 0-999 整数）；路径越界与结构非法都会让加载失败并携带文件与 key 定位。
+- **边界**：外部 iframe 应用与 browser 应用 `<webview>` 中的外部页面文案不受语言包控制；
+  应用词典中不带应用前缀的通用 key（如 `app.name`）是跨应用共享域，裸 key 覆盖会同时
+  影响所有应用，为单个应用贡献文案请使用 `<bundle>.<key>` 前缀条目。
+
+内置语言包见 `resources/plugins/language-packs/`（插件「内置语言包」，单个插件在
+`locales/` 目录下同时携带土耳其语、德语、法语、印尼语、日语、韩语与俄语七个语言文件），均全量覆盖
+主界面与各内置应用词条。
+
 ## 无 manifest 的本地插件
 
 手工放入 `plugins/` 的单个 `.js`、`.mjs`、`.cjs` 文件不要求 manifest。
@@ -1054,6 +1128,10 @@ index.cjs
 旁边的 `skills/` 或 `mcps/`。如果要声明静态资源，可为目录增加
 `opendesk.plugin.json`；单文件 `hello.mjs` 也可以使用同目录下的
 `hello.opendesk.plugin.json` sidecar manifest。
+
+带清单（根级 `opendesk.plugin.json` 或 `package.json#opendesk`）但**既没有 `entry` 也没有
+index 文件**的目录视为**纯静态插件**（语言包是典型形态）：宿主不执行任何插件代码，
+只装载清单声明的 `resources.*` 静态资源，详见「语言包插件」章节。
 
 OpenDesk 不会编译 TypeScript 插件入口。第三方依赖仍需要插件自己的 `node_modules`，入口必须是
 Node.js 可以直接运行的 `.js`、`.mjs` 或 `.cjs` 文件。
@@ -1115,6 +1193,44 @@ GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设
 `setPluginEnabled` 和 `reloadPlugins` 工具。插件列表和详情读取默认允许；安装、卸载、
 启停和重新加载会通过 `plugin` 权限资源请求用户确认。Agent 安装仍遵循上述 OpenDesk
 插件校验、plugins 目录和 `--ignore-scripts` 规则。
+
+## features capability：禁用 OpenDesk 内置特性
+
+声明 `features` capability 后，插件可以通过 `ctx.features` 禁用 OpenDesk 自身的特性或整个应用：
+
+```js
+export default definePlugin({
+    id: 'minimal-setup',
+    capabilities: ['features'],
+    setup(ctx) {
+        // 禁用长期记忆特性：隐藏记忆入口，不再注册任务回顾钩子、不再注入记忆工具与提示词段落
+        ctx.features.disable('memory');
+        // 禁用整个应用：应用图标从菜单隐藏、延迟资源不再加载、工具集与事件停用
+        ctx.features.disableApplication('filemgr');
+    }
+});
+```
+
+当前支持禁用的特性 id（宿主集中维护，displayName / description 支持 `string | Record<语言标签, 文案>` 多语言）：
+
+| featureId    | 作用                                                                         | 禁用后仍保留                       |
+| ------------ | ---------------------------------------------------------------------------- | ---------------------------------- |
+| `memory`     | 长期记忆与用户画像：记忆入口、任务回顾自动维护、记忆工具与提示词段落         | 无                                 |
+| `filesystem` | AI 文件系统的索引与语义搜索：文件系统入口、semanticSearch 工具、搜索文件按钮 | 普通文件读写/grep 工具、@ 添加文件 |
+
+行为约定：
+
+- 禁用状态**动态生效、跟随插件生命周期**：插件每次启动在 `setup()` 中重新调用即可保持禁用；
+  返回的 `PluginRegistration` 释放（或插件停用/卸载/宿主重载）后自动恢复。禁用不落盘。
+- 同一目标被多个插件同时禁用时，全部释放后才视为恢复；同一插件多次调用 `disable` 会各自得到
+  一个 registration，需要全部释放（按持有次数计数，释放其中一个不会整体解锁）。
+- `disable` 传入未知 featureId、`disableApplication` 传入未注册的 bundleName 会抛错
+  （`features.unknown_feature:<id>` / `features.unknown_application:<bundleName>`）。
+- `disableApplication` 对系统应用与用户应用都生效，但只校验 `setup()` 执行时**已注册**的应用：
+  插件加载之后才安装的用户应用在本次 setup 中不可禁用（需要在插件重新加载时再调用）。
+  应用恢复后其事件与工具集随之恢复。
+- 禁用应用会停掉该应用的 UI 入口、工具集、事件与主进程 worker 调用；自身持有后台资源的应用
+  （如 `filemgr` 的索引扫描）同时停止后台工作，不会在界面上不可见时继续跑。
 
 ## 生命周期和安全边界
 

@@ -53,6 +53,11 @@ describe('sidebar reveal current task on highlight sync', () => {
                 observe() {}
                 disconnect() {}
             },
+            ResizeObserver: class {
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            },
             localStorage: {
                 getItem: () => null,
                 setItem: () => undefined,

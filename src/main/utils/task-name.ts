@@ -10,9 +10,19 @@
  */
 
 import { escapeRegExp } from '../../common/utils/escape.js';
+import { formatLocaleDisplayName } from '../../common/locale/pack.js';
 
 /** 任务名最大长度（按 Unicode 码点计），超过则截断并追加省略号 */
 export const TASK_NAME_MAX_LENGTH = 30;
+
+/**
+ * CJK 语言的任务名建议长度（按"字"计，仅用于 prompt 提示，不做强制截断）。
+ * CJK 单字约占两字宽，10 字已是 20 列，足够装下一句中文概括；再长会在窄侧栏被省略号截掉。
+ */
+const TASK_NAME_CJK_SUGGESTED_LENGTH = 10;
+
+/** CJK 书写系统的语言 tag（zh-CN / ja-JP / ko-KR 及其变体），用于按字数而非字符数给长度提示 */
+const CJK_LOCALE_TAG_PATTERN = /^(?:zh|ja|ko)(?:-|$)/i;
 
 /** 需要保留的格式字符：ZWJ/ZWNJ，用于 emoji 组合序列与 Persian/Arabic 连字 */
 const PRESERVED_FORMAT_CHARS = new Set(['\u200C', '\u200D']);
@@ -64,6 +74,31 @@ export function truncateTaskName(text: string): string {
  */
 export const TASK_NAME_PROMPT_PLACEHOLDER = '任务名称';
 
+/**
+ * 构造任务名生成 prompt。
+ *
+ * 要求模型使用的语言取系统当前有效语言（调用方传入 `getLocale()` 的解析值），
+ * 与对话回复语言保持一致；长度提示按书写系统区分：西文沿用 {@link TASK_NAME_MAX_LENGTH}，
+ * CJK 按 {@link TASK_NAME_CJK_SUGGESTED_LENGTH} 字给出。
+ *
+ * 长度上限必须与截断上限对齐——提示若比 {@link truncateTaskName} 更宽松，
+ * 模型给出的名字会被截成残句，这正是原先统一给 10 字符时西文任务名的表现。
+ *
+ * prompt 文案是 LLM 协议文本，对用户不可见，不参与本地化；格式占位文本必须取自
+ * {@link TASK_NAME_PROMPT_PLACEHOLDER}，与 {@link normalizeGeneratedTaskName} 的判定规则共用。
+ *
+ * @param userMessage 用户消息原文
+ * @param locale 当前有效语言 tag，如 zh-CN / en-US / ja-JP
+ */
+export function buildTaskNamePrompt(userMessage: string, locale: string): string {
+    const languageName = formatLocaleDisplayName(locale);
+    const maxLength = CJK_LOCALE_TAG_PATTERN.test(locale) ? TASK_NAME_CJK_SUGGESTED_LENGTH : TASK_NAME_MAX_LENGTH;
+    return `你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${userMessage}
+                请使用${languageName}（${locale}）输出一个简洁明了的任务名称，不超过${maxLength}个字符。
+                只输出单行内容，格式为 <taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>，其中的占位文字要替换成你生成的名字，不要输出任何其他内容。
+                `.trim();
+}
+
 /** 占位符字面量比较键：只保留字母与数字，抹平引号/括号/markdown 强调、下划线与连字符等包裹差异 */
 function placeholderKey(text: string): string {
     return text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
@@ -74,8 +109,16 @@ function placeholderKey(text: string): string {
  *
  * 模型常把它们当成标题前缀复读（`任务名称：修复登录`、`子任务标题 - 重构解析器`），
  * 只按整体等值比较拦不住，因此这里额外按"标签 + 分隔符"剥掉前导部分。
+ * 英文标签对应 prompt 要求用英文（或其它非中文语言）输出时的复读形态
+ * （`Task name: Fix login`、`Task title - Fix login`）。
  */
-const TASK_NAME_LABEL_PREFIXES = [TASK_NAME_PROMPT_PLACEHOLDER, '子任务标题'];
+const TASK_NAME_LABEL_PREFIXES = [
+    TASK_NAME_PROMPT_PLACEHOLDER,
+    '子任务标题',
+    'Task name',
+    'Task title',
+    'Subtask title'
+];
 
 /**
  * 模型只写占位文字时可能原样输出的字面量（按 {@link placeholderKey} 归一化后比较）：
@@ -87,9 +130,10 @@ const PLACEHOLDER_TASK_NAMES = new Set([
     ...TASK_NAME_LABEL_PREFIXES.map((label) => placeholderKey(label))
 ]);
 
-/** 前导标签前缀：标签 + 分隔符（冒号/横线，全角与半角；允许重复如"——"） */
+/** 前导标签前缀：标签 + 分隔符（冒号/横线，全角与半角；允许重复如"——"）；大小写不敏感以覆盖英文标签 */
 const TASK_NAME_LABEL_PREFIX_PATTERN = new RegExp(
-    `^(?:${TASK_NAME_LABEL_PREFIXES.map((label) => escapeRegExp(label)).join('|')})\\s*[:：\\-—–－]+\\s*`
+    `^(?:${TASK_NAME_LABEL_PREFIXES.map((label) => escapeRegExp(label)).join('|')})\\s*[:：\\-—–－]+\\s*`,
+    'i'
 );
 
 /**

@@ -25,7 +25,7 @@ import {
     type PluginVerification
 } from '../discovery/discovery.js';
 import { resolvePluginEntry } from '../discovery/loader.js';
-import { readPluginManifest } from '../discovery/manifest.js';
+import { readPluginManifest, readStaticOnlyPluginManifest } from '../discovery/manifest.js';
 import { computePluginIntegrity } from '../discovery/integrity.js';
 import { defaultNpmRunner, installPluginDependencies } from './dependencies.js';
 import {
@@ -282,6 +282,22 @@ function assertHostVersionCompatible(validated: ValidatedOpenDeskPluginPackage):
     if (issue) throw new PluginHostVersionError(issue.direction, issue.range, OPENDESK_RUNTIME_VERSION);
 }
 
+/**
+ * 安装期平台闸门：清单声明了 platforms 且不含当前平台时拒绝安装。
+ *
+ * 没有这道闸时安装会「成功」，但插件随即被已装列表的平台过滤挡住，
+ * 用户看到的是「安装成功却不显示」。市场路径在 installFromPluginRegistry
+ * 有对应预检（isSupportedOnCurrentPlatform），这里补齐本地安装路径。
+ */
+function assertPlatformSupported(validated: ValidatedOpenDeskPluginPackage): void {
+    const platforms = validated.platforms;
+    if (platforms?.length && !platforms.includes(process.platform)) {
+        // 结构化串带插件 id 与平台列表：渲染层模态与 formatPluginInstallError 都要从它取参数。
+        // id 由 assertSafePluginId 限制为 [a-zA-Z][a-zA-Z0-9._-]*，不含冒号，可安全作分隔
+        throw new Error(`plugin.install_platform_unsupported:${validated.id}:${platforms.join(', ')}`);
+    }
+}
+
 function waitForMoveRetry(delay: number): Promise<void> {
     return new Promise((resolve) => {
         const timer = setTimeout(resolve, delay);
@@ -394,6 +410,8 @@ export async function installPlugin(spec: string, options: PluginInstallOptions 
         // 宿主版本闸门放在上架信息核对之后：条目与包内清单的声明对不上时先报「信息不一致」
         // （那才是根因），两者一致时才按包内真身给出版本引导
         assertHostVersionCompatible(validated);
+        // 平台闸门与市场路径同一时机：落盘前拒绝，避免「安装成功却不显示」
+        assertPlatformSupported(validated);
         stage = 'commit';
         const integrity = computePluginIntegrity(pluginDirectory);
         const destination = path.join(getPluginsDirectory(configDirectory), validated.id);
@@ -603,7 +621,9 @@ export function listVisiblePlugins(options: { configDirectory?: string } = {}): 
         try {
             const spec = candidate?.spec ?? displayRecord.path;
             const resolved = resolvePluginEntry(spec, resolvedConfigDirectory);
-            const manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+            const manifest = resolved
+                ? readPluginManifest(resolved.entry, resolved.rootDir)
+                : readStaticOnlyPluginManifest(spec);
             if (manifest?.platforms?.length && !manifest.platforms.includes(process.platform as PluginPlatform)) {
                 continue;
             }

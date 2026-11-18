@@ -1,4 +1,10 @@
-import { normalizeGeneratedTaskName, TASK_NAME_MAX_LENGTH, truncateTaskName } from '../../../main/utils/task-name.js';
+import {
+    buildTaskNamePrompt,
+    normalizeGeneratedTaskName,
+    TASK_NAME_MAX_LENGTH,
+    TASK_NAME_PROMPT_PLACEHOLDER,
+    truncateTaskName
+} from '../../../main/utils/task-name.js';
 
 // 检测被截半的孤立代理项（乱码）：高代理后无低代理，或低代理前无高代理
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
@@ -61,6 +67,38 @@ describe('truncateTaskName', () => {
     test('空白消息折叠为空字符串', () => {
         expect(truncateTaskName('   ')).toBe('');
         expect(truncateTaskName('\u200B\uFEFF')).toBe('');
+    });
+});
+
+describe('buildTaskNamePrompt', () => {
+    test('CJK 语言按字数给长度提示，并使用该语言的展示名', () => {
+        const prompt = buildTaskNamePrompt('帮我修复登录页面的按钮错位问题', 'zh-CN');
+        expect(prompt).toContain('中文（zh-CN）');
+        expect(prompt).toContain('不超过10个字符');
+    });
+
+    test('西文语言的长度提示与截断上限同源，避免名字被截成残句', () => {
+        const prompt = buildTaskNamePrompt('帮我修复登录页面的按钮错位问题', 'en-US');
+        expect(prompt).toContain('English（en-US）');
+        expect(prompt).toContain(`不超过${TASK_NAME_MAX_LENGTH}个字符`);
+        expect(prompt).not.toContain('不超过10个字符');
+    });
+
+    test('CJK 判定按主语言前缀匹配，不误伤相近的西文 tag', () => {
+        expect(buildTaskNamePrompt('x', 'ja-JP')).toContain('不超过10个字符');
+        expect(buildTaskNamePrompt('x', 'ko-KR')).toContain('不超过10个字符');
+        // zu / jv 等以 z / j 开头的西文语言不能被当成 CJK
+        expect(buildTaskNamePrompt('x', 'zu-ZA')).toContain(`不超过${TASK_NAME_MAX_LENGTH}个字符`);
+        expect(buildTaskNamePrompt('x', 'jv-ID')).toContain(`不超过${TASK_NAME_MAX_LENGTH}个字符`);
+    });
+
+    test('prompt 内嵌用户消息并沿用统一的 <taskname> 占位格式', () => {
+        const prompt = buildTaskNamePrompt('把解析器重构成模块化结构', 'zh-CN');
+        expect(prompt).toContain('把解析器重构成模块化结构');
+        expect(prompt).toContain(`<taskname>${TASK_NAME_PROMPT_PLACEHOLDER}</taskname>`);
+        expect(prompt.startsWith('你是一个任务管理助手')).toBe(true);
+        // 首尾空白已在构造时裁剪，调用方不需要再 trim
+        expect(prompt).toBe(prompt.trim());
     });
 });
 
@@ -130,6 +168,20 @@ describe('normalizeGeneratedTaskName', () => {
         // 无分隔符或标签在中间时不剥，避免破坏真实名字
         expect(normalizeGeneratedTaskName('任务名称修复登录')).toBe('任务名称修复登录');
         expect(normalizeGeneratedTaskName('修复任务名称的展示')).toBe('修复任务名称的展示');
+    });
+
+    test('英文占位标签前缀同样被剥掉', () => {
+        // prompt 要求按系统语言输出后，非中文界面下模型会复读英文标签
+        expect(normalizeGeneratedTaskName('Task name: Fix login button')).toBe('Fix login button');
+        expect(normalizeGeneratedTaskName('task name - Fix login button')).toBe('Fix login button');
+        expect(normalizeGeneratedTaskName('Task title：修复登录')).toBe('修复登录');
+        expect(normalizeGeneratedTaskName('Subtask title: Refactor parser')).toBe('Refactor parser');
+        // 只写标签（含大小写变体）没有可用内容
+        expect(normalizeGeneratedTaskName('Task title')).toBeNull();
+        expect(normalizeGeneratedTaskName('TASK NAME')).toBeNull();
+        // 标签后没有分隔符时不剥，避免破坏真实名字
+        expect(normalizeGeneratedTaskName('Task name collision fix')).toBe('Task name collision fix');
+        expect(normalizeGeneratedTaskName('Subtask titles are confusing')).toBe('Subtask titles are confusing');
     });
 
     test('纯符号与省略号返回 null', () => {

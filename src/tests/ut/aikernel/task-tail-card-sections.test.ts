@@ -166,8 +166,10 @@ describe('TaskState TailCard request projection', () => {
 
         await task.submitUserMessage('real message');
 
-        expect(task.chat_context.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
-        expect((task.chat_context.messages[0] as UserMessage).getPlainText()).toBe('real message');
+        // submitUserMessage 先注入一条语言切换提醒（internal user message），随后才是用户消息
+        expect(task.chat_context.messages.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
+        expect((task.chat_context.messages[0] as UserMessage).internal).toBe(true);
+        expect((task.chat_context.messages[1] as UserMessage).getPlainText()).toBe('real message');
         expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('request-only knowledge prompt');
     });
 
@@ -262,7 +264,8 @@ describe('TaskState TailCard request projection', () => {
         expect(JSON.stringify(snapshots[1].anthropic)).toContain('deterministic tool result');
         expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('knowledge prompt for first production');
         expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('knowledge prompt for second production');
-        expect(task.chat_context.messages.map((message) => message.role)).toEqual(['user', 'assistant']);
+        // 首条消息前多出一条语言切换提醒（internal user message）
+        expect(task.chat_context.messages.map((message) => message.role)).toEqual(['user', 'user', 'assistant']);
     });
 });
 

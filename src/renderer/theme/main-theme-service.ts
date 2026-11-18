@@ -61,14 +61,19 @@ function readFontPreset(): string {
 }
 
 /**
- * `themeSource = dark` forces Chromium to auto-darken web contents (iframe sub-apps go blank).
- * User "dark" preference is applied via CSS `data-theme` only; `system` keeps OS detection.
+ * Electron-rendered native UI (tray context menu, devtools on Windows/Linux, macOS
+ * window chrome) follows `themeSource`, so it must mirror the app preference to keep
+ * native chrome consistent with the app theme; `system` keeps following the OS.
+ * `themeSource` also drives `prefers-color-scheme` for web contents — it always matches
+ * the CSS `data-theme` broadcast (both derive from the same resolved theme), and app
+ * pages only use that media query as a FOUC fallback. OHOS theme source is owned by
+ * the ArkTS bridge and left untouched.
  */
 function syncDesktopNativeTheme(preference: ThemePreference): void {
     if (isOhosPlatform()) {
         return;
     }
-    nativeTheme.themeSource = preference === 'system' ? 'system' : 'light';
+    nativeTheme.themeSource = preference;
 }
 
 function buildOhosNativeListenerRegistrar(): SystemThemeModuleOptions['registerOhosNativeListener'] {
@@ -114,8 +119,9 @@ export class MainThemeService {
 
         initSystemTheme(options);
         this.manager = new ThemeManager(options);
-        this.manager.setPreference(readStoredPreference());
-        syncDesktopNativeTheme(readStoredPreference());
+        const storedPreference = readStoredPreference();
+        this.manager.setPreference(storedPreference);
+        syncDesktopNativeTheme(storedPreference);
 
         this.manager.on('changed', (resolved: ResolvedTheme) => {
             persistPreference(resolved.preference);

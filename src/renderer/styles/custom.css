@@ -2080,8 +2080,6 @@ html[data-theme='dark'] .sb-chat-badge-failed {
     position: relative;
     gap: 8px !important;
     padding: 0 14px 12px;
-    /* 以自身内容宽度作为容器查询上下文，侧边栏拖窄时让导航按钮退化为纯图标 */
-    container: sb-nav / inline-size;
 }
 .sb-nav-btn {
     flex: 1;
@@ -2089,7 +2087,10 @@ html[data-theme='dark'] .sb-chat-badge-failed {
     align-items: center;
     justify-content: center;
     gap: 5px;
-    padding: 8px 0;
+    /* 左右内边距保证文案不贴边：否则三个按钮并排时相邻文案几乎连在一起，
+       视觉上像挤成一团。内边距会被 _updateNavLabelsFit 的内容宽度实测计入，
+       所以空间不足时文案会更早收起，而不是先挤成贴边状态 */
+    padding: 8px 10px;
     white-space: nowrap;
     background: var(--od-bg-elevated);
     border: 1px solid var(--od-border);
@@ -2099,7 +2100,13 @@ html[data-theme='dark'] .sb-chat-badge-failed {
     font-size: var(--fs-base);
     font-weight: 400;
     cursor: pointer;
-    transition: all 0.15s ease;
+    /* 过渡只作用于颜色类属性：按钮宽度/高度不参与过渡。
+       导航文案显隐自适应会临时切换测量类，若布局属性在过渡白名单内，
+       每次测量后的恢复都会被动画化，拖拽侧边栏时按钮宽度会间歇性插值抖动 */
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease,
+        box-shadow 0.15s ease;
 }
 .sb-nav-btn:hover {
     background: var(--od-bg-muted);
@@ -2111,13 +2118,19 @@ html[data-theme='dark'] .sb-chat-badge-failed {
     box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.04);
 }
 /*
- * 空间不足时只保留图标：单个按钮需要 图标 14 + 间距 5 + 文案（「新任务」3 个 13px 汉字 ≈ 39）= 58px，
- * 三个按钮加两个 8px 间距共需 190px，留余量后在 196px 以下收起文案（约等于侧边栏宽 224px）。
+ * 文案显隐由 sidebar.js 按真实宽度自适应：实测三个按钮（图标 + 间距 + 文案）所需宽度，
+ * 超出导航行可用宽度时给导航行加 sb-nav-labels-hidden 收起全部文案只留图标（按钮语义由 title 承载）。
+ * 判定跟随界面语言文本与字体的真实度量，不设固定像素断点，避免长文本语言（如德语）在默认宽度下溢出。
  */
-@container sb-nav (max-width: 196px) {
-    .sb-nav-btn > [data-sidebar-label] {
-        display: none;
-    }
+.sb-nav-row.sb-nav-labels-hidden .sb-nav-btn > [data-sidebar-label] {
+    display: none;
+}
+/* 测量所需宽度时临时让按钮按内容宽度排布，得到含文案的真实宽度。
+   必须同时禁用过渡：.sb-nav-btn 的 transition:all 会把测量用的临时类变化动画化，
+   每次测量都启停一次宽度动画，且实测宽度读到过渡中间值导致判定翻转、文案显隐闪烁 */
+.sb-nav-row.sb-nav-measure .sb-nav-btn {
+    flex: none !important;
+    transition: none !important;
 }
 
 /* ---- Sidebar final task layout ---- */
@@ -3351,10 +3364,14 @@ html[data-theme='dark'] .od-retry-now-btn:active {
 /*
  * 分割线要压住两侧面板：面板里常见 position: relative 的卡片，没有层级时下面
  * 扩展出来的触摸命中区会被相邻面板的定位内容盖掉一半。
+ *
+ * 中间那 1px 细线用描边 token 绘制，跟随深浅色主题；硬编码浅灰会在深色模式下
+ * 变成一条刺眼的白线。
  */
 .taskview-resizer {
     position: relative;
     z-index: 1;
+    background: linear-gradient(to right, transparent 40%, var(--od-border) 50%, transparent 60%);
 }
 
 /*

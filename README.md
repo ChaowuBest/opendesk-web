@@ -29,7 +29,7 @@ Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相�
 
 ![Architecture](./resources/renderer/images/architecture.png)
 
-请参考[https://opendesk.matrix.openharmony.cn/docs/contribute/architecture](这里)获得进一步详细的架构介绍。
+请参考[这里](https://opendesk.matrix.openharmony.cn/docs/contribute/architecture)获得进一步详细的架构介绍。
 
 ## 快速开始
 

@@ -16,9 +16,9 @@
 
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
-import * as XLSX from 'xlsx';
 import WordExtractor from 'word-extractor';
 import { readOfd } from '@sharp9/ofdjs';
 import {
@@ -30,6 +30,8 @@ import {
     getTagName
 } from '@sharp9/ofdjs/xml-parser';
 import { logger as staticLogger } from '../../../utils/logger.js';
+import { xlsxLoader } from '../../../loader/xlsx.js';
+import { prepareHostResource } from '../../../../platforms/runtime.js';
 
 function getLogger() {
     return staticLogger;
@@ -271,12 +273,13 @@ function isXmlEntryReadable(filePath, ext) {
     });
 }
 
-function extractSpreadsheetText(buffer) {
+async function extractSpreadsheetText(buffer) {
+    const XLSX = await xlsxLoader.ensure();
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheets = [];
     for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
-        const lines = sheetToRowNumberedLines(sheet);
+        const lines = sheetToRowNumberedLines(XLSX, sheet);
         if (lines.length === 0) continue;
         const text = lines.join('\n');
         sheets.push(workbook.SheetNames.length > 1 ? `[${sheetName}]\n${text}` : text);
@@ -284,7 +287,7 @@ function extractSpreadsheetText(buffer) {
     return sheets.join('\n\n');
 }
 
-function sheetToRowNumberedLines(sheet) {
+function sheetToRowNumberedLines(XLSX, sheet) {
     if (!sheet['!ref']) return [];
     const range = XLSX.utils.decode_range(sheet['!ref']);
     const lines = [];
@@ -313,6 +316,52 @@ async function ensureOfdDomp() {
         await initOfdDOMParser();
         _ofdDompReady = true;
     }
+}
+
+/**
+ * pdfjs-dist 包内资源目录（cmaps / standard_fonts）的文件系统路径缓存。
+ * null 表示尚未解析过，{} 内缺失的 key 表示该资源在当前环境不可用。
+ */
+let _pdfJsResourceDirs;
+
+/**
+ * 解析 pdfjs-dist 包内资源子目录（cmaps / standard_fonts）为文件系统路径（带尾部分隔符）。
+ * 解析失败（pdfjs-dist 不在依赖树中）返回 null，调用方会把 null 原样传给 pdf.js，
+ * 即退回 pdf.js 默认行为（不加载外部 CMap / 标准字体数据）。
+ *
+ * 必须返回纯文件系统路径而非 file:// URL：当 PDF 的 CID 字体依赖预定义 CMap
+ * （如土耳其语等拉丁扩展文本常见的 /UniGB-UCS2-H）时，pdf.js 需要读取对应的
+ * .bcmap 数据。pdf.js 在 Node/Electron 下由 NodeBinaryDataFactory 负责加载这类
+ * 资源，实现是 fs/promises.readFile，不接受 file:// 字符串；而 unpdf 的
+ * getDocumentProxy 默认在 Node 下恰恰把 cMapUrl / standardFontDataUrl 生成为
+ * file:// URL——读取失败会让字体翻译失败，整页文本提取为空。
+ *
+ * 版本约定：这里只提供「资源数据」，加载它们的是 unpdf 内置的 pdf.js（当前
+ * apiVersion 6.1.200），与声明的 pdfjs-dist 版本并不相同。cmaps 与 standard_fonts
+ * 是跨版本稳定的静态数据，已由单测覆盖其文件集合；升级 pdfjs-dist 或 unpdf 时
+ * 需重新确认引擎要求的资源文件仍被覆盖。
+ * @param {'cmaps' | 'standard_fonts'} kind
+ * @returns {string | null}
+ */
+export function getPdfJsResourceDir(kind) {
+    if (_pdfJsResourceDirs === undefined) {
+        _pdfJsResourceDirs = {};
+        try {
+            const pkgDir = path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+            for (const dir of ['cmaps', 'standard_fonts']) {
+                const full = path.join(pkgDir, dir) + path.sep;
+                if (fs.existsSync(full)) {
+                    // pdf.js 校验资源 url 必须以 "/" 结尾，Windows 的 path.sep 不满足，
+                    // 统一改成正斜杠（fs.readFile 在 Windows 上接受正斜杠路径）
+                    _pdfJsResourceDirs[dir] = full.replaceAll(path.sep, '/');
+                }
+            }
+        } catch {
+            // pdfjs-dist 无法解析（未安装或打包时被裁剪），退回 pdf.js 默认
+            // （不加载外部 CMap / 标准字体数据）
+        }
+    }
+    return _pdfJsResourceDirs[kind] ?? null;
 }
 
 /**
@@ -415,6 +464,7 @@ export async function extractText(filePath) {
         }
 
         if (OFFICE_PARSER_EXTS.has(ext)) {
+            await prepareHostResource('document-parser');
             if (!(await isXmlEntryReadable(filePath, ext))) {
                 (await getLogger()).warn(
                     `[parser] damaged xml entry in ${filePath}; skipped officeparser to avoid an uncaught stream error`
@@ -437,7 +487,7 @@ export async function extractText(filePath) {
 
         if (SPREADSHEET_EXTS.has(ext)) {
             const buffer = await fs.promises.readFile(filePath);
-            return extractSpreadsheetText(buffer);
+            return await extractSpreadsheetText(buffer);
         }
 
         if (ext === 'pptx') {
@@ -446,10 +496,27 @@ export async function extractText(filePath) {
         }
 
         if (ext === 'pdf') {
-            const { extractText: pdfExtract } = await import('unpdf');
+            const { extractText: pdfExtract, getDocumentProxy } = await import('unpdf');
             const buffer = await fs.promises.readFile(filePath);
-            const { text } = await pdfExtract(new Uint8Array(buffer));
-            return text.join('\n\n');
+            // 显式给出文件系统路径，让 pdf.js 的 NodeBinaryDataFactory 经 fs 加载预定义
+            // CMap 与标准字体数据（.bcmap / .pfb）：unpdf 在 Node 下默认生成的
+            // file:// URL 无法被 fs 读取。
+            // useWorkerFetch 在 Node 下本就默认关闭（数据工厂为 Node 实现时），显式写出
+            // 只为不依赖引擎默认值。
+            // 资源目录解析不到时传 null，即退回 pdf.js 默认（不加载外部 CMap/标准字体）。
+            // 代理生命周期归调用方管理，提取结束后必须销毁 loadingTask。
+            const pdf = await getDocumentProxy(new Uint8Array(buffer), {
+                useWorkerFetch: false,
+                cMapUrl: getPdfJsResourceDir('cmaps'),
+                cMapPacked: true,
+                standardFontDataUrl: getPdfJsResourceDir('standard_fonts')
+            });
+            try {
+                const { text } = await pdfExtract(pdf);
+                return text.join('\n\n');
+            } finally {
+                await pdf.loadingTask.destroy();
+            }
         }
 
         if (ext === 'ofd') {

@@ -12,7 +12,7 @@ import { setRuntimeLocale } from '../../../locale/index.js';
  * - getCatalog / getPluginCount 共用同一份清单，谁先调用谁触发下载；
  * - 逾期重试失败时直接复用本地已有文件，不让一次断网把市场清空；
  * - 本地调试清单（本地文件路径）跳过网络、不写缓存，改完立刻生效；
- * - categories 由清单自述，缺省表示该渠道不支持按分类显示。
+ * - categories 由清单自述，缺省表示该仓库不支持按分类显示。
  */
 
 const { PlainPluginRegistry, DEFAULT_CATALOG_TTL_MS } =

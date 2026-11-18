@@ -73,7 +73,7 @@ const PresentationProgramSchema = z
             .record(z.string(), z.string())
             .optional()
             .describe(
-                '可选图片资产映射：asset id 到文件路径。同一 programPath 重跑自动复用已归档素材；只传新增或替换的 id 即可，例如 { hero: "cover.png" }'
+                '可选素材映射：asset id 到文件路径。支持图片、音频、视频、GLB 和用于导入页面的 PPTX。同一 programPath 重跑自动复用已归档素材，只传新增或替换的 id 即可'
             )
     })
     .superRefine((value, context) => {

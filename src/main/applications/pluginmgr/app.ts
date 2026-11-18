@@ -31,7 +31,12 @@ import { getPluginHost } from './runtime/host.js';
 import { pluginCommandAcceptsArgs } from './runtime/command-arguments.js';
 import { getPluginToolLocalName } from './runtime/tool-names.js';
 import { resolvePluginEntry } from './discovery/loader.js';
-import { loadPluginResources, readPluginManifest, type PluginManifest } from './discovery/manifest.js';
+import {
+    loadPluginResources,
+    readPluginManifest,
+    readStaticOnlyPluginManifest,
+    type PluginManifest
+} from './discovery/manifest.js';
 import {
     installPlugin,
     isBuiltinPluginId,
@@ -51,12 +56,7 @@ import type {
     PluginPlatform
 } from '../../../../packages/plugin-sdk/src/index.js';
 import { localePrimaryTag } from '../../../../packages/plugin-sdk/src/index.js';
-import {
-    formatPluginInstallError,
-    formatPluginUninstallError,
-    isHostVersionInstallError,
-    type PluginInstallResult
-} from './management/errors.js';
+import { formatPluginInstallError, formatPluginUninstallError, type PluginInstallResult } from './management/errors.js';
 import { validateOpenDeskPluginDirectory } from '../../../../packages/plugin-sdk/src/package.js';
 import { t } from './locale/index.js';
 import { t as translate, getLocale } from '../../../locale/index.js';
@@ -98,7 +98,7 @@ import {
     type PluginMarketInstallOutcome
 } from './catalog-common.js';
 
-/** 单个插件渠道的配置形状；系统默认渠道只有 isEnabled 会被采用 */
+/** 单个插件仓库的配置形状；系统默认仓库只有 isEnabled 会被采用 */
 const PluginChannelSchema = z.object({
     id: z.string().default(''),
     name: z.string().default(''),
@@ -108,7 +108,7 @@ const PluginChannelSchema = z.object({
 
 const PluginMgrConfigSchema = z.object({
     externalPaths: z.array(z.string()).default([]),
-    channels: z.array(PluginChannelSchema).default([]).describe('插件渠道（插件市场来源）')
+    channels: z.array(PluginChannelSchema).default([]).describe('插件仓库（插件市场来源）')
 });
 
 /** 下载进度事件的最小间隔：一个几十兆的包按块回调会有上千次，界面按这个节奏更新足够顺滑 */
@@ -254,7 +254,7 @@ export class PluginMgrApplication extends BaseApplication {
     /**
      * 当前生效的插件 registry 列表（每个是插件市场里的一个市场）。
      *
-     * 惰性构造：只有真的打开插件市场或查询渠道时才读配置、建目录；渠道配置变更后置空，
+     * 惰性构造：只有真的打开插件市场或查询仓库时才读配置、建目录；仓库配置变更后置空，
      * 下一次取用时按最新配置重建（见 onConfigChanged）。
      */
     private registries: BasePluginRegistry[] | null = null;
@@ -311,8 +311,8 @@ export class PluginMgrApplication extends BaseApplication {
     }
 
     /**
-     * 渠道配置变更（新增 / 删除 / 改名 / 启停）后丢弃已构建的 registry，
-     * 并通知已打开的插件市场按最新渠道重新加载。
+     * 仓库配置变更（新增 / 删除 / 改名 / 启停）后丢弃已构建的 registry，
+     * 并通知已打开的插件市场按最新仓库重新加载。
      *
      * 由 Setting.setData 触发（见 commitChannels），所以这里拿到的一定是最新配置。
      */
@@ -413,15 +413,19 @@ export class PluginMgrApplication extends BaseApplication {
                         if (spec) {
                             try {
                                 const resolved = resolvePluginEntry(spec, configDirectory);
-                                manifest = readPluginManifest(resolved.entry, resolved.rootDir);
+                                // 纯静态插件（无入口）直接读根级清单；manifestRootDir 即插件目录
+                                manifest = resolved
+                                    ? readPluginManifest(resolved.entry, resolved.rootDir)
+                                    : readStaticOnlyPluginManifest(spec);
+                                const manifestRootDir = resolved?.rootDir ?? spec;
                                 // 已安装插件的图标以 zip 解压后的清单为准；包内相对路径指向插件目录里的文件
                                 if (manifest) {
                                     manifestIconUrl = await resolveDisplayIconUrl(manifest.iconUrl, (icon) =>
-                                        path.join(resolved.rootDir, icon)
+                                        path.join(manifestRootDir, icon)
                                     );
                                 }
                                 if (skills.length === 0 && mcpServers.length === 0 && agents.length === 0) {
-                                    const resources = loadPluginResources(manifest, resolved.rootDir);
+                                    const resources = loadPluginResources(manifest, manifestRootDir);
                                     skills = resources.skills ?? [];
                                     mcpServers = resources.mcpServers ?? [];
                                     agents = resources.agents ?? [];
@@ -518,9 +522,16 @@ export class PluginMgrApplication extends BaseApplication {
         try {
             const result = await applyPluginInstall(targetId, () => installPlugin(spec));
             if (!result.success) {
-                if (isHostVersionInstallError(result.errorCode)) {
-                    // 结构化串原样抛给渲染层：界面据此识别「宿主版本不满足」并弹升级引导模态，
-                    // CLI / AI 工具不经过这条路径，仍用 result + formatPluginInstallError 组装文案
+                // 宿主版本 / 平台不满足的结构化串原样抛给渲染层：界面据此识别并弹对应模态
+                // （升级引导 / 平台说明），不走「文案 + 原始串」的合成消息——那样渲染层
+                // 解析不出结构化串，只能落回默认系统通知。CLI / AI 工具不经过这条路径，
+                // 仍用 result + formatPluginInstallError 组装文案
+                const code = result.errorCode;
+                if (
+                    code === 'host_version_too_old' ||
+                    code === 'host_version_too_new' ||
+                    code === 'platform_unsupported'
+                ) {
                     throw new Error(result.error ?? this.describeInstallFailure(result));
                 }
                 throw new Error(this.describeInstallFailure(result));
@@ -694,7 +705,7 @@ export class PluginMgrApplication extends BaseApplication {
     /**
      * 从插件市场下载并安装插件。
      *
-     * 下载地址一律取清单里声明的那条，而不是渲染层传上来的：清单已经过渠道校验，
+     * 下载地址一律取清单里声明的那条，而不是渲染层传上来的：清单已经过仓库校验，
      * 按 id 取回它就不会把界面变成「任意 URL 安装」的入口。
      */
     async installFromPluginRegistry(registryName: string, pluginId: string): Promise<PluginMarketInstallOutcome> {
@@ -703,10 +714,11 @@ export class PluginMgrApplication extends BaseApplication {
         if (!id) throw new PluginMarketError(t('market.entryIdMissing'));
         const entry = (await registry.getCatalog()).find((item) => item.id === id);
         if (!entry) throw new PluginMarketError(t('market.entryNotFound', { id }));
-        // 界面不展示平台不匹配的条目，这里再拦一次：直接调主进程 API 也不该绕过这条规则
+        // 界面不展示平台不匹配的条目，这里再拦一次：直接调主进程 API 也不该绕过这条规则。
+        // 文案与安装期平台闸门共用同一键（全局词典），避免两个入口措辞漂移
         if (!isSupportedOnCurrentPlatform(entry)) {
             throw new PluginMarketError(
-                t('market.platformUnsupported', {
+                translate('plugin.install.error.platformUnsupported', {
                     id: entry.id,
                     platforms: (entry.platforms ?? []).join(', ')
                 })
@@ -777,7 +789,7 @@ export class PluginMgrApplication extends BaseApplication {
                 if (mismatchMessage) {
                     return { success: false as const, code: 'manifest_mismatch' as const, message: mismatchMessage };
                 }
-                if (isHostVersionInstallError(result.errorCode)) {
+                if (result.errorCode === 'host_version_too_old' || result.errorCode === 'host_version_too_new') {
                     // 包内清单声明的宿主版本范围不满足（市场条目未声明时由 manager 的闸门兜住）：
                     // 与条目级拦截一样返回结构化 outcome，界面弹「请升级 OpenDesk」的模态
                     const stagedIssue = parsePluginHostVersionMessage(result.error ?? '');
@@ -894,26 +906,28 @@ export class PluginMgrApplication extends BaseApplication {
     private readStagedPluginManifest(pluginDirectory: string): PluginManifest | undefined {
         try {
             const resolved = resolvePluginEntry(pluginDirectory, getOpendeskDirectory());
-            return readPluginManifest(resolved.entry, resolved.rootDir);
+            return resolved
+                ? readPluginManifest(resolved.entry, resolved.rootDir)
+                : readStaticOnlyPluginManifest(pluginDirectory);
         } catch {
             return undefined;
         }
     }
 
-    // ── 插件渠道（设置界面 → 插件渠道） ─────────────────────────────────────
+    // ── 插件仓库（设置界面 → 插件仓库） ─────────────────────────────────────
 
-    /** 全部插件渠道（含已禁用的），系统默认渠道排第一 */
+    /** 全部插件仓库（含已禁用的），系统默认仓库排第一 */
     async listPluginChannels(): Promise<PluginChannelView[]> {
         return this.resolveChannels().map((channel) => this.toChannelView(channel));
     }
 
     /**
-     * 新增渠道：先校验输入、再联网验证清单确实可解析，最后才落配置。
+     * 新增仓库：先校验输入、再联网验证清单确实可解析，最后才落配置。
      *
-     * 验证放在主进程（而不是设置界面）里做，是为了保证「配置里存在的渠道一定验证过」，
+     * 验证放在主进程（而不是设置界面）里做，是为了保证「配置里存在的仓库一定验证过」，
      * 并且能复用主进程的代理设置。
      *
-     * @returns 变更后的完整渠道列表，便于界面就地重绘
+     * @returns 变更后的完整仓库列表，便于界面就地重绘
      */
     async addPluginChannel(input: { name?: unknown; url?: unknown }): Promise<PluginChannelView[]> {
         const name = normalizeChannelName(input?.name);
@@ -930,7 +944,7 @@ export class PluginMgrApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 编辑渠道：同样先联网验证；系统默认渠道不可编辑 */
+    /** 编辑仓库：同样先联网验证；系统默认仓库不可编辑 */
     async updatePluginChannel(id: string, input: { name?: unknown; url?: unknown }): Promise<PluginChannelView[]> {
         const name = normalizeChannelName(input?.name);
         const url = normalizeChannelUrl(input?.url);
@@ -939,7 +953,7 @@ export class PluginMgrApplication extends BaseApplication {
         this.assertChannelFree(before, name, url, id);
         await fetchChannelCatalog(url, { fetchImpl: this.platformFetch() });
 
-        // 同样按最新配置重来一遍：验证期间这条渠道可能已经被删除
+        // 同样按最新配置重来一遍：验证期间这条仓库可能已经被删除
         const channels = this.resolveChannels();
         const target = this.requireEditableChannel(channels, id);
         this.assertChannelFree(channels, name, url, id);
@@ -950,7 +964,7 @@ export class PluginMgrApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 删除渠道；系统默认渠道不可删除 */
+    /** 删除仓库；系统默认仓库不可删除 */
     async deletePluginChannel(id: string): Promise<PluginChannelView[]> {
         const channels = this.resolveChannels();
         const target = this.requireEditableChannel(channels, id);
@@ -960,7 +974,7 @@ export class PluginMgrApplication extends BaseApplication {
         return next.map((channel) => this.toChannelView(channel));
     }
 
-    /** 启用 / 禁用渠道：系统默认渠道也允许禁用 */
+    /** 启用 / 禁用仓库：系统默认仓库也允许禁用 */
     async setPluginChannelEnabled(id: string, isEnabled: boolean): Promise<void> {
         const channels = this.resolveChannels();
         if (!channels.some((channel) => channel.id === id)) {
@@ -971,15 +985,15 @@ export class PluginMgrApplication extends BaseApplication {
         this.commitChannels(next);
     }
 
-    // ── 插件渠道 / 市场的内部实现 ───────────────────────────────────────────
+    // ── 插件仓库 / 市场的内部实现 ───────────────────────────────────────────
 
-    /** 按当前配置解析出渠道列表（系统默认渠道 + 用户渠道） */
+    /** 按当前配置解析出仓库列表（系统默认仓库 + 用户仓库） */
     private resolveChannels(): PluginChannel[] {
         const config = this.getConfig() as { channels?: unknown } | undefined;
         return normalizePluginChannels(config?.channels);
     }
 
-    /** 系统默认渠道按当前语言取显示名 */
+    /** 系统默认仓库按当前语言取显示名 */
     private officialChannelName(): string {
         return resolvePluginRegistryDisplayName(OFFICIAL_REGISTRY_DISPLAY_NAME, getLocale());
     }
@@ -995,7 +1009,7 @@ export class PluginMgrApplication extends BaseApplication {
         };
     }
 
-    /** 取一个可以改/删的渠道（系统默认渠道只能启停）；不存在或不可改时抛错 */
+    /** 取一个可以改/删的仓库（系统默认仓库只能启停）；不存在或不可改时抛错 */
     private requireEditableChannel(channels: readonly PluginChannel[], id: string): PluginChannel {
         const target = channels.find((channel) => channel.id === id);
         if (!target) {
@@ -1007,13 +1021,13 @@ export class PluginMgrApplication extends BaseApplication {
         return target;
     }
 
-    /** 名字与地址没有和别的渠道撞车；`exceptId` 是正在编辑的那条，允许保留自身取值 */
+    /** 名字与地址没有和别的仓库撞车；`exceptId` 是正在编辑的那条，允许保留自身取值 */
     private assertChannelFree(channels: readonly PluginChannel[], name: string, url: string, exceptId?: string): void {
         assertChannelNameAvailable(channels, name, this.officialChannelName(), exceptId);
         assertChannelUrlAvailable(channels, url, exceptId);
     }
 
-    /** 新增渠道的写前校验：自定义渠道数量没超限，且名字与地址不与他人冲突 */
+    /** 新增仓库的写前校验：自定义仓库数量没超限，且名字与地址不与他人冲突 */
     private assertChannelAddable(channels: readonly PluginChannel[], name: string, url: string): void {
         const customCount = channels.filter((channel) => channel.id !== OFFICIAL_PLUGIN_CHANNEL_ID).length;
         if (customCount >= MAX_PLUGIN_CHANNELS) {
@@ -1028,7 +1042,7 @@ export class PluginMgrApplication extends BaseApplication {
     }
 
     /**
-     * 把渠道列表写回应用配置。
+     * 把仓库列表写回应用配置。
      *
      * 走 Setting.setData（而不是 BaseApplication.setConfig）是必须的：只有 setData 会
      * 比对新旧应用配置并触发 onConfigChanged，registry 列表与插件市场才能立刻跟着变。

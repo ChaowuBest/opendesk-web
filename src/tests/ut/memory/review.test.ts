@@ -13,7 +13,8 @@ import {
     MemoryReviewQueue,
     MEMORY_REVIEW_ALLOWED_TOOLS,
     MEMORY_REVIEW_TASK_NAME,
-    registerMemoryReviewHook
+    registerMemoryReviewHook,
+    unregisterMemoryReviewHook
 } from '../../../main/aikernel/memory/review';
 import { BaseToolset } from '../../../main/aikernel/tool';
 
@@ -319,5 +320,48 @@ describe('联合长期记忆回顾', () => {
         expect(formatted).toContain('[前文过长，已仅保留末尾 24000 字符]');
         expect(formatted).not.toContain('REMOVED_PREFIX');
         expect(formatted).toContain('KEPT_TAIL');
+    });
+
+    test('cancelAll 清空尚未执行的回顾请求', async () => {
+        const options = createReviewOptions();
+        const blockerSourceTask = new TaskState(options.taskManagerState);
+        const pendingSourceTask = new TaskState(options.taskManagerState);
+        const blockerReviewTask = new TaskState(options.taskManagerState);
+        const blockerFinished = createDeferred();
+
+        jest.spyOn(blockerReviewTask, 'waitUntilFinished').mockImplementation(async () => {
+            await blockerFinished.promise;
+        });
+        const startReviewTask = jest.fn(async () => blockerReviewTask);
+        const queue = new MemoryReviewQueue(options, startReviewTask);
+
+        queue.enqueue(blockerSourceTask, 0);
+        queue.enqueue(pendingSourceTask, 1);
+        await Promise.resolve();
+        expect(startReviewTask).toHaveBeenCalledTimes(1);
+
+        // 模拟 ctx.features.disable('memory')：清空待处理请求，已开始的请求正常跑完
+        queue.cancelAll();
+        blockerFinished.resolve();
+        await queue.waitUntilIdle();
+
+        expect(startReviewTask).toHaveBeenCalledTimes(1);
+    });
+
+    test('unregisterMemoryReviewHook 注销回顾钩子且允许重新注册', async () => {
+        // 防御性复位：前面用例可能通过 registerMemoryReviewHook 留下注册状态
+        unregisterMemoryReviewHook();
+        const options = createReviewOptions();
+
+        registerMemoryReviewHook(options);
+        expect(GlobalHooks.onTaskReviewHooks).toHaveLength(1);
+
+        unregisterMemoryReviewHook();
+        expect(GlobalHooks.onTaskReviewHooks).toHaveLength(0);
+
+        // 重新启用记忆特性时可以再次注册
+        registerMemoryReviewHook(options);
+        expect(GlobalHooks.onTaskReviewHooks).toHaveLength(1);
+        expect(GlobalHooks.onTaskReviewHooks[0].callback).toBeDefined();
     });
 });

@@ -11,12 +11,13 @@
 
 import { Marked } from 'marked';
 import { logger, getDebugMode } from '../utils/logger.js';
+import { hljsLoader, prefetchHighlighting } from '../loader/hljs.js';
 import { BaseTool, BaseToolset } from './tool.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { levenshteinDistance } from '../../utils/string.js';
 import markedKatex from 'marked-katex-extension';
-import hljs from 'highlight.js';
 import path from 'path';
+
 import fs from 'fs';
 import { fileLinkExtension, getRenderWorkspace } from '../utils/marked-file-link.js';
 import { cjkAutolinkFix } from '../../common/markdown/cjk-autolink-fix.js';
@@ -174,8 +175,10 @@ marked.use({
             }
             // 围栏/缩进代码块一律保持代码块渲染，不做文件路径解析
             // （胶囊只来自显式的 [...]() 链接，见 marked-file-link.ts）。
-            const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
-            const highlighted = hljs.highlight(text, { language }).value;
+            const hljs = hljsLoader.peek();
+            if (!hljs) prefetchHighlighting();
+            const language = lang && hljs?.getLanguage(lang) ? lang : 'plaintext';
+            const highlighted = hljs ? hljs.highlight(text, { language }).value : escapeHtml(text);
             // 结构/显示名与笔记编辑器共用同一外观契约（code-block-render.ts），
             // taskview 额外携带实时预览属性
             return renderCodeBlockHtml(highlighted, {

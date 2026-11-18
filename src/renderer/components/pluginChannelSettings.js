@@ -10,11 +10,11 @@
  */
 
 /**
- * 「渠道设置」页签里的插件渠道面板（plugin-channel-settings）。
+ * 「仓库设置」页签里的插件仓库面板（plugin-channel-settings）。
  *
- * 管理插件市场渠道：每个启用的渠道在「插件中心 → 插件市场」里是一个独立的插件市场。
+ * 管理插件市场仓库：每个启用的仓库在「插件中心 → 插件市场」里是一个独立的插件市场。
  * 面板行为（启停只改一行、增删改只重画列表、添加/编辑时由主进程联网校验清单）与测评集
- * 渠道面板完全一致，因此共用 `RegistryChannelSettings`，这里只声明两者的差异。
+ * 仓库面板完全一致，因此共用 `RegistryChannelSettings`，这里只声明两者的差异。
  */
 
 import { RegistryChannelSettings } from './registryChannelSettings.js';
@@ -26,7 +26,7 @@ PluginChannelSettings.registryChannelConfig = {
     i18n: 'sp.pluginChannel',
     logTag: 'plugin-channel-settings',
     styleId: 'od-plugin-channel-style',
-    /** 样式类名前缀：两个渠道面板同时挂在「渠道设置」里，样式全局生效，必须各自带前缀 */
+    /** 样式类名前缀：两个仓库面板同时挂在「仓库设置」里，样式全局生效，必须各自带前缀 */
     cssPrefix: 'sp-pc',
     icon: 'fa-store',
     dom: {

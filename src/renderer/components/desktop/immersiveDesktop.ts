@@ -208,6 +208,7 @@ export class ImmersiveDesktop extends HTMLElement {
     private _activeMetrics: GridMetrics | null = null;
     private _stageObserver: ResizeObserver | null = null;
     private _renderedAppsSignature = '';
+    private _appListUnsubscribe: (() => void) | null = null;
     private _lastHeaderDragMoved = false;
     private _editingNewCardId: string | null = null;
 
@@ -230,6 +231,13 @@ export class ImmersiveDesktop extends HTMLElement {
             await this.loadCards();
         })();
         void this.loadApplications();
+        // 应用列表变更（含插件 ctx.features.disableApplication 禁用应用）时刷新桌面图标，
+        // 并关掉桌面上已打开的该应用窗口，避免留下点不动的窗口
+        this._appListUnsubscribe =
+            globalWindow.applicationRegistryAPI?.onApplicationListChanged?.((apps: unknown) => {
+                void this.loadApplications();
+                this.closeDisabledApplicationWindows(apps);
+            }) ?? null;
         this.focus({ preventScroll: true });
     }
 
@@ -241,6 +249,8 @@ export class ImmersiveDesktop extends HTMLElement {
         this._themeObserver = null;
         this._themeUnsubscribe?.();
         this._themeUnsubscribe = null;
+        this._appListUnsubscribe?.();
+        this._appListUnsubscribe = null;
         window.removeEventListener('pointerdown', this.onGlobalPointerDown);
         window.removeEventListener('pointermove', this.onGlobalPointerMove);
         window.removeEventListener('pointerup', this.onGlobalPointerUp);
@@ -1568,6 +1578,22 @@ export class ImmersiveDesktop extends HTMLElement {
             this._apps = [];
         }
         this.renderAppList();
+    }
+
+    /** 关掉桌面上已打开、但应用已被插件禁用的浮动窗口（主进程列表对其 showIcon=false） */
+    private closeDisabledApplicationWindows(apps: unknown): void {
+        if (!Array.isArray(apps)) return;
+        const disabled = new Set(
+            (apps as Array<{ bundleName?: unknown; showIcon?: unknown }>)
+                .filter((app) => app?.showIcon === false && typeof app.bundleName === 'string')
+                .map((app) => app.bundleName as string)
+        );
+        if (disabled.size === 0) return;
+        for (const desktopWindow of [...this._windows.values()]) {
+            if (desktopWindow.bundleName && disabled.has(desktopWindow.bundleName)) {
+                this.closeWindow(desktopWindow.id);
+            }
+        }
     }
 
     private isAppListHidden(): boolean {

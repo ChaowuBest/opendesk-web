@@ -11,6 +11,11 @@
 
 import stripAnsi from 'strip-ansi';
 
+// Live snapshots may stop before a CSI/OSC control sequence is complete.
+// Keep that suffix pending so its completion never leaks into a later delta.
+// 各分支的字符集必须排除 ESC：扫描长度靠「下一个 ESC」截断，放进 ESC 会退化成平方级回溯。
+const INCOMPLETE_ANSI_SUFFIX = /\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b\x9c]*(?:\x1b)?|[ -/]*)$/;
+
 /**
  * 终端 live 输出的增量计算。
  *
@@ -50,6 +55,8 @@ export function computeTerminalLiveOutputFrame(
     lastSentStripped: string,
     currentOutput: string
 ): TerminalOutputDelta & { stripped: string } {
-    const stripped = stripAnsi(currentOutput);
+    // Some strip-ansi versions consume the introducer of an unfinished OSC.
+    // Remove pending suffixes first, while their escape markers are still intact.
+    const stripped = stripAnsi(currentOutput.replace(INCOMPLETE_ANSI_SUFFIX, ''));
     return { stripped, ...computeTerminalOutputDelta(lastSentStripped, stripped) };
 }

@@ -11,6 +11,7 @@
 
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { createRendererTranslator } from '../locale.ts';
+import { initFeatureState, isApplicationDisabledByFeature, isFeatureDisabled } from '../features.js';
 
 const HOME_SEARCH_DEBOUNCE_MS = 800;
 const HOME_SEARCH_TOP_K = 50;
@@ -38,6 +39,11 @@ const EMPTY_HOME_SEARCH_STATE = Object.freeze({
     error: null
 });
 let homeSearchState = { ...EMPTY_HOME_SEARCH_STATE };
+
+/** 语义搜索是否被插件门控掉（filesystem 特性禁用或 filemgr 应用整体禁用） */
+function isSemanticSearchUnavailable() {
+    return isFeatureDisabled('filesystem') || isApplicationDisabledByFeature('filemgr');
+}
 
 function normalizeSearchResultPath(item) {
     return String(item?.path ?? '')
@@ -106,6 +112,8 @@ class HomePage extends HTMLElement {
     }
 
     async connectedCallback() {
+        // 插件特性禁用状态（filesystem 搜索按钮显隐）需要先于首帧渲染就绪
+        initFeatureState();
         // Load user locale settings before rendering
         try {
             const settingObj = await window.settingAPI?.loadSettingObject?.();
@@ -293,6 +301,11 @@ class HomePage extends HTMLElement {
     }
 
     _setSearchMode(enabled, options = {}) {
+        // 插件禁用 filesystem 特性（或整个 filemgr 应用）后语义搜索不可用：搜索模式强制关闭
+        // （按钮已隐藏，这里兜底 searchMode 残留或事件触发的开启路径）
+        if (isSemanticSearchUnavailable()) {
+            enabled = false;
+        }
         const recommendation = this.querySelector('#home-recommendation');
         const agentInput = this.querySelector('#agent-input-main');
         this.__searchMode = Boolean(enabled);
@@ -331,6 +344,10 @@ class HomePage extends HTMLElement {
         if (this.__search_timeout) {
             clearTimeout(this.__search_timeout);
             this.__search_timeout = null;
+        }
+        // filesystem 特性被禁用或 filemgr 应用被禁用时不再发起索引搜索（按钮已隐藏，这里兜底）
+        if (isSemanticSearchUnavailable()) {
+            return;
         }
 
         const trimmed = String(query ?? '').trim();

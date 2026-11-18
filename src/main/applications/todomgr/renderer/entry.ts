@@ -13,7 +13,7 @@ import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { showWorkspacePicker } from '../../../../renderer/components/workspacePicker.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
-import { createRendererTranslator, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { createRendererTranslator, onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForTodoMgr } from '../locale/renderer.js';
 import type { TodoTemplate } from '../templates.js';
 import {
@@ -1268,7 +1268,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
         });
         if (typeof unsubscribe === 'function') {
-            this._settingUnsubscribe = unsubscribe;
+            // 语言包安装/卸载（即使未换语言）也重放一次 locale 应用，让新增量立即渲染；
+            // 退订与 setting 订阅共用 _settingUnsubscribe，元素销毁时一并清理
+            const unsubscribeLocalePacks = onLocalePacksChanged(() => {
+                if (!this.isConnected) return;
+                void window.settingAPI
+                    ?.loadSettingObject?.()
+                    .then((setting) => this._applyLocaleSetting(setting))
+                    .catch(() => {});
+            });
+            this._settingUnsubscribe = () => {
+                unsubscribe();
+                unsubscribeLocalePacks?.();
+            };
         }
     }
 

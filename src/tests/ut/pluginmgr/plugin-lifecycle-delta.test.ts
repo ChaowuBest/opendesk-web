@@ -21,11 +21,11 @@ import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting
  * 卸载时主进程被阻塞数秒、界面无响应。
  */
 
-function writePluginSource(directory: string, id: string): void {
+function writePluginSource(directory: string, id: string, manifestExtras: Record<string, unknown> = {}): void {
     fs.mkdirSync(directory, { recursive: true });
     fs.writeFileSync(
         path.join(directory, 'opendesk.plugin.json'),
-        JSON.stringify({ id, entry: './index.mjs', apiVersion: 1, capabilities: [] })
+        JSON.stringify({ id, entry: './index.mjs', apiVersion: 1, capabilities: [], ...manifestExtras })
     );
     // setup 时在自己的数据目录里累计一次启动次数，用于判断插件是否被重新激活
     fs.writeFileSync(
@@ -279,6 +279,18 @@ describe('pluginmgr 安装差量化', () => {
 
         expect(getPluginHost().get('builtin-plugin')?.status).toBe('active');
         expect(setupCount('builtin-plugin')).toBe(1);
+    });
+
+    test('平台不满足的本地安装原样抛结构化串供渲染层弹模态', async () => {
+        // 渲染层靠结构化串识别平台闸门并弹模态；若走 describeInstallFailure 的合成消息
+        // （文案 + 原始串），界面解析不出原因，只能落回默认系统通知
+        const sourceDirectory = path.join(sourcesDirectory, 'other-platform-plugin');
+        writePluginSource(sourceDirectory, 'other-platform-plugin', { platforms: ['openharmony'] });
+
+        const application = new PluginMgrApplication();
+        await expect(application.install(sourceDirectory)).rejects.toThrow(
+            'plugin.install_platform_unsupported:other-platform-plugin:openharmony'
+        );
     });
 
     test('覆盖安装失败时旧插件被装回运行时，并广播变更', async () => {

@@ -816,6 +816,39 @@ describe('opencode session routes', () => {
         expect(messages[1].parts[0].messageID).toBe(messages[1].info.id);
     });
 
+    test('GET /session/:id/message hides internal user messages from the listing', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const reminder = new UserMessage('<system-reminder>locale reminder text</system-reminder>');
+        reminder.message_id = 'locale-reminder-1';
+        reminder.timestamp = 500;
+        reminder.internal = true;
+        const realUser = new UserMessage('real question');
+        realUser.message_id = 'real-user-1';
+        realUser.timestamp = 1000;
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'real-assistant-1';
+        assistant.appendText('real answer');
+        task.chat_context.messages = [reminder, realUser, assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages.map((message: any) => message.info.role)).toEqual(['user', 'assistant']);
+        expect(JSON.stringify(messages)).not.toContain('locale reminder text');
+        // assistant 的父消息链接到最近一条可见用户消息，而不是被隐藏的 internal 消息
+        expect(messages[1].info.parentID).toBe(messages[0].info.id);
+    });
+
     test('DELETE /session/:id/message/:messageID accepts the public message id and persists removal', async () => {
         mockSessionDependencies();
         mockSetting();
@@ -1260,6 +1293,76 @@ describe('opencode session routes', () => {
                 (event) => event.type === 'message.part.updated' && event.properties.part.sessionID === 'ses_child'
             )
         ).toBe(true);
+    });
+
+    test('completed child assistant parent link skips internal user messages', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+        const parent = new TaskState(manager, null);
+        parent.task_id = 'task_parent';
+        parent.task_name = 'parent';
+        parent.workspace = workspace;
+        parent.harnessContext.workspace = workspace;
+        manager.tasks.push(parent);
+        registerServerSubTaskLifecycle(parent);
+
+        const child = manager.createSubTask(parent.task_id);
+        child.task_id = 'task_child';
+        child.task_name = 'child';
+        child.workspace = workspace;
+        child.harnessContext.workspace = workspace;
+        parent.notifySubTaskCreated(child);
+
+        // internal 用户消息紧邻 assistant（如 goal/workflow 内部 prompt），完成后发布的
+        // assistant 消息 parentID 应跳过它，落到最近一条可见用户消息上
+        const earlierUser = new UserMessage('earlier question');
+        earlierUser.message_id = 'child-earlier-user';
+        const internalPrompt = new UserMessage('internal continuation prompt');
+        internalPrompt.message_id = 'child-internal-prompt';
+        internalPrompt.internal = true;
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'child-assistant';
+        assistant.content.push(new TextMessagePart('child result'));
+        child.chat_context.messages = [earlierUser, internalPrompt, assistant];
+
+        child.task_status = 'stopped';
+        child.finished_at = new Date();
+        child.publishTaskUpdate(
+            {
+                type: 'assistant',
+                task_id: child.task_id,
+                task_status: 'stopped',
+                message_id: assistant.message_id,
+                last_part_index: 0,
+                last_part: assistant.content[0]
+            } as any,
+            'test child finished'
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState: manager } as any);
+        const listResponse = await SessionRoutes().request(
+            `/ses_child/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+        const messages = await listResponse.json();
+        expect(messages.map((message: any) => message.info.role)).toEqual(['user', 'assistant']);
+        expect(JSON.stringify(messages)).not.toContain('internal continuation prompt');
+
+        const assistantUpdates = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .filter(
+                (event) =>
+                    event.type === 'message.updated' &&
+                    event.properties?.info?.sessionID === 'ses_child' &&
+                    event.properties.info.role === 'assistant'
+            );
+        const completed = assistantUpdates[assistantUpdates.length - 1];
+        expect(completed.properties.info.parentID).toBe(messages[0].info.id);
     });
 
     test('queries and aborts child sessions by their public session id', async () => {

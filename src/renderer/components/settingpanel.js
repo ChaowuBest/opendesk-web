@@ -11,7 +11,8 @@
 
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { escapeHtml } from '../../common/utils/escape.js';
-import { createRendererTranslator } from '../locale.ts';
+import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
+import { formatLocaleDisplayName, orderLocaleOptions } from '../../common/locale/pack.js';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
@@ -175,15 +176,59 @@ class SettingPanel extends HTMLElement {
                 this.updateState = state;
                 this.refreshUpdateSection();
             });
+            // 语言包安装/卸载、生效语言变化的订阅与刷新（含"自动"模式解析结果纠正）
+            this._subscribeLocaleChanges();
         })();
     }
 
     /**
-     * 把主进程里的渠道配置同步进 currentData。
+     * 订阅语言相关变化并同步刷新面板。
      *
-     * 测评集渠道 / 插件渠道由各自的渠道组件直接写进主进程的 `applications.<bundleName>`，
-     * 面板手里的副本会因此变旧；保存前必须先对齐，否则会把刚加/删的渠道整块写回旧值。
-     * 只覆盖渠道所在的那几个应用配置，不整份重新载入，避免冲掉其它 Tab 里还没保存的输入。
+     * - locale:packsChanged（语言包安装/卸载/词条更新）：拉取 main 权威 resolved_locale
+     *   后重建翻译器——不能直接用面板 currentData 里可能滞留的旧值，否则切到"自动"
+     *   时会按旧语言解析、面板不跟随（侧边栏用广播对象所以不受影响）。
+     * - setting:changed：main 广播的 locale / resolved_locale 是权威值；仅在语言字段
+     *   实际变化时重建刷新，避免无关配置项保存触发全面板重建。
+     */
+    _subscribeLocaleChanges() {
+        if (this._localePacksUnsubscribe) return;
+        this._localePacksUnsubscribe = onLocalePacksChanged(() => {
+            if (!this.isConnected) return;
+            void window.settingAPI
+                ?.loadSettingObject?.()
+                .then((data) => {
+                    if (!this.isConnected || !this.currentData) return;
+                    if (typeof data?.resolved_locale === 'string') {
+                        this.currentData.resolved_locale = data.resolved_locale;
+                    }
+                    this._t = createRendererTranslator(this.currentData);
+                    this.refreshAll();
+                })
+                .catch(() => {});
+        });
+        this._settingUnsubscribe = window.settingAPI?.onSettingChanged?.((data) => {
+            if (!this.isConnected || !data || typeof data !== 'object' || !this.currentData) return;
+            let localeChanged = false;
+            if (typeof data.locale === 'string' && data.locale !== this.currentData.locale) {
+                this.currentData.locale = data.locale;
+                localeChanged = true;
+            }
+            if (typeof data.resolved_locale === 'string' && data.resolved_locale !== this.currentData.resolved_locale) {
+                this.currentData.resolved_locale = data.resolved_locale;
+                localeChanged = true;
+            }
+            if (!localeChanged) return;
+            this._t = createRendererTranslator(this.currentData);
+            this.refreshAll();
+        });
+    }
+
+    /**
+     * 把主进程里的仓库配置同步进 currentData。
+     *
+     * 测评集仓库 / 插件仓库由各自的仓库组件直接写进主进程的 `applications.<bundleName>`，
+     * 面板手里的副本会因此变旧；保存前必须先对齐，否则会把刚加/删的仓库整块写回旧值。
+     * 只覆盖仓库所在的那几个应用配置，不整份重新载入，避免冲掉其它 Tab 里还没保存的输入。
      */
     async _syncChannelConfigs() {
         try {
@@ -207,6 +252,10 @@ class SettingPanel extends HTMLElement {
         this._clearStartupListeners();
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
+        this._localePacksUnsubscribe?.();
+        this._localePacksUnsubscribe = null;
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
         this._scaleFactorChangeUnsub = null;
         if (this._modalEscHandler) {
@@ -311,7 +360,7 @@ class SettingPanel extends HTMLElement {
                 iconSvg: svg('<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>')
             },
             {
-                // 渠道设置：测评集渠道与插件渠道共用这一个页签（顺序见下方 render()）
+                // 仓库设置：测评集仓库与插件仓库共用这一个页签（顺序见下方 render()）
                 id: 'registries',
                 label: this._t('sp.tab.registryChannels'),
                 iconSvg: svg('<path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/>')
@@ -329,7 +378,7 @@ class SettingPanel extends HTMLElement {
             .map((t) => {
                 const active = t.id === this._activeTab;
                 return `<button class="sp-nav-item ${active ? 'active' : ''}" data-tab="${t.id}">
-                ${t.iconSvg} ${t.label}
+                ${t.iconSvg} <span class="sp-nav-label">${t.label}</span>
             </button>`;
             })
             .join('');
@@ -396,7 +445,8 @@ class SettingPanel extends HTMLElement {
 
             /* ── Left sidebar navigation (Tabs) ── */
             .sp-nav {
-                width: 164px; flex: none;
+                /* 宽度跟随最长文案自适应（下限维持原 164px 设计宽度），上限封顶，超出部分由文案省略号收敛 */
+                width: auto; min-width: 164px; max-width: 220px; flex: none;
                 display: flex; flex-direction: column; gap: 2px;
             }
             .sp-nav-item {
@@ -410,6 +460,11 @@ class SettingPanel extends HTMLElement {
             }
             .sp-nav-item svg {
                 flex-shrink: 0;
+            }
+            .sp-nav-label {
+                /* 导航列达到上限仍放不下时省略号截断，避免长文本语言（如德语）溢出导航列 */
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
             .sp-nav-item:hover {
                 background: var(--sp-color-bg-hover, #F0EFEC);
@@ -2303,6 +2358,20 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
+        // 语言选项动态化：内置语言 + 已启用语言包注册的语言（preload 快照；不可用时退回内置）
+        // 顺序：默认（跟随系统）→ 中文 → 其余按字母序
+        const builtinLocaleLabels = { 'zh-CN': '中文', 'en-US': 'English' };
+        const availableLocales = orderLocaleOptions(
+            window.localeAPI?.getLocalePacks?.()?.availableLocales?.length > 0
+                ? window.localeAPI.getLocalePacks().availableLocales
+                : Object.keys(builtinLocaleLabels)
+        );
+        const localeOptionsHtml = availableLocales
+            .map((tag) => {
+                const label = builtinLocaleLabels[tag] ?? formatLocaleDisplayName(tag);
+                return `<option value="${escapeHtml(tag)}"${currentLocale === tag ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+            })
+            .join('');
         const systemStartupSettings = this.launchAtLoginState?.mode === 'system-settings';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
@@ -2379,8 +2448,7 @@ class SettingPanel extends HTMLElement {
                     <label class="sp-form-label">${this._t('sp.general.language')}</label>
                     <select id="locale-select" class="sp-form-input">
                         <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>${this._t('sp.general.language.system')}</option>
-                        <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
-                        <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
+                        ${localeOptionsHtml}
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
@@ -2599,7 +2667,7 @@ class SettingPanel extends HTMLElement {
 
     refreshUpdateSection() {
         // 「软件更新」区块住在通用设置里，刷新时只替换这一块（找不到就补到通用 Tab 最前面），
-        // 绝不整页重建：整页重建会连带把模型/渠道等区块的 DOM 与状态一起丢掉。
+        // 绝不整页重建：整页重建会连带把模型/仓库等区块的 DOM 与状态一起丢掉。
         const current = this.querySelector('#software-update-section');
         const html = this.renderUpdateSection();
         if (current) {
@@ -3776,12 +3844,11 @@ class SettingPanel extends HTMLElement {
         // 语言选择
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
-            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-            this.refreshAll();
-            void this.saveImmediately().then(() => {
-                this._t = createRendererTranslator(this.currentData);
-                this.refreshAll();
-            });
+            // 不在本地立即重建翻译器：此刻瘦身快照仍是旧语言的，新语言词条尚未下发，
+            // 立即切换会先回退英文、等广播到位再切回（闪英文）。只保存设置，main 侧
+            // 检测到生效语言变化会先推送新语言快照（locale:packsChanged），connectedCallback
+            // 里订阅的 onLocalePacksChanged 随即重建翻译器并 refreshAll，一次性切到新语言
+            void this.saveImmediately();
         });
 
         // 字体预设
@@ -4042,8 +4109,8 @@ class SettingPanel extends HTMLElement {
         this._saving = true;
         let sideEffectFailures = [];
         try {
-            // 渠道配置由主进程直接写盘：保存整份配置前先对齐一次，
-            // 否则这次保存会把刚加/删的渠道冲掉
+            // 仓库配置由主进程直接写盘：保存整份配置前先对齐一次，
+            // 否则这次保存会把刚加/删的仓库冲掉
             await this._syncChannelConfigs();
             const result = await window.settingAPI.saveSettingObjectDetailed(this.currentData);
             const savedData = result.data;
@@ -5155,12 +5222,9 @@ class SettingPanel extends HTMLElement {
     _bindGeneralSectionEvents() {
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
-            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
-            this.refreshAll();
-            void this.saveImmediately().then(() => {
-                this._t = createRendererTranslator(this.currentData);
-                this.refreshAll();
-            });
+            // 同上：不在本地立即重建，等 main 推送新语言快照后的 onLocalePacksChanged
+            // 统一重建翻译器并 refreshAll，避免"先英文再切回"的中间态
+            void this.saveImmediately();
         });
         this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
             const preset = e.target.value;

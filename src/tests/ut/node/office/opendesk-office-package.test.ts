@@ -12,13 +12,16 @@ test('OpenDesk Office exposes an npm-like host package boundary', () => {
         'main',
         'word-main',
         'sheets-main',
+        'pdf-main',
         'host-security',
         'preload',
         'word-preload',
         'sheets-preload',
+        'pdf-preload',
         'renderer',
         'word-renderer',
         'sheets-renderer',
+        'pdf-renderer',
         'vite',
         'hap',
         'hap-manifest',
@@ -42,9 +45,11 @@ test('OpenDesk Office declares every HAP runtime dependency and asset', async ()
 
     assert.deepEqual(manifest.artifacts.sort(), [
         'dist/main/assets/opendesk-office-ironcalc.wasm',
+        'dist/preload/pdfPreload.js',
         'dist/preload/sheetsPreload.js',
         'dist/preload/slidesPreload.js',
         'dist/preload/wordPreload.js',
+        'dist/renderer/pdf_editor.html',
         'dist/renderer/sheets_editor.html',
         'dist/renderer/slides_editor.html',
         'dist/renderer/word_editor.html'

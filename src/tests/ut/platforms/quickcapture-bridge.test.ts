@@ -126,7 +126,8 @@ jest.unstable_mockModule('../../../locale/index.js', () => ({
             .map(([name, value]) => `${name}=${String(value)}`)
             .join(',');
         return `${key}:${suffix}`;
-    }
+    },
+    translateWithDomain: (key: string) => key
 }));
 
 let backendEnabled = true;

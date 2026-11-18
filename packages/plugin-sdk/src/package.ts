@@ -60,7 +60,9 @@ const McpServerSchema = z.discriminatedUnion('transport', [
 const PluginResourcesSchema = z.object({
     skills: z.array(z.string().min(1)).optional(),
     mcpServers: z.array(McpServerSchema).optional(),
-    agents: z.array(z.string().min(1)).optional()
+    agents: z.array(z.string().min(1)).optional(),
+    /** 语言包声明：目录（收集顶层 *.json）或单文件，文件名即 BCP-47 语言 tag */
+    locales: z.array(z.string().min(1)).optional()
 });
 
 /** 站点地址：只接受 http(s)——会展示在界面上，不能放行 `javascript:` 之类的协议 */
@@ -137,7 +139,11 @@ const SemverSchema = z
     .refine((value) => isSemVerVersion(value), { message: 'expected a SemVer version such as 1.2.3' });
 
 export const OpenDeskPluginManifestSchema = z.object({
-    entry: z.string().min(1),
+    /**
+     * 插件入口：可运行插件必填；纯静态插件（如语言包，只声明 resources.* 的贡献）
+     * 不需要入口文件，缺省即按纯静态插件装载（宿主不执行任何插件代码）。
+     */
+    entry: z.string().min(1).optional(),
     id: z
         .string()
         .regex(/^[a-zA-Z][a-zA-Z0-9._-]*$/)
@@ -177,20 +183,24 @@ export const OpenDeskPluginManifestSchema = z.object({
 });
 
 const PackagePluginDeclarationSchema = OpenDeskPluginManifestSchema.omit({ entry: true }).extend({
-    plugin: z.string().min(1)
+    /** 与 entry 同口径：纯静态插件可不声明 */
+    plugin: z.string().min(1).optional()
 });
 
 export interface ValidatedOpenDeskPluginPackage {
     id: string;
     name: string;
     version: string;
-    entry: string;
+    /** 解析后的入口绝对路径；纯静态插件（语言包等）没有入口，为 undefined */
+    entry?: string;
     apiVersion: number;
     capabilities: string[];
     /** 插件要求的宿主版本下界（含）；未声明表示不限。安装期的宿主版本闸门据此拦截 */
     minOpenDeskVersion?: string;
     /** 插件要求的宿主版本上界（含）；未声明表示不限 */
     maxOpenDeskVersion?: string;
+    /** 插件支持的操作系统平台（win32 / darwin / linux 等）；未声明表示不限。安装期的平台闸门据此拦截 */
+    platforms?: string[];
 }
 
 function normalizePluginId(packageName: string): string {
@@ -312,13 +322,19 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
         throw new OpenDeskPluginPackageError('package_metadata_invalid', 'package version is required');
     }
     const declaration = readPluginManifest(directory, packageJson);
-    assertSafeRelativePath(declaration.entry);
-    const entry = path.resolve(directory, declaration.entry);
-    if (!fs.existsSync(entry) || !fs.statSync(entry).isFile()) {
-        throw new OpenDeskPluginPackageError(
-            'plugin_structure_invalid',
-            `plugin entry not found: ${declaration.entry}`
-        );
+    // 入口仅在声明时校验存在性：纯静态插件（语言包等只声明 resources.locales 的贡献）
+    // 没有可运行入口，缺 entry 是合法形态，由宿主 loader 走静态装载路径
+    let entry: string | undefined;
+    if (declaration.entry !== undefined) {
+        assertSafeRelativePath(declaration.entry);
+        const resolvedEntry = path.resolve(directory, declaration.entry);
+        if (!fs.existsSync(resolvedEntry) || !fs.statSync(resolvedEntry).isFile()) {
+            throw new OpenDeskPluginPackageError(
+                'plugin_structure_invalid',
+                `plugin entry not found: ${declaration.entry}`
+            );
+        }
+        entry = resolvedEntry;
     }
     for (const skillPath of declaration.resources?.skills ?? []) {
         assertSafeRelativePath(skillPath);
@@ -365,6 +381,22 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
             'plugin agent resource requires the agent capability'
         );
     }
+    if (declaration.resources?.locales?.length && !declaration.capabilities.includes('locale')) {
+        throw new OpenDeskPluginPackageError(
+            'plugin_manifest_invalid',
+            'plugin locale resource requires the locale capability'
+        );
+    }
+    for (const localePath of declaration.resources?.locales ?? []) {
+        assertSafeRelativePath(localePath);
+        const resolvedLocalePath = path.resolve(directory, localePath);
+        if (!fs.existsSync(resolvedLocalePath)) {
+            throw new OpenDeskPluginPackageError(
+                'plugin_structure_invalid',
+                `plugin locale path not found: ${localePath}`
+            );
+        }
+    }
     const packageName = typeof packageJson.name === 'string' && packageJson.name ? packageJson.name : undefined;
     const packageVersion =
         typeof packageJson.version === 'string' && packageJson.version ? packageJson.version : undefined;
@@ -377,7 +409,8 @@ function validatePluginDirectory(directory: string, requirePackageMetadata: bool
         apiVersion: declaration.apiVersion,
         capabilities: [...declaration.capabilities],
         minOpenDeskVersion: declaration.minOpenDeskVersion,
-        maxOpenDeskVersion: declaration.maxOpenDeskVersion
+        maxOpenDeskVersion: declaration.maxOpenDeskVersion,
+        platforms: declaration.platforms ? [...declaration.platforms] : undefined
     };
 }
 

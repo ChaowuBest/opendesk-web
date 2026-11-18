@@ -16,7 +16,7 @@
 import Alpine from 'alpinejs';
 import { installApplicationFrameProxies } from './application-frame-proxy.js';
 import { initApplicationThemeHost, initApplicationThemeFromAPI } from '../theme/theme-iframe-bridge.js';
-import { createRendererTranslator } from '../locale.js';
+import { createRendererTranslator, onLocalePacksChanged } from '../locale.js';
 import { ApplicationTaskSession } from './application-task-session.js';
 
 /** 将 iframe 内键盘/鼠标事件转发给父窗口，使父窗口的输入监听在子应用中仍能生效 */
@@ -444,6 +444,17 @@ void (async () => {
     window.settingAPI?.onSettingChanged?.((settings) => {
         applicationHostT = createRendererTranslator(settings);
         updateFloatingChatTranslations();
+    });
+
+    // 语言包安装/卸载后重建翻译器（按最新设置重取，避免语言覆盖丢失）
+    onLocalePacksChanged?.(() => {
+        void window.settingAPI
+            ?.loadSettingObject?.()
+            .then((settings) => {
+                applicationHostT = createRendererTranslator(settings);
+                updateFloatingChatTranslations();
+            })
+            .catch(() => {});
     });
 
     try {

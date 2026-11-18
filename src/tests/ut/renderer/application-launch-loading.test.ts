@@ -54,7 +54,7 @@ describe('应用启动加载占位', () => {
         );
     });
 
-    test('切到测评后，后台 Browser Use 不会让旧任务重新可见', () => {
+    test('切到测评后，后台 Browser Use 不会让旧任务重新可见', async () => {
         const { document } = parseHTML(`
             <div id="nonAppSlot">
                 <task-view id="previous"><nav class="od-chat-nav"></nav></task-view>
@@ -84,7 +84,7 @@ describe('应用启动加载占位', () => {
         vm.runInContext('showAppFrames()', context);
 
         const backgroundWasRenderable = getDisplay(nonAppSlot) !== 'none' && getDisplay(background) !== 'none';
-        vm.runInContext(makeEnsureSidebarScript('background'), context);
+        await vm.runInContext(`(() => { ${makeEnsureSidebarScript('background')} })()`, context);
 
         expect(appFramesContainer.style.display).toBe('block');
         expect(vm.runInContext('currentNonAppContent', context)).toBeNull();

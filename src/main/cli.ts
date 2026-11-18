@@ -21,6 +21,7 @@ import {
     reloadLoggerFileTransport
 } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
+import { getFeatureManager } from '../common/features/manager.js';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
 import { initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
@@ -99,6 +100,15 @@ function warnToStderr(message: string): void {
     process.stderr.write(message + '\n');
 }
 
+/** worker 启动时注入插件已禁用的特性/应用（worker 侧门控的初始状态；运行时变更由 registry 推送） */
+function collectWorkerDisableOptions() {
+    const manager = getFeatureManager();
+    return {
+        disabledFeatures: manager.getDisabledFeatures(),
+        disabledApplications: manager.getDisabledApplications()
+    };
+}
+
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
 // 当终端管道断开或系统休眠后恢复时，写入操作可能触发 EPIPE
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
@@ -164,7 +174,11 @@ function parseCommandLineArgs() {
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'no permission check, every operation is allowed');
     prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
-    prog.option('--language <lang>', 'language to use (auto, zh-CN, en-US)', (v) => v);
+    prog.option(
+        '--language <lang>',
+        'language to use (auto, zh-CN, en-US, or any language provided by locale pack plugins)',
+        (v) => v
+    );
     prog.option('--render-interval <ms>', 'render throttle base interval in milliseconds (default: 100)', (v) =>
         parseInt(v, 10)
     );
@@ -443,7 +457,7 @@ async function main(args: CommandLineArgs) {
         registerGoalHooks();
         initializeHarnesses();
 
-        initializeRegistryWorker();
+        initializeRegistryWorker(collectWorkerDisableOptions());
         await ApplicationRegistry.ensureFullyLoaded();
         // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
         await syncPluginSkillServers();
@@ -484,7 +498,7 @@ async function main(args: CommandLineArgs) {
             process.stdout.write(FULL_CLEAR);
         }
 
-        initializeRegistryWorker();
+        initializeRegistryWorker(collectWorkerDisableOptions());
         await ApplicationRegistry.ensureFullyLoaded();
         // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
         await syncPluginSkillServers();

@@ -307,11 +307,12 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         await task.rewindToUserMessage(realUser.message_id, { resubmit: true });
 
+        // resubmit 走 submitUserMessage，会在重提交的用户消息前注入一条语言切换提醒
         expect(
             task.chat_context.messages
                 .filter((message): message is UserMessage => message instanceof UserMessage)
                 .map((message) => message.getPlainText())
-        ).toEqual(['old internal prompt', 'edit me']);
+        ).toEqual(['old internal prompt', expect.stringContaining('<system-reminder>'), 'edit me']);
         expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('new request-only prompt');
     });
 
@@ -336,11 +337,12 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         await task.rewindToUserMessage(realUser.message_id, { resubmit: true });
 
+        // resubmit 走 submitUserMessage，会在重提交的用户消息前注入一条语言切换提醒
         expect(
             task.chat_context.messages
                 .filter((message): message is UserMessage => message instanceof UserMessage)
                 .map((message) => message.getPlainText())
-        ).toEqual(['old internal prompt', 'edit me']);
+        ).toEqual(['old internal prompt', expect.stringContaining('<system-reminder>'), 'edit me']);
         expect(JSON.stringify(task.chat_context.toJSON())).not.toContain('current request-only prompt');
     });
 });

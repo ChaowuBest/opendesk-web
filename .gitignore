@@ -9,6 +9,7 @@
 .plan
 .atomcode
 .trae
+.zcode
 
 **/.DS_Store
 **/__pycache__

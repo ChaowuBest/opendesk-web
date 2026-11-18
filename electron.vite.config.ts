@@ -111,6 +111,7 @@ export default defineConfig(({ mode }) => {
             }
         },
         preload: {
+            resolve: { alias: openDeskOfficeAliases },
             plugins: [tailwindcss()],
             build: {
                 outDir: 'dist/preload',
@@ -129,7 +130,8 @@ export default defineConfig(({ mode }) => {
                         webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js'),
                         slidesPreload: openDeskOfficeEntries.slides.preload,
                         wordPreload: openDeskOfficeEntries.word.preload,
-                        sheetsPreload: openDeskOfficeEntries.sheets.preload
+                        sheetsPreload: openDeskOfficeEntries.sheets.preload,
+                        pdfPreload: openDeskOfficeEntries.pdf.preload
                     },
                     output: {
                         format: 'cjs',
@@ -180,7 +182,8 @@ export default defineConfig(({ mode }) => {
                         task_status_widget: path.join(__dirname, 'src', 'renderer', 'task_status_widget.html'),
                         slides_editor: path.join(__dirname, 'src', 'renderer', 'slides_editor.html'),
                         word_editor: path.join(__dirname, 'src', 'renderer', 'word_editor.html'),
-                        sheets_editor: path.join(__dirname, 'src', 'renderer', 'sheets_editor.html')
+                        sheets_editor: path.join(__dirname, 'src', 'renderer', 'sheets_editor.html'),
+                        pdf_editor: path.join(__dirname, 'src', 'renderer', 'pdf_editor.html')
                     },
                     onwarn(warning, warn) {
                         // 忽略 Tailwind CSS 的 sourcemap 警告

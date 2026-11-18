@@ -118,11 +118,14 @@ declare global {
             onExit: (callback: (event: { sessionId: string; exitCode: number; signal?: number }) => void) => () => void;
         };
         officeHostAPI: {
-            prepare: (kind: 'slides' | 'word' | 'sheets') => Promise<boolean>;
-            requestClose: (kind: 'slides' | 'word' | 'sheets', webContentsId: number) => Promise<boolean>;
-            refreshPresentation: (webContentsId: number) => Promise<boolean>;
+            prepare: (kind: import('../common/officeWebview.js').OfficeEditorKind) => Promise<boolean>;
+            requestClose: (
+                kind: import('../common/officeWebview.js').OfficeEditorKind,
+                webContentsId: number
+            ) => Promise<boolean>;
+            refreshFile: (webContentsId: number, filePath: string) => Promise<void>;
             bindOfficeTask: (
-                kind: 'slides' | 'word' | 'sheets',
+                kind: import('../common/officeWebview.js').OfficeEditorKind,
                 taskId: string,
                 filePath: string,
                 webContentsId: number
@@ -130,7 +133,7 @@ declare global {
             onOpenOfficeTaskFile: (
                 callback: (request: {
                     requestId: string;
-                    kind: 'slides' | 'word' | 'sheets';
+                    kind: import('../common/officeWebview.js').OfficeEditorKind;
                     taskId: string;
                     filePath: string;
                 }) => void
@@ -155,6 +158,15 @@ declare global {
             check: () => Promise<unknown>;
             restart: () => Promise<boolean>;
             onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
+        };
+        /** preload 注入的语言包 API：快照由 preload 缓存，供翻译器同步读取 */
+        localeAPI?: {
+            /** 当前语言包快照；首次拉取完成前或不可达时为 null */
+            getLocalePacks: () => import('./locale.js').RendererLocalePackSnapshot | null;
+            /** 订阅语言包变更（含首次拉取完成），返回取消函数 */
+            onLocalePacksChanged: (
+                callback: (snapshot: import('./locale.js').RendererLocalePackSnapshot | null) => void
+            ) => () => void;
         };
         settingAPI: {
             listShells: () => Promise<import('../common/shells.js').SupportedShell[]>;
@@ -254,6 +266,8 @@ declare global {
             ensureApplicationLoaded: (bundleName: string) => Promise<void>;
             getApplicationGUIConfig: (bundleName: string) => Promise<any>;
             getApplicationList: () => Promise<any>;
+            /** 应用列表变更（含插件禁用应用）回调，返回取消订阅函数 */
+            onApplicationListChanged?: (callback: (apps: unknown) => void) => () => void;
         };
         fsAPI: {
             searchFilesByKeyword: (keyword: string) => Promise<any>;

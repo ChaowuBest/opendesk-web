@@ -51,9 +51,9 @@ export interface BasePluginRegistry {
     readonly name: string;
     readonly displayName: PluginRegistryDisplayName;
     /**
-     * 该 registry 支持的插件分类，按渠道声明顺序排列。
+     * 该 registry 支持的插件分类，按仓库声明顺序排列。
      *
-     * 为 undefined 表示这个渠道不支持按插件类型分类显示——界面上也就不会出现
+     * 为 undefined 表示这个仓库不支持按插件类型分类显示——界面上也就不会出现
      * 「全部插件 / 分类A / 分类B」那一排切换按钮。分类以 registry 自述为准，
      * 因此它是只读的，界面上没有「新建分类」这类入口。
      */

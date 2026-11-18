@@ -127,7 +127,9 @@ elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn {
     color: var(--od-text-muted, #8a8580) !important;
     padding: 0 !important;
     font-family: inherit !important;
-    flex: none !important;
+    /* 允许压缩：常显文案在窄侧栏里放不下时由文案让步（见 .elastic-label 的 ellipsis），
+       而不是让整行溢出到色栏边界之外被裁掉。图标宽度由 .elastic-icon-wrap 固定，不会被压缩 */
+    flex: 0 1 auto !important;
     white-space: nowrap !important;
     transition:
         background 0.15s ease,
@@ -154,9 +156,13 @@ elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn .elastic-icon-wrap sv
 elastic-toolbar-widget.sidebar-bottom .elastic-label {
     font-size: 11px !important;
     color: var(--od-text, #4a4642) !important;
+    /* 收起态宽度为 0；展开态的宽度上限由 --elastic-label-max 提供（见下方 hover/active 规则） */
     max-width: 0 !important;
     opacity: 0 !important;
     overflow: hidden !important;
+    /* 允许文案压缩到 0 并按省略号显示：整行空间不足时先牺牲文案宽度，保住图标与色栏边界 */
+    min-width: 0 !important;
+    text-overflow: ellipsis !important;
     margin-left: 0 !important;
     padding-right: 0 !important;
     transition:
@@ -173,8 +179,14 @@ elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
     color: var(--od-text-muted, #8a8580) !important;
 }
 
+/*
+ * 展开态的宽度上限取文案的真实内容宽度（由 toolbar.ts 实测后写入 --elastic-label-max），
+ * 不能用固定像素：固定 56px 会把长文案语言（如 “Système de fichiers”）截成半截，
+ * 且不同语言、不同字体下都会失真。calc 里的 +8px 是展开态 padding-right 的落地空间，
+ * 因为 border-box 下 max-width 已经包含内边距。
+ */
 elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover .elastic-label {
-    max-width: 56px !important;
+    max-width: calc(var(--elastic-label-max, 12em) + 8px) !important;
     opacity: 1 !important;
     padding-right: 8px !important;
 }
@@ -187,7 +199,7 @@ elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active {
 elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.navbar-active .elastic-label {
     color: #df4436 !important;
     font-weight: 500 !important;
-    max-width: 56px !important;
+    max-width: calc(var(--elastic-label-max, 12em) + 8px) !important;
     opacity: 1 !important;
     padding-right: 8px !important;
 }
@@ -241,8 +253,30 @@ elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .sb-f
 elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn.sb-feedback-btn .elastic-label {
     color: var(--od-text-muted, #8a8580) !important;
     font-weight: 500 !important;
-    max-width: 56px !important;
+    max-width: calc(var(--elastic-label-max, 12em) + 8px) !important;
     opacity: 1 !important;
+    padding-right: 0 !important;
+}
+
+/*
+ * 测量态：禁用压缩并把所有常显文案按内容宽度展开，用于判断整行是否放得下。
+ * 与 .sb-nav-row 的测量态同一思路——在同一任务内完成测量与恢复，不产生中间渲染帧。
+ */
+elastic-toolbar-widget.sidebar-bottom.elastic-labels-measure .elastic-capsule-btn {
+    flex: none !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom.elastic-labels-measure .elastic-capsule-btn .elastic-label {
+    max-width: calc(var(--elastic-label-max, 12em) + 8px) !important;
+}
+
+/*
+ * 整行放不下所有常显文案时，先收起反馈按钮的常显文案（次要信息，悬停仍有 title 提示），
+ * 把宽度让给当前页文案，避免文案被色栏边界裁断。
+ */
+elastic-toolbar-widget.sidebar-bottom.elastic-labels-tight .elastic-capsule-btn.sb-feedback-btn .elastic-label {
+    max-width: 0 !important;
+    opacity: 0 !important;
     padding-right: 0 !important;
 }
 

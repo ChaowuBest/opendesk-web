@@ -77,7 +77,7 @@ test('AgentOffice loads Staff capabilities without making Staff dispatchable', a
     const registrationSnapshots: Array<Array<{ agentId: string; config: unknown }>> = [];
     const application = new AgentOfficeApplication();
     application.callWorker = async (methodName: string) => {
-        assert.equal(methodName, 'listStaffs');
+        assert.equal(methodName, 'listStaffStartupInfo');
         return {
             status: 'ok',
             data: [staffListItem(ENABLED_STAFF_ID, true), staffListItem(DISABLED_STAFF_ID, false)]

@@ -28,7 +28,8 @@ function compileProbe(dir: string, name: string, source: string): string {
     const sourcePath = path.join(dir, `${name}.c`);
     fs.writeFileSync(sourcePath, source);
     const binary = path.join(dir, name);
-    execFileSync(CLANG, ['-O1', '-o', binary, sourcePath], { stdio: 'pipe' });
+    const sdk = execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8' }).trim();
+    execFileSync(CLANG, ['-isysroot', sdk, '-O1', '-o', binary, sourcePath], { stdio: 'pipe' });
     execFileSync(CODESIGN, ['--force', '--sign', '-', binary], { stdio: 'ignore' });
     return binary;
 }
@@ -91,6 +92,9 @@ darwinOnly('沙箱内核行为（C 探针真实进程）', () => {
         return fs.readdirSync(execCacheDir);
     };
     const sandboxEnv = (): Record<string, string> => ({
+        // These cases exercise the CLT shim and its allowlist, independently
+        // of whether the user's selected developer directory is a full Xcode.
+        DEVELOPER_DIR: path.resolve(CLT_USR_BIN, '../..'),
         OPENDESK_SANDBOX_TRASH_DIR: trash,
         OPENDESK_SANDBOX_TRASH: '1',
         // 沙箱判定日志（dylib slog）：python3/回收站用例失败时从此归因。

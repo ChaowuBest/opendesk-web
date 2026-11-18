@@ -91,7 +91,7 @@ describe('file explorer', () => {
         let callback!: (change: unknown) => void;
         const dispose = jest.fn();
         const requestClose = jest.fn(async () => true);
-        const refreshPresentation = jest.fn(async () => true);
+        const refreshFile = jest.fn(async () => {});
         (window as any).fsAPI = {
             watchFile: jest.fn(async (_path, cb) => {
                 callback = cb;
@@ -102,20 +102,21 @@ describe('file explorer', () => {
         (window as any).officeHostAPI = {
             prepare: jest.fn(async () => true),
             requestClose,
-            ...(ext === 'pptx' ? { refreshPresentation } : {})
+            refreshFile
         };
         const { container, explorer } = mountExplorer();
         explorer.selectFile(file);
         await settle();
         const editor = container.querySelector('.ws-office-editor-frame') as any;
         editor.getWebContentsId = () => 123;
+        editor.classList.remove('ws-office-editor-frame--loading');
         return {
             container,
             explorer,
             editor,
             dispose,
             requestClose,
-            refreshPresentation,
+            refreshFile,
             notify: () => callback({ path: file, type: 'changed' })
         };
     }
@@ -124,11 +125,11 @@ describe('file explorer', () => {
         const s = await openWatchedOffice('pptx');
         s.notify();
         s.notify();
-        await waitFor(() => s.refreshPresentation.mock.calls.length > 0, 'ppt in-place refresh started');
+        await waitFor(() => s.refreshFile.mock.calls.length > 0, 'ppt in-place refresh started');
         // 刷新链收尾后（_fileRefreshVersion 归零）仍只有一次：说明去抖窗口内的第二次通知被合并了
         await waitFor(() => s.explorer._fileRefreshVersion === null, 'ppt in-place refresh finished');
-        expect(s.refreshPresentation).toHaveBeenCalledTimes(1);
-        expect(s.refreshPresentation).toHaveBeenCalledWith(123);
+        expect(s.refreshFile).toHaveBeenCalledTimes(1);
+        expect(s.refreshFile).toHaveBeenCalledWith(123, '/workspace/deck.pptx');
         expect(s.requestClose).not.toHaveBeenCalled();
         expect(officeFrame(s.container)).toBe(s.editor);
         expect(s.container.querySelector('.ws-preview-size')?.textContent).toBe('4.0 KB');
@@ -137,44 +138,41 @@ describe('file explorer', () => {
         expect(s.dispose).toHaveBeenCalledTimes(1);
     });
 
-    test.each(['docx', 'xlsx'] as const)('reloads watched %s through its close guard', async (ext) => {
+    test.each(['docx', 'xlsx'] as const)('keeps the %s editor mounted when a watched file changes', async (ext) => {
         const s = await openWatchedOffice(ext);
-        s.notify();
-        // 等编辑器 frame 真的被换成新节点，而不是猜「150ms 应该够了」
-        await waitFor(
-            () => !!officeFrame(s.container) && officeFrame(s.container) !== s.editor,
-            `${ext} editor reloaded`
-        );
-        expect(s.requestClose).toHaveBeenCalledWith(ext === 'docx' ? 'word' : 'sheets', 123);
-        expect(officeFrame(s.container)).not.toBe(s.editor);
-        s.explorer.closeEditor();
-    });
+        const getFileSize = (window as any).fsAPI.getFileSize;
+        await waitFor(() => getFileSize.mock.calls.length === 1, 'initial file size');
+        getFileSize.mockResolvedValue(8192);
 
-    test('reloads a watched document even when its close guard outlives a fixed wait window', async () => {
-        const s = await openWatchedOffice('docx');
-        // 让关闭守卫比「固定等待 150ms」更慢：刷新链总时长超过旧窗口也应当被等到并完成
-        s.requestClose.mockImplementation(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 250));
-            return true;
-        });
         s.notify();
-        await waitFor(
-            () => !!officeFrame(s.container) && officeFrame(s.container) !== s.editor,
-            'slow docx editor reloaded'
-        );
-        expect(s.requestClose).toHaveBeenCalledWith('word', 123);
-        s.explorer.closeEditor();
-    });
 
-    test('preserves an Office editor when its close guard rejects refresh', async () => {
-        const s = await openWatchedOffice('docx');
-        s.requestClose.mockResolvedValue(false);
-        s.notify();
-        // 守卫已经被问过 → 刷新链已经走到拒绝分支，之后不会有结构变化
-        await waitFor(() => s.requestClose.mock.calls.length > 0, 'close guard asked');
-        await settle();
+        await waitFor(
+            () => s.container.querySelector('.ws-preview-size')?.textContent === '8.0 KB',
+            'size updated after save'
+        );
+        expect(s.refreshFile).toHaveBeenCalledWith(123, `/workspace/deck.${ext}`);
+        expect(s.requestClose).not.toHaveBeenCalled();
         expect(officeFrame(s.container)).toBe(s.editor);
-        expect(s.dispose).not.toHaveBeenCalled();
+        s.explorer.stopWatchingFile();
+    });
+
+    test('queues a watched Office change while the previous refresh is running', async () => {
+        const s = await openWatchedOffice('docx');
+        let finish!: () => void;
+        s.refreshFile.mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    finish = resolve;
+                })
+        );
+        s.notify();
+        await waitFor(() => s.refreshFile.mock.calls.length === 1, 'first Word refresh started');
+        s.notify();
+        finish();
+        await waitFor(() => s.refreshFile.mock.calls.length === 2, 'queued Word refresh started');
+        await waitFor(() => s.explorer._fileRefreshVersion === null, 'queued Word refresh finished');
+        expect(officeFrame(s.container)).toBe(s.editor);
+        expect(s.requestClose).not.toHaveBeenCalled();
         s.explorer.stopWatchingFile();
     });
 
@@ -563,6 +561,52 @@ describe('file explorer', () => {
         expect(container.querySelector('.ws-preview-size')?.textContent).toBe(expected);
     });
 
+    test('opens and refreshes a local PDF through the Office host', async () => {
+        const readTextFile = jest.fn();
+        const prepare = jest.fn(async () => true);
+        const refreshFile = jest.fn(async () => {});
+        const requestClose = jest.fn(async () => true);
+        let change!: () => void;
+        const getFileSize = jest.fn(async () => 4096);
+        (window as any).officeHostAPI = { prepare, refreshFile, requestClose };
+        (window as any).fsAPI = {
+            getFileSize,
+            readTextFile,
+            watchFile: jest.fn(async (_path, callback: () => void) => {
+                change = callback;
+                return () => {};
+            })
+        };
+        const { container, explorer } = mountExplorer();
+        const filePath = '/workspace/报告 #.PDF';
+        explorer.openEditor(filePath);
+        await settle();
+
+        const preview = officeFrame(container) as HTMLElement & { getWebContentsId: () => number };
+        expect(prepare).toHaveBeenCalledWith('pdf');
+        expect(preview?.getAttribute('partition')).toBe('persist:opendesk-office');
+        const url = new URL(preview.getAttribute('src')!, 'http://localhost');
+        expect(url.pathname).toBe('/pdf_editor.html');
+        expect(url.searchParams.get('file')).toBe(filePath);
+        expect(container.querySelector('.ws-preview-size')?.textContent).toBe('4.0 KB');
+        expect(container.querySelector('[data-action="open-editor"]')).toBeNull();
+        expect(readTextFile).not.toHaveBeenCalled();
+
+        preview.getWebContentsId = () => 123;
+        const readyEvent = new window.Event('ipc-message');
+        Object.assign(readyEvent, { channel: 'opendesk-office:document-ready' });
+        preview.dispatchEvent(readyEvent);
+        getFileSize.mockResolvedValue(8192);
+        change();
+        await waitFor(() => container.querySelector('.ws-preview-size')?.textContent === '8.0 KB', 'PDF refresh');
+        expect(refreshFile).toHaveBeenCalledWith(123, filePath);
+        expect(officeFrame(container)).toBe(preview);
+        explorer.closeEditor();
+        await settle();
+        expect(requestClose).toHaveBeenCalledWith('pdf', 123);
+        expect(officeFrame(container)).toBeNull();
+    });
+
     test('keeps a shadow-safe loading view visible until the embedded pptx editor is visible', async () => {
         let finishPrepare: ((ready: boolean) => void) | undefined;
         const prepare = jest.fn(
@@ -798,6 +842,7 @@ describe('file explorer', () => {
 
         const editor = container.querySelector<HTMLElement>('.ws-office-editor-frame')!;
         (editor as any).getWebContentsId = () => 42;
+        editor.classList.remove('ws-office-editor-frame--loading');
         const onSwitchBlocked = jest.fn();
         explorer.selectFile('/workspace/readme.txt', undefined, onSwitchBlocked);
         await new Promise((resolve) => setTimeout(resolve, 0));

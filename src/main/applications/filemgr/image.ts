@@ -11,8 +11,11 @@
 
 import fs from 'fs';
 import fileType from 'file-type';
-import { Jimp } from 'jimp';
 import { getPlatform } from '../../../platforms/base.js';
+import { jimpLoader } from '../../loader/jimp.js';
+
+// jimp 体积大（bundle 内 ~2.6MB），仅在图片超出模型友好尺寸、需要用 JS 解码缩放
+// 时才加载。加载失败折叠为 ImageSourceError，与图片本身损坏走同一条降级路径。
 
 const MAX_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION = 2048;
@@ -407,6 +410,12 @@ async function processImageWithJimp(
         throw new ImageSourceError('resize_unsupported', MAX_IMAGE_DIMENSION);
     }
 
+    let Jimp: (typeof import('jimp'))['Jimp'];
+    try {
+        Jimp = await jimpLoader.ensure();
+    } catch {
+        throw new ImageSourceError('resize_unsupported', MAX_IMAGE_DIMENSION);
+    }
     const image = await Jimp.read(input);
     if (
         image.width <= 0 ||

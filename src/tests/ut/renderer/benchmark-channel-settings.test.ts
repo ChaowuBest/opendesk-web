@@ -1,10 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
-// 渠道设置面板的刷新契约：
-// - 启停某个渠道只改这一行，不重建整个面板（否则设置界面其它 Tab 的 DOM 与滚动位置都会丢）；
+// 仓库设置面板的刷新契约：
+// - 启停某个仓库只改这一行，不重建整个面板（否则设置界面其它 Tab 的 DOM 与滚动位置都会丢）；
 // - 增删改只重画列表容器；
-// - 系统默认渠道不提供编辑/删除入口。
+// - 系统默认仓库不提供编辑/删除入口。
 
 const OFFICIAL = {
     id: 'official',
@@ -77,7 +77,7 @@ describe('benchmark-channel-settings', () => {
         expect(officialRow).toBeTruthy();
         expect(officialRow.querySelector('[data-action="edit"]')).toBeNull();
         expect(officialRow.querySelector('[data-action="delete"]')).toBeNull();
-        // 系统默认渠道仍然可以启停
+        // 系统默认仓库仍然可以启停
         expect(officialRow.querySelector('[data-channel-toggle="official"]')).toBeTruthy();
         expect(officialRow.textContent).toContain('系统默认');
 
@@ -181,7 +181,7 @@ describe('benchmark-channel-settings', () => {
                       CUSTOM,
                       {
                           id: 'channel-2',
-                          name: '新渠道',
+                          name: '新仓库',
                           url: 'https://new.example.com/benchmarks.json',
                           isEnabled: true,
                           isDefault: false
@@ -196,12 +196,12 @@ describe('benchmark-channel-settings', () => {
         panel.openEditModal(null);
         const overlay = document.querySelector('.od-confirm-modal-overlay');
         expect(overlay).toBeTruthy();
-        overlay.querySelector('#od-bm-channel-name').value = '新渠道';
+        overlay.querySelector('#od-bm-channel-name').value = '新仓库';
         overlay.querySelector('#od-bm-channel-url').value = 'https://new.example.com/benchmarks.json';
         await panel.submitModal();
 
         expect(callsOf(callMainWorld, 'addBenchmarkChannel')).toEqual([
-            ['benchmark', 'addBenchmarkChannel', { name: '新渠道', url: 'https://new.example.com/benchmarks.json' }]
+            ['benchmark', 'addBenchmarkChannel', { name: '新仓库', url: 'https://new.example.com/benchmarks.json' }]
         ]);
         expect(renderSpy).not.toHaveBeenCalled();
         expect(panel.querySelector('[data-channel-row="channel-2"]')).toBeTruthy();
@@ -212,7 +212,7 @@ describe('benchmark-channel-settings', () => {
     test('a failed add keeps the modal open with the error text', async () => {
         const panel = createPanel();
         callMainWorld = jest.fn(async () => {
-            throw new Error('渠道地址校验失败');
+            throw new Error('仓库地址校验失败');
         });
         window.applicationRegistryAPI = { callMainWorld, subscribeEvent };
 
@@ -225,7 +225,7 @@ describe('benchmark-channel-settings', () => {
         expect(panel._modal).toBeTruthy();
         const errorBox = overlay.querySelector('[data-modal-error]');
         expect(errorBox.hidden).toBe(false);
-        expect(errorBox.textContent).toContain('渠道地址校验失败');
+        expect(errorBox.textContent).toContain('仓库地址校验失败');
         const confirmButton = overlay.querySelector('[data-modal-confirm]');
         expect(confirmButton.disabled).toBe(false);
         expect(confirmButton.textContent).toBe('确定');
@@ -239,12 +239,12 @@ describe('benchmark-channel-settings', () => {
         await panel.submitModal();
 
         expect(callsOf(callMainWorld, 'addBenchmarkChannel')).toHaveLength(0);
-        expect(overlay.querySelector('[data-modal-error]').textContent).toContain('请填写渠道名称');
+        expect(overlay.querySelector('[data-modal-error]').textContent).toContain('请填写仓库名称');
 
         overlay.querySelector('#od-bm-channel-name').value = 'X';
         await panel.submitModal();
 
         expect(callsOf(callMainWorld, 'addBenchmarkChannel')).toHaveLength(0);
-        expect(overlay.querySelector('[data-modal-error]').textContent).toContain('请填写渠道地址');
+        expect(overlay.querySelector('[data-modal-error]').textContent).toContain('请填写仓库地址');
     });
 });

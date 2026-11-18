@@ -10,16 +10,16 @@
  */
 
 /**
- * 「渠道设置」面板的共用实现（registryChannelSettings）。
+ * 「仓库设置」面板的共用实现（registryChannelSettings）。
  *
- * 设置界面里的两类渠道面板长得一样：测评集渠道（benchmark-channel-settings）与插件渠道
+ * 设置界面里的两类仓库面板长得一样：测评集仓库（benchmark-channel-settings）与插件仓库
  * （plugin-channel-settings）。两者都是「一处远端清单地址」的管理面板：
- * - 最上面是系统默认渠道（官方清单地址），只能启停，不能改名/改地址/删除；
- * - 其余是用户自己添加的渠道，支持编辑、删除、启停；
+ * - 最上面是系统默认仓库（官方清单地址），只能启停，不能改名/改地址/删除；
+ * - 其余是用户自己添加的仓库，支持编辑、删除、启停；
  * - 添加/编辑的模态弹窗点确定时，由主进程联网验证清单确实可解析，验证不过不落配置。
  *
  * 差别只有应用包名、主进程接口方法名、文案前缀与几个 DOM id，因此放在同一个基类里实现：
- * 改一处两边都跟着改，不会再出现「测评集渠道修了、插件渠道忘了修」的漂移。
+ * 改一处两边都跟着改，不会再出现「测评集仓库修了、插件仓库忘了修」的漂移。
  * 子类只需提供一份 `static registryChannelConfig` 并注册自定义元素。
  *
  * 刷新策略：启停只改这一行（开关 + 状态标签），增删改只重画列表容器，
@@ -36,7 +36,7 @@ const CLOSE_SVG =
 /**
  * CSS 属性选择器里用的转义。
  *
- * 渠道 id 来自配置（可被外部工具直接改写），拼进 `[data-xxx="…"]` 前必须转义；
+ * 仓库 id 来自配置（可被外部工具直接改写），拼进 `[data-xxx="…"]` 前必须转义；
  * 单元测试环境没有 CSS.escape，退化成只处理引号与反斜杠。
  */
 function escapeSelector(value) {
@@ -46,8 +46,8 @@ function escapeSelector(value) {
 }
 
 /**
- * 面板样式。类名带渠道类型前缀（`sp-bm-channel` / `sp-pc-channel`）：两个面板同时挂在
- * 「渠道设置」页签里，样式是全局的，共用一个前缀会互相影响。
+ * 面板样式。类名带仓库类型前缀（`sp-bm-channel` / `sp-pc-channel`）：两个面板同时挂在
+ * 「仓库设置」页签里，样式是全局的，共用一个前缀会互相影响。
  */
 function buildChannelSettingsStyle(config) {
     const prefix = `${config.cssPrefix}-channel`;
@@ -105,7 +105,7 @@ export class RegistryChannelSettings extends HTMLElement {
         this._unsubscribers = [];
         this._modal = null;
         this._modalKeyHandler = null;
-        /** 正在提交的渠道开关：避免同一条渠道的并发点击把配置写乱 */
+        /** 正在提交的仓库开关：避免同一条仓库的并发点击把配置写乱 */
         this._pendingToggles = new Set();
     }
 
@@ -154,7 +154,7 @@ export class RegistryChannelSettings extends HTMLElement {
         if (!this.isConnected) return;
         // 先把外壳摆出来（列表显示加载态），别让这个 Tab 在首次 IPC 回来前一片空白
         this.render();
-        // 渠道变化也可能来自别的窗口，订阅后这里只重画列表
+        // 仓库变化也可能来自别的窗口，订阅后这里只重画列表
         try {
             const unsubscribe = await this.subscribeEvent(
                 'registriesChanged',
@@ -174,9 +174,9 @@ export class RegistryChannelSettings extends HTMLElement {
     }
 
     /**
-     * 从主进程取一份渠道列表并重画列表。
+     * 从主进程取一份仓库列表并重画列表。
      *
-     * silent 用于后台刷新（渠道变化事件）：失败时保留现有列表，不要把界面切成错误页。
+     * silent 用于后台刷新（仓库变化事件）：失败时保留现有列表，不要把界面切成错误页。
      */
     async reload({ silent = false } = {}) {
         const wasLoading = this._loading;
@@ -230,7 +230,7 @@ export class RegistryChannelSettings extends HTMLElement {
         }
         const count = this.querySelector('[data-channel-count]');
         if (count) {
-            // 加载中 / 出错时不留一个「共 0 个渠道」的错数：空内容由 :empty 规则整块隐藏
+            // 加载中 / 出错时不留一个「共 0 个仓库」的错数：空内容由 :empty 规则整块隐藏
             count.textContent =
                 this._loading || this._error ? '' : this._t(this._k('count'), { count: this._channels.length });
         }
@@ -254,7 +254,7 @@ export class RegistryChannelSettings extends HTMLElement {
         const prefix = `${this.config.cssPrefix}-channel`;
         const isDefault = channel.isDefault === true;
         const enabled = channel.isEnabled !== false;
-        // 系统默认渠道不提供编辑/删除：它的地址是官方常量，改了也没有意义
+        // 系统默认仓库不提供编辑/删除：它的地址是官方常量，改了也没有意义
         const actions = isDefault
             ? ''
             : `<button type="button" class="sp-btn sp-btn-sm sp-btn-secondary" data-action="edit" data-channel-id="${escapeHtml(channel.id)}">${escapeHtml(this._t(this._k('edit')))}</button>
@@ -386,7 +386,7 @@ export class RegistryChannelSettings extends HTMLElement {
         // 弹窗已经开着（例如连点两次添加）：不新建第二个，否则前一个会失去引用留在屏幕上
         if (this._modal) return;
         const editing = channelId ? this._channels.find((item) => item.id === channelId) : null;
-        // 系统默认渠道只能启停，连弹窗都不该打开
+        // 系统默认仓库只能启停，连弹窗都不该打开
         if (channelId && !editing) return;
         if (editing?.isDefault) return;
         const isEdit = Boolean(editing);

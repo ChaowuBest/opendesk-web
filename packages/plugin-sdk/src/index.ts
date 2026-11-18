@@ -104,6 +104,8 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'channel',
     'account',
     'appearance',
+    'features',
+    'locale',
     'registry'
 ] as const;
 
@@ -436,6 +438,29 @@ export interface PluginMcpRemoteServerDefinition extends PluginMcpServerBase {
 export type PluginMcpServerDefinition = PluginMcpStdioServerDefinition | PluginMcpRemoteServerDefinition;
 
 /**
+ * 单个语言包：一份已解析的语言词典，对应插件目录中的一个 JSON 文件。
+ *
+ * 语言包是纯数据（扁平 key -> 文案），tag 由文件名给出（如 locales/tr-TR.json）；
+ * 文件内可通过保留 key @fallback 声明回退语言（仅非内置语言有意义，缺省 en-US）。
+ */
+export interface PluginLocalePackDefinition {
+    /** 规范化后的 BCP-47 tag，如 tr-TR */
+    tag: string;
+    /** 回退语言 tag（已规范化），未声明时宿主按 en-US 处理 */
+    fallback?: string;
+    /**
+     * 合并优先级（0-999 整数，数值越大越优先）。来自语言包文件内的 @priority 保留 key，
+     * 未声明时为 1；系统内置文案视为 priority 0，内置语言包插件为 priority 1。
+     * 同 key 冲突按 priority 裁决，平局按插件 ID 字典序后者胜。
+     */
+    priority: number;
+    /** 参与翻译查找的词条（@ 保留 key 已剥离） */
+    entries: Record<string, string>;
+    /** 来源文件相对插件根的路径，诊断与冲突报告用 */
+    sourceFile: string;
+}
+
+/**
  * 插件在 manifest 中声明的静态资源。
  *
  * 这些资源无需执行 setup() 即可由宿主直接从插件目录加载并注册。
@@ -444,6 +469,7 @@ export interface PluginStaticResources {
     skills?: PluginSkillDefinition[];
     mcpServers?: PluginMcpServerDefinition[];
     agents?: AgentDefinition[];
+    locales?: PluginLocalePackDefinition[];
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +778,32 @@ export interface AppearanceCapability {
     setAppLogo(logoPath: string | PluginAppLogoThemeVariants): PluginRegistration;
 }
 
+/**
+ * 特性能力：插件禁用 OpenDesk 自身的内置特性或整个应用。
+ *
+ * 禁用状态动态生效、跟随插件生命周期：插件每次启动在 setup() 中重新调用即可保持
+ * 禁用；返回的 PluginRegistration 释放（或插件停用/卸载/宿主重载）后自动恢复。
+ * 禁用不落盘。同一目标被多个插件同时禁用时，全部释放后才视为恢复；同一插件多次
+ * 调用时按持有次数计数，需要把每次返回的 registration 都释放。
+ */
+export interface FeaturesCapability {
+    /**
+     * 禁用一个 OpenDesk 内置特性。
+     *
+     * @param featureId 特性 id，必须是宿主特性列表中的已知 id（当前支持
+     *   `memory`：长期记忆与用户画像；`filesystem`：AI 文件系统的索引与语义搜索，
+     *   纯文件读写、grep 与 @ 添加文件不受影响）。未知 id 会抛错。
+     */
+    disable(featureId: string): PluginRegistration;
+    /**
+     * 禁用一个 OpenDesk 应用（按 bundleName）：应用图标从菜单隐藏、延迟资源不再加载、
+     * 工具集与事件不再提供给任务和插件。
+     *
+     * @param bundleName 已注册的应用 bundleName（系统应用或用户应用）。未知 bundleName 会抛错。
+     */
+    disableApplication(bundleName: string): PluginRegistration;
+}
+
 export interface PluginContext {
     readonly pluginId: string;
     readonly pluginDir: string;
@@ -848,6 +900,8 @@ export interface PluginContext {
     readonly channels: ChannelsCapability;
     /** 外观能力：插件自定义应用外观（逐步开放中） */
     readonly appearance: AppearanceCapability;
+    /** 特性能力：插件禁用 OpenDesk 自身的内置特性或整个应用 */
+    readonly features: FeaturesCapability;
     /** 注册表能力：插件向技能市场 / MCP 管理器贡献注册表（marketplace） */
     readonly registry: RegistryCapability;
 }
@@ -1150,7 +1204,8 @@ export interface ChannelQrLoginSession {
 /** 参数登录的表单字段描述，OpenDesk 据此渲染登录 UI */
 export interface ChannelAccountLoginParam {
     name: string;
-    displayName: string;
+    /** 表单字段显示名；支持本地化映射 { en, zh }，宿主按当前界面语言解析 */
+    displayName: string | PluginLocalizedText;
     required: boolean;
     /** password 时 UI 用掩码输入框 */
     type?: 'text' | 'password';
@@ -1170,6 +1225,13 @@ export interface ChannelRuntimeContext {
     readonly accountId?: string;
     /** OpenDesk 侧维护的非敏感配置（对应 Channel.configSchema，存于 settings.json） */
     readonly config: Readonly<Record<string, unknown>>;
+    /**
+     * 当前界面语言（BCP-47 tag，如 zh-CN / en-US），动态读取：语言切换后返回新值。
+     * 渠道用它解析自己的用户可见文案（连接状态、交互卡片/提示、登录错误提示等），
+     * 配合 resolvePluginLocalizedText({ en, zh }, ctx.locale) 使用；
+     * ctx 缺失或 locale 未知时由渠道自行决定回退语言。
+     */
+    readonly locale: string;
     /** channel 专属数据目录（<opendesk>/channels/<channelId>/），凭证持久化用 */
     readonly dataDir: string;
     /** 将相对路径解析到 dataDir 内 */

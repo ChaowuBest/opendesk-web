@@ -223,6 +223,34 @@ export function parsePluginHostVersionMessage(message: string): PluginHostVersio
     };
 }
 
+/** 平台闸门结构化串前缀：`plugin.install_platform_unsupported:<id>:<platforms>`。分类与渲染层解析都靠它，不要改成人类可读文案 */
+export const PLUGIN_PLATFORM_UNSUPPORTED_MESSAGE_PREFIX = 'plugin.install_platform_unsupported:';
+
+/** 平台闸门结构化串的载荷：插件 id 与其支持的平台列表 */
+export interface PluginPlatformUnsupportedIssue {
+    id: string;
+    platforms: string;
+}
+
+/**
+ * 解析安装期平台闸门抛出的结构化串；不是该前缀（或缺字段）时返回 undefined。
+ *
+ * 插件 id 由 assertSafePluginId 限制为 `[a-zA-Z][a-zA-Z0-9._-]*`，不含冒号，
+ * 所以首个冒号就是 id 与平台列表的分隔。
+ */
+export function parsePluginPlatformUnsupportedMessage(
+    message: string | undefined
+): PluginPlatformUnsupportedIssue | undefined {
+    if (!message?.startsWith(PLUGIN_PLATFORM_UNSUPPORTED_MESSAGE_PREFIX)) return undefined;
+    const rest = message.slice(PLUGIN_PLATFORM_UNSUPPORTED_MESSAGE_PREFIX.length);
+    const separator = rest.indexOf(':');
+    if (separator <= 0) return undefined;
+    const id = rest.slice(0, separator);
+    const platforms = rest.slice(separator + 1);
+    if (!id || !platforms) return undefined;
+    return { id, platforms };
+}
+
 /**
  * 有专用文案的加载期诊断码 → locale 词条（src/locale 的 plugin.diagnostic.*）。
  *
