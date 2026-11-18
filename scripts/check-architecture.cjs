@@ -26,10 +26,12 @@ const MAIN_ROOT = path.join(PROJECT_ROOT, 'src', 'main');
 
 const LAYER_DEPS = {
     utils: [],
-    telemetry: ['utils', 'aikernel'],
-    aikernel: ['utils', 'tui', 'telemetry'],
-    services: ['utils', 'aikernel', 'telemetry'],
-    applications: ['aikernel', 'services', 'tui', 'utils', 'plugins', 'telemetry']
+    // 大体积依赖的懒加载包装：基础设施层，允许依赖 utils，其余层均可依赖它。
+    loader: ['utils'],
+    telemetry: ['utils', 'loader', 'aikernel'],
+    aikernel: ['utils', 'loader', 'tui', 'telemetry'],
+    services: ['utils', 'loader', 'aikernel', 'telemetry'],
+    applications: ['aikernel', 'loader', 'services', 'tui', 'utils', 'plugins', 'telemetry']
 };
 
 // aikernel/types 只承载公共契约，所有层均可依赖；其自身仍由下方规则限制为不能依赖其他实现目录。
