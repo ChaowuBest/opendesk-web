@@ -1715,7 +1715,7 @@ export const enUs: Record<string, string> = {
     'sp.task.terminal.noShells': 'No supported shells found',
     'sp.task.terminal.sandbox': 'Enable sandbox',
     'sp.task.terminal.sandbox.desc':
-        'Run this powershell or Git Bash in the Windows sandbox (Detours) and request file access when needed; child processes use host real paths directly.',
+        'Run the selected shell in a sandbox. File access follows task permission rules and requests approval when needed.',
     'sp.task.terminal.sandbox.delToTrash': 'Move deleted files to the Recycle Bin',
     'sp.task.terminal.sandbox.delToTrash.desc':
         'Files deleted inside the sandbox go to the OpenDesk file trash (restorable from the GUI) instead of being permanently removed. Overwrites and moves are unaffected.',
