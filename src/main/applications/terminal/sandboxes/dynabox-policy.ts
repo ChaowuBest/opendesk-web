@@ -10,6 +10,7 @@
  */
 
 import path from 'node:path';
+import picomatch from 'picomatch';
 
 import type { PermissionRule } from '../../../aikernel/security/permission.js';
 
@@ -759,7 +760,11 @@ export function policyTextLinux(
     workspace: string,
     rules?: PermissionRule[],
     home?: string,
-    opendeskDataDir?: string
+    opendeskDataDir?: string,
+    native?: {
+        runtimePaths: { readExecute: string[]; writable: string[] };
+        readOnly: boolean;
+    }
 ): string {
     const quote = (value: string) => JSON.stringify(value);
     const workspaceRoot = workspace.replace(/\/+$/, '') || '/';
@@ -777,11 +782,88 @@ export function policyTextLinux(
             home,
             undefined,
             opendeskDataDir,
-            isReadonlyModeRules(rules)
-        )
+            isReadonlyModeRules(rules) || native?.readOnly === true
+        ),
+        ...(native ? nativeRuntimeRules(native, rules) : [])
     ].join('\n');
     // allow 的 `X/**` 补 `X`（尾部 ** 不覆盖目录自身，见 expandAllowTreeRules）
     return expandAllowTreeRules(policy);
+}
+
+/** Add only host-declared runtime paths; an explicit deny must never be replaced by a runtime allowance. */
+function nativeRuntimeRules(
+    native: { runtimePaths: { readExecute: string[]; writable: string[] }; readOnly: boolean },
+    rules?: PermissionRule[]
+): string[] {
+    const lines: string[] = [];
+    const add = (root: string, action: string, effect: string) => {
+        lines.push(
+            `[[rules]]\npath = ${JSON.stringify(root)}\naccess = ${JSON.stringify(action)}\nperm = ${JSON.stringify(effect)}`
+        );
+    };
+    const paths = (input: string[]) => {
+        if (!Array.isArray(input)) throw new Error('Invalid native sandbox runtime paths');
+        return [
+            ...new Set(
+                input.map((value) => {
+                    if (typeof value !== 'string' || !path.posix.isAbsolute(value) || /[?*[\]{}\n\r\0]/.test(value))
+                        throw new Error('Invalid native sandbox runtime path');
+                    const normalized = path.posix.normalize(value).replace(/\/+$/, '');
+                    if (!normalized) throw new Error('Native sandbox runtime cannot grant the filesystem root');
+                    return normalized;
+                })
+            )
+        ];
+    };
+    const denied = (root: string, action: string) =>
+        (rules ?? []).some((rule) => {
+            if (
+                rule.effect !== 'deny' ||
+                !['file', '*'].includes(rule.resourceType) ||
+                (rule.action !== action && rule.action !== '*')
+            )
+                return false;
+            return expandPermissionPattern(rule.pathPattern).some((pattern) => {
+                const normalized = hostPatternToVirtualLinux(pattern);
+                if (!normalized) return false;
+                if (picomatch(normalized, { dot: true })(root)) return true;
+                // A wildcard deny above this runtime may match descendants with lower native specificity.
+                // Keep the request explicit instead of broadening access in that ambiguous overlap.
+                const wildcard = normalized.search(/[?*[\]{}]/);
+                if (wildcard < 0) return false;
+                const prefix = normalized.slice(0, wildcard).replace(/\/+$/, '');
+                return root === prefix || root.startsWith(prefix + '/');
+            });
+        });
+    for (const root of paths(native.runtimePaths.readExecute)) {
+        for (const action of ['read', 'execute']) {
+            if (denied(root, action)) continue;
+            add(root, action, 'allow');
+            add(`${root}/**`, action, 'allow');
+        }
+    }
+    const writable = paths(native.runtimePaths.writable);
+    if (!native.readOnly)
+        for (const root of writable) {
+            for (const action of ['read', 'write']) {
+                if (denied(root, action)) continue;
+                add(root, action, 'allow');
+                add(`${root}/**`, action, 'allow');
+            }
+        }
+    // Existing shell policy omits execute declarations; native runtime grants must still honor explicit execute denies.
+    for (const rule of rules ?? [])
+        if (
+            rule.effect === 'deny' &&
+            ['file', '*'].includes(rule.resourceType) &&
+            ['execute', '*'].includes(rule.action)
+        ) {
+            for (const pattern of expandPermissionPattern(rule.pathPattern)) {
+                const mapped = hostPatternToVirtualLinux(pattern);
+                if (mapped) add(mapped, 'execute', 'deny');
+            }
+        }
+    return lines;
 }
 
 /**
@@ -831,7 +913,7 @@ function readFallbackPerm(rules?: PermissionRule[]): 'allow' | 'ask' | 'deny' {
  * 注意不能只看 write deny：审计类自定义模式（全盘 write deny + 全盘 read
  * allow）的读路径依赖外读放行，套用 readonly 的 read deny 会破坏其语义。
  */
-function isReadonlyModeRules(rules?: PermissionRule[]): boolean {
+export function isReadonlyModeRules(rules?: PermissionRule[]): boolean {
     const list = rules ?? [];
     const has = (action: string, effect: 'allow' | 'deny', allPath: boolean) =>
         list.some(

@@ -38,6 +38,9 @@ import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
 import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
 import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
 import { prepareOpenHarmonySandbox } from '../sandboxes/openharmony-sandbox.js';
+import { prepareNativeSandbox, sandboxUnavailable } from '../sandboxes/native-sandbox.js';
+import { getPlatform } from '../../../../platforms/base.js';
+import { NaiveSandboxKit } from '../../../../platforms/bridges/common.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
 import { MAIN_AGENT_UNLIMITED_MODE } from '../../../aikernel/agents/main/modes/unlimited.js';
 import { t } from '../locale/index.js';
@@ -266,8 +269,42 @@ export async function executeShellCommand(opts: {
     const startTime = Date.now();
     // 沙箱权限弹窗等待用户决策期间暂停超时计时（见 dynabox 的 onPermissionWaitChange）
     const timeoutClock = new ShellTimeoutClock(timeout, startTime);
+    let nativeSandbox = null;
+    if (effectiveUseDynamicSandbox) {
+        try {
+            let kit;
+            try {
+                kit = (await getPlatform().getNativeBridge()?.getSandboxKit()) ?? new NaiveSandboxKit();
+            } catch (error) {
+                if (!(error instanceof Error) || error.message !== 'Platform is not set') throw error;
+                kit = new NaiveSandboxKit();
+            }
+            const state = await kit.getState();
+            if (state.supported) {
+                if (!state.ready) throw sandboxUnavailable();
+                nativeSandbox = await prepareNativeSandbox(kit, {
+                    shellPath,
+                    shellArgs,
+                    command,
+                    cwd,
+                    taskState,
+                    toolName,
+                    deleteToTrash: effectiveDeleteToTrash,
+                    trashDir: sandboxTrashDir,
+                    trashExcludeDirs: sandboxTrashExcludeDirs,
+                    onPermissionWaitChange(waiting) {
+                        if (waiting) timeoutClock.pause();
+                        else timeoutClock.resume();
+                    }
+                });
+            }
+        } catch (error) {
+            throw sandboxUnavailable(error);
+        }
+    }
     const sandbox =
-        effectiveUseDynamicSandbox && process.platform === 'linux'
+        nativeSandbox ??
+        (effectiveUseDynamicSandbox && process.platform === 'linux'
             ? await prepareLinuxSandbox({
                   shellPath,
                   shellArgs,
@@ -331,7 +368,12 @@ export async function executeShellCommand(opts: {
                             else timeoutClock.resume();
                         }
                     })
-                  : null;
+                  : null);
+    if (effectiveUseDynamicSandbox && !sandbox) throw sandboxUnavailable();
+    if (taskState?.task_status === 'stopped' || taskState?.runtimeInterrupt?.requested) {
+        await sandbox?.cleanup();
+        throw Object.assign(new Error(t('sandbox.stopped')), { code: 'SANDBOX_STOPPED' });
+    }
     let proc: ChildProcessWithoutNullStreams;
     try {
         proc = sandbox

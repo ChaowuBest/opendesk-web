@@ -35,6 +35,9 @@ export class TerminalApplication extends BaseApplication {
         const toolset = new BaseToolset('terminal');
         const taskConfig = Setting.getInstance().getData().task_config;
         const shell = selectSupportedShell(scanSupportedShells(), taskConfig, process.platform);
+        if (taskConfig?.shell_sandboxed === true && !isUnlimitedMode(taskState) && !shell?.sandboxed) {
+            throw Object.assign(new Error(t('sandbox.unavailable')), { code: 'SANDBOX_UNAVAILABLE' });
+        }
         if (!shell) return [];
         // 无限制模式强制禁用所有 shell 沙箱：shell 直接以宿主权限执行，
         // 删除送回收站（依赖沙箱原生层拦截）也随之失效。
