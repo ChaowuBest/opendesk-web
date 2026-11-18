@@ -10,6 +10,8 @@
  */
 
 import {
+    type CalendarKit,
+    NaiveCalendarKit,
     ArkDataBridgeError,
     executePreparedManyBatchedWith,
     type ArkDataBatchOptions,
@@ -220,6 +222,12 @@ class QuickCaptureKitProxy implements QuickCaptureKit {
 }
 
 export class NativeBridgeProxy implements NativeBridge {
+    private readonly calendarKit: CalendarKit = new NaiveCalendarKit();
+
+    async getCalendarKit(): Promise<CalendarKit> {
+        return this.calendarKit;
+    }
+
     async getStartupKit(): Promise<StartupKit> {
         return new StartupKitProxy();
     }
