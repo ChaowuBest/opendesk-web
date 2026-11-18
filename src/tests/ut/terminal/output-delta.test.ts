@@ -90,4 +90,56 @@ describe('computeTerminalLiveOutputFrame', () => {
         expect(frame.reset).toBe(true);
         expect(frame.delta).toBe('head...marker...tail-new');
     });
+
+    test('keeps an unfinished OSC or standalone escape pending until its next snapshot', () => {
+        expect(computeTerminalLiveOutputFrame('', 'text\u001b]0;window title').stripped).toBe('text');
+        expect(computeTerminalLiveOutputFrame('text', 'text\u001b]0;window title\u0007more').delta).toBe('more');
+        expect(computeTerminalLiveOutputFrame('', 'text\u001b').stripped).toBe('text');
+    });
+
+    test.each(['\u0007', '\u001b\\', '\u009c'])(
+        'completed OSC with terminator %j preserves following text',
+        (terminator) => {
+            expect(computeTerminalLiveOutputFrame('', `before\u001b]0;window title${terminator}after`)).toEqual({
+                stripped: 'beforeafter',
+                reset: false,
+                delta: 'beforeafter'
+            });
+        }
+    );
+
+    test('an OSC and its ST terminator may span several snapshots without exposing control text', () => {
+        let raw = '';
+        let sent = '';
+        for (const [chunk, expectedDelta] of [
+            ['before\u001b]', 'before'],
+            ['0;window title', ''],
+            ['\u001b', ''],
+            ['\\after', 'after']
+        ]) {
+            raw += chunk;
+            const frame = computeTerminalLiveOutputFrame(sent, raw);
+            expect(frame.reset).toBe(false);
+            expect(frame.delta).toBe(expectedDelta);
+            sent = frame.stripped;
+        }
+        expect(sent).toBe('beforeafter');
+    });
+
+    test.each(['\u001b', '\u001b[', '\u001b[3', '\u001b[31;', '\u001b[?25'])(
+        'a pending escape or CSI suffix %j never enters a delta',
+        (suffix) => {
+            expect(computeTerminalLiveOutputFrame('text', `text${suffix}`)).toEqual({
+                stripped: 'text',
+                reset: false,
+                delta: ''
+            });
+        }
+    );
+
+    test('complete styling and cursor sequences preserve ordinary bracket and semicolon text', () => {
+        expect(
+            computeTerminalLiveOutputFrame('', '\u001b[31m[3;window title\u001b[0m\u001b[?25h]0;plain').stripped
+        ).toBe('[3;window title]0;plain');
+    });
 });
