@@ -22,6 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+const MAIN_ROOT = path.join(PROJECT_ROOT, 'src', 'main');
 
 const LAYER_DEPS = {
     utils: [],
@@ -33,7 +34,7 @@ const LAYER_DEPS = {
 
 // aikernel/types 只承载公共契约，所有层均可依赖；其自身仍由下方规则限制为不能依赖其他实现目录。
 const SHARED_CONTRACT_LAYERS = ['aikernel/types'];
-const AIKERNEL_TYPES_ROOT = path.join(PROJECT_ROOT, 'src', 'main', 'aikernel', 'types');
+const AIKERNEL_TYPES_ROOT = path.join(MAIN_ROOT, 'aikernel', 'types');
 
 // 文件级例外：允许特定文件依赖白名单之外的层。
 // 仅用于无法通过重构避免的合理跨层依赖，每条需注明理由。
@@ -98,11 +99,19 @@ function extractAikernelTypeImports(filePath) {
     return imports;
 }
 
-function getLayer(filePath) {
-    const mainIndex = filePath.indexOf(path.join('src', 'main') + path.sep);
-    if (mainIndex === -1) return null;
+// 相对 src/main 求层路径：按路径片段搜索 "src/main" 会把检出目录自带的同名片段当成层根，
+// 导致整个源码树被静默跳过。
+function relativeToMainRoot(filePath) {
+    const relativePath = path.relative(MAIN_ROOT, filePath);
+    if (!relativePath || path.isAbsolute(relativePath)) return null;
+    if (relativePath === '..' || relativePath.startsWith('..' + path.sep)) return null;
+    return relativePath;
+}
 
-    const relativePath = filePath.substring(mainIndex + path.join('src', 'main').length + 1);
+function getLayer(filePath) {
+    const relativePath = relativeToMainRoot(filePath);
+    if (relativePath === null) return null;
+
     const firstDir = relativePath.split(path.sep)[0];
 
     if (firstDir.includes('.')) return null;
@@ -120,10 +129,9 @@ function getTargetLayer(importPath, currentFile) {
         return 'aikernel/types';
     }
 
-    const mainIndex = resolved.indexOf(path.join('src', 'main') + path.sep);
-    if (mainIndex === -1) return null;
+    const relativePath = relativeToMainRoot(resolved);
+    if (relativePath === null) return null;
 
-    const relativePath = resolved.substring(mainIndex + path.join('src', 'main').length + 1);
     return relativePath.split(path.sep)[0];
 }
 
@@ -208,7 +216,7 @@ function getSourceFiles(dir, fileList = []) {
 function main() {
     log(colors.blue, '🏗️  检查架构约束 (OpenDesk)...');
 
-    const mainDir = path.join(PROJECT_ROOT, 'src', 'main');
+    const mainDir = MAIN_ROOT;
 
     if (!fs.existsSync(mainDir)) {
         log(colors.red, '❌ src/main 目录不存在');
