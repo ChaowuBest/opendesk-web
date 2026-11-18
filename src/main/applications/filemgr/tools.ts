@@ -22,6 +22,7 @@ import { detectEncoding, decodeBuffer, encodingDisplayName } from '../terminal/e
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import { getTempDir } from '../../utils/temp.js';
 import { normalizeLineEndings } from '../../../utils/string.js';
 import { sanitizeLocalPath } from '../../utils/path.js';
@@ -4227,8 +4228,12 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽
+    // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽；
+    // ctx.features.disable('filesystem') 禁用 AI 文件系统时同样屏蔽（getToolsets 已跳过，这里是兜底）
     isAvailable(_taskState?: TaskState): boolean {
+        if (getFeatureManager().isFeatureDisabled('filesystem')) {
+            return false;
+        }
         return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
     }
 

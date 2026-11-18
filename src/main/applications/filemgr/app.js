@@ -21,6 +21,7 @@ import { extractText as extractFileTextDirect } from './parser/extract.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
 import { t } from '../../../locale/index.js';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import './harness/index.js';
 
 function probeErrorMessage(code) {
@@ -142,11 +143,15 @@ class FileMgrApplication extends BaseApplication {
             }
         });
 
-        toolset.addTool(
-            new SemanticSearchTool((query, maxResults, scope) =>
-                this.searchIndexedFiles(query, { topK: maxResults, scope })
-            )
-        );
+        // ctx.features.disable('filesystem') 只关闭 AI 索引相关能力（语义搜索），
+        // 纯文件读写/grep 等工具不受影响；isAvailable 里的门控是任务构建期的第二道防线
+        if (!getFeatureManager().isFeatureDisabled('filesystem')) {
+            toolset.addTool(
+                new SemanticSearchTool((query, maxResults, scope) =>
+                    this.searchIndexedFiles(query, { topK: maxResults, scope })
+                )
+            );
+        }
 
         return [toolset];
     }
@@ -166,15 +171,16 @@ class FileMgrApplication extends BaseApplication {
         }
 
         function statusLabel(status) {
-            return (
+            const key =
                 {
-                    idle: '● 未配置',
-                    initializing: '● 正在启动',
-                    running: '● 运行中',
-                    readonly: '● 查询模式',
-                    error: '● 异常'
-                }[status] ?? status
-            );
+                    idle: 'renderer.filemgr.status.idle',
+                    initializing: 'renderer.filemgr.status.initializing',
+                    running: 'renderer.filemgr.status.running',
+                    readonly: 'renderer.filemgr.status.readonly',
+                    disabled: 'renderer.filemgr.status.disabled',
+                    error: 'renderer.filemgr.status.error'
+                }[status] ?? null;
+            return key ? '● ' + t(key) : status;
         }
 
         function alertMessage(alert) {

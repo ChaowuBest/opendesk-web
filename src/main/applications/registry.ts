@@ -25,6 +25,8 @@ import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
 import { WorkerRestartController, type WorkerRestartDecision } from './worker-restart.js';
 import { toErrorMessage } from '../../common/utils/error.js';
+import { getFeatureManager } from '../../common/features/manager.js';
+import { t } from '../../locale/index.js';
 import path from 'path';
 
 export type ProtocolHandlerEntry = {
@@ -35,6 +37,10 @@ export type ProtocolHandlerEntry = {
 
 type WorkerRuntimeOptions = {
     preferredSystemLanguages?: readonly string[];
+    /** 启动时已被插件禁用的特性列表，随 workerData 注入 worker 线程（如 filemgr 的 AI 索引门控） */
+    disabledFeatures?: readonly string[];
+    /** 启动时已被插件禁用的应用列表，随 workerData 注入（被禁用的应用要停掉自身后台资源） */
+    disabledApplications?: readonly string[];
 };
 
 const DATABASE_KIT_METHODS = new Set([
@@ -152,6 +158,11 @@ export class ApplicationRegistry {
      * （与全量加载屏障的容错行为保持一致）。
      */
     static ensureApplicationLoaded(bundleName: string): Promise<void> {
+        // 被插件禁用的应用不再加载延迟资源（图标已隐藏、工具集/事件已停用）
+        if (getFeatureManager().isApplicationDisabled(bundleName)) {
+            return Promise.resolve();
+        }
+
         const loaded = this.applicationLoadPromises.get(bundleName);
         if (loaded) return loaded;
 
@@ -281,7 +292,15 @@ export class ApplicationRegistry {
     }
 
     static getApplicationList(): object[] {
-        return Array.from(this.applications.values()).map((application) => application.toJSON());
+        const featureManager = getFeatureManager();
+        return Array.from(this.applications.values()).map((application) => {
+            const json = application.toJSON() as { bundleName: string; showIcon?: boolean };
+            // 被插件禁用的应用对渲染进程表现为不显示图标（菜单/侧栏弹层据此隐藏）
+            if (featureManager.isApplicationDisabled(json.bundleName)) {
+                return { ...json, showIcon: false };
+            }
+            return json;
+        });
     }
 
     static getApplication(bundleName: string): BaseApplication | undefined {
@@ -290,7 +309,12 @@ export class ApplicationRegistry {
 
     static async listAvailableToolsets(taskState?: TaskState): Promise<BaseToolset[]> {
         const result: BaseToolset[] = [];
+        const featureManager = getFeatureManager();
         for (const application of this.applications.values()) {
+            // 被插件禁用的应用不向任务提供工具集
+            if (featureManager.isApplicationDisabled(application.bundleName)) {
+                continue;
+            }
             // 部分应用实现接受可选 taskState（超集签名），按宽签名转发。
             // 实现内部普遍读取 this（如 SearchApplication.getToolsets 调 this.normalizeConfig()），
             // 必须以 application 为 this 调用，摘成裸函数会把 this 丢成 undefined
@@ -309,6 +333,10 @@ export class ApplicationRegistry {
      * 注意：此方法不进行事件校验，仅用于内部转发
      */
     static dispatchEvent(bundleName: string, eventName: string, ...args: any[]): void {
+        // 被插件禁用的应用不再派发事件（订阅者与 todomgr 触发器均不感知）
+        if (getFeatureManager().isApplicationDisabled(bundleName)) {
+            return;
+        }
         const application = this.getApplication(bundleName);
         if (application) {
             application.sendEventToSubscribers(eventName, ...args);
@@ -329,6 +357,10 @@ export class ApplicationRegistry {
      * 处理 Worker 侧发出的事件（带事件名校验）
      */
     static async handleWorkerEmitEvent(bundleName: string, eventName: string, args: any[]): Promise<void> {
+        // 与 dispatchEvent 一致：被插件禁用的应用事件不再向订阅者/插件/todomgr 转发
+        if (getFeatureManager().isApplicationDisabled(bundleName)) {
+            return;
+        }
         const application = ApplicationRegistry.getApplication(bundleName);
         if (!application) {
             logger.warn(`application ${bundleName} not found`);
@@ -366,7 +398,11 @@ export class ApplicationRegistry {
      */
     static async getAllSupportedEvents(): Promise<Map<string, { eventName: string; eventDescription: string }[]>> {
         const result = new Map<string, { eventName: string; eventDescription: string }[]>();
+        const featureManager = getFeatureManager();
         for (const [bundleName, application] of this.applications) {
+            if (featureManager.isApplicationDisabled(bundleName)) {
+                continue;
+            }
             try {
                 const events = await application.getSupportedEvents();
                 if (events.length > 0) {
@@ -383,7 +419,10 @@ export class ApplicationRegistry {
         const application = ApplicationRegistry.getApplication(bundleName);
         const requestId = crypto.randomUUID();
 
-        if (application === undefined) {
+        // 被插件禁用的应用不再响应 worker 方法调用（如语义搜索、事件订阅查询）
+        if (getFeatureManager().isApplicationDisabled(bundleName)) {
+            return { status: 'error', message: t('feature.application.disabled', { bundleName }) };
+        } else if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` };
         } else if (!ApplicationRegistry.hasGlobalWorker()) {
             return { status: 'error', message: 'global worker not initialized yet' };
@@ -417,7 +456,40 @@ export class ApplicationRegistry {
  * Worker 是单线程，若消息在 Worker 侧异常路径上丢失（没有回执），无超时会让调用方永久挂起，
  * 进而把设置面板的保存队列一起卡住，因此这里必须有兜底。
  */
-const SETTING_SYNC_TIMEOUT_MS = 10_000;
+const WORKER_SYNC_TIMEOUT_MS = 10_000;
+
+/** 发送一条系统级（bundleName='__system'）Worker 消息并等待回执 */
+async function requestSystemWorker(methodName: string, args: unknown[], timeoutMessage: string): Promise<void> {
+    const requestId = crypto.randomUUID();
+    const promise = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            ApplicationRegistry.pendingRequests.delete(requestId);
+            reject(new Error(timeoutMessage));
+        }, WORKER_SYNC_TIMEOUT_MS);
+        timer.unref?.();
+        ApplicationRegistry.pendingRequests.set(requestId, {
+            resolve: (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            reject: (reason) => {
+                clearTimeout(timer);
+                reject(reason);
+            }
+        });
+    });
+    ApplicationRegistry.getGlobalWorker().postMessage({
+        bundleName: '__system',
+        requestId,
+        methodName,
+        args
+    });
+    try {
+        await promise;
+    } finally {
+        ApplicationRegistry.pendingRequests.delete(requestId);
+    }
+}
 
 /**
  * 通知 Worker 线程更新全局设置
@@ -431,45 +503,79 @@ export async function notifyWorkerSettingUpdate(
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
-    const requestId = crypto.randomUUID();
-    const promise = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            ApplicationRegistry.pendingRequests.delete(requestId);
-            reject(new Error('worker settings sync timed out'));
-        }, SETTING_SYNC_TIMEOUT_MS);
-        timer.unref?.();
-        ApplicationRegistry.pendingRequests.set(requestId, {
-            resolve: (value) => {
-                clearTimeout(timer);
-                resolve(value);
-            },
-            reject: (reason) => {
-                clearTimeout(timer);
-                reject(reason);
-            }
-        });
-    });
     const args: unknown[] = [settingData];
     if (runtimeOptions.preferredSystemLanguages) {
         args.push([...runtimeOptions.preferredSystemLanguages]);
     }
-    ApplicationRegistry.getGlobalWorker().postMessage({
-        bundleName: '__system',
-        requestId,
-        methodName: '__updateGlobalSetting',
-        args
-    });
-    try {
-        await promise;
-    } finally {
-        ApplicationRegistry.pendingRequests.delete(requestId);
+    await requestSystemWorker('__updateGlobalSetting', args, 'worker settings sync timed out');
+}
+
+/**
+ * 把主进程维护的禁用状态同步到 Worker 线程。
+ *
+ * Worker 线程的 FeatureManager 只镜像特性级状态（worker.ts 的 applyDisabledFeatures），
+ * 不自行产生禁用状态；需要停止自身资源的 Worker（如 filemgr 的 AI 索引）由同一消息
+ * 拿到特性 + 应用两份列表后自行判断（feature 禁用或应用自身被禁用都要停索引）。
+ */
+export async function notifyWorkerFeatureUpdate(
+    disabledFeatures: readonly string[],
+    disabledApplications: readonly string[] = []
+): Promise<void> {
+    if (!ApplicationRegistry.hasGlobalWorker()) {
+        logger.warn('global worker not initialized, cannot notify feature update');
+        return;
     }
+    await requestSystemWorker(
+        '__updateDisabledFeatures',
+        [[...disabledFeatures], [...disabledApplications]],
+        'worker feature sync timed out'
+    );
+}
+
+/** 当前禁用状态推给 Worker（fire-and-forget，失败只记日志） */
+function pushDisabledStateToWorker(): void {
+    const manager = getFeatureManager();
+    void notifyWorkerFeatureUpdate(manager.getDisabledFeatures(), manager.getDisabledApplications()).catch((error) => {
+        logger.warn(`push disabled features to worker failed: ${error}`);
+    });
+}
+
+let featureWorkerSyncRegistered = false;
+
+/**
+ * 订阅禁用状态变更并同步到 Worker 线程（线程内 FeatureManager 镜像 + 门控 worker 转发）。
+ *
+ * main 与 cli 共用：两者都在 initializeRegistryWorker 之前完成插件 setup，启动值随
+ * workerData 注入，运行时变更（插件启停）由这里推送；worker 崩溃重启出的新实例只携带
+ * 启动值，也由这里在重启回调里补推。由 initializeRegistryWorker 调用；测试可单独触发。
+ */
+export function ensureFeatureWorkerSync(): void {
+    if (featureWorkerSyncRegistered) return;
+    featureWorkerSyncRegistered = true;
+    const manager = getFeatureManager();
+    manager.onFeaturesChanged(pushDisabledStateToWorker);
+    manager.onApplicationsChanged(pushDisabledStateToWorker);
+    onGlobalWorkerRestarted(pushDisabledStateToWorker);
 }
 
 /**
  * 初始化应用注册表和协议处理
  * 在 app.whenReady() 之前调用，用于注册应用实例和协议 schemes
  */
+let featureApplicationListenerRegistered = false;
+
+/**
+ * 订阅插件特性禁用变更：ctx.features.disableApplication 生效/回退时向渲染进程
+ * 推送刷新后的应用列表。由 initializeRegistry 调用；测试可单独触发。
+ */
+export function ensureFeatureDisableSubscription(): void {
+    if (featureApplicationListenerRegistered) return;
+    featureApplicationListenerRegistered = true;
+    getFeatureManager().onApplicationsChanged(() => {
+        ApplicationRegistry.notifyApplicationListChanged();
+    });
+}
+
 export function initializeRegistry() {
     // 注册所有应用实例
     for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
@@ -486,6 +592,9 @@ export function initializeRegistry() {
 
     // 标记应用注册表已就绪，执行所有等待中的回调
     ApplicationRegistry.markAsReady();
+
+    // 插件通过 ctx.features.disableApplication 禁用应用后，向渲染进程推送刷新后的应用列表
+    ensureFeatureDisableSubscription();
 }
 
 // Worker 重启相关状态
@@ -528,6 +637,8 @@ export function notifyGlobalWorkerRestarted(): Promise<void> {
 export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = {}) {
     cachedRuntimeOptions = runtimeOptions;
     workerRestartController.reset();
+    // 特性禁用的启动值随 workerData 注入；运行时变更的推送订阅在这里统一注册（main/cli 共用）
+    ensureFeatureWorkerSync();
     spawnGlobalWorker(runtimeOptions);
 }
 
@@ -546,6 +657,10 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                 setting: Setting.getInstance().getData(),
                 preferredSystemLanguages: runtimeOptions.preferredSystemLanguages
                     ? [...runtimeOptions.preferredSystemLanguages]
+                    : undefined,
+                disabledFeatures: runtimeOptions.disabledFeatures ? [...runtimeOptions.disabledFeatures] : undefined,
+                disabledApplications: runtimeOptions.disabledApplications
+                    ? [...runtimeOptions.disabledApplications]
                     : undefined
             }
         });

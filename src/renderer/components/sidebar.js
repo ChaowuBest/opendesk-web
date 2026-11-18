@@ -27,6 +27,7 @@ import { escapeHtml } from '../../common/utils/escape.js';
 import { CHEVRON_DOWN_SVG, CHEVRON_RIGHT_SVG } from '../../common/ui-icons.js';
 import { isApplicationVisibleInMenu } from '../utils/application-visibility.ts';
 import { fixedLayerOrigin, visibleViewportRect } from '../utils/window-frame.js';
+import { initFeatureState, isFeatureDisabled, isApplicationDisabledByFeature, onFeaturesChanged } from '../features.js';
 import {
     buildSidebarFavoritesResults,
     buildSidebarTaskGroups,
@@ -154,6 +155,12 @@ class SideBar extends HTMLElement {
         this._initNavLabelsFit();
         this._initTaskSwipeDelete();
         this._initMultiSelect();
+
+        // 插件禁用记忆/文件系统特性时同步隐藏底部工具栏对应入口
+        initFeatureState();
+        if (window.featuresAPI?.onChanged) {
+            this._featuresUnsubscribe = onFeaturesChanged(() => this._syncBottomToolbarWithFeatures());
+        }
         this.querySelector('#collapse-sidebar-btn')?.addEventListener('click', () => {
             this._dismissAppPopover();
             this.dispatchEvent(
@@ -321,6 +328,10 @@ class SideBar extends HTMLElement {
         this._swipeDeleteController = null;
         this._multiSelectController?.destroy();
         this._multiSelectController = null;
+        if (this._featuresUnsubscribe) {
+            this._featuresUnsubscribe();
+            this._featuresUnsubscribe = null;
+        }
         if (this._navRowResizeObserver) {
             this._navRowResizeObserver.disconnect();
             this._navRowResizeObserver = null;
@@ -762,8 +773,10 @@ class SideBar extends HTMLElement {
     _getBottomToolbarButtons() {
         const svg = (path) =>
             `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
-        const buttons = [
-            {
+        const buttons = [];
+        // 记忆/文件系统入口按插件特性禁用状态显隐（ctx.features.disable）
+        if (!isFeatureDisabled('memory')) {
+            buttons.push({
                 id: 'open-memory-btn',
                 icon: '',
                 iconSvg: svg(
@@ -773,8 +786,10 @@ class SideBar extends HTMLElement {
                 action: () => {
                     window.globalControlAPI.openMemory();
                 }
-            },
-            {
+            });
+        }
+        if (!isFeatureDisabled('filesystem') && !isApplicationDisabledByFeature('filemgr')) {
+            buttons.push({
                 id: 'open-file-system-btn',
                 icon: '',
                 iconSvg: svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
@@ -782,19 +797,19 @@ class SideBar extends HTMLElement {
                 action: () => {
                     window.globalControlAPI.openApplication('filemgr');
                 }
-            },
-            {
-                id: 'open-setting-editor-btn',
-                icon: '',
-                iconSvg: svg(
-                    '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
-                ),
-                label: this._t('renderer.toolbar.settings'),
-                action: () => {
-                    window.globalControlAPI.openSettingEditor();
-                }
+            });
+        }
+        buttons.push({
+            id: 'open-setting-editor-btn',
+            icon: '',
+            iconSvg: svg(
+                '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+            ),
+            label: this._t('renderer.toolbar.settings'),
+            action: () => {
+                window.globalControlAPI.openSettingEditor();
             }
-        ];
+        });
         if (this._agentgateEnabled) {
             buttons.push({
                 id: 'open-agentgate-btn',
@@ -844,8 +859,10 @@ class SideBar extends HTMLElement {
     }
 
     _createBottomToolbar() {
-        const toolbar = new ElasticToolbarWidget(this._getBottomToolbarButtons());
+        const buttons = this._getBottomToolbarButtons();
+        const toolbar = new ElasticToolbarWidget(buttons);
         this._bottomToolbar = toolbar;
+        this._bottomToolbarButtonIds = buttons.map((button) => button.id).join(',');
 
         // 覆盖默认样式以匹配侧边栏毛玻璃风格
         toolbar.classList.add('sidebar-bottom');
@@ -854,6 +871,19 @@ class SideBar extends HTMLElement {
             container.appendChild(toolbar);
         }
         this._startAgentgateStatusPolling();
+    }
+
+    /** 插件特性禁用状态变化后，底部工具栏按钮集合与之前不同时才重建（ElasticToolbarWidget 幂等重建） */
+    _syncBottomToolbarWithFeatures() {
+        const container = this.querySelector('#sidebar-bottom-toolbar');
+        if (!container || !this._bottomToolbar) return;
+        const buttonIds = this._getBottomToolbarButtons()
+            .map((button) => button.id)
+            .join(',');
+        if (this._bottomToolbarButtonIds === buttonIds) return;
+        this._bottomToolbarButtonIds = buttonIds;
+        this._bottomToolbar.remove();
+        this._createBottomToolbar();
     }
 
     /**

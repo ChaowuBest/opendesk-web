@@ -17,6 +17,7 @@ import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { createMainPlanningToolset } from '../../aikernel/planning/tools.js';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import type { z } from 'zod';
 import process from 'process';
 
@@ -30,9 +31,10 @@ async function collectAllToolsets(): Promise<BaseToolset[]> {
 
     const appToolsets = await ApplicationRegistry.listAvailableToolsets();
     const skillToolset = SkillRegistry.getInstance().getToolset();
-    const memoryToolset = createMemoryToolset();
+    // 记忆特性被插件禁用时不注入记忆工具集（与 tool-resolver 行为一致）
+    const memoryToolset = getFeatureManager().isFeatureDisabled('memory') ? null : createMemoryToolset();
     const planningToolset = createMainPlanningToolset();
-    return [...appToolsets, skillToolset, memoryToolset, planningToolset];
+    return [...appToolsets, skillToolset, ...(memoryToolset ? [memoryToolset] : []), planningToolset];
 }
 
 function findTool(

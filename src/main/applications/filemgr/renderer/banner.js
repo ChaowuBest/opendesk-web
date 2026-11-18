@@ -30,6 +30,11 @@ const STATUS_MODEL = {
         labelKey: 'renderer.filemgr.status.readonly',
         rgb: '245, 158, 11'
     },
+    // 插件通过 ctx.features.disable('filesystem') 停用 AI 索引后 worker 进入的状态
+    disabled: {
+        labelKey: 'renderer.filemgr.status.disabled',
+        rgb: '142, 142, 147'
+    },
     error: {
         labelKey: 'renderer.filemgr.status.error',
         rgb: '255, 59, 48'
@@ -80,6 +85,7 @@ const FALLBACK_TEXT = {
     'renderer.filemgr.status.initializing': '正在启动',
     'renderer.filemgr.status.running': '运行中',
     'renderer.filemgr.status.readonly': '查询模式',
+    'renderer.filemgr.status.disabled': '已停用',
     'renderer.filemgr.status.error': '异常',
     'renderer.filemgr.mode.full': '完整索引',
     'renderer.filemgr.mode.baseOnly': '基础索引',

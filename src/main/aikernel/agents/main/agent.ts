@@ -26,6 +26,7 @@ import { getLocale } from '../../../../locale/index.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 import { readUserPortrait } from '../../memory/user_portrait.js';
+import { getFeatureManager } from '../../../../common/features/manager.js';
 import { getEvidenceCardSystemSection, isEvidenceCardFeatureEnabled } from '../../../utils/evidencecard.js';
 import { Setting } from '../../../utils/setting.js';
 import { listExecutionNodes } from '../../security/harness.js';
@@ -193,11 +194,19 @@ ${portrait}
 }
 
 export async function getUserPortraitSection(): Promise<string | null> {
+    // 记忆特性被插件禁用时不再注入用户画像段落
+    if (getFeatureManager().isFeatureDisabled('memory')) {
+        return null;
+    }
     return formatUserPortraitSection(await readUserPortrait());
 }
 
 // ─── Section 10: Long-Term Memory ─────────────────────────────────
-export function getLongTermMemorySection(): string {
+export function getLongTermMemorySection(): string | null {
+    // 记忆特性被插件禁用时不再注入长期记忆段落
+    if (getFeatureManager().isFeatureDisabled('memory')) {
+        return null;
+    }
     return `# 长期记忆
 
 OpenDesk 有两类长期记忆：

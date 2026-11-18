@@ -104,6 +104,7 @@ export const OPENDESK_PLUGIN_CAPABILITIES = [
     'channel',
     'account',
     'appearance',
+    'features',
     'locale',
     'registry'
 ] as const;
@@ -777,6 +778,32 @@ export interface AppearanceCapability {
     setAppLogo(logoPath: string | PluginAppLogoThemeVariants): PluginRegistration;
 }
 
+/**
+ * 特性能力：插件禁用 OpenDesk 自身的内置特性或整个应用。
+ *
+ * 禁用状态动态生效、跟随插件生命周期：插件每次启动在 setup() 中重新调用即可保持
+ * 禁用；返回的 PluginRegistration 释放（或插件停用/卸载/宿主重载）后自动恢复。
+ * 禁用不落盘。同一目标被多个插件同时禁用时，全部释放后才视为恢复；同一插件多次
+ * 调用时按持有次数计数，需要把每次返回的 registration 都释放。
+ */
+export interface FeaturesCapability {
+    /**
+     * 禁用一个 OpenDesk 内置特性。
+     *
+     * @param featureId 特性 id，必须是宿主特性列表中的已知 id（当前支持
+     *   `memory`：长期记忆与用户画像；`filesystem`：AI 文件系统的索引与语义搜索，
+     *   纯文件读写、grep 与 @ 添加文件不受影响）。未知 id 会抛错。
+     */
+    disable(featureId: string): PluginRegistration;
+    /**
+     * 禁用一个 OpenDesk 应用（按 bundleName）：应用图标从菜单隐藏、延迟资源不再加载、
+     * 工具集与事件不再提供给任务和插件。
+     *
+     * @param bundleName 已注册的应用 bundleName（系统应用或用户应用）。未知 bundleName 会抛错。
+     */
+    disableApplication(bundleName: string): PluginRegistration;
+}
+
 export interface PluginContext {
     readonly pluginId: string;
     readonly pluginDir: string;
@@ -873,6 +900,8 @@ export interface PluginContext {
     readonly channels: ChannelsCapability;
     /** 外观能力：插件自定义应用外观（逐步开放中） */
     readonly appearance: AppearanceCapability;
+    /** 特性能力：插件禁用 OpenDesk 自身的内置特性或整个应用 */
+    readonly features: FeaturesCapability;
     /** 注册表能力：插件向技能市场 / MCP 管理器贡献注册表（marketplace） */
     readonly registry: RegistryCapability;
 }

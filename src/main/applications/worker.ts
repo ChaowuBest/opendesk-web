@@ -25,6 +25,7 @@ import { getOpendeskDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
 import { toErrorMessage } from '../../common/utils/error.js';
 import { setRuntimePreferredSystemLanguages } from '../../locale/index.js';
+import { getFeatureManager } from '../../common/features/manager.js';
 
 import { parentPort, workerData } from 'worker_threads';
 import path from 'path';
@@ -37,7 +38,60 @@ const workerInitPromises: Map<string, Promise<void>> = new Map();
  * 在worker线程中无法使用 */
 // workerData.setting 由主进程注入，形态为 { applications: { [bundleName]: config } }
 const setting = (workerData?.setting ?? {}) as { applications?: Record<string, object> };
+// workerData.disabledFeatures 由主进程注入：插件通过 ctx.features.disable 已禁用的特性列表，
+// 供支持特性门控的 worker（如 filemgr 的 AI 索引）在 initialize() 前就位
+const disabledFeatures = (workerData?.disabledFeatures ?? []) as string[];
+// workerData.disabledApplications 由主进程注入：插件通过 ctx.features.disableApplication 已禁用的
+// 应用列表。只在需要自我门控的 worker（如 filemgr 被禁用时停索引）里消费，不进 FeatureManager 镜像。
+const disabledApplications = (workerData?.disabledApplications ?? []) as string[];
 setRuntimePreferredSystemLanguages(workerData?.preferredSystemLanguages ?? null);
+
+/**
+ * 特性禁用状态在 worker 线程 FeatureManager 里的持有者标识。
+ * 状态真源始终在主进程，worker 线程只镜像主进程推送的列表，不能自行产生禁用状态。
+ */
+const WORKER_FEATURE_OWNER = '__worker_host__';
+
+/**
+ * 把主进程维护的禁用状态应用到 worker 线程：先镜像特性级禁用到本线程 FeatureManager
+ * （供 worker 内被实例化的应用类读取），再把特性 + 应用两份列表转发给实现了
+ * setDisabledFeatures 的 worker（如 filemgr 的 AI 索引门控，需要停止扫描/释放索引）。
+ *
+ * 应用级禁用的多数消费方（图标列表、延迟加载、工具集、事件、callWorker）在主进程；
+ * 这里仍下发应用列表，是因为「禁用整个应用」同样应当停掉该应用自己的后台资源
+ * （如 filemgr 的索引），否则界面上看不到应用、后台还在扫描写索引。
+ *
+ * 转发调用在返回前同步进入 worker 的 setDisabledFeatures（该函数第一行设置内部标志），
+ * 才能保证随后同步执行的 initialize() 读到正确的门控状态。
+ */
+export async function applyDisabledFeatures(
+    workers: Map<string, BaseWorker>,
+    features: readonly string[],
+    applications: readonly string[] = []
+): Promise<void> {
+    const manager = getFeatureManager();
+    const next = new Set(features);
+    for (const featureId of manager.getDisabledFeatures()) {
+        if (!next.has(featureId)) {
+            manager.setFeatureDisabled(featureId, WORKER_FEATURE_OWNER, false);
+        }
+    }
+    for (const featureId of next) {
+        manager.setFeatureDisabled(featureId, WORKER_FEATURE_OWNER, true);
+    }
+
+    const pending: Promise<void>[] = [];
+    for (const appWorker of workers.values()) {
+        const featureAwareWorker = appWorker as unknown as {
+            setDisabledFeatures?: (ids: string[], applications: string[]) => void | Promise<void>;
+        };
+        if (typeof featureAwareWorker.setDisabledFeatures !== 'function') continue;
+        // 同步调用：标志就位后 initialize() 才跑，之后才等待可能的异步拆除
+        const result = featureAwareWorker.setDisabledFeatures([...features], [...applications]);
+        pending.push(Promise.resolve(result).then(() => undefined));
+    }
+    await Promise.all(pending);
+}
 
 export function initializeAppWorkers() {
     for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
@@ -51,6 +105,14 @@ export function initializeAppWorkers() {
         const appWorker = new WORKER_CLASS(app.bundleName, appDataDir);
         appWorkers.set(app.bundleName, appWorker);
     }
+
+    // 特性门控先于 applicationConfigChanged/initialize()：镜像 workerData 注入的禁用特性，
+    // 并转发给支持门控的 worker（如 filemgr 的 AI 索引），被禁用的特性从一开始就不启动
+    // 扫描与嵌入。启动路径 fire-and-forget：applyDisabledFeatures 在返回前已同步把门控
+    // 标志写进各 worker，initialize() 读到的就是正确值，异步部分（拆除/重建）随后跑。
+    void applyDisabledFeatures(appWorkers, disabledFeatures, disabledApplications).catch((error) => {
+        logger.error(`apply disabled features to workers failed: ${toErrorMessage(error)}`);
+    });
 
     for (const [name, appWorker] of appWorkers.entries()) {
         logger.info(`initializing worker ${name}`);
@@ -141,6 +203,23 @@ export async function handleWorkerRequest(
             const message = error instanceof Error ? error.message : String(error);
             logger.error(`failed to apply global setting update: ${message}`);
             postMessage({ type: 'response', id: requestId, status: 'error', message });
+        }
+        return;
+    }
+
+    // 处理特性禁用状态更新消息（主进程是唯一真源，这里只做镜像与转发）
+    if (methodName === '__updateDisabledFeatures') {
+        const nextFeatures = Array.isArray(args[0]) ? args[0].filter((id): id is string => typeof id === 'string') : [];
+        const nextApplications = Array.isArray(args[1])
+            ? args[1].filter((name): name is string => typeof name === 'string')
+            : [];
+        try {
+            await applyDisabledFeatures(appWorkers, nextFeatures, nextApplications);
+            postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
+        } catch (error) {
+            const reason = toErrorMessage(error);
+            logger.error(`failed to apply disabled features: ${reason}`);
+            postMessage({ type: 'response', id: requestId, status: 'error', message: reason });
         }
         return;
     }

@@ -127,9 +127,11 @@ import {
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
 import { readUserPortrait, writeUserPortrait } from './aikernel/memory/user_portrait.js';
-import { registerMemoryReviewHook } from './aikernel/memory/review.js';
+import { registerMemoryReviewHook, unregisterMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
+import { getFeatureManager } from '../common/features/manager.js';
+import { OPENDESK_FEATURES, resolveFeatureLocalizedText } from '../common/features/registry.js';
 import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
 import { startReporter } from './utils/reporter.js';
 import { submitFeedback } from './utils/feedback.js';
@@ -229,6 +231,47 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const modes = agent.supportedModes();
     const mode = modes.find((candidate) => candidate.id === _currentElectronModeId) ?? agent.getDefaultMode();
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
+}
+
+/**
+ * features:getState / features:changed 推给渲染进程的状态载荷。
+ * 特性清单的展示文案在这里按当前界面语言解析成纯文本，渲染进程无需再关心
+ * FeatureLocalizedText 的多语言结构。
+ */
+function getFeatureStatePayload() {
+    const locale = getLocale();
+    return {
+        ...getFeatureManager().getSnapshot(),
+        features: OPENDESK_FEATURES.map((feature) => ({
+            id: feature.id,
+            displayName: resolveFeatureLocalizedText(feature.displayName, locale) ?? feature.id,
+            description: resolveFeatureLocalizedText(feature.description, locale) ?? ''
+        }))
+    };
+}
+
+/**
+ * 记忆特性门控联动（ctx.features.disable('memory')）：
+ * 禁用时注销任务回顾钩子并停掉记忆清理调度器，恢复时重新注册。
+ */
+let stopMemoryCleanupSchedulerFn: (() => void) | null = null;
+/** 记忆特性联动订阅；重复进入 startApplication 时不重复注册 */
+let featureStateSubscription: (() => void) | undefined;
+function syncMemoryFeatureState(): void {
+    if (getFeatureManager().isFeatureDisabled('memory')) {
+        unregisterMemoryReviewHook();
+        stopMemoryCleanupSchedulerFn?.();
+        stopMemoryCleanupSchedulerFn = null;
+        return;
+    }
+    // registerMemoryReviewHook 内部有已注册守卫，重复调用安全
+    registerMemoryReviewHook({
+        taskManagerState: GlobalState.getInstance().taskManagerState,
+        initializeReviewTask: initializeMemoryReviewTask
+    });
+    stopMemoryCleanupSchedulerFn ??= startMemoryCleanupScheduler(() =>
+        FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
+    );
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -1321,7 +1364,19 @@ const registerBrowserAPIHandlers = () => {
 };
 
 const registerMemoryAPIHandlers = () => {
-    ipcMain.handle('memory:getUserPortrait', async () => {
+    type MemoryInvokeHandler = Parameters<typeof ipcMain.handle>[1];
+    // 记忆特性被插件禁用（ctx.features.disable('memory')）时记忆相关 IPC 一律不可用：
+    // 侧栏入口已经隐藏，这里堵住渲染进程的旁路调用，避免继续读写记忆数据。
+    const handleMemoryIPC = (channel: string, handler: MemoryInvokeHandler) => {
+        ipcMain.handle(channel, async (event, ...args) => {
+            if (getFeatureManager().isFeatureDisabled('memory')) {
+                return { status: 'error', message: t('feature.memory.disabled') };
+            }
+            return handler(event, ...args);
+        });
+    };
+
+    handleMemoryIPC('memory:getUserPortrait', async () => {
         try {
             return { status: 'ok', data: { raw: await readUserPortrait() } };
         } catch (error: any) {
@@ -1329,7 +1384,7 @@ const registerMemoryAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('memory:listMemories', async () => {
+    handleMemoryIPC('memory:listMemories', async () => {
         try {
             const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
             const memories = await registry.listAllMemories();
@@ -1345,7 +1400,7 @@ const registerMemoryAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('memory:updateUserPortrait', async (_event, content: string) => {
+    handleMemoryIPC('memory:updateUserPortrait', async (_event, content: string) => {
         try {
             await writeUserPortrait(content);
             return { status: 'ok', data: { raw: await readUserPortrait() } };
@@ -1354,7 +1409,7 @@ const registerMemoryAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('memory:updateMemory', async (_event, uid: string, title: string, content: string) => {
+    handleMemoryIPC('memory:updateMemory', async (_event, uid: string, title: string, content: string) => {
         try {
             const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
             return { status: 'ok', data: await registry.updateMemory(uid, title, content) };
@@ -1363,7 +1418,7 @@ const registerMemoryAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('memory:removeMemory', async (_event, uid: string) => {
+    handleMemoryIPC('memory:removeMemory', async (_event, uid: string) => {
         try {
             const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
             return { status: 'ok', data: await registry.removeMemory(uid) };
@@ -1372,7 +1427,7 @@ const registerMemoryAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('memory:cleanup', async () => {
+    handleMemoryIPC('memory:cleanup', async () => {
         try {
             const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
             return { status: 'ok', data: await registry.cleanupStaleMemories() };
@@ -1380,6 +1435,23 @@ const registerMemoryAPIHandlers = () => {
             return { status: 'error', message: error?.message || String(error) };
         }
     });
+};
+
+/** 插件特性禁用状态查询/推送：sidebar 记忆与文件系统图标、agentinput 搜索按钮据此显隐 */
+let featuresBroadcastSubscriptions: Array<() => void> | undefined;
+const registerFeaturesAPIHandlers = () => {
+    // 必须先注册 handler 再允许渲染进程拉取；重复进入时保持幂等（不重复 handle/订阅）
+    if (featuresBroadcastSubscriptions) return;
+    ipcMain.handle('features:getState', async () => {
+        return { status: 'ok', data: getFeatureStatePayload() };
+    });
+    const broadcast = () => broadcastToAllWindows('features:changed', getFeatureStatePayload());
+    // 特性级与应用级禁用都在同一份快照里，两类变化都要推送，否则渲染端的
+    // disabledApplications 会停留在启动时的快照（应用入口/iframe/搜索按钮不跟着更新）
+    featuresBroadcastSubscriptions = [
+        getFeatureManager().onFeaturesChanged(broadcast),
+        getFeatureManager().onApplicationsChanged(broadcast)
+    ];
 };
 
 const registerUsageAPIHandlers = () => {
@@ -4050,6 +4122,8 @@ async function startApplication(): Promise<void> {
         AgentRegistry.initBuiltinAgents();
         registerModeAPIHandlers();
         registerNativeBridge();
+        // 特性禁用状态是渲染进程首帧就要读的（sidebar/搜索按钮显隐），必须早于 createWindow
+        registerFeaturesAPIHandlers();
 
         createWindow();
 
@@ -4105,9 +4179,8 @@ async function startApplication(): Promise<void> {
                 return () => task.removeSubscriber(subscriber.subscription_id);
             }
         });
-        startMemoryCleanupScheduler(() =>
-            FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
-        );
+        // 记忆清理调度器的生命周期统一由 syncMemoryFeatureState 管理（跟随 memory 特性门控启停），
+        // 不在此处再启动一个不受门控约束的实例。
         startProxyEnvRefreshScheduler();
         // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）
         startReporter('desktop');
@@ -4120,10 +4193,11 @@ async function startApplication(): Promise<void> {
             new PluginToolsetProvider()
         );
 
-        registerMemoryReviewHook({
-            taskManagerState: GlobalState.getInstance().taskManagerState,
-            initializeReviewTask: initializeMemoryReviewTask
-        });
+        // 插件特性门控联动：插件已在 initializePluginHost 中完成 setup（禁用状态就位）。
+        // 记忆回顾钩子按特性状态注册；特性变更时同步注销/恢复。
+        // worker 侧（镜像 + 崩溃重启兜底）由 initializeRegistryWorker 的 ensureFeatureWorkerSync 统一处理。
+        syncMemoryFeatureState();
+        featureStateSubscription ??= getFeatureManager().onFeaturesChanged(syncMemoryFeatureState);
 
         registerGoalHooks();
 
@@ -4136,7 +4210,12 @@ async function startApplication(): Promise<void> {
 
         // 启动 global worker（同步 spawn，不阻塞）。
         // Worker 初始化与应用 Agent 加载将在 createWindow 之后并行执行，避免阻塞窗口显示。
-        initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
+        const manager = getFeatureManager();
+        initializeRegistryWorker({
+            preferredSystemLanguages: getPreferredSystemLanguagesForLocale(),
+            disabledFeatures: manager.getDisabledFeatures(),
+            disabledApplications: manager.getDisabledApplications()
+        });
         resolveRegistryWorkerReady();
 
         // 插件 bootstrap 早于全局 worker 启动，技能内部 MCP server 的首次同步在此补齐
@@ -4267,6 +4346,7 @@ async function startApplication(): Promise<void> {
         initializeScreenAdaption();
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
+        // registerFeaturesAPIHandlers() 已在 createWindow 前注册（渲染进程首帧即需要特性状态）
         registerUsageAPIHandlers();
         registerDesktopAPIHandlers();
         registerTrashAPIHandlers();

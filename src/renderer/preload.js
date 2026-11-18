@@ -1325,6 +1325,20 @@ if (shouldExposeMainWindowAPIs()) {
             return () => ipcRenderer.removeListener('updater:stateChanged', listener);
         }
     });
+    // 插件特性禁用状态（ctx.features.disable / disableApplication）：
+    // sidebar 记忆与文件系统图标、agentinput 搜索按钮等据此显隐
+    safeExposeInMainWorld('featuresAPI', {
+        getState: async () => {
+            const result = await ipcRenderer.invoke('features:getState');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        onChanged: (callback) => {
+            const listener = (_event, state) => callback(state);
+            ipcRenderer.on('features:changed', listener);
+            return () => ipcRenderer.removeListener('features:changed', listener);
+        }
+    });
     safeExposeInMainWorld('memoryAPI', {
         getUserPortrait: async () => {
             const result = await ipcRenderer.invoke('memory:getUserPortrait');
