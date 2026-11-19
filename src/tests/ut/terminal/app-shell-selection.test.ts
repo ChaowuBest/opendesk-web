@@ -20,6 +20,8 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     }
 }));
 jest.unstable_mockModule('../../../main/applications/base.js', () => ({ BaseApplication: class {} }));
+const warn = jest.fn();
+jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { warn, error: jest.fn(), info: jest.fn() } }));
 const scan = jest.fn(() => shells);
 jest.unstable_mockModule('../../../main/applications/terminal/scan.js', () => ({
     scanSupportedShells: scan,
@@ -51,6 +53,7 @@ const { TerminalApplication } = await import('../../../main/applications/termina
 beforeEach(() => {
     taskConfig = {};
     launches.length = 0;
+    warn.mockReset();
     scan.mockReset();
     scan.mockReturnValue(shells);
 });
@@ -146,21 +149,26 @@ test('empty discovery registers no terminal tools', async () => {
     expect(await new TerminalApplication().getToolsets()).toEqual([]);
 });
 
-test('a requested sandbox rejects execution when its selected capability disappears', async () => {
+test('a requested sandbox degrades to the host shell when its selected capability disappears', async () => {
     taskConfig = { shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
     scan.mockReturnValueOnce([
         { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
         { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
     ]);
     launches.length = 0;
-    await expect(new TerminalApplication().getToolsets()).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
-    expect(launches).toEqual([]);
+    const [toolset] = await new TerminalApplication().getToolsets();
+    // 沙箱组件缺失时不能阻断任务：非沙箱执行，且不把回收站偏好透传给普通 shell
+    expect([...toolset.tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
+    expect(launches[0]).toEqual({ name: 'executePwsh', args: ['C:/Windows/powershell.exe', false, false] });
+    expect(warn).toHaveBeenCalledTimes(1);
 });
 
-test('an empty inventory cannot silently discard a saved sandbox request, while unlimited explicitly bypasses it', async () => {
+test('an empty inventory registers no tools instead of failing the whole toolset build', async () => {
     taskConfig = { shell_path: '/host/bin/bash', shell_sandboxed: true };
     scan.mockReturnValue([]);
-    await expect(new TerminalApplication().getToolsets()).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
+    expect(await new TerminalApplication().getToolsets()).toEqual([]);
+
+    // unlimited 模式同样只是不注册沙箱工具
     scan.mockReturnValue([{ kind: 'bash', path: '/host/bin/bash', sandboxed: false }]);
     await new TerminalApplication().getToolsets({ activeModeId: 'unlimited' } as never);
     expect(launches[0]).toEqual({ name: 'executeBash', args: ['/host/bin/bash', false, false] });

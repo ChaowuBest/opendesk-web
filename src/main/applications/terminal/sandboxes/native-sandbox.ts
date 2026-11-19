@@ -11,30 +11,31 @@
 
 import type { SandboxKit } from '../../../../platforms/bridges/common.js';
 import { preparePosixSandbox, type PosixSandboxOptions } from './posix-sandbox.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 import { t } from '../locale/index.js';
 
+export { isSandboxUnavailableError, SANDBOX_UNAVAILABLE } from './sandbox-errors.js';
+
 export function sandboxUnavailable(cause?: unknown): Error {
-    return Object.assign(new Error(t('sandbox.unavailable'), { cause }), { code: 'SANDBOX_UNAVAILABLE' });
+    return sandboxUnavailableError(t('sandbox.unavailable'), cause);
 }
 
 export async function prepareNativeSandbox(kit: SandboxKit, options: PosixSandboxOptions) {
-    try {
-        return await preparePosixSandbox(options, async ({ workspace, policyPath, endpoint, logPath, readOnly }) => {
-            const launch = await kit.prepare({
-                shellPath: options.shellPath,
-                shellArgs: [...options.shellArgs],
-                cwd: workspace,
-                policyPath,
-                endpoint,
-                logPath,
-                readOnly,
-                deleteToTrash: readOnly ? false : options.deleteToTrash,
-                trashDir: options.trashDir,
-                trashExcludeDirs: options.trashExcludeDirs
-            });
-            return { ...launch, runtimePaths: launch.runtimePaths ?? { readExecute: [], writable: [] } };
+    // Kit 自身以 SANDBOX_UNAVAILABLE 表示"组件缺失/宿主未实现"，调用方据此降级；
+    // 策略、授权端点等其它故障保持原样抛出，不会被降级成宿主权限执行。
+    return preparePosixSandbox(options, async ({ workspace, policyPath, endpoint, logPath, readOnly }) => {
+        const launch = await kit.prepare({
+            shellPath: options.shellPath,
+            shellArgs: [...options.shellArgs],
+            cwd: workspace,
+            policyPath,
+            endpoint,
+            logPath,
+            readOnly,
+            deleteToTrash: readOnly ? false : options.deleteToTrash,
+            trashDir: options.trashDir,
+            trashExcludeDirs: options.trashExcludeDirs
         });
-    } catch (error) {
-        throw sandboxUnavailable(error);
-    }
+        return { ...launch, runtimePaths: launch.runtimePaths ?? { readExecute: [], writable: [] } };
+    });
 }

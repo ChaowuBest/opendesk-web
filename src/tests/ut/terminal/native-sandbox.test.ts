@@ -168,6 +168,21 @@ describe('shared native sandbox preparation and shell execution', () => {
         expect(spawn).not.toHaveBeenCalled();
     });
 
+    test('a desktop platform without sandbox components degrades to the ordinary shell', async () => {
+        // 桌面端沙箱二进制缺失（未随包/被删除）：宿主未声明 SandboxKit 支持，
+        // 平台内置实现也拿不到启动计划，此时降级为宿主 shell 而不是中断任务。
+        const host = new Host();
+        jest.spyOn(host, 'getNativeBridge').mockReturnValue({
+            getSandboxKit: async () => new NaiveSandboxKit()
+        } as any);
+        setPlatform(host);
+        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+        child();
+        await executeShellCommand(options({ cwd: directory }));
+        expect(kit.prepare).not.toHaveBeenCalled();
+        expect(spawn).toHaveBeenCalledWith('/opaque/runtime/bin/bash', ['-c', 'printf safe'], expect.anything());
+    });
+
     test('spawn failure disposes native and shared resources exactly once', async () => {
         spawn.mockImplementation(() => {
             throw new Error('spawn failed');
@@ -246,7 +261,9 @@ describe('shared native sandbox preparation and shell execution', () => {
             ...(await prepare(input)),
             runtimePaths: { readExecute: ['/'], writable: [] }
         });
-        await expect(prepareNativeSandbox(kit, options())).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
+        // 策略校验失败不是"组件缺失"，因此不携带可降级错误码：调用方必须原样上抛，
+        // 不能把策略故障降级成以宿主权限执行。
+        await expect(prepareNativeSandbox(kit, options())).rejects.toThrow('cannot grant the filesystem root');
         expect(cleanup).toHaveBeenCalledTimes(2);
     });
 

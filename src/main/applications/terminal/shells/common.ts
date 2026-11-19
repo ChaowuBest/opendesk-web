@@ -38,7 +38,7 @@ import { prepareDynamicSandbox } from '../sandboxes/dynabox.js';
 import { prepareLinuxSandbox } from '../sandboxes/linux-sandbox.js';
 import { prepareDarwinSandbox } from '../sandboxes/darwin-sandbox.js';
 import { prepareOpenHarmonySandbox } from '../sandboxes/openharmony-sandbox.js';
-import { prepareNativeSandbox, sandboxUnavailable } from '../sandboxes/native-sandbox.js';
+import { prepareNativeSandbox, sandboxUnavailable, isSandboxUnavailableError } from '../sandboxes/native-sandbox.js';
 import { getPlatform } from '../../../../platforms/base.js';
 import { NaiveSandboxKit } from '../../../../platforms/bridges/common.js';
 import { appendSandboxPathDiagnostic, appendSandboxPipeDiagnostic } from '../sandboxes/path-diagnostic.js';
@@ -203,6 +203,18 @@ export function parseCdAndCommand(command: string): { cwd?: string; command: str
 // ── Shell 执行核心逻辑 ──────────────────────────────────────────────────────
 
 /**
+ * 沙箱组件不可用时降级为宿主 shell。仅记录内部日志：设置页已隐藏沙箱开关，
+ * 用户可见的是"命令正常执行"，不再因为这个平台差异中断整个任务。
+ */
+function logSandboxFallback(platform: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[terminal] ${platform} shell sandbox unavailable, falling back to the host shell: ${message}`);
+}
+
+/** 应用内置了沙箱实现的平台；其余平台必须由宿主提供 SandboxKit。 */
+const SANDBOX_PLATFORMS: ReadonlySet<string> = new Set(['win32', 'darwin', 'linux', 'openharmony']);
+
+/**
  * 通用的 shell 命令执行逻辑，被三种 shell 工具共用。
  * 负责 spawn 子进程、实时输出更新、超时后台化、用户 stop 中断。
  */
@@ -299,77 +311,90 @@ export async function executeShellCommand(opts: {
                 });
             }
         } catch (error) {
+            // 宿主声明 supported（沙箱应当可用）却拿不到启动计划时 fail closed：
+            // 绝不静默降级为宿主权限执行，否则用户会误以为命令仍受沙箱约束。
             throw sandboxUnavailable(error);
         }
     }
-    const sandbox =
-        nativeSandbox ??
-        (effectiveUseDynamicSandbox && process.platform === 'linux'
-            ? await prepareLinuxSandbox({
-                  shellPath,
-                  shellArgs,
-                  command,
-                  cwd,
-                  taskState,
-                  toolName,
-                  deleteToTrash: effectiveDeleteToTrash,
-                  trashDir: sandboxTrashDir,
-                  trashExcludeDirs: sandboxTrashExcludeDirs,
-                  onPermissionWaitChange: (waiting) => {
-                      if (waiting) timeoutClock.pause();
-                      else timeoutClock.resume();
-                  }
-              })
-            : effectiveUseDynamicSandbox && process.platform === 'darwin'
-              ? await prepareDarwinSandbox({
-                    shellPath,
-                    shellArgs,
-                    command,
-                    cwd,
-                    taskState,
-                    toolName,
-                    deleteToTrash: effectiveDeleteToTrash,
-                    trashDir: sandboxTrashDir,
-                    trashExcludeDirs: sandboxTrashExcludeDirs,
-                    onPermissionWaitChange: (waiting) => {
-                        if (waiting) timeoutClock.pause();
-                        else timeoutClock.resume();
-                    }
-                })
-              : effectiveUseDynamicSandbox && (process.platform as string) === 'openharmony'
-                ? await prepareOpenHarmonySandbox({
-                      shellPath,
-                      shellArgs,
-                      command,
-                      cwd,
-                      taskState,
-                      toolName,
-                      deleteToTrash: effectiveDeleteToTrash,
-                      trashDir: sandboxTrashDir,
-                      trashExcludeDirs: sandboxTrashExcludeDirs,
-                      onPermissionWaitChange: (waiting) => {
-                          if (waiting) timeoutClock.pause();
-                          else timeoutClock.resume();
-                      }
-                  })
-                : effectiveUseDynamicSandbox
-                  ? await prepareDynamicSandbox({
-                        shellPath,
-                        shellArgs,
-                        command,
-                        cwd,
-                        taskState,
-                        toolName,
-                        deleteToTrash: effectiveDeleteToTrash,
-                        trashDir: sandboxTrashDir,
-                        trashExcludeDirs: sandboxTrashExcludeDirs,
-                        onPermissionWaitChange: (waiting) => {
-                            if (waiting) timeoutClock.pause();
-                            else timeoutClock.resume();
-                        }
-                    })
-                  : null);
-    if (effectiveUseDynamicSandbox && !sandbox) throw sandboxUnavailable();
+    let sandbox: Awaited<ReturnType<typeof prepareLinuxSandbox>> = nativeSandbox;
+    if (!sandbox && effectiveUseDynamicSandbox) {
+        try {
+            sandbox =
+                process.platform === 'linux'
+                    ? await prepareLinuxSandbox({
+                          shellPath,
+                          shellArgs,
+                          command,
+                          cwd,
+                          taskState,
+                          toolName,
+                          deleteToTrash: effectiveDeleteToTrash,
+                          trashDir: sandboxTrashDir,
+                          trashExcludeDirs: sandboxTrashExcludeDirs,
+                          onPermissionWaitChange: (waiting) => {
+                              if (waiting) timeoutClock.pause();
+                              else timeoutClock.resume();
+                          }
+                      })
+                    : process.platform === 'darwin'
+                      ? await prepareDarwinSandbox({
+                            shellPath,
+                            shellArgs,
+                            command,
+                            cwd,
+                            taskState,
+                            toolName,
+                            deleteToTrash: effectiveDeleteToTrash,
+                            trashDir: sandboxTrashDir,
+                            trashExcludeDirs: sandboxTrashExcludeDirs,
+                            onPermissionWaitChange: (waiting) => {
+                                if (waiting) timeoutClock.pause();
+                                else timeoutClock.resume();
+                            }
+                        })
+                      : (process.platform as string) === 'openharmony'
+                        ? await prepareOpenHarmonySandbox({
+                              shellPath,
+                              shellArgs,
+                              command,
+                              cwd,
+                              taskState,
+                              toolName,
+                              deleteToTrash: effectiveDeleteToTrash,
+                              trashDir: sandboxTrashDir,
+                              trashExcludeDirs: sandboxTrashExcludeDirs,
+                              onPermissionWaitChange: (waiting) => {
+                                  if (waiting) timeoutClock.pause();
+                                  else timeoutClock.resume();
+                              }
+                          })
+                        : await prepareDynamicSandbox({
+                              shellPath,
+                              shellArgs,
+                              command,
+                              cwd,
+                              taskState,
+                              toolName,
+                              deleteToTrash: effectiveDeleteToTrash,
+                              trashDir: sandboxTrashDir,
+                              trashExcludeDirs: sandboxTrashExcludeDirs,
+                              onPermissionWaitChange: (waiting) => {
+                                  if (waiting) timeoutClock.pause();
+                                  else timeoutClock.resume();
+                              }
+                          });
+        } catch (error) {
+            if (!isSandboxUnavailableError(error)) throw error;
+            // 桌面端沙箱组件缺失（未随包/被删除）：降级为宿主 shell 执行，
+            // 设置页在没有沙箱变体时也不会暴露该开关。
+            logSandboxFallback(process.platform, error);
+        }
+    }
+    if (effectiveUseDynamicSandbox && !sandbox && !SANDBOX_PLATFORMS.has(process.platform)) {
+        // 未知宿主既没有内置沙箱实现，也没有提供 SandboxKit：属于宿主配置错误，
+        // 保持 fail closed，避免在声明需要沙箱的平台上以宿主权限执行命令。
+        throw sandboxUnavailable();
+    }
     if (taskState?.task_status === 'stopped' || taskState?.runtimeInterrupt?.requested) {
         await sandbox?.cleanup();
         throw Object.assign(new Error(t('sandbox.stopped')), { code: 'SANDBOX_STOPPED' });

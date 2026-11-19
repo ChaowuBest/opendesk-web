@@ -20,6 +20,7 @@ import { ExecuteZshTool } from './shells/zsh.js';
 import { CheckShellStatusTool } from './shells/status.js';
 import { scanSupportedShells, selectSupportedShell } from './scan.js';
 import { Setting } from '../../utils/setting.js';
+import { logger } from '../../utils/logger.js';
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
@@ -35,13 +36,18 @@ export class TerminalApplication extends BaseApplication {
         const toolset = new BaseToolset('terminal');
         const taskConfig = Setting.getInstance().getData().task_config;
         const shell = selectSupportedShell(scanSupportedShells(), taskConfig, process.platform);
-        if (taskConfig?.shell_sandboxed === true && !isUnlimitedMode(taskState) && !shell?.sandboxed) {
-            throw Object.assign(new Error(t('sandbox.unavailable')), { code: 'SANDBOX_UNAVAILABLE' });
-        }
         if (!shell) return [];
+        // 沙箱不可用（组件未随包/被移除/CLI 模式不提供）时不阻断任务：降级为宿主 shell 执行，
+        // 设置页在没有沙箱变体时也不会暴露该开关，避免留下一个"看起来生效"的配置。
+        const unlimited = isUnlimitedMode(taskState);
+        if (taskConfig?.shell_sandboxed === true && !unlimited && !shell.sandboxed) {
+            logger.warn(
+                `[terminal] shell sandbox requested but unavailable for ${shell.path}; falling back to the host shell`
+            );
+        }
         // 无限制模式强制禁用所有 shell 沙箱：shell 直接以宿主权限执行，
         // 删除送回收站（依赖沙箱原生层拦截）也随之失效。
-        const sandboxed = !isUnlimitedMode(taskState) && shell.sandboxed;
+        const sandboxed = !unlimited && shell.sandboxed;
         const deleteToTrash = sandboxed && taskConfig?.shell_sandbox_del_to_trash === true;
         switch (shell.kind) {
             case 'powershell':
