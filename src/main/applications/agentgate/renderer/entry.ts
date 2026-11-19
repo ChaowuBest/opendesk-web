@@ -149,7 +149,7 @@ const T: Record<string, { zh: string; en: string }> = {
     },
     consoleRetry: { zh: '重新加载', en: 'Reload' },
     sectionMoss: { zh: 'MOSS安全防护引擎', en: 'MOSS Security Protection Engine' },
-    masterSwitch: { zh: '安全网关总开关', en: 'Security Gateway Master Switch' },
+    masterSwitch: { zh: 'MOSS防护总开关', en: 'MOSS Protection Master Switch' },
     masterSwitchDesc: {
         zh: '关闭后所有安全审查能力停止工作，即使试验性功能已开启',
         en: 'When disabled, all security inspection capabilities stop working, even if experimental features are enabled'
@@ -252,7 +252,7 @@ const T: Record<string, { zh: string; en: string }> = {
     dashboardLoading: { zh: '加载中...', en: 'Loading...' },
     dashboardLoadFailed: { zh: '实时状态加载失败', en: 'Dashboard failed to load' },
     dashboardUnreachable: { zh: '安全网关服务未连接', en: 'Security gateway service unreachable' },
-    masterSwitchOff: { zh: '安全网关总开关已关闭', en: 'Master Switch Off' },
+    masterSwitchOff: { zh: 'MOSS防护总开关已关闭', en: 'MOSS Protection Master Switch Off' },
     masterSwitchOffHint: {
         zh: '请打开总开关以启用安全监控',
         en: 'Enable the master switch to activate security monitoring'
@@ -1335,7 +1335,7 @@ function injectDashLocale(panel: HTMLElement): void {
         if (el) el.textContent = text;
     };
     // Header
-    replace('.header h1', '安全网关实时状态');
+    replace('.header h1', 'MOSS防护实时信息');
     // Stats card labels ( Agents / Sessions / Tool Calls / Allow / Deny / Avg Latency )
     const labels = panel.querySelectorAll('.card .label');
     const zhLabels = ['智能体', '会话', '工具调用', '放行', '拦截', '平均延迟'];
