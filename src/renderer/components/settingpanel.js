@@ -29,6 +29,7 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
+import { isApplicationDisabledByFeature } from '../features.js';
 import './channelSettings.js';
 import './benchmarkChannelSettings.js';
 import './pluginChannelSettings.js';
@@ -44,7 +45,7 @@ const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 /**
- * 设置面板的全部页签 id。
+ * 设置面板的全部页签 id（顺序即左栏导航顺序）。
  * initial-tab 白名单与 _switchTab 的显隐循环共用这一份，避免新增页签时漏改一处导致「点页签不切换」。
  * 侧边栏图标与文案见 renderTabs。
  */
@@ -54,6 +55,7 @@ const SETTING_TAB_IDS = [
     'tasks',
     'memory',
     'channels',
+    'security',
     'agents',
     'search',
     'registries',
@@ -172,6 +174,8 @@ class SettingPanel extends HTMLElement {
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
+        /** 安全设置内嵌应用页的窗口尺寸监听退订函数 */
+        this._securityResizeUnsub = null;
         this._t = createRendererTranslator();
     }
 
@@ -265,6 +269,8 @@ class SettingPanel extends HTMLElement {
 
     disconnectedCallback() {
         this._clearStartupListeners();
+        this._securityResizeUnsub?.();
+        this._securityResizeUnsub = null;
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
         this._localePacksUnsubscribe?.();
@@ -368,6 +374,12 @@ class SettingPanel extends HTMLElement {
                 id: 'channels',
                 label: this._t('sp.tab.channels'),
                 iconSvg: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>')
+            },
+            {
+                // 安全网关：从侧边栏「应用」菜单迁来，排在「消息设置」之后
+                id: 'security',
+                label: this._t('sp.tab.security'),
+                iconSvg: svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>')
             },
             {
                 id: 'agents',
@@ -968,6 +980,24 @@ class SettingPanel extends HTMLElement {
                 color: var(--sp-color-text-secondary);
             }
 
+            /* ── 安全设置：内嵌安全网关应用页 ── */
+            .sp-security-host { display: block; }
+            .sp-security-frame {
+                display: block; width: 100%; border: 0;
+                background: var(--sp-color-bg);
+                border-radius: var(--sp-radius-lg);
+                border: 1px solid var(--sp-color-border);
+                /* 内容区已经自带滚动条，内嵌页自己滚，外层不再多一条 */
+                overflow: hidden;
+            }
+            html[data-theme='dark'] .sp-security-frame {
+                border-color: #3B3835;
+            }
+            .sp-security-hint {
+                margin: 0; font-size: 12.5px; line-height: 1.6;
+                color: var(--sp-color-text-secondary, #4A4642);
+            }
+
             /* ── Scrollbar ── */
             .sp-scroll-content { min-width: 0; }
             .sp-scroll-content::-webkit-scrollbar { width: 6px; }
@@ -1085,6 +1115,9 @@ class SettingPanel extends HTMLElement {
                         <div id="tab-channels" class="${this._activeTab === 'channels' ? '' : 'hidden'} space-y-5">
                             <channel-settings-panel></channel-settings-panel>
                         </div>
+                        <div id="tab-security" class="${this._activeTab === 'security' ? '' : 'hidden'} space-y-5">
+                            ${this.renderSecuritySection()}
+                        </div>
                         <div id="tab-agents" class="${this._activeTab === 'agents' ? '' : 'hidden'} space-y-5">
                             ${this.renderAcpAgentsSection()}
                         </div>
@@ -1113,12 +1146,118 @@ class SettingPanel extends HTMLElement {
 
         this._createSettingPanelToolbar();
         this._hasRendered = true;
+        // 直接以「安全设置」作为初始页签时（initial-tab）也要挂上内嵌页
+        if (this._activeTab === 'security') this._mountSecurityApp();
     }
 
     _createSettingPanelToolbar() {
         const container = this.querySelector('#setting-panel-toolbar');
         if (!container) return;
         // toolbar is now empty (buttons moved to inline button group)
+    }
+
+    /**
+     * 「安全设置」页签内容。
+     *
+     * 安全网关（agentgate）整套界面是独立应用（Dashboard 表格、AgentMoss 策略控制台 iframe、
+     * 配置表单，共 3.4k 行），不适合在设置面板里重写一遍，因此这里嵌它的应用页：与侧边栏
+     * 「应用」里打开的是同一个 application.html 壳，主题/字体/语言都通过既有子 frame 通道同步。
+     *
+     * 插件通过 ctx.features.disableApplication('agentgate') 禁用该应用时不再挂载：此时
+     * callMainWorld 一律返回 disabled 错误，挂上去只会是一屏报错。
+     */
+    renderSecuritySection() {
+        if (isApplicationDisabledByFeature('agentgate')) {
+            return `<section class="sp-section">
+                <div class="sp-section-card">
+                    <p class="sp-security-hint">${escapeHtml(this._t('sp.security.disabledHint'))}</p>
+                </div>
+            </section>`;
+        }
+        return '<div id="security-app-host" class="sp-security-host"></div>';
+    }
+
+    /** 首次切到「安全设置」时才创建应用 iframe：不打开该页就不必拉起 AgentGate 界面 */
+    _mountSecurityApp() {
+        const host = this.querySelector('#security-app-host');
+        if (!host || host.dataset.mounted === '1') return;
+        const frame = document.createElement('iframe');
+        frame.id = 'security-app-frame';
+        frame.className = 'sp-security-frame';
+        frame.title = this._t('sp.tab.security');
+        // 与侧边栏「应用」打开内置应用走同一个壳页面（applicationBundleName 决定加载哪个 entry）
+        frame.src = './application.html?applicationBundleName=agentgate';
+        host.dataset.mounted = '1';
+        host.replaceChildren(frame);
+        this._syncSecurityFrameHeight();
+        this._syncSecurityFrameChrome();
+        this._postPendingHighlight();
+    }
+
+    /**
+     * 补发「高亮某条拦截记录」请求。
+     *
+     * 浮窗点「查看详情」时要求直接定位到那条记录，但内嵌页是懒加载的，此刻 iframe 里的 entry
+     * 还没起来。application-host 要先拉配置、动态 import entry 才挂监听，所以等一个延时再发；
+     * entry 对这种消息幂等（只是切到 dashboard 并设高亮 id），重复接收无害。
+     */
+    _postPendingHighlight() {
+        const highlightEventId = this.getAttribute('initial-highlight-event');
+        if (!highlightEventId) return;
+        setTimeout(() => {
+            this.querySelector('#security-app-frame')?.contentWindow?.postMessage(
+                { type: 'HIGHLIGHT_EVENT', highlightEventId },
+                '*'
+            );
+        }, 800);
+    }
+
+    /**
+     * 让应用 iframe 精确填满内容区可视高度。
+     *
+     * 内容区是 overflow-y-auto，若 iframe 用固定高度会与页面滚动条叠成两层滚动条；
+     * 用 clientHeight 减 padding 换算，缩放（scale_factor）变化时同样正确。
+     */
+    _syncSecurityFrameHeight() {
+        const frame = this.querySelector('#security-app-frame');
+        const content = this.querySelector('.sp-scroll-content');
+        if (!frame || !content) return;
+        const styles = getComputedStyle(content);
+        const inner =
+            content.clientHeight - (parseFloat(styles.paddingTop) || 0) - (parseFloat(styles.paddingBottom) || 0);
+        frame.style.height = `${Math.max(420, Math.round(inner))}px`;
+    }
+
+    /**
+     * 把字体预设 / 主题转发给内嵌的安全网关页。
+     *
+     * 主窗口的 broadcastFontSettings / broadcastThemeSettings 只遍历 appFrameCache（侧边栏「应用」
+     * 打开的 iframe），设置面板里的这个 frame 不在那张表里，不补发就会停在旧字体/旧配色上。
+     */
+    _forwardChromeToSecurityFrame(payload) {
+        const frame = this.querySelector('#security-app-frame');
+        frame?.contentWindow?.postMessage(payload, '*');
+    }
+
+    /**
+     * iframe 初次加载后补一次当前字体 / 主题。
+     *
+     * 内嵌页启动时会自己向 themeAPI 取主题、向 settingAPI 取字体预设，正常已是最新；
+     * 但 onload 恰好早于本面板写 currentData 时可能取到旧值，这里再推一次做兜底。
+     */
+    _syncSecurityFrameChrome() {
+        const frame = this.querySelector('#security-app-frame');
+        const win = frame?.contentWindow;
+        if (!win) return;
+        const theme = document.documentElement.dataset.theme;
+        const preset = document.documentElement.getAttribute('data-font-preset');
+        // iframe 里 entry 的监听要到动态 import 之后才装好，跟着 load 事件再多等一拍
+        setTimeout(() => {
+            const cw = this.querySelector('#security-app-frame')?.contentWindow;
+            if (!cw) return;
+            if (theme) cw.postMessage({ type: 'THEME_SETTINGS', theme }, '*');
+            if (preset) cw.postMessage({ type: 'FONT_SETTINGS', fontPreset: preset }, '*');
+        }, 300);
     }
 
     _switchTab(tab) {
@@ -1130,6 +1269,7 @@ class SettingPanel extends HTMLElement {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
+        if (tab === 'security') this._mountSecurityApp();
         this._startupController?.setGeneralVisible(tab === 'general');
     }
 
@@ -3775,6 +3915,12 @@ class SettingPanel extends HTMLElement {
             });
         });
 
+        // 窗口尺寸变化时重算安全设置内嵌页的高度（面板可能被 refreshAll 重建，先退订旧监听）
+        this._securityResizeUnsub?.();
+        const onResize = () => this._syncSecurityFrameHeight();
+        window.addEventListener('resize', onResize);
+        this._securityResizeUnsub = () => window.removeEventListener('resize', onResize);
+
         // 设置向导：运行向导按钮
         this.querySelector('#run-wizard-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openWizard();
@@ -5284,6 +5430,8 @@ class SettingPanel extends HTMLElement {
             this.currentData.gui_config.font_preset = preset;
             document.documentElement.setAttribute('data-font-preset', preset);
             window.broadcastFontSettings?.(preset);
+            // 设置面板里的内嵌应用页不在 appFrameCache 中，上面那句广播覆盖不到它
+            this._forwardChromeToSecurityFrame({ type: 'FONT_SETTINGS', fontPreset: preset });
             this.saveImmediately();
         });
         this.querySelector('#theme-preference-select')?.addEventListener('change', async (e) => {
@@ -5296,6 +5444,11 @@ class SettingPanel extends HTMLElement {
                     if (result.status === 'ok' && result.data) {
                         applyResolvedTheme(result.data);
                         window.broadcastThemeSettings?.(result.data);
+                        this._forwardChromeToSecurityFrame({
+                            type: 'THEME_SETTINGS',
+                            theme: result.data.effective,
+                            resolved: result.data
+                        });
                     }
                 } catch (err) {
                     console.warn('[setting] theme setPreference failed', err);

@@ -30,8 +30,10 @@ describe('installed update titlebar entry', () => {
 
     test('opens the general settings tab where software update is the first section', () => {
         expect(rendererEntry).toContain("openSettingEditor({ tab: 'general' })");
-        expect(rendererHtml).toContain("options && options.tab === 'general'");
+        // 首页按钮把 tab 原样交给 setting-panel，由 SETTING_TAB_IDS 白名单统一校验
+        expect(rendererHtml).toContain("el.setAttribute('initial-tab', options.tab)");
         expect(settingPanel).toContain("this.getAttribute('initial-tab')");
+        expect(settingPanel).toContain('SETTING_TAB_IDS.includes(initialTab)');
         expect(settingPanel).toMatch(
             /id="tab-general"[^>]*>[\s\S]*?\$\{this\.renderUpdateSection\(\)\}[\s\S]*?id="general-sections"/
         );

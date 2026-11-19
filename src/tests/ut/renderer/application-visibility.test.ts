@@ -36,4 +36,22 @@ describe('application menu visibility', () => {
             )
         ).toBe(false);
     });
+
+    test('hides applications that have no standalone entry', () => {
+        // agentgate 已并入「设置 → 安全设置」；skillmgr 由侧边栏「技能」直达。
+        // 两者都还带 showIcon=true（主进程侧仍在运行），但不应出现在应用列表里。
+        expect(
+            isApplicationVisibleInMenu({ bundleName: 'agentgate', showIcon: true, isExperimental: false }, undefined)
+        ).toBe(false);
+        expect(
+            isApplicationVisibleInMenu({ bundleName: 'skillmgr', showIcon: true, isExperimental: false }, undefined)
+        ).toBe(false);
+        // 与实验性开关无关：即使显式打开也不回到列表
+        expect(
+            isApplicationVisibleInMenu(
+                { bundleName: 'agentgate', showIcon: true, isExperimental: true },
+                { applications: { agentgate: true } }
+            )
+        ).toBe(false);
+    });
 });
