@@ -199,6 +199,7 @@ class TaskArtifacts extends HTMLElement {
     private _tickTimer: number | null = null;
 
     private _fileExplorer = new FileExplorer();
+    private _workspaceSidebarVisible = false;
     private _browser: EmbeddedBrowser | null = null;
     private _browserRestoreState: BrowserRestoreState | null = null;
     private _browserRevealPendingContent = false;
@@ -362,6 +363,7 @@ class TaskArtifacts extends HTMLElement {
             });
         }
         this._fileExplorer.stopWatchingFile();
+        this._fileExplorer.setDirectoryBrowserVisible(false);
         this._goalController.disconnect();
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._settingUnsubscribe?.();
@@ -503,11 +505,18 @@ class TaskArtifacts extends HTMLElement {
         this._syncTaskTerminal();
     }
 
-    /**
-     * 外部调用：当文件被编辑/创建/删除时，增量刷新已展开目录内容。
-     */
-    softRefreshWorkspace(): void {
-        this._fileExplorer.softRefresh();
+    setWorkspaceSidebarVisible(visible: boolean): void {
+        this._workspaceSidebarVisible = visible;
+        this._syncWorkspaceDirectoryVisibility();
+    }
+
+    private _syncWorkspaceDirectoryVisibility(): void {
+        this._fileExplorer.setDirectoryBrowserVisible(
+            this.isConnected &&
+                this._workspaceSidebarVisible &&
+                this._activeTab === 'workspace' &&
+                this._isHostTaskVisible()
+        );
     }
 
     /**
@@ -882,6 +891,7 @@ class TaskArtifacts extends HTMLElement {
             this._fileExplorer.closeEditor();
         }
         this._activeTab = tabId;
+        this._syncWorkspaceDirectoryVisibility();
         this._browserFocusLayoutActive = tabId === 'browser';
         if (tabId === 'browser') {
             this._browserRevealPendingContent = !this._browser || !this._browser.hasActiveContent();
