@@ -324,7 +324,15 @@ export class ApplicationRegistry {
                 this: BaseApplication,
                 taskState?: TaskState
             ) => Promise<BaseToolset[]>;
-            result.push(...(await getToolsets.call(application, taskState)));
+            try {
+                result.push(...(await getToolsets.call(application, taskState)));
+            } catch (error) {
+                // 单个应用（含插件提供的后装应用）构建工具集失败时不能让整轮任务失败：
+                // 其余应用的工具集照常可用，缺失的这部分由错误日志追踪。
+                logger.error(
+                    `[registry] application ${application.bundleName} failed to provide toolsets: ${toErrorMessage(error)}`
+                );
+            }
         }
 
         return result;
