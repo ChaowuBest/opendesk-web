@@ -2061,6 +2061,7 @@ export class TaskState {
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
         const generation = ++this._turnGeneration;
+        const isCurrent = () => generation === this._turnGeneration && this.task_status !== 'stopped';
         this._activeModelRequestOptions = options.modelRequestOptions;
         this.clearRuntimeInterruptForNewTurn();
         this.recordTaskInteraction();
@@ -2115,8 +2116,11 @@ export class TaskState {
 
         this.chat_context.appendMessage(user_message);
         for (let i = 0; i < user_message.content.length; i++) {
+            if (!isCurrent()) return { status: 'ok' };
             await this.sendSubscriptionFeedback(i);
         }
+
+        if (!isCurrent()) return { status: 'ok' };
 
         // Compaction runs once at completion preparation, after skills and tools are attached.
         // The former pre-submit check could race that request and retry the same failure twice.
@@ -2124,6 +2128,7 @@ export class TaskState {
 
         // 检测用户消息中的 /skillname，替换文本（用户消息已经显示，如果有替换则更新显示）
         const displayMessage = await this.replaceSlashSkillsInText(message);
+        if (!isCurrent()) return { status: 'ok' };
 
         // 如果文本被替换了，保留原始输入并更新显示文本，重新推送到前端
         if (displayMessage !== message) {
@@ -2137,6 +2142,7 @@ export class TaskState {
             await this.sendUserMessageReplace(user_message);
         }
 
+        if (!isCurrent()) return { status: 'ok' };
         const autoParseThinkTags =
             Setting.getInstance().getModelInstance(
                 this.model || Setting.getInstance().getData().default_model || '',
@@ -2168,13 +2174,15 @@ export class TaskState {
         this.syncManagedToolsets(allToolsets);
 
         // 检测用户消息中的 /skillname 引用并预加载到 assistant message
-        await this.preloadSlashSkills(message, assistant_message);
+        await this.preloadSlashSkills(message, assistant_message, isCurrent);
 
         // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
         for (let i = 0; i < assistant_message.content.length; i++) {
+            if (!isCurrent()) return { status: 'ok' };
             await this.sendSubscriptionFeedback(i);
         }
 
+        if (!isCurrent()) return { status: 'ok' };
         logger.info(`messsage submitted to task ${this.task_id}`);
 
         if (this.task_name === null) {
@@ -2193,6 +2201,7 @@ export class TaskState {
                 this.task_manager_state.publishTaskListUpdate();
             }
         }
+        if (!isCurrent()) return { status: 'ok' };
         this._activeTurnMetadata = assistant_message.metadata;
         this.processTaskTurn({
             generation,
@@ -2620,7 +2629,8 @@ export class TaskState {
         return updatedMessage;
     }
 
-    private async preloadSlashSkills(message: string, assistantMessage: AssistantMessage) {
+    private async preloadSlashSkills(message: string, assistantMessage: AssistantMessage, isCurrent: () => boolean) {
+        if (!isCurrent()) return;
         // 提取消息中所有 /skillname 模式（skill name 规则: 小写字母、数字、连字符）
         const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;
         const matchedNames = new Set<string>();
@@ -2634,6 +2644,7 @@ export class TaskState {
         const allSkills = await registry.getAllSkillsFlat(this.agentId);
 
         for (const name of matchedNames) {
+            if (!isCurrent()) return;
             // 查找 user-invocable 的 skill
             const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
             if (!entry) continue;
@@ -2641,11 +2652,13 @@ export class TaskState {
             const { bundleName } = entry;
             try {
                 const loaded = await registry.loadSkillForAgent(bundleName, name, this.agentId, this.hooks);
+                if (!isCurrent()) return;
                 if (!loaded) continue;
                 const { skill: loadedSkill, content: fullContent } = loaded;
 
                 // 技能目录（含 test/ 等自定义子目录）随技能加载开放只读，避免模型读技能资源时被权限拦住
                 await makeSkillDirectoryReadable(this, loadedSkill.directory);
+                if (!isCurrent()) return;
 
                 // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
                 if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {

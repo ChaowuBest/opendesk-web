@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { GlobalHooks } from '../../../main/aikernel/hooks.js';
+import { SkillRegistry } from '../../../main/aikernel/skill.js';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
@@ -52,6 +53,49 @@ describe('assistant turn execution timestamps', () => {
         expect(assistant.metadata?.execution?.startAt).toEqual(expect.any(Number));
         expect(assistant.metadata?.execution?.finishAt).toBeUndefined();
     });
+
+    test.each(['superseded', 'stopped'] as const)(
+        'discards a slash-skill reply after the submitting turn is %s',
+        async (retirement) => {
+            const task = createTask();
+            task.task_name = 'fixture';
+            jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+            const processTurn = jest.spyOn(task, 'processTaskTurn').mockResolvedValue(undefined);
+            const registry = SkillRegistry.getInstance();
+            type SkillList = Awaited<ReturnType<SkillRegistry['getAllSkillsFlat']>>;
+            jest.spyOn(registry, 'getAllSkillsFlat').mockResolvedValue([{
+                bundleName: 'fixture',
+                skill: { frontmatter: { name: 'fixture' }, isUserInvocable: true }
+            }] as unknown as SkillList);
+            jest.spyOn(registry, 'getSkillForAgent').mockResolvedValue(undefined);
+            let requested!: () => void;
+            const loading = new Promise<void>((resolve) => { requested = resolve; });
+            type Loaded = Awaited<ReturnType<SkillRegistry['loadSkillForAgent']>>;
+            let complete!: (value: Loaded) => void;
+            const reply = new Promise<Loaded>((resolve) => { complete = resolve; });
+            jest.spyOn(registry, 'loadSkillForAgent').mockImplementation(() => {
+                requested();
+                return reply;
+            });
+
+            const submission = task.submitUserMessage('/fixture');
+            await loading;
+            const oldAssistant = task.chat_context.lastMessage() as AssistantMessage;
+            if (retirement === 'superseded') await task.submitUserMessage('new prompt');
+            else task.task_status = 'stopped';
+            const oldParts = [...oldAssistant.content];
+            complete({
+                skill: { env: { FIXTURE_STALE_SKILL: 'obsolete' } },
+                content: 'late tool content'
+            } as unknown as Loaded);
+
+            await expect(submission).resolves.toMatchObject({ status: 'ok' });
+            expect(oldAssistant.content).toEqual(oldParts);
+            expect(task.harnessContext.environ.FIXTURE_STALE_SKILL).toBeUndefined();
+            expect(processTurn).toHaveBeenCalledTimes(retirement === 'superseded' ? 1 : 0);
+            expect(task.chat_context.messages.some((message) => message instanceof UserMessage)).toBe(true);
+        }
+    );
 
     test('processTaskTurn finish solidifies execution.finishAt for the whole turn', async () => {
         const task = createTask();
