@@ -295,7 +295,7 @@ declare global {
         };
         workspaceAPI?: {
             getEffectiveWorkspace: () => Promise<string | null>;
-            pickDirectoryDialog?: () => Promise<string | null>;
+            pickDirectoryDialog?: (defaultPath?: string) => Promise<string | null>;
             listDirectory: (
                 path: string,
                 options?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }

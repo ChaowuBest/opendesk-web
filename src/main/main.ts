@@ -3137,10 +3137,14 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
-    ipcMain.handle('workspace:pickDirectoryDialog', async () => {
+    ipcMain.handle('workspace:pickDirectoryDialog', async (_event, currentPath?: string) => {
         try {
+            const initialPath =
+                typeof currentPath === 'string' && path.isAbsolute(currentPath) ? path.normalize(currentPath) : undefined;
+            const stat = initialPath ? await fsPromises.stat(initialPath).catch(() => undefined) : undefined;
             const result = await dialog.showOpenDialog(globalMainWindow!, {
                 title: t('main.dialog.selectWorkspaceDirectory'),
+                defaultPath: stat?.isDirectory() ? initialPath : undefined,
                 properties: ['openDirectory', 'createDirectory']
             });
             if (result.canceled || result.filePaths.length === 0) {

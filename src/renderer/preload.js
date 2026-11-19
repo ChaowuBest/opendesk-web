@@ -1777,8 +1777,8 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        pickDirectoryDialog: async () => {
-            const result = await ipcRenderer.invoke('workspace:pickDirectoryDialog');
+        pickDirectoryDialog: async (defaultPath) => {
+            const result = await ipcRenderer.invoke('workspace:pickDirectoryDialog', defaultPath);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
