@@ -14,6 +14,7 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { t } from '../locale/index.js';
 import { preparePosixSandbox, type PosixSandboxOptions } from './posix-sandbox.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export interface DynamicSandboxLaunch {
@@ -172,7 +173,7 @@ export function detectToolchainReadOnlyDirs(env: NodeJS.ProcessEnv = process.env
 export async function prepareLinuxSandbox(options: PosixSandboxOptions): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'linux') return null;
     const executable = resolveLinuxSandboxExecutable();
-    if (!executable) throw new Error(t('sandbox.executableMissing.linux'));
+    if (!executable) throw sandboxUnavailableError(t('sandbox.executableMissing.linux'));
 
     return preparePosixSandbox(
         options,
