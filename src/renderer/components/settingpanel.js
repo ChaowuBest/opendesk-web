@@ -29,6 +29,7 @@ import {
     bindOverlayDismiss
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
+import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
 import { isApplicationDisabledByFeature } from '../features.js';
 import './channelSettings.js';
 import './benchmarkChannelSettings.js';
@@ -176,6 +177,8 @@ class SettingPanel extends HTMLElement {
         this._hasRendered = false;
         /** 安全设置内嵌应用页的窗口尺寸监听退订函数 */
         this._securityResizeUnsub = null;
+        /** 安全设置内嵌应用页的主题变更监听退订函数 */
+        this._securityThemeUnsub = null;
         this._t = createRendererTranslator();
     }
 
@@ -271,6 +274,8 @@ class SettingPanel extends HTMLElement {
         this._clearStartupListeners();
         this._securityResizeUnsub?.();
         this._securityResizeUnsub = null;
+        this._securityThemeUnsub?.();
+        this._securityThemeUnsub = null;
         this._updateStateUnsubscribe?.();
         this._updateStateUnsubscribe = null;
         this._localePacksUnsubscribe?.();
@@ -3921,6 +3926,18 @@ class SettingPanel extends HTMLElement {
         window.addEventListener('resize', onResize);
         this._securityResizeUnsub = () => window.removeEventListener('resize', onResize);
 
+        // 主题变化时同步给安全设置内嵌页。
+        // 侧边栏的主题切换按钮只走 broadcastThemeSettings，而它只遍历 appFrameCache（侧边栏「应用」
+        // 打开的 iframe），设置面板里这个 frame 不在那张表里，不接这个事件就会停在外层切深色、
+        // 内嵌页仍是浅色。opendesk-theme-changed 是主窗口应用主题后统一派发的，系统主题联动同样走它。
+        this._securityThemeUnsub?.();
+        const onThemeChanged = (event) => {
+            const effective = event?.detail?.effective || document.documentElement.dataset.theme;
+            if (effective) this._forwardChromeToSecurityFrame({ type: 'THEME_SETTINGS', theme: effective });
+        };
+        document.addEventListener(OPENDESK_THEME_CHANGED, onThemeChanged);
+        this._securityThemeUnsub = () => document.removeEventListener(OPENDESK_THEME_CHANGED, onThemeChanged);
+
         // 设置向导：运行向导按钮
         this.querySelector('#run-wizard-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openWizard();
@@ -5442,13 +5459,9 @@ class SettingPanel extends HTMLElement {
                 try {
                     const result = await window.themeAPI.setPreference(pref);
                     if (result.status === 'ok' && result.data) {
+                        // applyResolvedTheme 会派发 opendesk-theme-changed，内嵌安全网关页由上面的监听转达
                         applyResolvedTheme(result.data);
                         window.broadcastThemeSettings?.(result.data);
-                        this._forwardChromeToSecurityFrame({
-                            type: 'THEME_SETTINGS',
-                            theme: result.data.effective,
-                            resolved: result.data
-                        });
                     }
                 } catch (err) {
                     console.warn('[setting] theme setPreference failed', err);

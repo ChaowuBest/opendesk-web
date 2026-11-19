@@ -29,6 +29,8 @@ describe('setting-panel tabs', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
+        // linkedom 不提供 getComputedStyle：安全设置页要用它换算内嵌页高度，这里给个只回 padding 的替身
+        (globalThis as any).getComputedStyle = () => ({ paddingTop: '0px', paddingBottom: '0px' });
         await import('../../../renderer/components/settingpanel.js');
     });
 
@@ -136,6 +138,40 @@ describe('setting-panel tabs', () => {
         expect(panel.querySelector('#tab-general')?.classList.contains('hidden')).toBe(true);
         // 页签内容里的记忆开关存在，说明 tab-memory 容器不是空壳
         expect(panel.querySelector('#tab-memory #memory-enabled-toggle')).toBeTruthy();
+    });
+
+    test('security tab mounts the AgentGate app page on first switch', () => {
+        const panel = createPanel();
+        panel.render();
+
+        // 懒加载：没切进去之前不该创建 iframe，否则每次打开设置都会拉起 AgentGate
+        expect(panel.querySelector('#security-app-frame')).toBeNull();
+
+        panel._switchTab('security');
+
+        const frame = panel.querySelector('#security-app-frame') as HTMLIFrameElement;
+        expect(frame).toBeTruthy();
+        // 走与侧边栏「应用」同一个壳页，靠 applicationBundleName 决定加载哪个 entry
+        expect(frame.getAttribute('src')).toContain('applicationBundleName=agentgate');
+    });
+
+    test('theme change is forwarded into the embedded security frame', () => {
+        const panel = createPanel();
+        panel.render();
+        // 事件绑定不在 render() 里，由 connectedCallback / refreshAll 调 setUpEventListeners
+        panel.setUpEventListeners();
+        panel._switchTab('security');
+
+        // 主窗口的 broadcastThemeSettings 只遍历 appFrameCache，内嵌页不在那张表里；
+        // 这里校验设置面板确实把 opendesk-theme-changed 转成了 THEME_SETTINGS 消息
+        const forward = jest.fn();
+        panel._forwardChromeToSecurityFrame = forward;
+
+        document.dispatchEvent(
+            new (window.CustomEvent as any)('opendesk-theme-changed', { detail: { effective: 'dark' } })
+        );
+
+        expect(forward).toHaveBeenCalledWith({ type: 'THEME_SETTINGS', theme: 'dark' });
     });
 
     test('channel settings nav label is localized', () => {
