@@ -60,6 +60,8 @@ export interface AutoCompactDecision {
 }
 
 export interface AutoCompactDecisionOptions {
+    /** A resolved window for this preparation, including 0 when unknown. */
+    contextWindow?: number;
     reservedSummaryOutput?: number;
     buffer?: number;
 }
@@ -397,7 +399,7 @@ export async function getAutoCompactDecision(
     options: AutoCompactDecisionOptions = {}
 ): Promise<AutoCompactDecision> {
     const tokenEstimate = estimateVisibleContextTokens({ ...buildTokenEstimateInput(contextInput), model });
-    const contextWindow = await resolveContextWindow(model);
+    const contextWindow = options.contextWindow ?? (await resolveContextWindow(model));
 
     return createAutoCompactDecision({
         contextWindow,
