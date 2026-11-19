@@ -4,6 +4,7 @@
  */
 
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
+import { classifyErrorText } from '../../../../utils/error-beautify.js';
 import { neutralizeMarkdownHtml } from '../../../../common/markdown/markdown-html-safety.js';
 import { showConfirmModal, renderIcon, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
 import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
@@ -827,6 +828,27 @@ ${OVERLAY_CSS}
 /* ── Messages ── */
 .registry-msg { font-size: 12px; color: #999; margin: 12px 0; text-align: center; }
 .registry-msg.error { color: #D14; }
+
+/* ── Registry Error State（搜索失败醒目错误态）── */
+/* 容器复用 .empty-state 的居中布局与内边距，这里只补错误明细与重试按钮的样式 */
+.registry-error-state .error-detail {
+    margin-top: 10px; max-width: 460px;
+    font-size: 11px; font-family: 'Maple Mono', 'SF Mono', 'Cascadia Code', monospace;
+    color: rgba(209, 20, 20, 0.75); text-align: center; line-height: 1.5;
+    word-break: break-all; opacity: 0.9;
+}
+.error-retry-btn {
+    margin-top: 16px; padding: 5px 20px;
+    border: 1px solid #d0d3dc; border-radius: 6px;
+    background: #fff; color: #1d1d1f;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.error-retry-btn:hover { background: #f5f6f8; }
+:host([data-theme="dark"]) .registry-error-state .error-detail { color: rgba(230, 130, 125, 0.85); }
+:host([data-theme="dark"]) .error-retry-btn {
+    background: #333333; border-color: rgba(255, 255, 255, 0.2); color: #cccccc;
+}
+:host([data-theme="dark"]) .error-retry-btn:hover { background: #3f3f46; }
 
 /* ── Registry Filter ── */
 .registry-info-bar { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 12px 0; }
@@ -4287,11 +4309,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (!state) return '';
         const tabInfo = REGISTRY_TABS.find((t) => t.id === tabId);
         const isDefaultView = state.hasSearched && state.results.length > 0 && !state.query.trim();
+        const hasError = Boolean(state.message?.isError);
+        const hasResults = state.results.length > 0;
 
-        // 错误提示仍需独立一行，避免被输入框宽度截断
-        const errHtml = state.message?.isError
-            ? `<div class="registry-msg error">${escapeHtml(state.message.text)}</div>`
-            : '';
+        // 已有结果时的加载更多失败：错误横幅独立一行（不遮盖结果），避免被输入框宽度截断
+        const errHtml =
+            hasError && hasResults ? `<div class="registry-msg error">${escapeHtml(state.message.text)}</div>` : '';
 
         // 构建筛选滑块 HTML（仅当 registry 声明了 filters 时）
         const tabFilters = tabInfo?.filters;
@@ -4311,7 +4334,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         const infoBarHtml = errHtml || filterHtml ? `<div class="registry-info-bar">${errHtml}${filterHtml}</div>` : '';
 
         let contentHtml = '';
-        if (state.searching && state.results.length === 0) {
+        if (hasError && !hasResults && !state.searching) {
+            // 搜索失败（含断网）且没有可展示的结果：内容区醒目错误态，而不是「未找到匹配的技能」空态
+            contentHtml = this._renderRegistryErrorState(tabId);
+        } else if (state.searching && state.results.length === 0) {
             contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>${this._t('renderer.skill.search.searching')}</span></div>`;
         } else if (state.hasSearched && state.results.length > 0) {
             if (isDefaultView) {
@@ -4330,6 +4356,45 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
 
         return `${infoBarHtml}${contentHtml}`;
+    }
+
+    /* 搜索失败且无结果可展示时的内容区醒目错误态：按错误归类给本地化标题与建议，
+       原始明细（如 getaddrinfo ENOTFOUND…）以小字附在下方，并提供重试入口 */
+    _renderRegistryErrorState(tabId) {
+        const state = this.registryStates[tabId];
+        const raw = String(state?.message?.text || '');
+        const kind = classifyErrorText(raw);
+        const title =
+            kind === 'network'
+                ? this._t('renderer.skill.error.networkTitle')
+                : kind === 'timeout'
+                  ? this._t('renderer.skill.error.searchTimeout')
+                  : this._t('renderer.skill.error.searchFailed');
+        const icon = kind === 'generic' ? '⚠️' : '📡';
+        const hint =
+            kind === 'network'
+                ? `<div class="empty-hint">${escapeHtml(this._t('renderer.skill.error.networkHint'))}</div>`
+                : '';
+        const detail = raw && raw !== title ? `<div class="error-detail">${escapeHtml(raw)}</div>` : '';
+        return `<div class="empty-state registry-error-state">
+            <div class="empty-icon">${icon}</div>
+            <div class="empty-title">${escapeHtml(title)}</div>
+            ${hint}
+            ${detail}
+            <button type="button" class="error-retry-btn" data-retry-tab="${escapeHtml(tabId)}">${escapeHtml(this._t('renderer.skill.error.retry'))}</button>
+        </div>`;
+    }
+
+    /* 错误态重试按钮：结果区局部替换后需要重新绑定（与筛选滑块同理） */
+    _bindRegistryErrorEvents(root = this.shadowRoot) {
+        root.querySelectorAll('.error-retry-btn[data-retry-tab]').forEach((el) => {
+            if (el._retryBound) return;
+            el._retryBound = true;
+            el.addEventListener('click', () => {
+                const tabId = el.getAttribute('data-retry-tab');
+                if (tabId) this.searchRegistry(tabId);
+            });
+        });
     }
 
     /* 搜索进行中/结束的局部状态同步：只动搜索框、按钮与计数，整块 body 保持旧内容不闪 */
@@ -4383,6 +4448,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             afterApply: (el) => {
                 this._bindCardEvents(el);
                 this._bindRegistryFilterEvents(el);
+                this._bindRegistryErrorEvents(el);
                 this._bindScrollObservers();
             }
         });
@@ -5452,6 +5518,8 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // 注册源筛选滑块事件
         this._bindRegistryFilterEvents();
+        // 注册源错误态重试按钮
+        this._bindRegistryErrorEvents();
 
         // 已安装面板搜索
         const installedSi = $(`[data-search-tab="installed"]`);

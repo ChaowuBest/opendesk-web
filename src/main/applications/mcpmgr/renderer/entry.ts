@@ -15,6 +15,7 @@ import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../w
 import { z } from 'zod';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { flattenSchemaParams } from '../../../../common/utils/schema-params.js';
+import { classifyErrorText } from '../../../../utils/error-beautify.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 import { showConfirmModal, bindOverlayDismiss } from '../../../../renderer/components/confirmModal';
@@ -413,6 +414,25 @@ button, input, textarea { font: inherit; }
 
 .registry-msg { font-size: var(--fs-md); color: #999; margin: 12px 0; text-align: center; }
 .registry-msg.error { color: #D14; }
+/* 搜索失败醒目错误态（含重试入口）：容器复用 .empty-state 的居中布局与内边距 */
+.registry-error-state .error-detail {
+    margin-top: 10px; max-width: 460px;
+    font-size: var(--fs-sm); font-family: 'Maple Mono', 'SF Mono', 'Cascadia Code', monospace;
+    color: rgba(209, 20, 20, 0.75); text-align: center; line-height: 1.5;
+    word-break: break-all; opacity: 0.9;
+}
+.error-retry-btn {
+    margin-top: 16px; padding: 5px 20px;
+    border: 1px solid #d0d3dc; border-radius: 6px;
+    background: #fff; color: #1d1d1f;
+    font-size: var(--fs-md); font-weight: 500; cursor: pointer;
+}
+.error-retry-btn:hover { background: #f5f6f8; }
+:host([data-theme="dark"]) .registry-error-state .error-detail { color: rgba(230, 130, 125, 0.85); }
+:host([data-theme="dark"]) .error-retry-btn {
+    background: #333333; border-color: rgba(255, 255, 255, 0.2); color: #cccccc;
+}
+:host([data-theme="dark"]) .error-retry-btn:hover { background: #3f3f46; }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: #999; }
 .empty-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
 .empty-title { font-size: var(--fs-lg); font-weight: 600; color: #1d1d1f; margin-bottom: 6px; }
@@ -1049,6 +1069,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 total?: number;
                 hasMore?: boolean;
                 message?: string;
+                error?: string;
             }>('searchMcpRegistry', registryId, query, page, 30);
             if (
                 requestId !== this._registrySearchRequestId ||
@@ -1061,7 +1082,12 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             state.total = result.total || state.results.length;
             state.hasMore = Boolean(result.hasMore);
             state.hasSearched = true;
-            state.message = result.message ? { text: result.message, isError: false } : null;
+            // 注册源插件的失败以 error 字段回传：不伪装成信息性 message（否则会被塞进搜索框右端小字）
+            state.message = result.error
+                ? { text: result.error, isError: true }
+                : result.message
+                  ? { text: result.message, isError: false }
+                  : null;
         } catch (err: any) {
             if (requestId !== this._registrySearchRequestId || this.activeTab !== registryId) return;
             state.results = [];
@@ -1094,12 +1120,19 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 total?: number;
                 hasMore?: boolean;
                 message?: string;
+                error?: string;
             }>('searchMcpRegistry', registryId, state.query, nextPage, 30);
             if (
                 requestId !== this._registrySearchRequestId ||
                 this.activeTab !== registryId ||
                 !this.registries.some((registry) => registry.id === registryId)
             ) {
+                return;
+            }
+            // 追加页失败同样以 error 通道回传：已有结果保留，错误横幅显示在结果上方
+            if (result.error) {
+                state.message = { text: result.error, isError: true };
+                this.syncRegistryPanel({ fade: false });
                 return;
             }
             const newMcps = result.mcps || [];
@@ -1109,8 +1142,12 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             state.hasMore = Boolean(result.hasMore);
             // 增量追加新卡片到 DOM，不重建整个页面
             this.appendRegistryCards(newMcps);
-        } catch {
-            // 加载失败保持现有数据不变
+        } catch (err: any) {
+            // 加载失败保持现有数据不变，但要在结果区上方给出可见的错误横幅
+            if (requestId === this._registrySearchRequestId && this.activeTab === registryId) {
+                state.message = { text: err?.message || this._t('error.searchFailed'), isError: true };
+                this.syncRegistryPanel({ fade: false });
+            }
         } finally {
             if (requestId === this._registrySearchRequestId) {
                 state.loadingMore = false;
@@ -1211,13 +1248,17 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const registry = this.registries.find((r) => r.id === registryId);
         const label = registry?.label || registryId;
         const state = this.registryState;
-        // 错误提示仍需独立一行，避免被输入框宽度截断
-        const message = state.message?.isError
-            ? `<div class="registry-msg error">${escapeHtml(state.message.text)}</div>`
-            : '';
+        const hasError = Boolean(state.message?.isError);
+        const hasResults = state.results.length > 0;
+        // 已有结果时的加载更多失败：错误横幅独立一行（不遮盖结果），避免被输入框宽度截断
+        const message =
+            hasError && hasResults ? `<div class="registry-msg error">${escapeHtml(state.message!.text)}</div>` : '';
         let content = '';
 
-        if (state.searching && state.results.length === 0) {
+        if (hasError && !hasResults && !state.searching) {
+            // 搜索失败（含断网）且没有可展示的结果：内容区醒目错误态，而不是「未找到 MCP」空态
+            content = this.renderRegistryErrorState(registryId);
+        } else if (state.searching && state.results.length === 0) {
             content = `<div class="loading-state"><div class="loading-spinner"></div><span>${escapeHtml(this._t('renderer.mcp.loading'))}</span></div>`;
         } else if (state.results.length === 0) {
             const icon = registry?.icon || '◇';
@@ -1237,6 +1278,46 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         }
 
         return `${message}${content}`;
+    }
+
+    /** 搜索失败且无结果可展示时的内容区醒目错误态：按错误归类给本地化标题与建议，
+        原始明细（如 getaddrinfo ENOTFOUND…）以小字附在下方，并提供重试入口 */
+    private renderRegistryErrorState(registryId: string): string {
+        const state = this.registryState;
+        const raw = String(state.message?.text || '');
+        const kind = classifyErrorText(raw);
+        const title =
+            kind === 'network'
+                ? this._t('renderer.mcp.error.networkTitle')
+                : kind === 'timeout'
+                  ? this._t('renderer.mcp.error.searchTimeout')
+                  : this._t('error.searchFailed');
+        const icon = kind === 'generic' ? '⚠️' : '📡';
+        const hint =
+            kind === 'network'
+                ? `<div class="empty-hint">${escapeHtml(this._t('renderer.mcp.error.networkHint'))}</div>`
+                : '';
+        const detail = raw && raw !== title ? `<div class="error-detail">${escapeHtml(raw)}</div>` : '';
+        return `<div class="empty-state registry-error-state">
+            <div class="empty-icon">${icon}</div>
+            <div class="empty-title">${escapeHtml(title)}</div>
+            ${hint}
+            ${detail}
+            <button type="button" class="error-retry-btn" data-retry-tab="${escapeHtml(registryId)}">${escapeHtml(this._t('renderer.mcp.error.retry'))}</button>
+        </div>`;
+    }
+
+    /** 错误态重试按钮：结果区局部替换后需要重新绑定（与卡片同理） */
+    private bindRegistryErrorEvents(root: ParentNode) {
+        root.querySelectorAll('.error-retry-btn[data-retry-tab]').forEach((el) => {
+            const button = el as HTMLElement;
+            if (button.dataset.retryBound === '1') return;
+            button.dataset.retryBound = '1';
+            button.addEventListener('click', () => {
+                const tabId = button.getAttribute('data-retry-tab');
+                if (tabId) void this.searchRegistry(this.registryState.query.trim(), 1);
+            });
+        });
     }
 
     private renderRegistryCard(mcp: RegistryMcp): string {
@@ -1705,6 +1786,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         });
 
         this.bindRegistryCardEvents(root);
+        this.bindRegistryErrorEvents(root);
         this.bindInstalledCardEvents(root);
         this.bindBatchEvents(root);
         this.bindRegistrySentinel(root);
@@ -1953,6 +2035,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 // 到点才取数据：淡出期间可能已经产生更新的结果
                 body.innerHTML = this.renderRegistryBody(registryId);
                 this.bindRegistryCardEvents(body);
+                this.bindRegistryErrorEvents(body);
                 this.bindRegistrySentinel(body);
             },
             fade

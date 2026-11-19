@@ -1067,7 +1067,9 @@ export class SkillInstallManager {
                 });
                 return {
                     registry,
-                    skills: (result.skills || []).map((skill) => mapRegistrySkill(registry, skill))
+                    skills: (result.skills || []).map((skill) => mapRegistrySkill(registry, skill)),
+                    // 插件吞掉的网络/HTTP 错误以 error 字段随正常结果回传，不能漏报
+                    error: result.error
                 };
             })
         );
@@ -1077,6 +1079,9 @@ export class SkillInstallManager {
         for (let i = 0; i < settled.length; i++) {
             const item = settled[i];
             if (item.status === 'fulfilled') {
+                if (item.value.error) {
+                    errors.push({ registryName: item.value.registry.id, error: item.value.error });
+                }
                 results.push(...item.value.skills);
             } else {
                 errors.push({
@@ -1125,6 +1130,10 @@ export class SkillInstallManager {
             limit: 30,
             apiKey: registry.id === 'skillsmp' ? options.skillsmpApiKey : undefined
         });
+        // 注册源搜索失败（如断网）时如实上抛，避免退化成「未找到技能」误导调用方
+        if (result.error) {
+            return { success: false, error: result.error, registryName: registry.id };
+        }
         const installable = (result.skills || []).filter((skill) => skill.canInstall && skill.installUrl);
         const exactCandidates = installable.filter((skill) => isExactRegistrySkillMatch(registry, skill, query));
         const scoredCandidates = installable

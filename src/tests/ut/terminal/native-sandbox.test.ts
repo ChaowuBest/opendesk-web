@@ -202,7 +202,12 @@ describe('shared native sandbox preparation and shell execution', () => {
         try {
             const text = fs.readFileSync(request!.policyPath, 'utf8');
             expect(request!.readOnly).toBe(true);
-            expect(fs.statSync(request!.policyPath).mode & 0o777).toBe(0o600);
+            // Windows 的 libuv 不支持 POSIX 权限位：chmod 只能切换只读属性，
+            // stat 恒返回 0o666（可写）或 0o444（只读），0o600 断言只在 POSIX 上有意义。
+            // 本测试 beforeEach 会伪造 process.platform，这里必须用真实平台 originalPlatform 判断
+            if (originalPlatform !== 'win32') {
+                expect(fs.statSync(request!.policyPath).mode & 0o777).toBe(0o600);
+            }
             expect(text).toContain('path = "/opaque/runtime/bin/**"\naccess = "read"\nperm = "allow"');
             expect(text).not.toContain('path = "/opaque/runtime/tmp/**"\naccess = "write"\nperm = "allow"');
             expect(text).not.toContain(`path = "${directory}/**"\naccess = "write"\nperm = "allow"`);

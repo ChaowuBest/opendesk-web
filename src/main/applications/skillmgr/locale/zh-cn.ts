@@ -94,6 +94,9 @@ export const zhCn: Record<string, string> = {
     'renderer.skill.error.searchFailed': '搜索失败',
     'renderer.skill.error.searchTimeout': '搜索超时，请检查网络或稍后重试',
     'renderer.skill.error.loadTimeout': '加载超时',
+    'renderer.skill.error.networkTitle': '网络连接失败',
+    'renderer.skill.error.networkHint': '网络连接不可用，请检查网络后重试',
+    'renderer.skill.error.retry': '重试',
 
     // ========== Renderer：安装 / 删除 / 启停 ==========
     'renderer.skill.install.success': '安装成功',
