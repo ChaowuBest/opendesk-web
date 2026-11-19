@@ -148,7 +148,7 @@ const T: Record<string, { zh: string; en: string }> = {
         en: 'Please ensure the security analysis engine service (AgentMoss HTTP) is running'
     },
     consoleRetry: { zh: '重新加载', en: 'Reload' },
-    sectionMoss: { zh: '安全分析引擎', en: 'Security Analysis Engine' },
+    sectionMoss: { zh: 'MOSS安全防护引擎', en: 'MOSS Security Protection Engine' },
     masterSwitch: { zh: '安全网关总开关', en: 'Security Gateway Master Switch' },
     masterSwitchDesc: {
         zh: '关闭后所有安全审查能力停止工作，即使试验性功能已开启',
@@ -1630,15 +1630,18 @@ class AgentGateEntryWidget extends HTMLElement {
     }
 
     async _init() {
+        // 页签顺序：设置 → 实时状态 → 策略控制台。
+        // 「设置」放最左并作为默认页：该页面已迁入设置面板的「安全设置」，
+        // 用户从设置入口进来时先看到配置项，而不是实时状态表格。
         this.root.innerHTML = `
             <div class="ag-tabs">
-                <div class="ag-tab active" data-tab="dashboard">${tr('tabDashboard')}</div>
+                <div class="ag-tab active" data-tab="config">${tr('tabConfig')}</div>
+                <div class="ag-tab" data-tab="dashboard">${tr('tabDashboard')}</div>
                 <div class="ag-tab" data-tab="console">${tr('tabConsole')}</div>
-                <div class="ag-tab" data-tab="config">${tr('tabConfig')}</div>
             </div>
-            <div id="ag-dash" class="ag-panel"></div>
+            <div id="ag-dash" class="ag-panel hidden"></div>
             <div id="ag-console" class="ag-panel hidden"></div>
-            <div id="ag-conf" class="ag-panel hidden"></div>
+            <div id="ag-conf" class="ag-panel"></div>
         `;
 
         // Tabs
