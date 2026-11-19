@@ -38,7 +38,7 @@ declare const window: Window & {
         renameEntry(oldPath: string, newName: string): Promise<string>;
         createDirectory(parentPath: string, dirName: string): Promise<string>;
         deleteEntry(entryPath: string): Promise<void>;
-        pickDirectoryDialog(): Promise<string | null>;
+        pickDirectoryDialog(defaultPath?: string): Promise<string | null>;
     };
 };
 
@@ -422,7 +422,7 @@ ${OVERLAY_CSS}
             // 系统文件选择按钮
             overlay.querySelector('[data-action="pick-directory"]')?.addEventListener('click', async () => {
                 try {
-                    const picked = await window.workspaceAPI.pickDirectoryDialog();
+                    const picked = await window.workspaceAPI.pickDirectoryDialog(currentWorkspace || undefined);
                     if (picked) syncBrowserToPath(picked);
                 } catch {
                     // 静默处理
