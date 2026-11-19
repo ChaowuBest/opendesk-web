@@ -17,6 +17,7 @@ const { HarnessContext } = await import('../../../main/aikernel/security/harness
 const { MAIN_AGENT_STANDARD_MODE } = await import('../../../main/aikernel/agents/main/modes/standard.js');
 const { AgentRegistry } = await import('../../../main/aikernel/agents/registry.js');
 const { TaskManagerState, TaskState } = await import('../../../main/aikernel/states/tasks.js');
+const { BaseTaskManagerUpdateSubscriber } = await import('../../../main/aikernel/task/manager.js');
 const { replaceTaskHarnessForWorkspace, updateTaskWorkspace } = await import('../../../main/aikernel/task/mode.js');
 
 const taskAgentRef = AgentRegistry.getMainAgent();
@@ -211,6 +212,28 @@ describe('shared task workspace operation', () => {
     }
 
     afterEach(() => jest.restoreAllMocks());
+
+    test('publishes the new workspace in the task list after switching', async () => {
+        const { task, createProvider } = fixture();
+        task.activeModeId = selected.id;
+        task.task_manager_state.tasks.push(task);
+        const published: object[][] = [];
+        task.task_manager_state.addSubscriber(
+            new (class extends BaseTaskManagerUpdateSubscriber {
+                send(taskList: object[]) {
+                    published.push(taskList);
+                }
+            })()
+        );
+
+        await updateTaskWorkspace(task, '/new', {
+            currentModeId: standard.id,
+            permissionPromptFactory: createProvider
+        });
+
+        expect(published).toHaveLength(1);
+        expect(published[0]).toEqual([expect.objectContaining({ task_id: task.task_id, workspace: '/new' })]);
+    });
 
     test('main task mode wins over global defaults while preserving environment, node and permission owner', async () => {
         const { task, calls, environment, executionHost, provider, createProvider, createContext } = fixture({

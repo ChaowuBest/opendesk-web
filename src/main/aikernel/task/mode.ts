@@ -25,7 +25,8 @@ export interface SupportedModeSnapshot {
 }
 
 export type GlobalModeSelectionResult =
-    { status: 'ok'; modeId: string; changed: boolean } | { status: 'error'; message: string };
+    | { status: 'ok'; modeId: string; changed: boolean }
+    | { status: 'error'; message: string };
 
 /**
  * Build the public mode snapshot shared by GUI hosts.
@@ -207,6 +208,8 @@ export async function updateTaskWorkspace(
         host.permissionPromptFactory
     );
     task.persistLater();
+    // workspace 归属变化会改变任务列表的工作空间分组，广播列表更新让侧栏立即拿到新归属
+    task.task_manager_state.publishTaskListUpdate();
     await task.refreshToolsets();
 }
 
