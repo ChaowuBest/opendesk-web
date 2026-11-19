@@ -895,7 +895,9 @@ class FileManagerWorker extends BaseWorker {
 
         // A shell and a GUI may share this directory even on sandboxed platforms.
         // Hosts may select a bounded retry policy; an existing owner is never unlocked here.
-        const policy = getHostRuntime().fileScanLock ?? {};
+        // OpenHarmony 是单实例 + 应用沙箱文件系统：抢锁失败后等待 15 秒没有意义，
+        // 直接进入 query mode，与宿主显式注入 retries:0 的语义一致。
+        const policy = getHostRuntime().fileScanLock ?? (process.platform === 'openharmony' ? { retries: 0 } : {});
         const MAX_RETRIES = Math.max(0, Math.floor(policy.retries ?? 10));
         const RETRY_DELAY = Math.max(0, policy.retryDelayMs ?? 1500);
 

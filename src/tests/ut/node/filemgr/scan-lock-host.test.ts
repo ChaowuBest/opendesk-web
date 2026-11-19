@@ -31,3 +31,28 @@ test('a configured host never removes another scanner lock and can acquire it af
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('OpenHarmony keeps the single-instance scan lock when no host policy is installed', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'host-scan-lock-ohos-'));
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    // 主仓的 OpenHarmony 运行时没有 configureHostRuntime 调用，这里复现"宿主未注入策略"
+    const restore = configureHostRuntime();
+    const owner = new FileManagerWorker('filemgr', directory) as any;
+    const contender = new FileManagerWorker('filemgr', directory) as any;
+    try {
+        Object.defineProperty(process, 'platform', { value: 'openharmony', configurable: true });
+        assert.equal(await owner._acquireScanLock(), true);
+        const started = Date.now();
+        assert.equal(await contender._acquireScanLock(), false);
+        const elapsed = Date.now() - started;
+        // 桌面默认策略是 10 次 × 1500ms；OH 必须一次失败就进入 query mode
+        assert.ok(elapsed < 2000, `OpenHarmony must not wait for the desktop retry policy: ${elapsed}ms`);
+        assert.equal(contender._releaseScanLock, null);
+    } finally {
+        Object.defineProperty(process, 'platform', originalPlatform);
+        await owner._releaseScanLock?.().catch(() => {});
+        await contender._releaseScanLock?.().catch(() => {});
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
