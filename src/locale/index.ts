@@ -89,6 +89,8 @@ function getOhosBridgeSystemLanguage(): string | undefined {
 }
 
 function getElectronPreferredSystemLanguages(): string[] | undefined {
+    // Other runtimes can attempt to install missing packages when require() resolves them.
+    if (!process.versions.electron) return undefined;
     try {
         const electron = require('electron') as {
             app?: {

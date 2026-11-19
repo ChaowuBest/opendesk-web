@@ -118,4 +118,25 @@ describe('terminal system prompt contribution', () => {
             expect(enUs[key]).toBeTruthy();
         }
     });
+
+    test('Android sandbox instructions describe Android paths and app permissions without Linux mount claims', () => {
+        const text = createTerminalSystemPromptContribution({
+            kind: 'bash',
+            shellPath: '/app/runtime/bash',
+            sandboxed: true,
+            platform: 'android'
+        }).content;
+        expect(text).not.toContain('Linux dynamic sandbox');
+        expect(text).not.toContain('mounted read-only');
+        expect(text).not.toContain('Execution mode: host');
+        for (const key of [
+            'prompt.mode.sandbox.android',
+            'prompt.sandbox.android.paths',
+            'prompt.sandbox.android.workspace',
+            'sandbox.unavailable'
+        ]) {
+            expect(zhCn[key]).toBeTruthy();
+            expect(enUs[key]).toBeTruthy();
+        }
+    });
 });

@@ -1,9 +1,9 @@
 import { describe, expect, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
+import { getGuiApplicationClasses } from '../../../platforms/applications.js';
 import { AdminConsoleApplication } from '../../../main/applications/adminconsole/app.js';
 import { isApplicationVisibleInMenu } from '../../../renderer/utils/application-visibility.js';
 
-const workerPlatformSource = readFileSync(new URL('../../../platforms/worker.ts', import.meta.url), 'utf8');
 const sidebarSource = readFileSync(new URL('../../../renderer/components/sidebar.js', import.meta.url), 'utf8');
 const rendererHtml = readFileSync(new URL('../../../renderer/index.html', import.meta.url), 'utf8');
 const mainSource = readFileSync(new URL('../../../main/main.ts', import.meta.url), 'utf8');
@@ -39,8 +39,7 @@ describe('adminconsole application registration', () => {
 
 describe('adminconsole wiring', () => {
     test('is registered as a platform application', () => {
-        expect(workerPlatformSource).toContain("from '../main/applications/adminconsole/app.js'");
-        expect(workerPlatformSource).toContain('AdminConsoleApplication,');
+        expect(getGuiApplicationClasses()).toContain(AdminConsoleApplication);
     });
 
     test('opens from the debug menu instead of a dedicated renderer overlay', () => {

@@ -26,6 +26,7 @@ import { policyTextOpenHarmony } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
 import { detectToolchainReadOnlyDirs, type DynamicSandboxLaunch } from './linux-sandbox.js';
 import { resolveOpenHarmonySandboxExecutable, resolveOpenHarmonySandboxLibrary } from './resolve-ohos.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 // 复用公共定位逻辑（OPENDESK_DYNOBOX_BIN → /data/app/bin/dynobox → resources → dev）
@@ -71,7 +72,7 @@ export async function prepareOpenHarmonySandbox(options: {
 }): Promise<DynamicSandboxLaunch | null> {
     if ((process.platform as string) !== 'openharmony') return null;
     const executable = resolveOpenHarmonySandboxExecutable();
-    if (!executable) throw new Error(t('sandbox.executableMissing.ohos'));
+    if (!executable) throw sandboxUnavailableError(t('sandbox.executableMissing.ohos'));
 
     const workspace = options.cwd || options.taskState?.getWorkspace();
     if (!workspace) throw new Error(t('sandbox.cwdMissing.linux'));

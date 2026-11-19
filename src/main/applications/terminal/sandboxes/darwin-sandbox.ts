@@ -21,6 +21,7 @@ import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyTextLinux } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
 import type { DynamicSandboxLaunch } from './linux-sandbox.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export type { DynamicSandboxLaunch };
@@ -372,7 +373,7 @@ export async function prepareDarwinSandbox(options: {
 }): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'darwin') return null;
     const dylib = resolveDarwinSandboxDylib();
-    if (!dylib) throw new Error(t('sandbox.executableMissing.darwin'));
+    if (!dylib) throw sandboxUnavailableError(t('sandbox.executableMissing.darwin'));
 
     if (!options.cwd && !options.taskState?.getWorkspace()) {
         throw new Error(t('sandbox.cwdMissing.darwin'));

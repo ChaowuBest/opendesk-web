@@ -20,6 +20,7 @@ import {
     UserMessage,
     isAssistantMessage,
     isCompactBoundaryMessage,
+    parseMarkdownSafe,
     isUserMessage,
     type ChatMessage,
     type CompactBoundaryTrigger
@@ -575,6 +576,24 @@ export async function readTaskSessionMemory(
     } catch {
         return undefined;
     }
+}
+
+export async function readTaskSessionMemoryForDisplay(
+    taskId: string,
+    renderCache: Map<string, { content: string; rendered: string }>
+): Promise<{ raw: string; rendered: string } | null> {
+    const content = await readTaskSessionMemory(taskId);
+    if (!content || isSessionMemoryTemplateOnly(content)) {
+        renderCache.delete(taskId);
+        return null;
+    }
+    const cached = renderCache.get(taskId);
+    if (cached?.content === content) {
+        return { raw: content, rendered: cached.rendered };
+    }
+    const rendered = await parseMarkdownSafe(content);
+    renderCache.set(taskId, { content, rendered });
+    return { raw: content, rendered };
 }
 
 export async function writeTaskSessionMemory(

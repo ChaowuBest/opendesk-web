@@ -47,6 +47,7 @@ import { BaseWorker } from '../base';
 import { WorkerDatabaseKitProxy } from '../../../platforms/bridges/worker.js';
 import fastGlob from 'fast-glob';
 import lockfile from 'proper-lockfile';
+import { getHostRuntime } from '../../../platforms/runtime.js';
 import path from 'path';
 import fs from 'fs';
 import { getHomeDir } from '../../utils/temp.js';
@@ -892,23 +893,13 @@ class FileManagerWorker extends BaseWorker {
         fs.mkdirSync(this.appDataDirectory, { recursive: true });
         const lockPath = path.join(this.appDataDirectory, 'scan.lock');
 
-        // On OpenHarmony, files are sandboxed and there is no risk of
-        // multiple processes competing for the lock. Skip the file lock
-        // entirely and just clean up any leftover from a previous run.
-        if (process.platform === 'openharmony') {
-            await lockfile.unlock(lockPath).catch(() => {});
-            try {
-                fs.unlinkSync(lockPath);
-            } catch {}
-            try {
-                fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
-            } catch {}
-            this._releaseScanLock = async () => {};
-            return true;
-        }
-
-        const MAX_RETRIES = 10;
-        const RETRY_DELAY = 1500;
+        // A shell and a GUI may share this directory even on sandboxed platforms.
+        // Hosts may select a bounded retry policy; an existing owner is never unlocked here.
+        // OpenHarmony 是单实例 + 应用沙箱文件系统：抢锁失败后等待 15 秒没有意义，
+        // 直接进入 query mode，与宿主显式注入 retries:0 的语义一致。
+        const policy = getHostRuntime().fileScanLock ?? (process.platform === 'openharmony' ? { retries: 0 } : {});
+        const MAX_RETRIES = Math.max(0, Math.floor(policy.retries ?? 10));
+        const RETRY_DELAY = Math.max(0, policy.retryDelayMs ?? 1500);
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
@@ -916,7 +907,12 @@ class FileManagerWorker extends BaseWorker {
                 // never pre-created and every instance uses the same absolute path, so
                 // proper-lockfile's default realpath (which requires the file to exist) only
                 // caused ENOENT. Stale recovery is left to proper-lockfile's built-in stale/update.
-                this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0, realpath: false });
+                this._releaseScanLock = await lockfile.lock(lockPath, {
+                    retries: 0,
+                    realpath: false,
+                    ...(policy.staleMs === undefined ? {} : { stale: policy.staleMs }),
+                    ...(policy.updateMs === undefined ? {} : { update: policy.updateMs })
+                });
                 if (attempt > 0) {
                     logger.info(`[filemgr] scan lock acquired after ${attempt} retries`);
                 }
@@ -926,6 +922,7 @@ class FileManagerWorker extends BaseWorker {
                     logger.warn(
                         `[filemgr] scan lock unavailable after ${MAX_RETRIES} retries, entering query mode: ${error.message}`
                     );
+                    this._releaseScanLock = null;
                     return false;
                 }
 

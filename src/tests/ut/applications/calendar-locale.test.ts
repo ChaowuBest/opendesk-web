@@ -53,4 +53,24 @@ describe('calendar locale', () => {
             '+2 more…'
         );
     });
+
+    test('system-calendar controls and recoverable failures have translations in both languages', () => {
+        for (const locale of ['zh-CN', 'en-US']) {
+            const translate = createTranslatorForCalendar({ locale });
+            for (const name of [
+                'authorize',
+                'show',
+                'destination',
+                'local',
+                'permissionDenied',
+                'invalidSelection',
+                'unclassified',
+                'typeUnsupported',
+                'recurringReadOnly'
+            ]) {
+                const key = `renderer.calendar.integration.${name}`;
+                expect(translate(key)).not.toBe(key);
+            }
+        }
+    });
 });

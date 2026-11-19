@@ -34,7 +34,13 @@ export function createTerminalSystemPromptContribution(
             shell: t(`prompt.shell.${options.kind}`),
             path: shellPath
         }),
-        t(isWindowsSandbox ? 'prompt.mode.sandbox' : 'prompt.mode.host')
+        t(
+            isWindowsSandbox
+                ? 'prompt.mode.sandbox'
+                : options.sandboxed && platform === 'android'
+                  ? 'prompt.mode.sandbox.android'
+                  : 'prompt.mode.host'
+        )
     ];
 
     if (isWindowsSandbox) {
@@ -45,6 +51,8 @@ export function createTerminalSystemPromptContribution(
         if (options.deleteToTrash) {
             items.push(t('prompt.sandbox.trash'));
         }
+    } else if (options.sandboxed && platform === 'android') {
+        items.push(t('prompt.sandbox.android.paths'), t('prompt.sandbox.android.workspace'));
     } else if (options.sandboxed) {
         // Linux / OpenHarmony / darwin 沙箱（bash/zsh，透明路径语义）
         items.push(

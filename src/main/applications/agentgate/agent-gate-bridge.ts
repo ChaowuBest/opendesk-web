@@ -19,6 +19,7 @@
  *   4. 子进程异常退出时自动重启（最多 3 次）
  */
 
+import { getHostRuntime } from '../../../platforms/runtime.js';
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import { createServer } from 'net';
 import path from 'path';
@@ -202,6 +203,8 @@ class AgentGateBridge {
      * 查找，故统一在此映射。
      */
     private getProjectRoot(): string {
+        const hostRoot = getHostRuntime().nodeModulesRoot;
+        if (hostRoot && fs.existsSync(path.join(hostRoot, 'node_modules'))) return hostRoot;
         // 1. Electron 打包环境：app.getAppPath() 返回 app 资源目录
         try {
             const { app } = electron();
@@ -647,7 +650,9 @@ class AgentGateBridge {
                     // 存储类型：sqlite 时传 --db-path，json 时传环境变量
                     // 未配置时：鸿蒙默认 json，其他默认 sqlite
                     const storageType =
-                        appCfg.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
+                        appCfg.storageType ||
+                        getHostRuntime().agentGateStorage ||
+                        ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
                     if (storageType === 'sqlite') {
                         if (appCfg.dbPath) gateArgs.push('--db-path', appCfg.dbPath);
                     }
@@ -684,7 +689,9 @@ class AgentGateBridge {
                           ? ((settingInstance as any).getData?.() || {}).applications?.agentgate
                           : undefined;
                       let storageType =
-                          appCfg?.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
+                          appCfg?.storageType ||
+                          getHostRuntime().agentGateStorage ||
+                          ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
                       // sqlite 模式需要 better-sqlite3，检测是否真正可用（含鸿蒙强制 json），
                       // 不可用时自动回退到 json；ABI 兼容性兜底已在 start() 的 tryBuildSqliteNative 处理
                       if (storageType === 'sqlite' && !this.isSqliteAvailable()) {

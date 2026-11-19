@@ -13,7 +13,7 @@ declare const __BUILD_TIME__: string;
 declare const __IS_DEV__: boolean;
 
 import { FileWatchService, type FileWatchSubscription } from './services/file-watch/service.js';
-import { TaskSearchService } from './services/task-search/service.js';
+import { TaskSearchService, searchVisibleTasks } from './services/task-search/service.js';
 import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../common/task-search.js';
 import { createRequire } from 'module';
 
@@ -46,17 +46,16 @@ import {
     isDebugLogEnabled,
     isOpendeskDebugMode
 } from './utils/setting.js';
-import { runSettingSideEffects, type SettingSideEffect } from './utils/setting-side-effects.js';
+import { saveSettingObject, importQuickPassConfiguration } from './applications/settings/service.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
-import { cleanPathInput } from '../utils/path.js';
+import { listFileEntries, listWorkspaceEntries, readTextFile, resolveWorkspaceFilePath } from './utils/file-browser.js';
 import { sandboxPathToHostPath } from '../common/utils/path.js';
 import { toErrorMessage } from '../common/utils/error.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
-import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import {
     LogStream,
@@ -83,8 +82,8 @@ import { registerInteractiveTerminalHandlers } from './applications/terminal/int
 import {
     initializeRegistry,
     initializeRegistryWorker,
-    notifyWorkerSettingUpdate,
-    ApplicationRegistry
+    ApplicationRegistry,
+    notifyWorkerSettingUpdate
 } from './applications/registry';
 import {
     initializeRegistryProtocols,
@@ -101,10 +100,12 @@ import { exportTaskJsonToFile, exportTaskToHtml, generateTaskHtml } from './util
 import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
 import { refreshRuntimePreferredSystemLanguages } from './utils/system-language-refresh.js';
 import * as taskTransfer from './aikernel/task/transfer.js';
+import { releaseTaskMemory } from './aikernel/task/memory.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
+import { exportLogEntries } from './utils/export-log.js';
+import { createLocalExportDestinationHost } from './utils/export-local-destination.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
-import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
@@ -120,12 +121,9 @@ import {
 import { isOpenDeskOfficePartition } from '../common/officeWebview.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import {
-    prepareFileMgrStartupWorkspaceSettings,
-    prepareFileMgrWorkspaceSettings
-} from './applications/filemgr/workspace.js';
+import { prepareFileMgrStartupWorkspaceSettings } from './applications/filemgr/workspace.js';
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
-import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
+import { readTaskSessionMemoryForDisplay } from './aikernel/compaction/session-memory-compact.js';
 import { readUserPortrait, writeUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook, unregisterMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
@@ -135,7 +133,8 @@ import { OPENDESK_FEATURES, resolveFeatureLocalizedText } from '../common/featur
 import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
 import { startReporter } from './utils/reporter.js';
 import { submitFeedback } from './utils/feedback.js';
-import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './telemetry/local-telemetry.js';
+import type { RankPeriod } from './telemetry/local-telemetry.js';
+import { createTaskUsageViewService } from './telemetry/task-usage-view.js';
 import { TelemetryOperation, TelemetryOperationRegistry } from './telemetry/operation.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { registerDesktopAPIHandlers, registerTrashAPIHandlers } from './windows/handlers.js';
@@ -159,8 +158,7 @@ import {
     lookupKnownContextSize,
     lookupKnownMaxOutputTokens,
     resolveModelVisionSupport,
-    resolveModelReasoningEfforts,
-    fetchContextSizeFromAPI
+    resolveModelReasoningEfforts
 } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
 import { fetchProviderModelNames } from './utils/provider-models.js';
@@ -179,12 +177,23 @@ import { QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT } from '../platforms/bridges/co
 import { getHuaweiAuthService } from '../platforms/bridges/harmonyos/auth/huawei-auth.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
+import { applyTaskExecutionNode, normalizeExecutionNodeId } from './applications/devicemgr/task-execution.js';
 import { registerElectronAccountIntegration } from './applications/account/electron.js';
 import { type TaskState, isTaskVisibleForDeveloperMode } from './aikernel/states/tasks.js';
 import { getLocale, getRuntimePreferredSystemLanguages, t } from '../locale/index.js';
 import { getLocalePackStore } from '../locale/packs.js';
 import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
-import { replaceTaskHarnessForWorkspace, switchTaskMode } from './aikernel/task/mode.js';
+import {
+    getSupportedModeSnapshot,
+    replaceTaskHarnessForWorkspace,
+    selectGlobalMode,
+    switchTaskMode,
+    updateTaskWorkspace
+} from './aikernel/task/mode.js';
+import { resolveTaskModelContextSize, setTaskModel } from './aikernel/task/model.js';
+import { createGuiTask, submitGuiTaskMessage } from './applications/task-gui/operations.js';
+import { createGuiGoalOperations } from './applications/task-gui/goals.js';
+import { applyWorkspaceSelection } from './applications/settings/workspace.js';
 import {
     expandVisualBounds,
     LINUX_WINDOW_SHADOW_MARGIN,
@@ -293,7 +302,6 @@ import Convert from 'ansi-to-html';
 import fs from 'fs';
 import path from 'path';
 import { openSystemTrash, initializeTrash, startTrashPreviewCleanupScheduler } from './utils/trash.js';
-import os from 'os';
 import fsPromises from 'fs/promises';
 
 import { getAppIconPath, getWindowIcon } from './utils/app-icon.js';
@@ -487,10 +495,6 @@ function getPreferredSystemLanguagesForLocale(): string[] {
     }
 }
 
-// app ready 后经 refreshRuntimePreferredSystemLanguages（bridge 优先，退化 Electron）注入
-// 系统首选语言缓存：与主窗口 focus 时的刷新共用同一取值路径，避免注入值与刷新值来源不一致
-// 导致首次 focus 产生纠正性广播。此后主进程 getLocale()/t() 的 auto 解析只读这份缓存，
-// 与 Worker 的注入机制保持一致；首次注入只预热缓存，不会触发变更广播。
 void app.whenReady().then(() => {
     refreshRuntimePreferredSystemLanguages().catch((error: any) => {
         logger.warn(`[locale] failed to inject system languages at startup: ${error?.message ?? error}`);
@@ -1282,22 +1286,9 @@ const registerModeAPIHandlers = () => {
     ipcMain.handle('mode:getSupportedModes', () => {
         try {
             const agentDecl = AgentRegistry.getMainAgent();
-            const modes = agentDecl.supportedModes();
-            const defaultId = agentDecl.getDefaultMode().id;
-            const currentId = _currentElectronModeId || defaultId;
             return {
                 status: 'ok',
-                data: {
-                    modes: modes.map((m) => ({
-                        id: m.id,
-                        name: m.name,
-                        description: m.description,
-                        icon: m.icon,
-                        color: m.color
-                    })),
-                    defaultModeId: defaultId,
-                    currentModeId: currentId
-                }
+                data: getSupportedModeSnapshot(agentDecl, _currentElectronModeId)
             };
         } catch (err) {
             return { status: 'error', message: String(err) };
@@ -1307,16 +1298,15 @@ const registerModeAPIHandlers = () => {
     ipcMain.handle('mode:setCurrentMode', async (event, modeId) => {
         try {
             const agentDecl = AgentRegistry.getMainAgent();
-            const modes = agentDecl.supportedModes();
-            const target = modes.find((m) => m.id === modeId);
-            if (!target) {
-                return { status: 'error', message: `unknown mode: ${modeId}` };
-            }
+            const selection = selectGlobalMode(agentDecl, _currentElectronModeId, modeId);
+            if (selection.status !== 'ok') return selection;
 
-            // 仅更新系统默认模式（影响新任务启动时的初始模式），不再同步所有现有任务
-            _currentElectronModeId = modeId;
+            // 仅更新系统默认模式（影响新任务启动时的初始模式），不再同步所有现有任务。
+            // 先保存成功状态，再广播；非法值和重复选择都不产生 changed 事件。
+            _currentElectronModeId = selection.modeId;
+            if (selection.changed) broadcastToAllWindows('mode:changed', selection.modeId);
 
-            return { status: 'ok', data: modeId };
+            return { status: 'ok', data: selection.modeId };
         } catch (err) {
             return { status: 'error', message: String(err) };
         }
@@ -1455,50 +1445,16 @@ const registerFeaturesAPIHandlers = () => {
 };
 
 const registerUsageAPIHandlers = () => {
-    const startOfLocalDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const startOfLocalWeek = (date: Date): Date => {
-        const start = startOfLocalDay(date);
-        const daysSinceMonday = (start.getDay() + 6) % 7;
-        start.setDate(start.getDate() - daysSinceMonday);
-        return start;
-    };
-    const countTasksCreatedBetween = (start: Date, end: Date): number => {
-        const taskManagerState = GlobalState.getInstance().taskManagerState;
-        return taskManagerState.tasks.filter((task) => {
-            const createdAt = task.created_at;
-            return createdAt >= start && createdAt < end;
-        }).length;
-    };
+    const usageViews = createTaskUsageViewService({
+        listTasks: () => GlobalState.getInstance().taskManagerState.tasks,
+        getTask: (taskId) => GlobalState.getInstance().taskManagerState.getTask(taskId),
+        isDeveloperMode: isDeveloperModeEnabled,
+        isTaskVisible: isTaskVisibleForDeveloperMode
+    });
 
     ipcMain.handle('usage:getDashboardSummary', async (_event, params?: { rankPeriod?: RankPeriod }) => {
         try {
-            const now = new Date();
-            const summary = await getUsageDashboardSummary({ rankLimit: 30, now, rankPeriod: params?.rankPeriod });
-            const taskManagerState = GlobalState.getInstance().taskManagerState;
-            const todayStart = startOfLocalDay(now);
-            const tomorrowStart = new Date(todayStart.getTime());
-            tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-            const weekStart = startOfLocalWeek(todayStart);
-            summary.today.task_count = countTasksCreatedBetween(todayStart, tomorrowStart);
-            summary.week.task_count = countTasksCreatedBetween(weekStart, tomorrowStart);
-
-            const existingRankItems: typeof summary.month_top_tasks = [];
-            const developerMode = isDeveloperModeEnabled();
-            for (const item of summary.month_top_tasks) {
-                const task = taskManagerState.getTask(item.task_id);
-                if (!task || !isTaskVisibleForDeveloperMode(task, developerMode)) {
-                    continue;
-                }
-                existingRankItems.push({
-                    ...item,
-                    task_name: task.task_name || item.task_name
-                });
-                if (existingRankItems.length >= 10) {
-                    break;
-                }
-            }
-            summary.month_top_tasks = existingRankItems;
-            return { status: 'ok', data: summary };
+            return { status: 'ok', data: await usageViews.getDashboardSummary(params) };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }
@@ -1506,25 +1462,7 @@ const registerUsageAPIHandlers = () => {
 
     ipcMain.handle('usage:getRankings', async (_event, params?: { rankPeriod?: RankPeriod }) => {
         try {
-            const rankings = await getUsageRankings(params?.rankPeriod ?? 'month', 30);
-            const taskManagerState = GlobalState.getInstance().taskManagerState;
-            const enrichedTasks: typeof rankings.tasks = [];
-            const developerMode = isDeveloperModeEnabled();
-            for (const item of rankings.tasks) {
-                const task = taskManagerState.getTask(item.task_id);
-                if (!task || !isTaskVisibleForDeveloperMode(task, developerMode)) {
-                    continue;
-                }
-                enrichedTasks.push({
-                    ...item,
-                    task_name: task.task_name || item.task_name
-                });
-                if (enrichedTasks.length >= 10) {
-                    break;
-                }
-            }
-            rankings.tasks = enrichedTasks;
-            return { status: 'ok', data: rankings };
+            return { status: 'ok', data: await usageViews.getRankings(params) };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }
@@ -1533,6 +1471,7 @@ const registerUsageAPIHandlers = () => {
 
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
+    const guiGoalOperations = createGuiGoalOperations(globalState.taskManagerState);
     registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
     const taskSearch = new TaskSearchService(
         getTaskDirectory(),
@@ -1558,31 +1497,14 @@ const registerTaskManagerAPIHandlers = () => {
         }
     });
     ipcMain.handle('taskManager:searchTasks', async (_event, query: unknown, limit: unknown) => {
-        if (
-            typeof query !== 'string' ||
-            query.length > TASK_SEARCH_MAX_QUERY ||
-            typeof limit !== 'number' ||
-            !Number.isInteger(limit) ||
-            limit < 1 ||
-            limit > TASK_SEARCH_MAX_RESULTS
-        ) {
-            return { status: 'error' };
-        }
         try {
-            const data = await taskSearch.search(query, limit, _event.sender.id);
-            // Recheck live metadata without loading any task history. Deleted/internal
-            // tasks must not leak through an index that is still being refreshed.
-            const visible = new Map(
-                globalState.taskManagerState.tasks
-                    .filter((task) => task.internal !== true && Boolean(task.task_name?.trim() || task.name_pending))
-                    .map((task) => [task.task_id, task])
+            const data = await searchVisibleTasks(
+                taskSearch,
+                () => globalState.taskManagerState.tasks,
+                query,
+                limit,
+                _event.sender.id
             );
-            data.items = data.items
-                .filter((item) => visible.has(item.taskId))
-                .map((item) => {
-                    const task = visible.get(item.taskId)!;
-                    return { ...item, title: task.task_name || '', workspace: task.workspace || '' };
-                });
             return { status: 'ok', data };
         } catch (error) {
             logger.warn(`Task search failed: ${error}`);
@@ -1675,94 +1597,15 @@ const registerTaskManagerAPIHandlers = () => {
         };
     }
 
-    function normalizeExecutionNodeId(nodeId?: string | null): string {
-        return typeof nodeId === 'string' ? nodeId.trim() : '';
-    }
-
-    async function applyTaskExecutionNode(task: TaskState, nodeId?: string | null) {
-        const normalizedNodeId = normalizeExecutionNodeId(nodeId);
-        if (!normalizedNodeId) {
-            await task.setExecutionHost({ type: 'local' });
-            return { status: 'ok', data: { type: 'local' } };
-        }
-        const node = getExecutionNode(normalizedNodeId);
-        if (!node) {
-            return { status: 'error', message: `node ${normalizedNodeId} not connected` };
-        }
-        const label = node.displayName || node.nodeId;
-        await task.setExecutionHost({
-            type: 'node',
-            nodeId: node.nodeId,
-            nodeLabel: label,
-            capabilities: {
-                nodeId: node.nodeId,
-                displayName: node.displayName,
-                platform: node.platform,
-                workspace: node.workspace,
-                commands: node.commands,
-                shells: node.shells,
-                defaultShell: node.defaultShell
-            }
+    ipcMain.handle('taskManager:createTask', async (_event, rawOptions) => {
+        return createGuiTask(globalState.taskManagerState, rawOptions, {
+            get currentModeId() {
+                return _currentElectronModeId;
+            },
+            defaultExecutionNodeId: globalState.getDefaultExecutionNodeId(),
+            permissionPromptFactory: () => new ElectronPermissionPromptProvider(),
+            createInteractionToolset: (task) => getPlatform().createInteractionToolset(task)
         });
-        return {
-            status: 'ok',
-            data: { type: 'node', nodeId: node.nodeId, nodeLabel: label, workspace: node.workspace }
-        };
-    }
-
-    ipcMain.handle('taskManager:createTask', async (event, rawOptions) => {
-        const options = normalizeCreateTaskOptions(rawOptions);
-        // 如果没有指定执行节点，使用全局默认值
-        let initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
-        if (!initialNodeId) {
-            initialNodeId = globalState.getDefaultExecutionNodeId();
-        }
-        if (initialNodeId && !getExecutionNode(initialNodeId)) {
-            return { status: 'error', message: `node ${initialNodeId} not connected` };
-        }
-        // system prompt 中的可派发 agent 列表是创建时刻的快照（此后不会重建）。
-        // 应用的 agent 延迟加载在主窗口显示后才后台触发，若在此处不等待加载屏障，
-        // 加载窗口内创建的任务将终身缺失自定义 agent，任务无法分发到这些 agent
-        // （与 CLI/TUI 建任务前 await ensureFullyLoaded 的行为保持一致）。
-        // 屏障通常启动后即已就绪，此处等待无感；agent 加载失败时屏障内部已兜底不会 reject。
-        await ApplicationRegistry.ensureFullyLoaded();
-        const task = globalState.taskManagerState.createTask(undefined, {
-            internal: options.internal,
-            taskName: options.taskName
-        });
-        const workspace = Setting.getInstance().getEffectiveWorkspace();
-        const agentDecl = AgentRegistry.getMainAgent();
-        const modes = agentDecl.supportedModes();
-        const resolvedModeId = options.modeId || _currentElectronModeId;
-        const activeMode = modes.find((candidate) => candidate.id === resolvedModeId) ?? agentDecl.getDefaultMode();
-
-        try {
-            task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
-            task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
-            task.workspace = workspace;
-            task.activeModeId = activeMode.id;
-            task.allowedTools = activeMode.allowedTools;
-            task.disabledTools = activeMode.disabledTools;
-            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-            // 交互工具集由 platform 按需构建（含审批后切模式的 modeSwitcher）；挂载由每次 turn 的 interactive 标记决定
-            task.interactionToolset = getPlatform().createInteractionToolset(task);
-
-            if (initialNodeId) {
-                const result = await applyTaskExecutionNode(task, initialNodeId);
-                if (result.status !== 'ok') return result;
-            }
-
-            await task.rebuildSystemPrompt();
-        } catch (err) {
-            logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
-            task.harnessContext = HarnessContext.createEmpty();
-            task.harnessContext.workspace = workspace;
-            task.workspace = workspace;
-        }
-        // harness 初始化设置了 task.workspace 等属性，需要通知前端更新，
-        // 否则前端在 createTask() 发出的 taskListUpdate 中看到的是空 workspace
-        globalState.taskManagerState.publishTaskListUpdate();
-        return { status: 'ok', data: task.task_id };
     });
 
     ipcMain.handle('taskManager:triggerTaskReview', async (_event, taskId: string) => {
@@ -1796,19 +1639,9 @@ const registerTaskManagerAPIHandlers = () => {
      * 仅被动响应前台请求，main 侧不做定时驱逐。
      */
     ipcMain.handle('taskManager:releaseTaskMemory', (_event, taskId) => {
-        if (typeof taskId !== 'string') {
-            return { status: 'error', message: 'taskId must be a string' };
-        }
-        // 用 tasks.find 而非 getTask()：getTask() 会触发 ensureLoaded()，
-        // 反而把待释放的任务数据加载回来。
-        const task = globalState.taskManagerState.tasks.find((candidate) => candidate.task_id === taskId);
-        if (!task) {
-            // 幂等：删除流程会先关闭视图（触发本 IPC）再删除任务，此时任务可能已不存在。
-            return { status: 'ok', data: { released: false } };
-        }
-        sessionMemoryRenderCache.delete(taskId);
-        const released = task.unload();
-        return { status: 'ok', data: { released } };
+        return releaseTaskMemory(taskId, globalState.taskManagerState.tasks, (id) => {
+            sessionMemoryRenderCache.delete(id);
+        });
     });
     ipcMain.handle('taskManager:forkTask', (event, taskId, upToMessageId?: string) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -1848,18 +1681,10 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         try {
-            const mainAgent = AgentRegistry.getMainAgent();
-            const mainModeId = task.activeModeId || _currentElectronModeId;
-            const mainModes = mainAgent.supportedModes();
-            const mainMode = mainModes.find((candidate) => candidate.id === mainModeId) ?? mainAgent.getDefaultMode();
-            // lazy harness 初始化前 provider 可能为空，与切换前行为一致地兜底
-            task.harnessContext.permissionPrompt =
-                task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-            await replaceTaskHarnessForWorkspace(task, newWorkspace, (taskAgent) =>
-                taskAgent.agentId === mainAgent.agentId ? mainMode : task.getAgentMode()
-            );
-            task.persistLater();
-            await task.refreshToolsets();
+            await updateTaskWorkspace(task, newWorkspace, {
+                currentModeId: _currentElectronModeId,
+                permissionPromptFactory: () => new ElectronPermissionPromptProvider()
+            });
             return { status: 'ok' };
         } catch (err: any) {
             logger.error(`Failed to update task workspace: ${err?.message ?? err}`);
@@ -1937,127 +1762,25 @@ const registerTaskManagerAPIHandlers = () => {
         }
     });
     ipcMain.handle('taskManager:getGoalStatus', async (_event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        return { status: 'ok', data: GoalController.getStatus(task) };
+        return guiGoalOperations.getGoalStatus(taskId);
     });
     ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        const goalState = task.goal_state;
-        const hasUnfinishedGoal =
-            goalState !== undefined && goalState.status !== 'complete' && goalState.status !== 'cleared';
-        if (hasUnfinishedGoal) {
-            return {
-                status: 'ok',
-                data: {
-                    ok: false,
-                    status: goalState.status,
-                    messageKey: 'goal.create.requires_clear',
-                    errorCode: 'goal_exists'
-                }
-            };
-        }
-        const input = {
-            objective: String(objective ?? ''),
-            source: 'gui' as const
-        };
-        const result = await GoalService.create(task, input, { projectDisplayMessage: true });
-        const response: GoalCommandResult =
-            result.ok === false && result.errorCode === 'task_running' && task.goal_state?.status === 'active'
-                ? {
-                      ok: true,
-                      status: task.goal_state.status,
-                      summary: GoalController.getStatus(task).summary,
-                      startedScheduler: false
-                  }
-                : result;
-        if (response.clearedTaskTodos) {
-            publishTaskTodosCleared([taskId]);
-        }
-        return {
-            status: 'ok',
-            data: response
-        };
+        return guiGoalOperations.createGoal(taskId, objective);
     });
     ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        const rawIfMatch =
-            options && typeof options === 'object' && !Array.isArray(options)
-                ? (options as Record<string, unknown>).ifMatch
-                : undefined;
-        const ifMatch = parseGoalEditIfMatch(rawIfMatch);
-        if (rawIfMatch !== undefined && !ifMatch) {
-            return {
-                status: 'ok',
-                data: {
-                    ok: false,
-                    messageKey: 'goal.edit.invalid_precondition',
-                    errorCode: 'invalid_goal_precondition'
-                } satisfies GoalCommandResult
-            };
-        }
-        return {
-            status: 'ok',
-            data: await GoalService.edit(task, String(objective ?? ''), 'gui', {
-                projectDisplayMessage: true,
-                ...(ifMatch ? { ifMatch } : {})
-            })
-        };
+        return guiGoalOperations.editGoal(taskId, objective, options);
     });
     ipcMain.handle('taskManager:addGoalSupplement', async (_event, taskId, content) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        return {
-            status: 'ok',
-            data: await GoalService.addSupplement(task, {
-                content: String(content ?? ''),
-                source: 'gui'
-            })
-        };
+        return guiGoalOperations.addGoalSupplement(taskId, content);
     });
     ipcMain.handle('taskManager:pauseGoal', async (_event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        return {
-            status: 'ok',
-            data: await GoalService.pause(task, 'gui')
-        };
+        return guiGoalOperations.pauseGoal(taskId);
     });
     ipcMain.handle('taskManager:resumeGoal', async (_event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        return {
-            status: 'ok',
-            data: await GoalService.resume(task, {
-                source: 'gui'
-            })
-        };
+        return guiGoalOperations.resumeGoal(taskId);
     });
     ipcMain.handle('taskManager:clearGoal', async (_event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        const result = await GoalService.clear(task, 'gui');
-        ApplicationRegistry.dispatchEvent('todomgr', 'taskTodosUpdated', {
-            taskId,
-            todos: getTaskTodosForDisplay(taskId)
-        });
-        return { status: 'ok', data: result };
+        return guiGoalOperations.clearGoal(taskId);
     });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -2192,57 +1915,8 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:getAttachmentFileSupport', () => {
         return { status: 'ok', data: getAttachmentFileSupport() };
     });
-    ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        await globalState.taskManagerState.refreshLazyTaskSystemPrompt(task);
-        if (details.attachedFilePaths) {
-            try {
-                await task.attachFiles(details.attachedFilePaths);
-            } catch (err) {
-                if (err instanceof UnsupportedAttachmentFileTypeError) {
-                    const extensions = [
-                        ...new Set(
-                            err.unsupportedFiles.map((file) =>
-                                file.extension
-                                    ? `.${file.extension}`
-                                    : t('renderer.agentInput.unsupportedFile.noExtension')
-                            )
-                        )
-                    ].join(', ');
-                    const supportedExtensions = err.supportedExtensions.map((extension) => `.${extension}`).join(', ');
-                    return {
-                        status: 'error',
-                        message: t('renderer.agentInput.unsupportedFile.message', {
-                            extensions,
-                            supportedExtensions
-                        })
-                    };
-                }
-                throw err;
-            }
-        }
-        if (details.selectedModel) {
-            task.model = details.selectedModel;
-            task.ensureValidModelOrFallback();
-        }
-        if (details.reasoningEffort !== undefined) {
-            task.reasoningEffort = details.reasoningEffort;
-        }
-        if (Object.prototype.hasOwnProperty.call(details, 'selectedExecutionNodeId')) {
-            const result = await setTaskExecutionNode(taskId, details.selectedExecutionNodeId ?? null);
-            if (result.status !== 'ok') return result;
-        }
-
-        const imageDataUris: string[] | undefined =
-            Array.isArray(details.attachedImages) && details.attachedImages.length > 0
-                ? details.attachedImages
-                : undefined;
-
-        await task.submitUserMessage(details.message, { imageDataUris, interactive: true });
-        return { status: 'ok' };
+    ipcMain.handle('taskManager:submitMessage', async (_event, taskId, details) => {
+        return submitGuiTaskMessage(globalState.taskManagerState, taskId, details);
     });
     ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -2265,39 +1939,10 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias, 'chat')) {
-            return { status: 'error', message: t('error.model.chat_alias_not_found', { alias: modelAlias }) };
-        }
-        const previous = task.model;
-        task.model = modelAlias || undefined;
-        if (reasoningEffort !== undefined) {
-            // 空字符串是显式选择模型默认档位，不能丢弃或保留旧的任务覆盖值。
-            task.reasoningEffort = reasoningEffort;
-        }
-        task.persistLater();
-        // 模型切换后立即重新过滤工具集：非视觉模型不应继续看到 readImage/askImage 等视觉工具，
-        // 否则运行中的 turn 会在后续请求中继续调用已不匹配的工具并报"模型不支持视觉"错误。
-        if (previous !== task.model) {
-            try {
-                await task.refreshToolsets();
-            } catch (err) {
-                logger.warn(
-                    `failed to refresh toolsets after model switch: ${err instanceof Error ? err.message : String(err)}`
-                );
-            }
-        }
-        return { status: 'ok' };
+        return setTaskModel(task, modelAlias, reasoningEffort);
     });
-    ipcMain.handle('taskManager:stopTask', async (event, taskId) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        if (task.goal_state?.status === 'active') {
-            return { status: 'ok', data: await GoalService.stopActiveGoal(task, 'gui') };
-        }
-        task.stop();
-        return { status: 'ok' };
+    ipcMain.handle('taskManager:stopTask', async (_event, taskId) => {
+        return guiGoalOperations.stopTask(taskId);
     });
     ipcMain.handle('taskManager:interruptForNewMessage', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -2318,17 +1963,7 @@ const registerTaskManagerAPIHandlers = () => {
     // session memory 渲染缓存
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
-            const content = await readTaskSessionMemory(taskId);
-            if (!content || isSessionMemoryTemplateOnly(content)) {
-                return { status: 'ok', data: null };
-            }
-            const cached = sessionMemoryRenderCache.get(taskId);
-            if (cached && cached.content === content) {
-                return { status: 'ok', data: { raw: content, rendered: cached.rendered } };
-            }
-            const rendered = await parseMarkdownSafe(content);
-            sessionMemoryRenderCache.set(taskId, { content, rendered });
-            return { status: 'ok', data: { raw: content, rendered } };
+            return { status: 'ok', data: await readTaskSessionMemoryForDisplay(taskId, sessionMemoryRenderCache) };
         } catch {
             return { status: 'ok', data: null };
         }
@@ -2346,26 +1981,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
     });
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
-        try {
-            const setting = Setting.getInstance();
-            const modelInstance = modelAlias
-                ? setting.getModelInstance(modelAlias, 'chat')
-                : setting.getDefaultModelInstance();
-            if (!modelInstance) {
-                return { status: 'ok', data: 0 };
-            }
-            if (modelInstance.context_length && modelInstance.context_length > 0) {
-                return { status: 'ok', data: modelInstance.context_length };
-            }
-            const knownSize = lookupKnownContextSize(modelInstance.model_name);
-            if (knownSize > 0) {
-                return { status: 'ok', data: knownSize };
-            }
-            const apiSize = await fetchContextSizeFromAPI(modelInstance);
-            return { status: 'ok', data: apiSize };
-        } catch {
-            return { status: 'ok', data: 0 };
-        }
+        return { status: 'ok', data: await resolveTaskModelContextSize(modelAlias) };
     });
     // 检查文件是否存在
     ipcMain.handle('fs:fileExists', async (event, filePath) => {
@@ -2616,48 +2232,9 @@ const registerFSAPIHandlers = () => {
 
     // 列出目录内容（仅一层），用于工作空间文件浏览器的按需展开。
     // 返回条目按：目录在前 + 名称不区分大小写排序。
-    ipcMain.handle('fs:listDirectory', async (event, dirPath) => {
+    ipcMain.handle('fs:listDirectory', async (_event, dirPath: string) => {
         try {
-            if (typeof dirPath !== 'string' || dirPath.length === 0) {
-                return { status: 'error', message: 'dirPath is required' };
-            }
-            const systemPath = dirPath.replace(/\//g, path.sep);
-            const dirents = await fs.promises.readdir(systemPath, { withFileTypes: true });
-            const entries = [];
-            for (const d of dirents) {
-                // 跳过一些典型噪声项，避免浏览器崩溃或渲染过慢；
-                // 这里只对无意义的系统快捷方式做过滤，用户自己的点开头目录仍然保留
-                const name = d.name;
-                const abs = path.join(systemPath, name);
-                let isDirectory = d.isDirectory();
-                const isSymbolicLink = d.isSymbolicLink();
-                let size = 0;
-                let modifiedAt = null;
-                try {
-                    const st = await fs.promises.stat(abs);
-                    // 通过 stat 解析 symlink 指向的真实类型，便于前端显示文件夹 / 文件图标
-                    if (isSymbolicLink) {
-                        isDirectory = st.isDirectory();
-                    }
-                    size = st.size;
-                    modifiedAt = st.mtimeMs;
-                } catch {
-                    // 忽略权限/损坏项，仍然列出但不提供尺寸
-                }
-                entries.push({
-                    name,
-                    path: abs.replace(/\\/g, '/'),
-                    isDirectory,
-                    isSymbolicLink,
-                    size,
-                    modifiedAt
-                });
-            }
-            entries.sort((a, b) => {
-                if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-                return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-            });
-            return { status: 'ok', data: entries };
+            return { status: 'ok', data: await listFileEntries(dirPath) };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2665,57 +2242,9 @@ const registerFSAPIHandlers = () => {
 
     // 读取文本文件内容，用于工作空间预览/编辑面板。
     // maxBytes <= 0 或未提供时不限制体积，直接读取全文。
-    ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
+    ipcMain.handle('fs:readTextFile', async (_event, filePath: string, maxBytes?: number) => {
         try {
-            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 0;
-            const { systemPath, size } = await readFileMetadata(filePath);
-            if (limit > 0 && size > limit) {
-                return {
-                    status: 'ok',
-                    data: { tooLarge: true, size, limit, content: '', binary: false }
-                };
-            }
-            const buf = await fs.promises.readFile(systemPath);
-            // 粗略判断是否为二进制：包含 NUL 字节即判定为二进制，避免把乱码渲染到预览器
-            let binary = false;
-            const probe = buf.subarray(0, Math.min(buf.length, 8192));
-            for (let i = 0; i < probe.length; i++) {
-                if (probe[i] === 0) {
-                    binary = true;
-                    break;
-                }
-            }
-            // 二进制图片文件附带 data URI，供前端预览
-            let dataUri: string | undefined;
-            if (binary) {
-                const ext = path.extname(systemPath).toLowerCase().slice(1);
-                const mimeMap: Record<string, string> = {
-                    png: 'image/png',
-                    jpg: 'image/jpeg',
-                    jpeg: 'image/jpeg',
-                    gif: 'image/gif',
-                    webp: 'image/webp',
-                    bmp: 'image/bmp',
-                    ico: 'image/x-icon',
-                    avif: 'image/avif',
-                    apng: 'image/apng'
-                };
-                const mime = mimeMap[ext];
-                if (mime) {
-                    dataUri = `data:${mime};base64,${buf.toString('base64')}`;
-                }
-            }
-            return {
-                status: 'ok',
-                data: {
-                    tooLarge: false,
-                    size,
-                    limit,
-                    content: binary ? '' : buf.toString('utf8'),
-                    binary,
-                    ...(dataUri ? { dataUri } : {})
-                }
-            };
+            return { status: 'ok', data: await readTextFile(filePath, maxBytes) };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2742,27 +2271,14 @@ const registerFSAPIHandlers = () => {
     // 支持：相对路径（基于工作空间根目录）、Windows 反斜杠、~ 展开。
     ipcMain.handle('fs:resolveFilePath', (_event, filePath: string) => {
         try {
-            if (typeof filePath !== 'string' || filePath.length === 0) {
-                return { status: 'error', message: 'filePath is required' };
-            }
-            let p = filePath;
-            // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
-            p = cleanPathInput(p);
-            // 沙箱虚拟路径（Z:\C\...）还原为宿主路径，卷卸载后仍可打开
-            p = sandboxPathToHostPath(p);
-            // 展开 ~
-            if (p.startsWith('~')) {
-                p = path.join(os.homedir(), p.slice(1));
-            }
-            // 相对路径：基于工作空间根目录解析
-            if (!path.isAbsolute(p)) {
-                const workspace = Setting.getInstance().getEffectiveWorkspace();
-                p = path.resolve(workspace, p);
-            } else {
-                p = path.resolve(p);
-            }
-            // 统一使用正斜杠
-            return { status: 'ok', data: p.replace(/\\/g, '/') };
+            return {
+                status: 'ok',
+                data: resolveWorkspaceFilePath(
+                    filePath,
+                    Setting.getInstance().getEffectiveWorkspace(),
+                    sandboxPathToHostPath
+                )
+            };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -2834,8 +2350,7 @@ const registerSettingAPIHandlers = () => {
 
     ipcMain.handle('setting:loadSettingSchema', () => {
         try {
-            const schema = Setting.getSettingSchema();
-            return { status: 'ok', data: z.toJSONSchema(schema) };
+            return { status: 'ok', data: Setting.getSettingJSONSchema() };
         } catch (error: any) {
             logger.error(`error loading setting schema`, error);
             logger.error(error.stack);
@@ -2884,117 +2399,19 @@ const registerSettingAPIHandlers = () => {
         return result;
     });
 
-    const embeddingConfigFingerprint = (data: any): string => {
-        const alias = data?.default_embedding_model || '';
-        const model = (data?.models || []).find((item: any) => item.alias === alias);
-        const provider = (data?.providers || []).find((item: any) => item.name === model?.provider_name);
-        return JSON.stringify({
-            alias,
-            model_type: model?.model_type || 'chat',
-            model_name: model?.model_name || '',
-            provider_name: model?.provider_name || '',
-            custom_headers: model?.custom_headers || {},
-            provider_type: provider?.provider_type || 'openai',
-            base_url: provider?.base_url || '',
-            api_key: provider?.api_key || '',
-            no_proxy: !!provider?.no_proxy,
-            no_ssl: !!provider?.no_ssl
+    ipcMain.handle('setting:saveSettingObject', async (_event, settingObject) => {
+        const result = await saveSettingObject(settingObject, {
+            getPreferredSystemLanguages: getPreferredSystemLanguagesForLocale,
+            applyTheme: () => getMainThemeService().applyFromSettings()
         });
-    };
-
-    const notifyFileMgrEmbeddingConfigChanged = async (oldSettings: any, newSettings: any): Promise<void> => {
-        if (embeddingConfigFingerprint(oldSettings) === embeddingConfigFingerprint(newSettings)) {
-            return;
-        }
-        try {
-            await ApplicationRegistry.callWorker('filemgr', 'embeddingConfigChanged');
-        } catch (error: any) {
-            logger.warn(`[filemgr] failed to sync embedding config change: ${error?.message ?? error}`);
-        }
-    };
-
-    ipcMain.handle('setting:saveSettingObject', async (event, settingObject) => {
-        const oldSettings = Setting.getInstance().getData();
-        let prepared: ReturnType<typeof prepareFileMgrWorkspaceSettings>;
-        try {
-            prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
-            Setting.getInstance().setData(prepared.data);
-        } catch (error: any) {
-            // 持久化失败：配置未提交，内存与磁盘都保持旧值，按「保存失败」上报
-            return { status: 'error', message: error.message };
-        }
-
-        // 配置已落盘：以下步骤只是让新配置在各处立即生效。它们失败时配置本身是对的，
-        // 因此逐项收集失败信息单独提示，不再把它们混报成「保存失败」。
-        const currentSettings = Setting.getInstance().getData();
-        const debugLogChanged = !!oldSettings?.debug?.debug_log !== !!currentSettings.debug?.debug_log;
-        const telemetryChanged = JSON.stringify(oldSettings?.telemetry) !== JSON.stringify(currentSettings.telemetry);
-        const logSideEffectFailure = (label: string, message: string) =>
-            logger.warn(`[setting] ${label} failed after save: ${message}`);
-
-        // 阻塞组：调用方依赖其完成后的状态，且都是进程内调用，耗时为毫秒级
-        const blockingEffects: SettingSideEffect[] = [
-            // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
-            { label: 'llm-adapter-cache', run: () => LLM.clearAdapterCache() },
-            // 通知 Worker 线程更新设置，使新的模型配置立即生效
-            { label: 'worker-settings-sync', run: () => notifyWorkerCurrentSettingUpdate() },
-            {
-                label: 'filemgr-embedding-config',
-                run: () => notifyFileMgrEmbeddingConfigChanged(oldSettings, currentSettings)
-            }
-        ];
-        // 调试日志开关变更后立即生效（winston 级别随 setDebugMode 切换）
-        if (debugLogChanged) {
-            blockingEffects.push({
-                label: 'debug-log-mode',
-                run: () => setDebugMode(!!currentSettings.debug?.debug_log)
-            });
-        }
-        blockingEffects.push({ label: 'theme-apply', run: () => getMainThemeService().applyFromSettings() });
-        // AgentGate 的 bridge 启停已由 AgentGateApplication.onConfigChanged 内部处理，无需在此同步
-        const pendingWorkspace = prepared.shouldNotifyWorkspaceChanged ? prepared.defaultWorkspace : undefined;
-        if (pendingWorkspace) {
-            blockingEffects.push({
-                label: 'filemgr-workspace-marker',
-                run: () => ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', pendingWorkspace)
-            });
-        }
-        const sideEffectFailures = await runSettingSideEffects(blockingEffects, logSideEffectFailure);
-
-        // 后台组：会 spawn 系统命令（Windows 查注册表、macOS 走 scutil）或重建 OTel SDK，
-        // 耗时不可控。设置面板是防抖自动保存，放进阻塞组会把保存响应拖慢，
-        // 因此放到后台执行，失败只记日志（与这些步骤引入前的行为一致）。
-        const deferredEffects: SettingSideEffect[] = [
-            // 网络配置变更后立即刷新代理 env 缓存，使命令行子进程即时生效
-            { label: 'proxy-env-refresh', run: () => onNetworkConfigChanged() }
-        ];
-        // 遥测配置变更时热重载 OTel SDK
-        if (telemetryChanged) {
-            deferredEffects.push({
-                label: 'telemetry-reload',
-                run: async () => {
-                    const telemetry = await loadTelemetryModule();
-                    await telemetry.reloadTelemetry();
-                }
-            });
-        }
-        void runSettingSideEffects(deferredEffects, logSideEffectFailure);
-
         // setting:changed 广播由 Setting.afterSetDataCallbacks 统一负责（含 resolved_locale），
         // 这里不再重复广播，避免每个 renderer 窗口每次保存收到两遍。
-        return { status: 'ok', data: withResolvedLocale(currentSettings), sideEffectFailures };
+        return result.status === 'ok' ? { ...result, data: withResolvedLocale(result.data) } : result;
     });
-    ipcMain.handle('quickpass:import', async (event, quickpass) => {
-        try {
-            const oldSettings = Setting.getInstance().getData();
-            const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
-            const result = QuickPassHelper.importConfig(cleaned);
-            await notifyWorkerCurrentSettingUpdate();
-            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
-            return { status: 'ok', data: result };
-        } catch (error: any) {
-            return { status: 'error', message: error.message };
-        }
+    ipcMain.handle('quickpass:import', async (_event, quickpass) => {
+        return importQuickPassConfiguration(quickpass, {
+            getPreferredSystemLanguages: getPreferredSystemLanguagesForLocale
+        });
     });
     ipcMain.handle('quickpass:isQuickPass', (event, text) => {
         try {
@@ -3078,32 +2495,6 @@ const registerSettingAPIHandlers = () => {
             });
         }
     );
-    async function _applyWorkspaceSelection(selectedPath: string) {
-        try {
-            const oldSettings = Setting.getInstance().getData();
-            const nextSettings = { ...oldSettings, default_workspace: selectedPath };
-            const prepared = prepareFileMgrWorkspaceSettings(nextSettings, oldSettings);
-            Setting.getInstance().setData(prepared.data);
-            Setting.getInstance().addRecentWorkspace(selectedPath);
-            await notifyWorkerCurrentSettingUpdate();
-            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
-            if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
-                try {
-                    await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);
-                } catch (error: any) {
-                    logger.warn(`[filemgr] failed to refresh workspace marker: ${error?.message ?? error}`);
-                }
-            }
-        } catch (err: any) {
-            logger.error(`Failed to save workspace selection: ${err.message}`);
-            // 继续执行；setData 写盘失败时内存配置不会提交，本次切换与磁盘保持一致地不生效
-        }
-
-        // 切换全局工作空间不影响已有任务的 workspace 绑定。
-        // 每个任务在创建时就与其工作空间绑定，后续全局切换不应改变已有任务的上下文。
-        // 新创建的任务将使用新的全局工作空间。
-    }
-
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
@@ -3131,7 +2522,9 @@ const registerSettingAPIHandlers = () => {
                 return { status: 'ok', data: null };
             }
             const selectedPath = result.filePaths[0].replace(/\\/g, '/');
-            await _applyWorkspaceSelection(selectedPath);
+            await applyWorkspaceSelection(selectedPath, {
+                getPreferredSystemLanguages: getPreferredSystemLanguagesForLocale
+            });
             return { status: 'ok', data: selectedPath };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -3158,7 +2551,9 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('workspace:setWorkspaceDirectory', async (_event, selectedPath: string) => {
         try {
-            await _applyWorkspaceSelection(selectedPath);
+            await applyWorkspaceSelection(selectedPath, {
+                getPreferredSystemLanguages: getPreferredSystemLanguagesForLocale
+            });
             return { status: 'ok', data: selectedPath };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -3225,26 +2620,7 @@ const registerSettingAPIHandlers = () => {
                     }
                 }
 
-                const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
-                const result: { name: string; path: string; isDirectory: boolean }[] = [];
-                for (const entry of entries) {
-                    if (!opts?.showHidden && entry.name.startsWith('.')) continue;
-                    const fullPath = path.join(dirPath, entry.name).replace(/\\/g, '/');
-                    if (entry.isDirectory()) {
-                        result.push({ name: entry.name, path: fullPath, isDirectory: true });
-                    } else if (opts?.includeFiles) {
-                        if (opts.extensions && opts.extensions.length > 0) {
-                            const ext = path.extname(entry.name).toLowerCase();
-                            if (!opts.extensions.includes(ext)) continue;
-                        }
-                        result.push({ name: entry.name, path: fullPath, isDirectory: false });
-                    }
-                }
-                result.sort((a, b) => {
-                    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-                    return a.name.localeCompare(b.name);
-                });
-                return { status: 'ok', data: result };
+                return { status: 'ok', data: await listWorkspaceEntries(dirPath, opts) };
             } catch (error: any) {
                 return { status: 'ok', data: [] };
             }
@@ -3351,26 +2727,23 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('setting:exportLogEntries', async (_event: any, options: any) => {
         try {
-            const scope = options?.scope === 'filtered' ? 'filtered' : 'all';
-            const filter = scope === 'filtered' ? String(options?.filter || '').trim() : '';
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-            const fileName =
-                scope === 'filtered' ? `opendesk-filtered-logs-${timestamp}.txt` : `opendesk-logs-${timestamp}.txt`;
-            const dialogOptions: Electron.SaveDialogOptions = {
-                title: t('main.log.export.title'),
-                defaultPath: path.join(app.getPath('desktop'), fileName),
-                filters: [{ name: t('main.log.export.textFiles'), extensions: ['txt'] }]
+            const host = createLocalExportDestinationHost(async (request) => {
+                const dialogOptions: Electron.SaveDialogOptions = {
+                    title: request.title,
+                    defaultPath: path.join(app.getPath('desktop'), request.suggestedName),
+                    filters: [{ name: t('main.log.export.textFiles'), extensions: [...request.extensions] }]
+                };
+                const selected =
+                    globalMainWindow === null
+                        ? await dialog.showSaveDialog(dialogOptions)
+                        : await dialog.showSaveDialog(globalMainWindow, dialogOptions);
+                return selected.canceled || !selected.filePath ? null : selected.filePath;
+            });
+            const result = await exportLogEntries(options, host);
+            return {
+                status: 'ok',
+                data: result.canceled ? { canceled: true } : { canceled: false, filePath: result.receipt.localPath }
             };
-            const result =
-                globalMainWindow === null
-                    ? await dialog.showSaveDialog(dialogOptions)
-                    : await dialog.showSaveDialog(globalMainWindow, dialogOptions);
-            if (result.canceled || !result.filePath) {
-                return { status: 'ok', data: { canceled: true } };
-            }
-            const content = LogStream.getStream().formatEntries({ filter });
-            await fsPromises.writeFile(result.filePath, content, 'utf8');
-            return { status: 'ok', data: { canceled: false, filePath: result.filePath } };
         } catch (error: any) {
             logger.error('exporting log entries failed', error);
             return { status: 'error', message: error.message };
@@ -4216,7 +3589,7 @@ async function startApplication(): Promise<void> {
         // Worker 初始化与应用 Agent 加载将在 createWindow 之后并行执行，避免阻塞窗口显示。
         const manager = getFeatureManager();
         initializeRegistryWorker({
-            preferredSystemLanguages: getPreferredSystemLanguagesForLocale(),
+            getPreferredSystemLanguages: getPreferredSystemLanguagesForLocale,
             disabledFeatures: manager.getDisabledFeatures(),
             disabledApplications: manager.getDisabledApplications()
         });
@@ -4300,6 +3673,7 @@ async function startApplication(): Promise<void> {
         });
         powerMonitor.on('resume', () => {
             logger.info('[power] 系统从休眠恢复');
+            void refreshSystemLanguageOnMainWindowFocus();
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed() && win.isVisible()) {
                     safeSendToWebContents(win.webContents, 'window:visibilityChanged', true);

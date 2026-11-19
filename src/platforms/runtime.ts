@@ -28,6 +28,8 @@ export interface HostRuntimeOptions {
     prepareSynchronousProcess?: (kind: HostProcessKind) => void;
     resolveProcessCommand?: (command: string, args: readonly string[], kind: HostProcessKind) => HostProcessCommand;
     transformProcessEnvironment?: (environment: NodeJS.ProcessEnv, explicit?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+    /** Used when the user has no valid explicit workspace; the host owns storage readiness and permissions. */
+    defaultWorkspace?: () => string | undefined;
     defaultShell?: () => HostShell | undefined;
     shells?: (platform: string) => readonly SupportedShell[] | undefined;
     sqliteBackend?: 'native' | 'wasm';

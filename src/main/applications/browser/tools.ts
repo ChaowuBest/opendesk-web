@@ -1506,7 +1506,7 @@ export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryAr
             return fail(t('error.deleteHistoryNoFilter'));
         }
 
-        const mainWin = BrowserManager.mainWindow;
+        const mainWin = BrowserManager.rendererHost;
         if (!mainWin || mainWin.isDestroyed()) {
             return fail(t('error.mainWindowUnavailable'));
         }

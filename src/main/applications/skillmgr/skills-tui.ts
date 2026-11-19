@@ -266,15 +266,19 @@ export class SkillsOverlay implements Component {
 
             this.searchResults = result.skills || [];
             if (this.searchResults.length === 0) {
-                if ((result as any).message) {
-                    this.showMessage((result as any).message, false);
+                // 注册源插件的失败以 error 字段回传，优先于「未找到匹配的技能」提示
+                if (result.error) {
+                    this.showMessage(result.error, true);
+                    this.showSearch();
+                } else if (result.message) {
+                    this.showMessage(result.message, false);
                 } else {
                     this.showMessage('未找到匹配的技能', true);
                     this.showSearch();
                 }
             } else {
-                if ((result as any).message) {
-                    this.showMessage((result as any).message, false);
+                if (result.message) {
+                    this.showMessage(result.message, false);
                 }
                 this.showSearchResults();
             }
