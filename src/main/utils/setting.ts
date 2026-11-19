@@ -238,6 +238,11 @@ const GUIConfigSchema = z.object({
         .default('inline')
         .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
     output_mode: OutputDisplaySchema.describe('GUI 输出模式: minimal=极简, verbose=详细'),
+    memory_enabled: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('长期记忆开关: false 时以 user-setting 身份禁用 memory 特性, 未设置时视为开启'),
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
@@ -494,6 +499,7 @@ function getSettingSchema() {
             sidebar_width: 320,
             gui_reason_display: 'inline',
             output_mode: 'minimal',
+            memory_enabled: true,
             floating_window_mode: 'card'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({

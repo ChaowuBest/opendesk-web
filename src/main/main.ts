@@ -283,6 +283,20 @@ function syncMemoryFeatureState(): void {
     );
 }
 
+/**
+ * 用户级记忆开关（gui_config.memory_enabled）到特性门控的映射。
+ *
+ * 与插件 `ctx.features.disable('memory')` 是叠加关系：任意一方要求禁用即生效，
+ * 所以用固定的 owner id 单独持有一份禁用，插件释放自己那份不会误恢复用户关掉的记忆。
+ */
+const USER_MEMORY_DISABLE_OWNER = 'user-setting';
+
+function syncMemoryFeatureFromUserSetting(): void {
+    const enabled = Setting.getInstance().getData().gui_config?.memory_enabled !== false;
+    // setFeatureDisabled 内部幂等：状态没变化不会触发 notify，重复调用安全
+    getFeatureManager().setFeatureDisabled('memory', USER_MEMORY_DISABLE_OWNER, !enabled);
+}
+
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
     const seen = new Set(taskIds);
     for (const taskId of seen) {
@@ -3570,6 +3584,8 @@ async function startApplication(): Promise<void> {
             new PluginToolsetProvider()
         );
 
+        // 用户级记忆开关先落到特性门控上，下面的联动再按最终状态注册/注销资源。
+        syncMemoryFeatureFromUserSetting();
         // 插件特性门控联动：插件已在 initializePluginHost 中完成 setup（禁用状态就位）。
         // 记忆回顾钩子按特性状态注册；特性变更时同步注销/恢复。
         // worker 侧（镜像 + 崩溃重启兜底）由 initializeRegistryWorker 的 ensureFeatureWorkerSync 统一处理。
@@ -3960,6 +3976,12 @@ async function startApplication(): Promise<void> {
         // 这是 setting:changed 的唯一广播点，调用方（如设置保存）不要再自己广播一遍。
         Setting.afterSetDataCallbacks.push(() => {
             broadcastSettingChangedToAllWindows();
+        });
+
+        // 用户级记忆开关即时生效：设置面板 / callMainWorld 等任何写入路径都会走到这里，
+        // 关掉时记忆工具集、侧栏入口、回顾钩子与清理调度器随特性门控一起停用。
+        Setting.afterSetDataCallbacks.push(() => {
+            syncMemoryFeatureFromUserSetting();
         });
 
         // 语言包变更广播：插件宿主激活/停用语言包（LocaleStore 变更）后，

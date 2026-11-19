@@ -43,6 +43,23 @@ import {
 const CLOSE_SVG =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
+/**
+ * 设置面板的全部页签 id。
+ * initial-tab 白名单与 _switchTab 的显隐循环共用这一份，避免新增页签时漏改一处导致「点页签不切换」。
+ * 侧边栏图标与文案见 renderTabs。
+ */
+const SETTING_TAB_IDS = [
+    'general',
+    'models',
+    'tasks',
+    'memory',
+    'channels',
+    'agents',
+    'search',
+    'registries',
+    'wizard'
+];
+
 const SP_MODAL_EXTRA_CSS = `
 .od-confirm-modal-card.od-sp-wide { width: 480px; max-width: 92vw; }
 .od-confirm-modal-card.od-sp-wider { width: 560px; max-width: 92vw; }
@@ -160,9 +177,7 @@ class SettingPanel extends HTMLElement {
 
     connectedCallback() {
         const initialTab = this.getAttribute('initial-tab');
-        if (
-            ['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard'].includes(initialTab)
-        ) {
+        if (SETTING_TAB_IDS.includes(initialTab)) {
             this._activeTab = initialTab;
         }
         (async () => {
@@ -340,6 +355,13 @@ class SettingPanel extends HTMLElement {
                 label: this._t('sp.tab.tasks'),
                 iconSvg: svg(
                     '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'
+                )
+            },
+            {
+                id: 'memory',
+                label: this._t('sp.tab.memory'),
+                iconSvg: svg(
+                    '<path d="M12 3l8 4.5-8 4.5-8-4.5L12 3Z"/><path d="M4 12l8 4.5 8-4.5"/><path d="M4 16.5L12 21l8-4.5"/>'
                 )
             },
             {
@@ -1057,6 +1079,9 @@ class SettingPanel extends HTMLElement {
                         <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-5">
                             ${this.renderTaskSection()}
                         </div>
+                        <div id="tab-memory" class="${this._activeTab === 'memory' ? '' : 'hidden'} space-y-5">
+                            ${this.renderMemorySection()}
+                        </div>
                         <div id="tab-channels" class="${this._activeTab === 'channels' ? '' : 'hidden'} space-y-5">
                             <channel-settings-panel></channel-settings-panel>
                         </div>
@@ -1101,8 +1126,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.sp-nav-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard'];
-        for (const id of tabIds) {
+        for (const id of SETTING_TAB_IDS) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
@@ -1925,6 +1949,28 @@ class SettingPanel extends HTMLElement {
         if (!tab) return;
         tab.innerHTML = this.renderAcpAgentsSection();
         this._bindAcpAgentEvents();
+    }
+
+    renderMemorySection() {
+        const memoryEnabled = this.currentData?.gui_config?.memory_enabled !== false;
+
+        return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('sp.memory.title')}</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">${this._t('sp.memory.enabled')}</div>
+                    <div class="sp-toggle-desc">${this._t('sp.memory.enabledDesc')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="memory-enabled-toggle" type="checkbox" ${memoryEnabled ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            </div>
+        </section>
+        `;
     }
 
     renderTaskSection() {
@@ -3777,6 +3823,12 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#task-evidence-card-toggle')?.addEventListener('change', (e) => {
             if (!this.currentData.task_config) this.currentData.task_config = {};
             this.currentData.task_config.evidence_card = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#memory-enabled-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.memory_enabled = e.target.checked;
             this.saveImmediately();
         });
 
