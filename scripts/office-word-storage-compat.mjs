@@ -16,8 +16,8 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-const OFFICE_VERSION = '0.3.4';
-const WORD_MAIN_SHA256 = '16cf9e142c7971fd9f3e39b18ed48597f804b4c5344b4046cdc92ab672310dbf';
+const OFFICE_VERSION = '0.3.9';
+const WORD_MAIN_SHA256 = '1b52650d1b41747fffe170230ef8190869222ed92eba29be496b5ce88eb658f5';
 
 function replaceExactly(source, before, after, expectedCount) {
     const count = source.split(before).length - 1;
@@ -29,60 +29,72 @@ function replaceExactly(source, before, after, expectedCount) {
     return source.split(before).join(after);
 }
 
-/** Versioned package compatibility patch; transforms build input without changing node_modules. */
+/**
+ * Versioned package compatibility patch; transforms build input without changing node_modules.
+ *
+ * 0.3.9 bundles the host as readable-but-renamed ESM (`HR` stores the runtime config in the
+ * module variable `mp`, the atomic writer is `Bt`, invoke events are `i` inside the arrow
+ * handlers). Anchors below are exact-minified-text and verified unique for the pinned SHA;
+ * any upstream rebuild changes them and the SHA gate above fails first.
+ */
 export function transformOfficeWordStorage(source) {
     if (createHash('sha256').update(source).digest('hex') !== WORD_MAIN_SHA256) {
         throw new Error(`Office ${OFFICE_VERSION} Word bundle changed; review the storage patch before building`);
     }
+    // Commit helper next to the runtime-config setter (`mp` holds the host config once
+    // `HR` runs inside the factory's register()).
     source = replaceExactly(
         source,
-        'function configureDocsRuntime(config) {',
+        'function HR(e){mp=e,pp=null}',
         `async function commitOpenDeskWordDocument(event, localPath, bytes, intent) {
-  if (!runtime.documentStorage) throw new Error("Office document storage is not configured");
-  await runtime.documentStorage.commit(
+  if (!mp.documentStorage) throw new Error("Office document storage is not configured");
+  await mp.documentStorage.commit(
     { kind: "word", editorId: event.sender.id, localPath, bytes, intent },
-    () => atomicWriteFile(localPath, bytes)
+    () => Bt(localPath, bytes)
   );
 }
-function configureDocsRuntime(config) {`,
+function HR(e){mp=e,pp=null}`,
         1
     );
+    // Factory config literal: forward the shell-provided storage port into the runtime config.
     source = replaceExactly(
         source,
-        'rendererFile: options.rendererFilePath\n      });\n      registerDocsIpc();',
-        'rendererFile: options.rendererFilePath,\n        documentStorage: options.documentStorage\n      });\n      registerDocsIpc();',
+        'HR({preloadPath:e.preloadPath,rendererUrl:e.rendererDevUrl,rendererFile:e.rendererFilePath})',
+        'HR({preloadPath:e.preloadPath,rendererUrl:e.rendererDevUrl,rendererFile:e.rendererFilePath,documentStorage:e.documentStorage})',
         1
     );
+    // docs:save — write stays inside the per-sender write serializer (`KR.track`).
     source = replaceExactly(
         source,
-        'await atomicWriteFile(filePath, bytes);',
-        'await commitOpenDeskWordDocument(event, filePath, bytes, "save");',
-        2
-    );
-    // The second matching write is the first save of a new document.
-    source = replaceExactly(
-        source,
-        'await commitOpenDeskWordDocument(event, filePath, bytes, "save");\n      if (tornDownWcIds.has(event.sender.id)) {\n        await unlink2(filePath)',
-        'await commitOpenDeskWordDocument(event, filePath, bytes, "save-new");\n      if (tornDownWcIds.has(event.sender.id)) {\n        await unlink2(filePath)',
+        'async()=>{await Bt(s,d),Ye.has(i.sender.id)||await Ta(i.sender.id,s,Li(d))}',
+        'async()=>{await commitOpenDeskWordDocument(i,s,d,"save"),Ye.has(i.sender.id)||await Ta(i.sender.id,s,Li(d))}',
         1
     );
+    // docs:save-as — dialog pick result `l`.
     source = replaceExactly(
         source,
-        'await atomicWriteFile(result.filePath, bytes);',
-        'await commitOpenDeskWordDocument(event, result.filePath, bytes, "save-as");',
+        'await Bt(l.filePath,f)',
+        'await commitOpenDeskWordDocument(i,l.filePath,f,"save-as")',
         1
     );
-    for (const channel of ['docs:save', 'docs:save-as', 'docs:save-new']) {
-        const start = source.indexOf(`"${channel}"`);
-        const end = source.indexOf('\n  ipcMain.', start);
-        if (start < 0 || end < 0) throw new Error(`Missing Office Word save handler: ${channel}`);
-        const handler = replaceExactly(
-            source.slice(start, end),
-            'return { ok: false, error: String(err) };',
-            'if (err?.code === "canceled") return { ok: false };\n        return { ok: false, error: String(err) };',
-            1
-        );
-        source = source.slice(0, start) + handler + source.slice(end);
+    // docs:save-new — draft path `A`; the trailing recovery cleanup disambiguates it from
+    // the docs:save-to writer (`await Bt(s,f)`), which stays a plain local write.
+    source = replaceExactly(
+        source,
+        'await Bt(A,d),Ye.has(i.sender.id))return await Mu(A)',
+        'await commitOpenDeskWordDocument(i,A,d,"save-new"),Ye.has(i.sender.id))return await Mu(A)',
+        1
+    );
+    // Provider-committed writes can reject with `code: "canceled"` (shell picker UI);
+    // keep that silent like an in-package dialog cancel instead of surfacing an error.
+    for (const [catchVar, nextChannel] of [
+        ['l', 'docs:write-recovery'],
+        ['c', 'docs:save-new'],
+        ['A', 'docs:create-document']
+    ]) {
+        const before = `}catch(${catchVar}){return{ok:!1,error:String(${catchVar})}}}),oe.handle("${nextChannel}"`;
+        const after = `}catch(${catchVar}){if(${catchVar}?.code==="canceled")return{ok:!1};return{ok:!1,error:String(${catchVar})}}}),oe.handle("${nextChannel}"`;
+        source = replaceExactly(source, before, after, 1);
     }
     return source;
 }

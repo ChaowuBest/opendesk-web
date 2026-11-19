@@ -15,17 +15,19 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const SHEETS_SHA256 = '20e3414a3db5732e5ab93b142cf5e5fcaefe160d31cf61dc4315705932c597c3';
+const SHEETS_SHA256 = 'c227d3e9f832210ee90a239e6c94ca445c5041235aadb27139ac91d6bdb7b501';
 
 function replaceOnce(source, before, after) {
-    if (source.split(before).length !== 2) throw new Error('Office 0.3.4 Sheets storage patch mismatch');
+    if (source.split(before).length !== 2) throw new Error('Office 0.3.9 Sheets storage patch mismatch');
     return source.replace(before, after);
 }
 
 export function transformOfficeSheetsStorage(source) {
     if (createHash('sha256').update(source).digest('hex') !== SHEETS_SHA256) {
-        throw new Error('Office 0.3.4 Sheets bundle changed; review the storage patch before building');
+        throw new Error('Office 0.3.9 Sheets bundle changed; review the storage patch before building');
     }
+    // The sheets runtime config is stored wholesale (`runtime = config3`), so the storage
+    // port only needs to ride along in the factory config literal below.
     source = replaceOnce(
         source,
         'function configureSheetsRuntime(config3) {',
@@ -40,9 +42,11 @@ function configureSheetsRuntime(config3) {`
     );
     source = replaceOnce(
         source,
-        'rendererFile: options.rendererFilePath\n      });\n      if (options.ironCalcWasmPath)',
-        'rendererFile: options.rendererFilePath,\n        documentStorage: options.documentStorage\n      });\n      if (options.ironCalcWasmPath)'
+        'rendererFile: options.rendererFilePath\n      });\n      if (options.mainOutputDir || options.ironCalcWasmPath) {',
+        'rendererFile: options.rendererFilePath,\n        documentStorage: options.documentStorage\n      });\n      if (options.mainOutputDir || options.ironCalcWasmPath) {'
     );
+    // Workbook save: stage the write (and the CSV companion when saving in place) inside
+    // the provider commit; the staged workbook only lands at `targetPath` after commit.
     source = replaceOnce(
         source,
         `    const mutation = await writeWorkbookTo(client, session, request, targetPath);
@@ -79,7 +83,7 @@ function configureSheetsRuntime(config3) {`
       if (error?.code === "canceled") return { canceled: true };
       throw error;
     } finally {
-      if (csvInPlace) await unlink(stagedWorkbookPath).catch(() => {});
+      if (csvInPlace) await unlink2(stagedWorkbookPath).catch(() => {});
     }`
     );
     source = replaceOnce(
@@ -95,8 +99,8 @@ function configureSheetsRuntime(config3) {`
     );
     source = replaceOnce(
         source,
-        '          await atomicWriteFile(filePath, buffer);',
-        '          await commitOpenDeskSheetsBytes(event, filePath, buffer, "save-new");'
+        '          await atomicWriteFile(filePath, buffer2);',
+        '          await commitOpenDeskSheetsBytes(event, filePath, buffer2, "save-new");'
     );
     source = replaceOnce(
         source,
@@ -124,7 +128,7 @@ export function createOfficeSheetsStoragePlugin() {
     const version = JSON.parse(
         readFileSync(path.join(path.dirname(sheetsMainPath), '..', 'package.json'), 'utf8')
     ).version;
-    if (version !== '0.3.4') throw new Error(`Unsupported Office storage package version: ${version}`);
+    if (version !== '0.3.9') throw new Error(`Unsupported Office storage package version: ${version}`);
     return {
         name: 'opendesk-office:sheets-storage-compat',
         enforce: 'pre',

@@ -25,7 +25,7 @@ export function createOfficeStorageEsbuildPlugin() {
     const version = JSON.parse(
         readFileSync(path.join(path.dirname(wordMainPath), '..', 'package.json'), 'utf8')
     ).version;
-    if (version !== '0.3.4') throw new Error(`Unsupported Office storage package version: ${version}`);
+    if (version !== '0.3.9') throw new Error(`Unsupported Office storage package version: ${version}`);
     const entries = new Map([
         [wordMainPath, transformOfficeWordStorage],
         [require.resolve('@bitclub.ai/opendesk-office/main'), transformOfficeSlidesStorage],
