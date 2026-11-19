@@ -19,12 +19,17 @@
  * Linux 上通知的 click 事件并不可靠：部分通知守护进程只做「激活应用」，不投递
  * Electron 的 click 事件，窗口照样被拉到前台但回调不触发。因此除了 click 回调，
  * 还以主窗口获得焦点作为兜底入口，两条路径共用同一份「待打开任务」，只会消费一次。
+ *
+ * Windows 上另有两处坑：Notification 的 JS 包装对象被 GC 后 click 回调不再触发
+ * （见 liveNotifications），以及窗口聚焦受前台锁限制、必须借助置顶规避
+ * （见 bringMainWindowToForeground）。
  */
 
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, Notification } from 'electron';
 import { logger } from './logger.js';
 import { safeSendToWebContents } from './electron-ipc.js';
 import { electron } from '../../utils/electron.js';
+import { bringMainWindowToForeground } from './window-close.js';
 
 /** 主窗口解析器，由 Electron 入口注入；未注入时点击通知不做唤起与跳转 */
 let mainWindowResolver: (() => BrowserWindow | null) | null = null;
@@ -38,6 +43,15 @@ let mainWindowResolver: (() => BrowserWindow | null) | null = null;
 const pendingOpenTasks = new Map<string, number>();
 
 /**
+ * 存活中的通知对象，值为过期时间。
+ *
+ * Electron 的 Notification 是原生通知的 JS 包装：JS 对象一旦被 GC，'click' 等回调就
+ * 再也不会触发，而通知横幅仍会正常弹出、并留在通知中心——用户点它等于没点。
+ * 这些通知不会被其它引用持有，因此必须自己存一份，直到用户点击或超过存活时长。
+ */
+const liveNotifications = new Map<Notification, number>();
+
+/**
  * 唤起主窗口后延迟下发 command:openTask 的等待时长（ms）。
  * 主窗口从最小化/隐藏恢复是异步的，立即发送会让 IPC 在恢复期间被丢弃。
  */
@@ -45,6 +59,17 @@ const OPEN_TASK_DELAY_MS = 150;
 
 /** 待打开任务的存活时长：覆盖各交互面板最长的等待时间（10 分钟） */
 const PENDING_OPEN_TASK_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 通知引用的存活时长（ms），不能与待打开任务的 TTL 混为一谈。
+ *
+ * 待打开任务过期只意味着「不再自动跳转」，用户点通知仍应把窗口唤起来；而通知引用
+ * 一旦被释放，click 回调就彻底失效，表现为「点了通知毫无反应」。Windows 通知中心
+ * 的条目能留存数小时甚至跨天，所以留存时长按小时级给。
+ *
+ * 过期回收是惰性的（只在推送新通知时顺带清理），实际保留时间只会更长，不会更短。
+ */
+const NOTIFICATION_RETAIN_MS = 6 * 60 * 60 * 1000;
 
 /**
  * 上游在拿不到任务上下文时下发的占位 ID（见 aikernel/interaction/tools.ts）。
@@ -100,17 +125,52 @@ export function showTaskNotification(options: TaskNotificationOptions): void {
             body: options.body,
             silent: false
         });
+        pruneExpiredNotifications();
+        liveNotifications.set(notification, Date.now() + NOTIFICATION_RETAIN_MS);
+        const release = (): void => {
+            liveNotifications.delete(notification);
+        };
         notification.on('click', () => {
+            logger.info(`system notification clicked, task=${taskId ?? '(none)'}`);
+            release();
             // click 精确绑定了这条通知的任务，用户意图已明确：丢弃全部待打开记录，
             // 交给 click 自己跳。唤起窗口触发的 focus 兜底若还看到别的残留记录，
             // 会在 click 之后又跳一次，最终落在哪个任务取决于定时器注册顺序。
             pendingOpenTasks.clear();
             focusMainWindowForTask(taskId);
         });
+        // 通知被系统关闭或推送失败后都不会再有点击，可以释放引用；留在通知中心的情况仍由 TTL 兜底
+        notification.on('close', release);
+        notification.on('failed', release);
         notification.show();
     } catch (err) {
         logger.warn(`failed to show system notification: ${err}`);
     }
+}
+
+/** 清理过期通知引用，避免用户从不点击时无限累积 */
+function pruneExpiredNotifications(): void {
+    const now = Date.now();
+    for (const [notification, expiresAt] of liveNotifications) {
+        if (now > expiresAt) {
+            liveNotifications.delete(notification);
+        }
+    }
+}
+
+/**
+ * 丢弃全部通知引用。
+ *
+ * 供测试重置模块级状态使用：引用一旦丢弃，已弹出但未点击的通知就再也不会触发
+ * click 回调，因此不要在正常流程里调用。
+ */
+export function clearLiveNotifications(): void {
+    liveNotifications.clear();
+}
+
+/** 当前存活的通知对象数量，供测试断言引用回收行为 */
+export function getLiveNotificationCount(): number {
+    return liveNotifications.size;
 }
 
 /**
@@ -128,8 +188,9 @@ export function openTaskInMainWindow(taskId: string): void {
 /**
  * 把主窗口恢复到前台；带 taskId 时让 renderer 切到该任务。
  *
- * 与 task-status-widget 唤起主窗口的行为保持一致：最小化要先 restore，
- * macOS 上 show() 恢复隐藏窗口后可能不会激活应用，需要 app.focus 强制激活。
+ * 恢复窗口与聚焦统一走 bringMainWindowToForeground，其中已包含 Windows 前台锁的
+ * 规避处理：否则通知点击后窗口可能只闪任务栏图标，看起来像「点了没反应」。
+ * macOS 上 show() 恢复隐藏窗口后可能不会激活应用，因此随后还要在应用层激活一次。
  */
 function focusMainWindowForTask(taskId?: string | null): void {
     const win = mainWindowResolver?.() ?? null;
@@ -138,15 +199,10 @@ function focusMainWindowForTask(taskId?: string | null): void {
         return;
     }
 
-    if (win.isMinimized()) {
-        win.restore();
-    }
-    win.show();
-    win.moveTop();
+    bringMainWindowToForeground(win);
     if (process.platform === 'darwin') {
         electron().app.focus({ steal: true });
     }
-    win.focus();
 
     if (taskId) {
         dispatchOpenTask(win, taskId);

@@ -71,7 +71,7 @@ import {
     logRecoverableMainProcessError,
     shouldDowngradeRecoverableError
 } from './utils/recoverable-errors.js';
-import { createMainWindowCloseHandler } from './utils/window-close.js';
+import { createMainWindowCloseHandler, bringMainWindowToForeground } from './utils/window-close.js';
 import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfile } from './utils/window-recovery.js';
@@ -281,6 +281,20 @@ function syncMemoryFeatureState(): void {
     stopMemoryCleanupSchedulerFn ??= startMemoryCleanupScheduler(() =>
         FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace()).cleanupStaleMemories()
     );
+}
+
+/**
+ * 用户级记忆开关（gui_config.memory_enabled）到特性门控的映射。
+ *
+ * 与插件 `ctx.features.disable('memory')` 是叠加关系：任意一方要求禁用即生效，
+ * 所以用固定的 owner id 单独持有一份禁用，插件释放自己那份不会误恢复用户关掉的记忆。
+ */
+const USER_MEMORY_DISABLE_OWNER = 'user-setting';
+
+function syncMemoryFeatureFromUserSetting(): void {
+    const enabled = Setting.getInstance().getData().gui_config?.memory_enabled !== false;
+    // setFeatureDisabled 内部幂等：状态没变化不会触发 notify，重复调用安全
+    getFeatureManager().setFeatureDisabled('memory', USER_MEMORY_DISABLE_OWNER, !enabled);
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -2533,7 +2547,9 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:pickDirectoryDialog', async (_event, currentPath?: string) => {
         try {
             const initialPath =
-                typeof currentPath === 'string' && path.isAbsolute(currentPath) ? path.normalize(currentPath) : undefined;
+                typeof currentPath === 'string' && path.isAbsolute(currentPath)
+                    ? path.normalize(currentPath)
+                    : undefined;
             const stat = initialPath ? await fsPromises.stat(initialPath).catch(() => undefined) : undefined;
             const result = await dialog.showOpenDialog(globalMainWindow!, {
                 title: t('main.dialog.selectWorkspaceDirectory'),
@@ -3178,11 +3194,7 @@ const registerQuickCaptureHandlers = () => {
     // Electron 的 app 事件签名不接受自定义事件名，这里按 EventEmitter 使用。
     (app as unknown as NodeJS.EventEmitter).on(QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT, () => {
         if (!globalMainWindow || globalMainWindow.isDestroyed()) return;
-        if (globalMainWindow.isMinimized()) {
-            globalMainWindow.restore();
-        }
-        globalMainWindow.show();
-        globalMainWindow.focus();
+        bringMainWindowToForeground(globalMainWindow);
         // 主窗口本来就可见时 show() 不产生窗口事件、focus 也未必变化，三条激活信号里
         // 可能一条都不出现；显式补一条可见性信号，保证渲染层一定会去取待处理截图。
         safeSendToWebContents(globalMainWindow.webContents, 'window:visibilityChanged', true);
@@ -3244,7 +3256,9 @@ const buildTrayMenu = () => {
         {
             label: t('main.tray.openMainWindow'),
             click: () => {
-                globalMainWindow?.show();
+                if (globalMainWindow) {
+                    bringMainWindowToForeground(globalMainWindow);
+                }
             }
         },
         {
@@ -3288,7 +3302,9 @@ const registerTray = () => {
     globalTray.setToolTip('OpenDesk');
     globalTray.setContextMenu(buildTrayMenu());
     globalTray.on('click', () => {
-        globalMainWindow?.show();
+        if (globalMainWindow) {
+            bringMainWindowToForeground(globalMainWindow);
+        }
     });
 };
 
@@ -3358,7 +3374,9 @@ async function startApplication(): Promise<void> {
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (_event, _commandLine) => {
             if (globalMainWindow) {
-                globalMainWindow.show();
+                // 用户再次启动应用（双击图标、命令行再跑一次等）时要把窗口真正带到前台：
+                // 只调 show() 在 Windows 上不会还原最小化窗口，也不会抢到焦点
+                bringMainWindowToForeground(globalMainWindow);
             }
         });
     } else {
@@ -3406,11 +3424,7 @@ async function startApplication(): Promise<void> {
     // macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
     app.on('activate', () => {
         if (globalMainWindow) {
-            if (globalMainWindow.isMinimized()) {
-                globalMainWindow.restore();
-            }
-            globalMainWindow.show();
-            globalMainWindow.focus();
+            bringMainWindowToForeground(globalMainWindow);
         }
     });
 
@@ -3570,6 +3584,8 @@ async function startApplication(): Promise<void> {
             new PluginToolsetProvider()
         );
 
+        // 用户级记忆开关先落到特性门控上，下面的联动再按最终状态注册/注销资源。
+        syncMemoryFeatureFromUserSetting();
         // 插件特性门控联动：插件已在 initializePluginHost 中完成 setup（禁用状态就位）。
         // 记忆回顾钩子按特性状态注册；特性变更时同步注销/恢复。
         // worker 侧（镜像 + 崩溃重启兜底）由 initializeRegistryWorker 的 ensureFeatureWorkerSync 统一处理。
@@ -3960,6 +3976,12 @@ async function startApplication(): Promise<void> {
         // 这是 setting:changed 的唯一广播点，调用方（如设置保存）不要再自己广播一遍。
         Setting.afterSetDataCallbacks.push(() => {
             broadcastSettingChangedToAllWindows();
+        });
+
+        // 用户级记忆开关即时生效：设置面板 / callMainWorld 等任何写入路径都会走到这里，
+        // 关掉时记忆工具集、侧栏入口、回顾钩子与清理调度器随特性门控一起停用。
+        Setting.afterSetDataCallbacks.push(() => {
+            syncMemoryFeatureFromUserSetting();
         });
 
         // 语言包变更广播：插件宿主激活/停用语言包（LocaleStore 变更）后，

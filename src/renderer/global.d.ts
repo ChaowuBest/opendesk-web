@@ -52,6 +52,8 @@ declare global {
             font_preset?: string;
             /** 快速截图开关（HarmonyOS / Windows）；缺省视为开启（仅 renderer .js 消费，此处为契约文档化）。 */
             quick_capture_enabled?: boolean;
+            /** 长期记忆开关；缺省视为开启，false 时主进程以 user-setting 身份禁用 memory 特性。 */
+            memory_enabled?: boolean;
         };
         debug?: {
             experimental_features?: import('./utils/application-visibility.js').ExperimentalFeatureSettings;

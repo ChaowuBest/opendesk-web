@@ -1,9 +1,28 @@
 /* =========================================
    Setup Wizard · 轻盈留白 SOFT WHITE
    纯白底 + 品牌红 · 14px 圆角 · 胶囊按钮 · 柔和投影
+
+   布局要点：
+   1. 容器宽度恒定为最宽步骤（双栏个性化页）所需宽度，各步骤共用同一个 max-width，
+      切换步骤时左侧步骤导航不会水平漂移。
+   2. 容器高度取可用高度并封顶（与当前步骤内容无关），容器整体顶部对齐（与左侧搜索框齐平）；
+      容器内部一律从顶部排，所以内容顶部 / 里程碑顶部在切换步骤时位置恒定。
+   3. 降级断点用容器查询（@container wizard），按向导自身可用宽度判定而非视口宽度。
    ========================================= */
 
 setup-wizard {
+    /*
+     * 自定义元素默认是 display: inline，行内盒上 container-type 不会建立尺寸容器
+     * （容器查询会完全失效，断点永不匹配），所以必须显式块级化。
+     */
+    display: block;
+    /*
+     * 尺寸容器：下面的降级断点全部按「向导自身可用宽度」判定，而不是视口宽度。
+     * 首启向导挂在主窗口右侧面板，左边是 main-sidebar（宽度取 gui_config.sidebar_width，
+     * 默认 320、可调到 800），所以视口宽度与向导可用宽度之间差着一整个侧边栏。
+     * 按视口判会让双栏在真实可用宽度已经不足时仍不降级，故这里用容器查询。
+     */
+    container: wizard / inline-size;
     --wiz-accent: #de4433;
     --wiz-accent-soft: #fbedea;
     --wiz-sel-bg: #fcf1ee;
@@ -20,7 +39,6 @@ setup-wizard {
     --wiz-r-ctl: 9px;
     --wiz-r-btn: 999px;
     --wiz-ctl-h: 36px;
-    --wiz-btn-h: 36px;
     --wiz-title-size: 18px;
     --wiz-btn-primary-bg: linear-gradient(180deg, #e6512f, #d53d24);
     --wiz-btn-shadow: 0 4px 14px rgba(222, 68, 51, 0.26);
@@ -28,376 +46,380 @@ setup-wizard {
     --wiz-dot-halo: 0 0 0 4px rgba(222, 68, 51, 0.13);
     --wiz-check-shadow: 0 2px 6px rgba(222, 68, 51, 0.35);
     --wiz-green: #43a26a;
+    /* 任务输出预览用的真实 taskview 取色（浅色） */
+    --wiz-pv-muted: #5b6270;
+    --wiz-pv-faint: #8a919e;
+    --wiz-pv-ink: #3a3632;
+    --wiz-pv-amber: #b45309;
+    --wiz-pv-border: rgba(0, 0, 0, 0.1);
+    --wiz-pv-reasoning-line: rgb(210, 218, 230);
 }
 
-/* 根容器：在父容器中居中 */
-setup-wizard .wizard-root {
+/* 深色模式：OpenDesk 的主题开关落在 html[data-theme='dark'] 上（见 theme/theme-dark.css） */
+html[data-theme='dark'] setup-wizard {
+    --wiz-canvas: #17171a;
+    --wiz-card: #1d1d21;
+    --wiz-line: #2c2c31;
+    --wiz-ink: #f2f2f3;
+    --wiz-ink-2: #b4b4bb;
+    --wiz-ink-3: #8a8a93;
+    --wiz-icon-chip-bg: #26262b;
+    --wiz-input-bg: #212126;
+    --wiz-input-line: #303036;
+    --wiz-sel-bg: #2a1e1c;
+    --wiz-accent-soft: #2a1e1c;
+    --wiz-check-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+    --wiz-pv-muted: #c2c2ca;
+    --wiz-pv-faint: #94949d;
+    --wiz-pv-ink: #f0eeeb;
+    --wiz-pv-amber: #f5b545;
+    --wiz-pv-border: rgba(255, 255, 255, 0.16);
+    --wiz-pv-reasoning-line: #43434b;
+}
+
+/*
+ * 根容器：水平居中，垂直方向与左侧搜索栏顶部齐平（不再整体垂直居中，
+ * 否则内容容器会比侧边栏搜索框低一截）。
+ */
+setup-wizard .wiz-root {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
+    box-sizing: border-box;
     width: 100%;
     height: 100%;
+    /* 与侧边栏搜索框顶部对齐：.sb-header 的 padding 16 + 标题 37 + 12 = 65 */
+    padding-top: 65px;
     background: var(--wiz-canvas);
     color: var(--wiz-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
 }
 
-/* 内容包裹层：控制最大宽度，左右留白对称 */
-setup-wizard .wizard-inner {
+/*
+ * 容器宽度恒定（= 双栏步骤所需），三步/四步共用，rail 不随步骤漂移。
+ * 高度封顶 660px：660 > 内容最多的步骤（模型配置实测约 605），
+ * 所以任何一步都放得下、不出现滚动条；高度与当前步骤内容无关，
+ * 容器内部一律从顶部排，切换步骤时内容顶部 / 里程碑顶部位置恒定。
+ */
+setup-wizard .wiz-inner {
     display: flex;
     flex: none;
-    max-width: 880px;
     width: 100%;
+    max-width: 1060px;
     height: 100%;
+    max-height: 660px;
 }
 
-/* 左侧步骤导航 rail */
-setup-wizard .wizard-rail {
+/* ---- 左侧步骤导航 ---- */
+setup-wizard .wiz-rail {
     flex: none;
     width: 160px;
-    padding: 34px 0 0 32px;
+    /* 顶部与右侧 Step 标签对齐；容器内部一律从顶部排，切步骤时不会上下漂 */
+    padding: 6px 0 0 32px;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
 }
 
-setup-wizard .rail-item {
+setup-wizard .wiz-rail-node {
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    border-radius: 999px;
+    color: var(--wiz-ink-3);
 }
 
-setup-wizard .rail-dot {
+setup-wizard .wiz-rail-node:focus-visible {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 4px;
+}
+
+setup-wizard .wiz-rail-dot {
     width: 24px;
     height: 24px;
     flex: none;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
+    border: 1.5px solid var(--wiz-line);
+    color: var(--wiz-ink-3);
+    font-size: 11.5px;
     font-weight: 600;
-    background: #ddddd7;
+    display: grid;
+    place-items: center;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease,
+        border-color 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+setup-wizard .wiz-rail-text {
+    font-size: 12px;
+    color: var(--wiz-ink-3);
+    transition: color 0.15s ease;
+}
+
+setup-wizard .wiz-rail-node:hover .wiz-rail-dot {
+    border-color: var(--wiz-ink-3);
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-rail-node.is-active .wiz-rail-dot {
+    background: var(--wiz-accent);
+    border-color: transparent;
     color: #fff;
-}
-
-setup-wizard .rail-item.done .rail-dot {
-    background: var(--wiz-accent);
-}
-
-setup-wizard .rail-item.active .rail-dot {
-    background: var(--wiz-accent);
     box-shadow: var(--wiz-dot-halo);
 }
 
-setup-wizard .rail-label {
-    font-size: 12px;
-    color: var(--wiz-ink-3);
-}
-
-setup-wizard .rail-item.active .rail-label {
+setup-wizard .wiz-rail-node.is-active .wiz-rail-text {
     color: var(--wiz-ink);
     font-weight: 600;
 }
 
-setup-wizard .rail-item.done .rail-label {
+setup-wizard .wiz-rail-node.is-done .wiz-rail-dot {
+    background: var(--wiz-accent-soft);
+    border-color: transparent;
+    color: var(--wiz-accent);
+}
+
+setup-wizard .wiz-rail-node.is-done .wiz-rail-text {
     color: var(--wiz-ink-2);
 }
 
-setup-wizard .rail-line {
+setup-wizard .wiz-rail-line {
     width: 1px;
     height: 34px;
-    margin: 4px 0 4px 12px;
-    background: #e2e2dc;
+    margin-left: 11.5px;
+    background: var(--wiz-line);
 }
 
-/* 右侧内容区 */
-setup-wizard .wizard-content {
+/* ---- 右侧内容区 ---- */
+setup-wizard .wiz-content {
     flex: 1;
     display: flex;
     flex-direction: column;
+    /*
+     * 容器占满可用高度，内部从顶部开始排：各步骤的内容顶部位置恒定，
+     * 切换步骤时不会因为内容高度不同而上下跳动；剩余空间留在下方。
+     */
+    justify-content: flex-start;
     min-width: 0;
-    overflow: hidden;
+    min-height: 0;
 }
 
-setup-wizard .wizard-body {
-    flex: 1;
+setup-wizard .wiz-scroll {
+    /* 高度跟随内容；底栏紧贴内容下方，只有内容超出可用空间时才收缩并滚动 */
+    flex: 0 1 auto;
+    min-height: 0;
     overflow-y: auto;
-    padding: 34px 40px 24px 12px;
+    /* 底部留够卡片投影的空间，否则 overflow 会把阴影下边缘裁掉 */
+    padding: 8px 40px 32px 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--wiz-line) transparent;
 }
 
-setup-wizard .step-tag {
+setup-wizard .wiz-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+setup-wizard .wiz-scroll::-webkit-scrollbar-thumb {
+    background: var(--wiz-line);
+    border: 3px solid var(--wiz-canvas);
+    border-radius: 999px;
+}
+
+/* ---- 文案层级 ---- */
+setup-wizard .wiz-head {
+    max-width: 640px;
+    margin-bottom: 18px;
+}
+
+setup-wizard .wiz-eyebrow {
     font-size: 12px;
     font-weight: 600;
     color: var(--wiz-accent);
     letter-spacing: 0.02em;
-    margin-bottom: 6px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    width: fit-content;
+    margin-bottom: 8px;
 }
 
-setup-wizard .wizard-body h2 {
+setup-wizard .wiz-title {
     font-size: var(--wiz-title-size);
     font-weight: 600;
     letter-spacing: -0.01em;
-    margin: 0;
+    margin: 0 0 6px;
 }
 
-setup-wizard .ob-desc {
+setup-wizard .wiz-desc {
     font-size: 13px;
     color: var(--wiz-ink-2);
     line-height: 1.65;
-    margin-top: 7px;
+    margin: 0;
     max-width: 560px;
 }
 
-/* ---- 选项卡 (Step 1) ---- */
-setup-wizard .opt-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    margin-top: 20px;
-    max-width: 720px;
-}
-
-setup-wizard .opt-card {
-    position: relative;
-    background: var(--wiz-card);
-    border: 1px solid var(--wiz-line);
-    border-radius: var(--wiz-r-card);
-    padding: 16px 16px 14px;
-    cursor: pointer;
-    transition: all 0.16s;
-    box-shadow: var(--wiz-card-shadow);
-}
-
-setup-wizard .opt-card:hover:not(.disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(80, 66, 50, 0.08);
-    border-color: #d8d8d2;
-}
-
-setup-wizard .opt-card.disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-}
-
-setup-wizard .opt-card.selected {
-    border: 1.5px solid var(--wiz-accent);
-    background: var(--wiz-sel-bg);
-    padding: 15.5px 15.5px 13.5px;
-}
-
-setup-wizard .opt-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 9px;
-    background: var(--wiz-icon-chip-bg);
-    color: #8a8a8f;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 10px;
-    font-size: 15px;
-}
-
-setup-wizard .opt-name {
-    font-size: 13px;
-    font-weight: 600;
-}
-
-setup-wizard .opt-desc {
-    font-size: 11.5px;
-    color: var(--wiz-ink-2);
-    line-height: 1.55;
-    margin-top: 4px;
-}
-
-setup-wizard .opt-badge {
-    position: absolute;
-    top: 11px;
-    right: 32px;
-    font-size: 10px;
-    color: #8b8b90;
-    background: #f0f0ed;
-    border-radius: 4px;
-    padding: 2px 5px;
-}
-
-setup-wizard .opt-lock {
-    position: absolute;
-    top: 11px;
-    right: 11px;
-    color: #b9b9be;
-    font-size: 12px;
-}
-
-setup-wizard .opt-check {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: var(--wiz-accent);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: var(--wiz-check-shadow);
-    font-size: 9px;
-}
-
-/* ---- 占位页面 ---- */
-setup-wizard .placeholder-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 64px 0;
-    margin-top: 18px;
+setup-wizard .wiz-fine-print {
     max-width: 640px;
-    background: var(--wiz-card);
-    border: 1px solid var(--wiz-line);
-    border-radius: var(--wiz-r-card);
-    box-shadow: var(--wiz-card-shadow);
-}
-
-setup-wizard .placeholder-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    background: #fff7ed;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 20px;
-    font-size: 28px;
-    color: #f59e0b;
-}
-
-setup-wizard .placeholder-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--wiz-ink);
-    margin-bottom: 6px;
-}
-
-setup-wizard .placeholder-sub {
-    font-size: 13px;
+    margin: 12px 0 0;
+    font-size: 11px;
+    line-height: 1.55;
     color: var(--wiz-ink-3);
 }
 
-/* ---- 表单卡 (Step 2) ---- */
-setup-wizard .form-card {
+/* ---- 卡片与表单 ---- */
+setup-wizard .wiz-card {
+    max-width: 640px;
+    padding: 20px 20px 22px;
     background: var(--wiz-card);
     border: 1px solid var(--wiz-line);
     border-radius: var(--wiz-r-card);
     box-shadow: var(--wiz-card-shadow);
-    padding: 24px 26px;
-    margin-top: 18px;
-    max-width: 640px;
 }
 
-setup-wizard .f-row {
-    margin-bottom: 14px;
+setup-wizard .wiz-field + .wiz-field {
+    margin-top: 14px;
 }
 
-setup-wizard .f-row:last-child {
-    margin-bottom: 0;
+setup-wizard .wiz-checks + .wiz-field {
+    margin-top: 14px;
 }
 
-setup-wizard .f-grid2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-}
-
-setup-wizard .f-label {
+setup-wizard .wiz-label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--wiz-ink-2);
     margin-bottom: 6px;
 }
 
-setup-wizard .f-ctl {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+setup-wizard .wiz-ctl {
+    width: 100%;
     height: var(--wiz-ctl-h);
-    background: var(--wiz-input-bg);
+    padding: 0 11px;
     border: 1px solid var(--wiz-input-line);
     border-radius: var(--wiz-r-ctl);
-    padding: 0 10px;
-    font-size: 13px;
+    background: var(--wiz-input-bg);
     color: var(--wiz-ink);
-    width: 100%;
-    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 13px;
     transition:
-        border-color 0.15s,
-        box-shadow 0.15s;
+        border-color 0.15s ease,
+        box-shadow 0.15s ease;
 }
 
-setup-wizard .f-ctl:focus-within {
+setup-wizard .wiz-ctl::placeholder {
+    color: var(--wiz-ink-3);
+}
+
+setup-wizard .wiz-ctl:hover {
+    border-color: var(--wiz-ink-3);
+}
+
+setup-wizard .wiz-ctl:focus {
+    outline: none;
     border-color: var(--wiz-accent);
     box-shadow: 0 0 0 3px rgba(222, 68, 51, 0.12);
 }
 
-setup-wizard .f-select {
+setup-wizard .wiz-select {
     appearance: none;
     -webkit-appearance: none;
     cursor: pointer;
+    padding-right: 28px;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A5A5AA' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 10px center;
-    padding-right: 28px;
 }
 
-setup-wizard .f-ctl-with-btn {
-    padding: 0;
+setup-wizard .wiz-ctl-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-right: 4px;
+    border: 1px solid var(--wiz-input-line);
+    border-radius: var(--wiz-r-ctl);
+    background: var(--wiz-input-bg);
+    transition:
+        border-color 0.15s ease,
+        box-shadow 0.15s ease;
 }
 
-setup-wizard .f-ctl-input {
+setup-wizard .wiz-ctl-group:focus-within {
+    border-color: var(--wiz-accent);
+    box-shadow: 0 0 0 3px rgba(222, 68, 51, 0.12);
+}
+
+setup-wizard .wiz-ctl-group .wiz-ctl {
+    border: 0;
+    background: transparent;
+    padding-right: 0;
+}
+
+setup-wizard .wiz-ctl-group .wiz-ctl:focus {
+    box-shadow: none;
+}
+
+setup-wizard .wiz-ctl-input {
     flex: 1;
-    border: none;
+    min-width: 0;
+    height: var(--wiz-ctl-h);
+    padding: 0 11px;
+    border: 0;
     background: transparent;
+    color: var(--wiz-ink);
+    font-family: inherit;
+    font-size: 13px;
     outline: none;
-    font-size: 13px;
-    color: var(--wiz-ink);
-    height: 100%;
-    padding: 0 10px;
 }
 
-setup-wizard .f-ctl-input::placeholder {
+setup-wizard .wiz-ctl-input::placeholder {
     color: var(--wiz-ink-3);
 }
 
-setup-wizard .f-ctl-btn {
+setup-wizard .wiz-ctl-btn {
     flex: none;
-    border: none;
-    background: transparent;
-    cursor: pointer;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
     color: var(--wiz-ink-3);
-    padding: 0 10px;
-    height: 100%;
-    font-size: 13px;
-    transition: color 0.15s;
+    cursor: pointer;
+    transition: color 0.15s ease;
 }
 
-setup-wizard .f-ctl-btn:hover {
-    color: var(--wiz-ink);
+setup-wizard .wiz-ctl-btn:hover {
+    color: var(--wiz-ink-2);
 }
 
-setup-wizard .f-checks {
+setup-wizard .wiz-ctl-btn:focus-visible {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 1px;
+}
+
+setup-wizard .wiz-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+setup-wizard .wiz-checks {
     display: flex;
     gap: 18px;
     align-items: center;
+    margin-top: 14px;
 }
 
-setup-wizard .f-check {
+setup-wizard .wiz-check {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -406,91 +428,709 @@ setup-wizard .f-check {
     cursor: pointer;
 }
 
-setup-wizard .f-check input[type='checkbox'] {
+setup-wizard .wiz-check input[type='checkbox'] {
     width: 14px;
     height: 14px;
     accent-color: var(--wiz-accent);
     cursor: pointer;
 }
 
-/* ---- 验证结果 ---- */
-setup-wizard .verify-result {
-    font-size: 13px;
-    padding: 10px 12px;
-    border-radius: var(--wiz-r-ctl);
-    border: 1px solid;
-    max-height: 48px;
-    overflow-y: auto;
+/* ---- 账号类型分段控件 ---- */
+setup-wizard .wiz-seg {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    gap: 4px;
+    margin-bottom: 16px;
+    padding: 4px;
+    border: 1px solid var(--wiz-input-line);
+    border-radius: 999px;
+    background: var(--wiz-input-bg);
 }
 
-setup-wizard .verify-result.hidden {
+setup-wizard .wiz-seg-btn {
+    flex: 1;
+    height: 30px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--wiz-ink-2);
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+
+setup-wizard .wiz-seg-btn:hover {
+    color: var(--wiz-ink);
+}
+
+setup-wizard .wiz-seg-btn.is-on {
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-accent);
+    font-weight: 600;
+}
+
+setup-wizard .wiz-seg-btn:focus-visible {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 1px;
+}
+
+/* ---- 结果提示 ---- */
+setup-wizard .wiz-verify {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 14px;
+    padding: 9px 11px;
+    border: 1px solid;
+    border-radius: var(--wiz-r-ctl);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+setup-wizard .wiz-verify[hidden] {
     display: none;
 }
 
-setup-wizard .verify-success {
-    color: #16a34a;
-    background: #f0fdf4;
+setup-wizard .wiz-verify-success {
     border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #15803d;
 }
 
-setup-wizard .verify-error {
-    color: #dc2626;
-    background: #fef2f2;
+setup-wizard .wiz-verify-error {
     border-color: #fecaca;
+    background: #fef2f2;
+    color: #b91c1c;
 }
 
-setup-wizard .verify-info {
-    color: #2563eb;
-    background: #eff6ff;
+setup-wizard .wiz-verify-info {
     border-color: #bfdbfe;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+html[data-theme='dark'] setup-wizard .wiz-verify-success {
+    border-color: #23452f;
+    background: #16281d;
+    color: #6ec08c;
+}
+
+html[data-theme='dark'] setup-wizard .wiz-verify-error {
+    border-color: #4a2424;
+    background: #2a1717;
+    color: #e4908f;
+}
+
+html[data-theme='dark'] setup-wizard .wiz-verify-info {
+    border-color: #1e3a5f;
+    background: #16202c;
+    color: #7cb6f0;
+}
+
+/* ---- 模型发现 ---- */
+setup-wizard .wiz-model-fetch-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+setup-wizard .wiz-model-select {
+    flex: 1;
+    min-width: 0;
+}
+
+setup-wizard .wiz-model-loading {
+    position: absolute;
+    right: 34px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--wiz-ink-3);
+    font-size: 12px;
+}
+
+setup-wizard .wiz-model-error {
+    margin: 6px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #b91c1c;
+}
+
+html[data-theme='dark'] setup-wizard .wiz-model-error {
+    color: #e4908f;
+}
+
+/* ---- 双栏：个性化设置 ---- */
+setup-wizard .wiz-split {
+    display: grid;
+    grid-template-columns: 336px minmax(0, 1fr);
+    gap: 30px;
+    /* 两栏等高：右侧预览卡的下边缘与左栏最后一个设置块对齐 */
+    align-items: stretch;
+}
+
+setup-wizard .wiz-split-main {
+    min-width: 0;
+}
+
+setup-wizard .wiz-split-preview {
+    min-width: 0;
+    display: flex;
+}
+
+setup-wizard .wiz-block + .wiz-block {
+    margin-top: 22px;
+}
+
+setup-wizard .wiz-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+setup-wizard .wiz-block-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--wiz-ink);
+}
+
+setup-wizard .wiz-block-desc {
+    margin: 5px 0 0;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--wiz-ink-3);
+}
+
+/* 开关 */
+setup-wizard .wiz-switch {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    width: 38px;
+    height: 22px;
+    cursor: pointer;
+}
+
+setup-wizard .wiz-switch input {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+setup-wizard .wiz-switch-track {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--wiz-input-line);
+    transition: background 0.15s ease;
+}
+
+setup-wizard .wiz-switch-knob {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    transition: transform 0.15s ease;
+}
+
+setup-wizard .wiz-switch input:checked + .wiz-switch-track {
+    background: var(--wiz-accent);
+}
+
+setup-wizard .wiz-switch input:checked + .wiz-switch-track .wiz-switch-knob {
+    transform: translateX(16px);
+}
+
+setup-wizard .wiz-switch input:focus-visible + .wiz-switch-track {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 2px;
+}
+
+/* 记忆示例 */
+setup-wizard .wiz-memory-sample {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 10px;
+    padding: 9px 11px;
+    background: var(--wiz-icon-chip-bg);
+    border-radius: var(--wiz-r-ctl);
+    transition: opacity 0.18s ease;
+}
+
+setup-wizard .wiz-memory-sample.is-off {
+    opacity: 0.45;
+}
+
+setup-wizard .wiz-memory-row {
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-memory-note {
+    max-height: 0;
+    margin: 0;
+    overflow: hidden;
+    opacity: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--wiz-accent);
+    transition:
+        opacity 0.18s ease,
+        max-height 0.18s ease,
+        margin-top 0.18s ease;
+}
+
+setup-wizard .wiz-memory-note.is-on {
+    max-height: 22px;
+    margin-top: 8px;
+    opacity: 1;
+}
+
+/* 输出模式选项 */
+setup-wizard .wiz-radio-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+setup-wizard .wiz-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 11px 12px;
+    text-align: left;
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-input-line);
+    border-radius: 11px;
+    cursor: pointer;
+    transition:
+        border-color 0.15s ease,
+        background 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+setup-wizard .wiz-option:hover {
+    border-color: var(--wiz-ink-3);
+}
+
+setup-wizard .wiz-option.is-on {
+    border-color: var(--wiz-accent);
+    background: var(--wiz-sel-bg);
+    box-shadow: 0 0 0 3px rgba(222, 68, 51, 0.09);
+}
+
+setup-wizard .wiz-option:focus-visible {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 2px;
+}
+
+setup-wizard .wiz-option-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--wiz-icon-chip-bg);
+    color: var(--wiz-ink-2);
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+
+setup-wizard .wiz-option.is-on .wiz-option-icon {
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-accent);
+}
+
+setup-wizard .wiz-option-text {
+    min-width: 0;
+}
+
+setup-wizard .wiz-option-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--wiz-ink);
+}
+
+setup-wizard .wiz-option-desc {
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-option-check {
+    flex: none;
+    display: grid;
+    place-items: center;
+    margin-left: auto;
+    margin-top: 4px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--wiz-accent);
+    color: #fff;
+    font-size: 9px;
+    opacity: 0;
+    transform: scale(0.86);
+    transition:
+        opacity 0.15s ease,
+        transform 0.15s ease;
+}
+
+setup-wizard .wiz-option.is-on .wiz-option-check {
+    opacity: 1;
+    transform: none;
+}
+
+/* ---- 效果预览：复刻 taskview 的真实排版 ---- */
+setup-wizard .wiz-preview {
+    /* 撑满右栏宽度与高度，避免简洁模式内容少时卡片缩成一团 */
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: var(--wiz-card);
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    box-shadow: var(--wiz-card-shadow);
+    overflow: hidden;
+}
+
+setup-wizard .wiz-preview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    height: 32px;
+    padding: 0 12px;
+    background: var(--wiz-icon-chip-bg);
+    border-bottom: 1px solid var(--wiz-line);
+}
+
+setup-wizard .wiz-preview-bar-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-preview-bar-title i {
+    color: var(--wiz-ink-3);
+    font-size: 11px;
+}
+
+setup-wizard .wiz-preview-pill {
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-accent);
+    font-size: 10.5px;
+    line-height: 1;
+}
+
+setup-wizard .wiz-preview-body {
+    /* 内容区吃掉剩余高度：卡片被拉伸时底部不会留一条空白带 */
+    flex: 1 1 auto;
+    min-height: 258px;
+    padding: 16px 16px 18px;
+}
+
+/* 两版预览都渲染，按 data-mode 显隐（切换时淡入） */
+setup-wizard .wiz-preview-body .wiz-pv-flow {
+    display: none;
+}
+
+setup-wizard .wiz-preview-body[data-mode='minimal'] .wiz-pv-flow[data-mode='minimal'],
+setup-wizard .wiz-preview-body[data-mode='verbose'] .wiz-pv-flow[data-mode='verbose'] {
+    display: block;
+    animation: wiz-pv-in 0.2s ease both;
+}
+
+@keyframes wiz-pv-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* 简洁：折叠条（.od-completed-process 的观感） */
+setup-wizard .wiz-pv-process {
+    margin: 0 0 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--wiz-pv-border);
+}
+
+setup-wizard .wiz-pv-summary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 4px 0 8px;
+    color: var(--wiz-pv-muted);
+    font-size: 12px;
+}
+
+setup-wizard .wiz-pv-summary-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+setup-wizard .wiz-pv-chevron {
+    flex: none;
+    display: inline-flex;
+    width: 14px;
+    height: 14px;
+    align-items: center;
+    justify-content: center;
+    color: var(--wiz-pv-muted);
+    font-size: 10px;
+}
+
+/* 详细：思考块 + 工具行 */
+setup-wizard .wiz-pv-detail {
+    padding-top: 2px;
+}
+
+setup-wizard .wiz-pv-reasoning-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+}
+
+setup-wizard .wiz-pv-reasoning-head i {
+    color: var(--wiz-pv-amber);
+    font-size: 11px;
+}
+
+setup-wizard .wiz-pv-reasoning-title {
+    color: var(--wiz-pv-amber);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+setup-wizard .wiz-pv-reasoning-time {
+    color: var(--wiz-pv-faint);
+    font-size: 12px;
+}
+
+setup-wizard .wiz-pv-reasoning-body {
+    margin-left: 4px;
+    padding: 2px 12px 8px;
+    border-left: 2px solid var(--wiz-pv-reasoning-line);
+    color: var(--wiz-pv-muted);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+setup-wizard .wiz-pv-tool {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+    font-size: 12px;
+    color: var(--wiz-pv-muted);
+}
+
+setup-wizard .wiz-pv-tool i {
+    flex: none;
+    color: var(--wiz-pv-faint);
+    font-size: 11px;
+}
+
+setup-wizard .wiz-pv-tool-title {
+    flex: none;
+    color: var(--wiz-pv-muted);
+}
+
+setup-wizard .wiz-pv-tool-detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--wiz-pv-ink);
+}
+
+/* 终端（shell）工具卡片：照 taskview 的 terminal-tool 卡片观感 */
+setup-wizard .wiz-pv-terminal {
+    margin: 8px 0 0;
+    border: 1px solid var(--wiz-line);
+    border-radius: 12px;
+    background: var(--wiz-card);
+    overflow: hidden;
+}
+
+setup-wizard .wiz-pv-terminal-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    background: var(--wiz-icon-chip-bg);
+    font-size: 12px;
+    color: var(--wiz-pv-muted);
+}
+
+setup-wizard .wiz-pv-terminal-head > i:first-child {
+    flex: none;
+    color: var(--wiz-pv-faint);
+    font-size: 11px;
+}
+
+setup-wizard .wiz-pv-terminal-cmd {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--wiz-pv-ink);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+}
+
+setup-wizard .wiz-pv-terminal-tag {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--wiz-input-bg);
+    border: 1px solid var(--wiz-line);
+    color: var(--wiz-ink-3);
+    font-size: 10px;
+    line-height: 1.6;
+}
+
+setup-wizard .wiz-pv-terminal-chevron {
+    flex: none;
+    color: var(--wiz-pv-faint);
+    font-size: 10px;
+}
+
+setup-wizard .wiz-pv-terminal-body {
+    padding: 8px 10px;
+    border-top: 1px solid var(--wiz-line);
+    color: var(--wiz-pv-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+}
+
+/* 结论正文 */
+setup-wizard .wiz-pv-final {
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--wiz-pv-ink);
+}
+
+setup-wizard .wiz-pv-final-divider {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--wiz-pv-border);
+}
+
+/* ---- 完成页 ---- */
+setup-wizard .wiz-done-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+setup-wizard .wiz-done-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--wiz-accent-soft);
+    color: var(--wiz-accent);
+    font-size: 16px;
+}
+
+setup-wizard .wiz-summary {
+    max-width: 640px;
+    margin-top: 20px;
+    padding: 6px 16px;
+    border: 1px solid var(--wiz-line);
+    border-radius: var(--wiz-r-card);
+    background: var(--wiz-card);
+    box-shadow: var(--wiz-card-shadow);
+}
+
+setup-wizard .wiz-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 0;
+    font-size: 12.5px;
+}
+
+setup-wizard .wiz-summary-row + .wiz-summary-row {
+    border-top: 1px solid var(--wiz-line);
+}
+
+setup-wizard .wiz-summary-key {
+    color: var(--wiz-ink-2);
+}
+
+setup-wizard .wiz-summary-value {
+    color: var(--wiz-ink);
+    font-weight: 600;
 }
 
 /* ---- 按钮 ---- */
-setup-wizard .f-actions {
-    display: flex;
-    gap: 10px;
-    margin-top: 18px;
-}
-
-setup-wizard .f-actions .wiz-btn-primary {
-    flex: 1.4;
-}
-
-setup-wizard .f-actions .wiz-btn-secondary {
-    flex: 1;
-}
-
-setup-wizard .ob-back {
-    margin-top: 16px;
-}
-
-setup-wizard .ob-back .wiz-btn-ghost {
-    font-size: 13px;
-    color: var(--accent, var(--wizard-accent, #df4436));
-}
-
 setup-wizard .wiz-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    border: none;
-    cursor: pointer;
-    font-size: 12.5px;
-    font-weight: 500;
+    height: var(--wiz-ctl-h);
+    padding: 0 18px;
+    border: 0;
     border-radius: var(--wiz-r-btn);
-    padding: 0 16px;
-    height: var(--wiz-btn-h);
-    transition: all 0.15s;
     font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+        filter 0.15s ease,
+        background 0.15s ease,
+        border-color 0.15s ease,
+        color 0.15s ease,
+        transform 0.15s ease;
 }
 
 setup-wizard .wiz-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    opacity: 0.55;
+    cursor: default;
 }
 
 setup-wizard .wiz-btn-primary {
@@ -500,142 +1140,157 @@ setup-wizard .wiz-btn-primary {
 }
 
 setup-wizard .wiz-btn-primary:hover:not(:disabled) {
-    filter: brightness(0.94);
+    filter: brightness(1.05);
+}
+
+setup-wizard .wiz-btn-primary:active:not(:disabled) {
+    transform: translateY(1px);
 }
 
 setup-wizard .wiz-btn-secondary {
     background: var(--wiz-card);
     border: 1px solid var(--wiz-line);
-    color: var(--wiz-ink-2);
-}
-
-setup-wizard .wiz-btn-secondary:hover {
-    border-color: #d5d5cf;
     color: var(--wiz-ink);
+    font-weight: 500;
 }
 
-setup-wizard .wiz-btn-lg {
-    height: 44px;
-    padding: 0 28px;
-    font-size: 14px;
+setup-wizard .wiz-btn-secondary:hover:not(:disabled) {
+    border-color: var(--wiz-ink-3);
 }
 
 setup-wizard .wiz-btn-ghost {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: transparent;
-    border: none;
-    color: var(--wiz-ink-2);
-    font-size: 12.5px;
-    cursor: pointer;
-    padding: 7px 10px;
+    height: var(--wiz-ctl-h);
+    padding: 0 10px;
+    border: 0;
     border-radius: var(--wiz-r-btn);
+    background: none;
+    color: var(--wiz-ink-2);
     font-family: inherit;
-    transition: all 0.15s;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s ease;
 }
 
 setup-wizard .wiz-btn-ghost:hover {
-    background: rgba(0, 0, 0, 0.045);
-    color: var(--wiz-ink);
+    color: var(--wiz-accent);
 }
 
-/* ---- 完成页面 ---- */
-setup-wizard .done-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 72px 0;
-    margin-top: 18px;
-    max-width: 640px;
-    background: var(--wiz-card);
-    border: 1px solid var(--wiz-line);
-    border-radius: var(--wiz-r-card);
-    box-shadow: var(--wiz-card-shadow);
-}
-
-setup-wizard .done-icon {
-    width: 80px;
-    height: 80px;
-    border-radius: 50%;
-    background: #f0fdf4;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 24px;
-    font-size: 40px;
-    color: var(--wiz-green);
-}
-
-setup-wizard .done-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--wiz-ink);
-    margin-bottom: 20px;
+setup-wizard .wiz-btn:focus-visible,
+setup-wizard .wiz-btn-ghost:focus-visible,
+setup-wizard .wiz-option:focus-visible {
+    outline: 2px solid var(--wiz-accent);
+    outline-offset: 2px;
 }
 
 /* ---- 底部导航 ---- */
-setup-wizard .wizard-footer {
+setup-wizard .wiz-foot {
     flex: none;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px 40px 16px 12px;
-    border-top: 1px solid #ecece8;
+    padding: 14px 40px 24px 12px;
 }
 
-setup-wizard .wizard-footer #wizard-next-btn {
-    margin-left: auto;
-}
-
-setup-wizard .wizard-model-select {
-    position: relative;
-    --model-list-line: var(--wiz-input-line);
-    --model-list-bg: var(--wiz-input-bg);
-    --model-list-hover: var(--wiz-sel-bg);
-}
-setup-wizard .wizard-model-loading {
-    position: absolute;
-    right: 44px;
-    top: 50%;
-    transform: translateY(-50%);
-}
-setup-wizard .wizard-model-loading[hidden],
-setup-wizard .wizard-model-error[hidden] {
-    display: none;
-}
-setup-wizard .wizard-model-select input {
-    padding-right: 52px;
-}
-setup-wizard .wizard-model-select input:disabled {
-    cursor: default;
-    opacity: 0.65;
-}
-setup-wizard .wizard-model-error {
-    color: #e74c3c;
-    font-size: 13px;
-    margin: 8px 0 0;
-}
-setup-wizard .wizard-model-fetch-row {
+/*
+ * 按钮组的右边缘要和当前步骤内容的右边缘对齐：
+ * 单列步骤内容宽 640，双栏步骤内容占满可用宽度。
+ */
+setup-wizard .wiz-foot-inner {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+    width: 100%;
+    max-width: 640px;
 }
-setup-wizard .wizard-model-fetch-row .wizard-model-select {
+
+setup-wizard .wiz-foot[data-step='personalize'] .wiz-foot-inner {
+    max-width: none;
+}
+
+setup-wizard .wiz-foot-spacer {
     flex: 1;
-    min-width: 0;
 }
-setup-wizard .wizard-model-fetch-row button {
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-@media (max-width: 600px) {
-    setup-wizard .wizard-model-fetch-row {
-        gap: 8px;
+
+/* ---- 自适应 ----
+ * 全部按向导自身的可用宽度（容器查询）判定，不按视口宽度：
+ * 视口宽度里含着一整个左侧栏（sidebar_width 可调 200~800），按视口判会在真实可用宽度
+ * 已经不足时仍判定为「宽」，把双栏硬挤成窄条。
+ * 阈值都由左侧 rail 160 + 内容区左右 padding 52 的固定开销推出来。
+ */
+
+/* 双栏放不下（内容区 < 336 卡片 + 30 gap + 336 预览）：降级为单列，预览下沉。
+ * 920 = 160 rail + 52 padding + 336 左栏 + 30 gap + 336 预览 */
+@container wizard (max-width: 920px) {
+    setup-wizard .wiz-split {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 22px;
     }
-    setup-wizard .wizard-model-fetch-row button {
-        padding-right: 12px;
-        padding-left: 12px;
+
+    setup-wizard .wiz-split-main,
+    setup-wizard .wiz-split-preview {
+        max-width: 640px;
+    }
+
+    setup-wizard .wiz-preview-body {
+        min-height: 0;
+    }
+
+    /*
+     * 取消 660px 封顶：那个封顶是按双栏内容高度定的，单列把预览挪到下方后内容天然更高，
+     * 继续封顶会让窗口明明够高也出现内部滚动条。
+     * 这里改用整块可用高度（wiz-inner 仍是 height: 100%，所以切步骤时高度照旧恒定不跳），
+     * 只有窗口真的矮到放不下时才滚动。
+     */
+    setup-wizard .wiz-inner {
+        max-height: none;
+    }
+}
+
+/* 竖排 rail 吃掉太多宽度（内容区不足 520 = 336 卡片 + 余量）：导航改为顶部横向。
+ * 730 = 160 rail + 52 padding + 520 内容区 */
+@container wizard (max-width: 730px) {
+    setup-wizard .wiz-root {
+        padding-top: 16px;
+    }
+
+    setup-wizard .wiz-inner {
+        max-width: none;
+        flex-direction: column;
+    }
+
+    setup-wizard .wiz-rail {
+        flex: none;
+        width: auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        padding: 18px 20px 0;
+    }
+
+    setup-wizard .wiz-rail-line {
+        width: 26px;
+        height: 1px;
+        margin-left: 0;
+    }
+
+    setup-wizard .wiz-scroll {
+        padding: 8px 20px 0;
+    }
+
+    setup-wizard .wiz-foot {
+        max-width: none;
+        padding: 12px 20px 20px;
+    }
+}
+
+/* 顶部横向导航放不下全部标签（4 × 圆点 + 标签 + 连线约 420）：只留序号圆点 */
+@container wizard (max-width: 460px) {
+    setup-wizard .wiz-rail-text {
+        display: none;
+    }
+
+    setup-wizard .wiz-rail-line {
+        width: 16px;
     }
 }

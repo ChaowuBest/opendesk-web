@@ -71,7 +71,17 @@ describe('setting-panel tabs', () => {
         expect(order[order.indexOf('search') + 1]).toBe('registries');
         // 插件仓库不单独占页签，和测评集仓库一起放在「仓库设置」里
         expect(order).not.toContain('pluginRegistries');
-        expect(order).toEqual(['general', 'models', 'tasks', 'channels', 'agents', 'search', 'registries', 'wizard']);
+        expect(order).toEqual([
+            'general',
+            'models',
+            'tasks',
+            'memory',
+            'channels',
+            'agents',
+            'search',
+            'registries',
+            'wizard'
+        ]);
     });
 
     test('channel settings tab hosts both benchmark and plugin channel components', () => {
@@ -115,6 +125,18 @@ describe('setting-panel tabs', () => {
         expect(panel.querySelector('#tab-search')?.classList.contains('hidden')).toBe(true);
     });
 
+    test('memory tab is reachable through _switchTab', () => {
+        const panel = createPanel();
+        panel.render();
+
+        panel._switchTab('memory');
+
+        expect(panel.querySelector('#tab-memory')?.classList.contains('hidden')).toBe(false);
+        expect(panel.querySelector('#tab-general')?.classList.contains('hidden')).toBe(true);
+        // 页签内容里的记忆开关存在，说明 tab-memory 容器不是空壳
+        expect(panel.querySelector('#tab-memory #memory-enabled-toggle')).toBeTruthy();
+    });
+
     test('channel settings nav label is localized', () => {
         const zhPanel = createPanel('zh-CN');
         zhPanel.render();
@@ -135,6 +157,7 @@ describe('setting-panel tabs', () => {
             'general',
             'models',
             'tasks',
+            'memory',
             'channels',
             'agents',
             'search',
@@ -152,7 +175,9 @@ describe('setting-panel tabs', () => {
 
         for (const [tag, dict] of dicts) {
             const labels = tabKeys.map((key) => dict[key]);
-            expect([tag, labels.filter((label) => typeof label !== 'string')]).toEqual([tag, []]);
+            // 用数量比较而不是 deepEqual 空数组：jest 的 toEqual 会忽略 undefined 元素，
+            // 写成 [undefined] 与 [] 相等会让「语言包缺 key」静默通过
+            expect([tag, labels.filter((label) => typeof label !== 'string').length]).toEqual([tag, 0]);
             expect([tag, labels.length, new Set(labels).size]).toEqual([tag, tabKeys.length, tabKeys.length]);
         }
     });
