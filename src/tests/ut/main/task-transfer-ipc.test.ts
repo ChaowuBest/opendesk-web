@@ -42,6 +42,9 @@ describe('task transfer workspace IPC', () => {
         handlers.clear();
         chooseFile.mockClear();
         warn.mockClear();
+        // 每个用例都会注册一次生命周期钩子，避免 will-quit 回调在用例之间累积
+        const { app } = await import('electron');
+        (app.once as unknown as jest.Mock).mockClear();
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'od-transfer-ipc-'));
         const source = path.join(directory, 'source.json');
         fs.writeFileSync(
@@ -108,6 +111,21 @@ describe('task transfer workspace IPC', () => {
         expect(importTasks).toHaveBeenCalledTimes(2);
         expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('error');
         expect(chooseFile).toHaveBeenCalledTimes(1);
+    });
+
+    test('drops the pending import snapshot when the host quits', async () => {
+        const { app } = await import('electron');
+        const quits = (app.once as unknown as jest.Mock).mock.calls.filter(([event]) => event === 'will-quit');
+        expect(quits).toHaveLength(1);
+        (quits[0][1] as () => void)();
+
+        // 快照释放是异步的（关闭压缩包句柄 + 删除临时目录），等待它生效后再确认快照已失效。
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(await invoke('importTaskBundle', token, ['source'], directory)).toEqual({
+            status: 'error',
+            message: 'taskTransfer.error.expired'
+        });
+        expect(importTasks).not.toHaveBeenCalled();
     });
 
     test('rejects invalid directories without consuming the preview, allowing a corrected selection', async () => {

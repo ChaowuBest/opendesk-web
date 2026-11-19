@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { dialog, ipcMain, type BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
 import type { TaskManagerState } from '../aikernel/task/manager.js';
 import type * as TaskTransfer from '../aikernel/task/transfer.js';
 import { createTaskTransferService, type TaskTransferService } from './task-transfer-service.js';
@@ -58,4 +58,7 @@ export function registerTaskTransferHandlers(
     handle('discardTaskImport');
     handle('importTaskBundle');
     handle('exportTaskBundle');
+    // 导入预览快照持有压缩包句柄与临时目录，进程退出时需要主动释放：
+    // 10 分钟过期定时器不会再触发，否则退出后会残留临时文件。
+    app.once('will-quit', () => void service.dispose());
 }

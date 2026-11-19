@@ -46,6 +46,8 @@ export interface TaskTransferService {
     discardTaskImport(token: unknown): Promise<TaskTransferResult<void>>;
     importTaskBundle(token: unknown, selectedIds: unknown, workspace: unknown): Promise<TaskTransferResult<number>>;
     exportTaskBundle(selectedIds: unknown): Promise<TaskTransferResult<TaskExportResult | null>>;
+    /** 宿主退出时丢弃未消费的导入快照：关闭压缩包句柄并删除临时目录，可重复调用。 */
+    dispose(): Promise<void>;
 }
 /** The host owns document access; tokens, validation and mutations share the same implementation. */
 export function createTaskTransferService(deps: {
@@ -162,7 +164,9 @@ export function createTaskTransferService(deps: {
                     `OpenDesk-tasks-${new Date().toISOString().slice(0, 10)}.zip`,
                     (filePath) => deps.transfer.exportTaskBundle(deps.getManager(), selectedIds, filePath)
                 );
-            })
+            }),
+        // 进程退出不等待异步清理完成：快照目录的删除是 best-effort，但句柄必须尽早释放。
+        dispose: () => discard()
     };
 }
 
