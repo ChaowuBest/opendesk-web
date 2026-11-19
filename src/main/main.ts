@@ -71,7 +71,7 @@ import {
     logRecoverableMainProcessError,
     shouldDowngradeRecoverableError
 } from './utils/recoverable-errors.js';
-import { createMainWindowCloseHandler } from './utils/window-close.js';
+import { createMainWindowCloseHandler, bringMainWindowToForeground } from './utils/window-close.js';
 import { registerNotificationMainWindowResolver } from './utils/system-notification.js';
 import { installMainWindowNavigationGuard } from './utils/main-window-navigation.js';
 import { createReloadBudget, createWindowRecoveryController, freezeRecoveryProfile } from './utils/window-recovery.js';
@@ -2533,7 +2533,9 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:pickDirectoryDialog', async (_event, currentPath?: string) => {
         try {
             const initialPath =
-                typeof currentPath === 'string' && path.isAbsolute(currentPath) ? path.normalize(currentPath) : undefined;
+                typeof currentPath === 'string' && path.isAbsolute(currentPath)
+                    ? path.normalize(currentPath)
+                    : undefined;
             const stat = initialPath ? await fsPromises.stat(initialPath).catch(() => undefined) : undefined;
             const result = await dialog.showOpenDialog(globalMainWindow!, {
                 title: t('main.dialog.selectWorkspaceDirectory'),
@@ -3178,11 +3180,7 @@ const registerQuickCaptureHandlers = () => {
     // Electron 的 app 事件签名不接受自定义事件名，这里按 EventEmitter 使用。
     (app as unknown as NodeJS.EventEmitter).on(QUICK_CAPTURE_BRING_MAIN_TO_FRONT_EVENT, () => {
         if (!globalMainWindow || globalMainWindow.isDestroyed()) return;
-        if (globalMainWindow.isMinimized()) {
-            globalMainWindow.restore();
-        }
-        globalMainWindow.show();
-        globalMainWindow.focus();
+        bringMainWindowToForeground(globalMainWindow);
         // 主窗口本来就可见时 show() 不产生窗口事件、focus 也未必变化，三条激活信号里
         // 可能一条都不出现；显式补一条可见性信号，保证渲染层一定会去取待处理截图。
         safeSendToWebContents(globalMainWindow.webContents, 'window:visibilityChanged', true);
@@ -3244,7 +3242,9 @@ const buildTrayMenu = () => {
         {
             label: t('main.tray.openMainWindow'),
             click: () => {
-                globalMainWindow?.show();
+                if (globalMainWindow) {
+                    bringMainWindowToForeground(globalMainWindow);
+                }
             }
         },
         {
@@ -3288,7 +3288,9 @@ const registerTray = () => {
     globalTray.setToolTip('OpenDesk');
     globalTray.setContextMenu(buildTrayMenu());
     globalTray.on('click', () => {
-        globalMainWindow?.show();
+        if (globalMainWindow) {
+            bringMainWindowToForeground(globalMainWindow);
+        }
     });
 };
 
@@ -3358,7 +3360,9 @@ async function startApplication(): Promise<void> {
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (_event, _commandLine) => {
             if (globalMainWindow) {
-                globalMainWindow.show();
+                // 用户再次启动应用（双击图标、命令行再跑一次等）时要把窗口真正带到前台：
+                // 只调 show() 在 Windows 上不会还原最小化窗口，也不会抢到焦点
+                bringMainWindowToForeground(globalMainWindow);
             }
         });
     } else {
@@ -3406,11 +3410,7 @@ async function startApplication(): Promise<void> {
     // macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
     app.on('activate', () => {
         if (globalMainWindow) {
-            if (globalMainWindow.isMinimized()) {
-                globalMainWindow.restore();
-            }
-            globalMainWindow.show();
-            globalMainWindow.focus();
+            bringMainWindowToForeground(globalMainWindow);
         }
     });
 

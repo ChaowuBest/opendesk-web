@@ -9,6 +9,8 @@ interface NotificationRecord {
     silent: boolean;
     shown: boolean;
     clickHandler: ClickHandler | null;
+    closeHandler: ClickHandler | null;
+    failedHandler: ClickHandler | null;
 }
 
 const sentMessages: Array<{ channel: string; args: unknown[] }> = [];
@@ -28,7 +30,9 @@ class MockNotification {
             body: options.body,
             silent: options.silent,
             shown: false,
-            clickHandler: null
+            clickHandler: null,
+            closeHandler: null,
+            failedHandler: null
         });
     }
 
@@ -37,8 +41,13 @@ class MockNotification {
     }
 
     on(event: string, handler: ClickHandler): void {
+        const latest = notifications[notifications.length - 1];
         if (event === 'click') {
-            notifications[notifications.length - 1].clickHandler = handler;
+            latest.clickHandler = handler;
+        } else if (event === 'close') {
+            latest.closeHandler = handler;
+        } else if (event === 'failed') {
+            latest.failedHandler = handler;
         }
     }
 }
@@ -60,9 +69,11 @@ const mockApp = {
 const mainWindow = {
     isDestroyed: () => false,
     isMinimized: () => true,
+    isVisible: () => false,
     restore: jest.fn(),
     show: jest.fn(),
     moveTop: jest.fn(),
+    setAlwaysOnTop: jest.fn(),
     focus: jest.fn(),
     webContents: {
         send: jest.fn((channel: string, ...args: unknown[]) => {
@@ -82,8 +93,13 @@ jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }
 }));
 
-const { showTaskNotification, registerNotificationMainWindowResolver, clearPendingOpenTasks } =
-    await import('../../../main/utils/system-notification.js');
+const {
+    showTaskNotification,
+    registerNotificationMainWindowResolver,
+    clearPendingOpenTasks,
+    clearLiveNotifications,
+    getLiveNotificationCount
+} = await import('../../../main/utils/system-notification.js');
 
 function clickLatestNotification(): void {
     const latest = notifications[notifications.length - 1];
@@ -100,6 +116,13 @@ function openTaskMessages(): unknown[][] {
     return sentMessages.filter((msg) => msg.channel === 'command:openTask').map((msg) => msg.args);
 }
 
+const realPlatform = process.platform;
+
+/** 把 process.platform 临时伪装成指定平台：前台锁规避只在 Windows 生效 */
+function stubPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
 describe('system-notification', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -109,14 +132,17 @@ describe('system-notification', () => {
         mainWindow.restore.mockClear();
         mainWindow.show.mockClear();
         mainWindow.moveTop.mockClear();
+        mainWindow.setAlwaysOnTop.mockClear();
         mainWindow.focus.mockClear();
-        // 待打开任务是模块级状态，逐个用例之间必须清空
+        // 待打开任务与存活通知都是模块级状态，逐个用例之间必须清空
         clearPendingOpenTasks();
+        clearLiveNotifications();
         registerNotificationMainWindowResolver(() => mainWindow as never);
     });
 
     afterEach(() => {
         jest.useRealTimers();
+        stubPlatform(realPlatform);
     });
 
     it('推送通知并携带标题与正文', () => {
@@ -147,6 +173,75 @@ describe('system-notification', () => {
 
         jest.advanceTimersByTime(200);
         expect(openTaskMessages()).toEqual([['task-42']]);
+    });
+
+    it('Windows 上点击通知用临时置顶绕过前台锁，把窗口真正带到前台', () => {
+        // 复现：Windows 的 SetForegroundWindow 受前台锁限制，后台进程只调 focus()
+        // 通常只让任务栏图标闪一下，窗口仍被其它应用盖住，用户看到的现象就是
+        // 「点了通知没有任何反应」。置顶期间 focus() 不受前台锁约束。
+        stubPlatform('win32');
+
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-win' });
+        clickLatestNotification();
+
+        // 置顶先于 focus 生效，且不能在同一个 tick 里撤销
+        expect(mainWindow.setAlwaysOnTop.mock.calls).toEqual([[true]]);
+        expect(mainWindow.focus).toHaveBeenCalled();
+
+        jest.advanceTimersByTime(200);
+        // 置顶必须撤销，不能把主窗口永久钉在最前面
+        expect(mainWindow.setAlwaysOnTop.mock.calls).toEqual([[true], [false]]);
+        expect(openTaskMessages()).toEqual([['task-win']]);
+    });
+
+    it('非 Windows 平台不做置顶切换', () => {
+        stubPlatform('linux');
+
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-linux' });
+        clickLatestNotification();
+
+        expect(mainWindow.setAlwaysOnTop).not.toHaveBeenCalled();
+        expect(mainWindow.focus).toHaveBeenCalled();
+    });
+
+    it('点击通知后释放引用，避免 JS 包装残留', () => {
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-gc' });
+        expect(getLiveNotificationCount()).toBe(1);
+
+        clickLatestNotification();
+
+        expect(getLiveNotificationCount()).toBe(0);
+    });
+
+    it('通知被系统关闭或推送失败后释放引用', () => {
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-a' });
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-b' });
+        expect(getLiveNotificationCount()).toBe(2);
+
+        // close / failed 之后都不会再有点击，引用可以丢掉，否则只能等 TTL 惰性回收
+        notifications[0].closeHandler!();
+        expect(getLiveNotificationCount()).toBe(1);
+        notifications[1].failedHandler!();
+        expect(getLiveNotificationCount()).toBe(0);
+    });
+
+    it('通知引用存活期按小时级保留，远超待打开任务的 10 分钟', () => {
+        // 待打开任务过期只意味着不再自动跳转；用户稍后点通知仍应能唤起窗口，
+        // 因此通知引用不能跟待打开任务的 TTL 绑在一起，否则点了同样毫无反应。
+        // 惰性回收只在推送新通知时触发，所以这里靠「30 分钟后再推一条」观察第一条是否被清掉
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-late' });
+
+        jest.advanceTimersByTime(30 * 60 * 1000);
+        showTaskNotification({ title: '权限确认', body: '请确认', taskId: 'task-later' });
+
+        expect(getLiveNotificationCount()).toBe(2);
+
+        // 30 分钟前那条仍然可点：能唤起窗口并按自己的任务跳转
+        notifications[0].clickHandler!();
+        jest.advanceTimersByTime(200);
+
+        expect(mainWindow.show).toHaveBeenCalled();
+        expect(openTaskMessages()).toEqual([['task-late']]);
     });
 
     it('通知 click 未投递时，主窗口获得焦点仍会打开任务', () => {

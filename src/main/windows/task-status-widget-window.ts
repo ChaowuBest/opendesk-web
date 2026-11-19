@@ -15,6 +15,7 @@ import { errorToMessage, type TaskUpdateChunk } from '../aikernel/task/types.js'
 import { BaseTaskUpdateSubscriber } from '../aikernel/states/tasks.js';
 import { logger } from '../utils/logger.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
+import { bringMainWindowToForeground } from '../utils/window-close.js';
 import { getWindowIcon } from '../utils/app-icon.js';
 import {
     endWindowDragSession,
@@ -722,16 +723,14 @@ function hideWidget(): void {
 }
 
 function activateMainWindow(main: BrowserWindow): void {
-    if (main.isMinimized()) {
-        main.restore();
-    }
-    main.show();
+    // 恢复/聚焦统一走 bringMainWindowToForeground：其中包含 Windows 前台锁的规避，
+    // 否则从浮窗回到主窗口时同样可能只闪任务栏图标
+    bringMainWindowToForeground(main);
     if (process.platform === 'darwin') {
         // macOS 上 window.show() 恢复隐藏窗口后可能不会激活应用，导致 Dock 图标
         // 不高亮、窗口不进入前台；用 app.focus({ steal: true }) 强制激活。
         app.focus({ steal: true });
     }
-    main.focus();
 }
 
 function restoreMainWindow(): void {

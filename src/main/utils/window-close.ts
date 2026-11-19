@@ -23,6 +23,7 @@ export interface MainWindowLike {
     show(): void;
     hide(): void;
     moveTop(): void;
+    setAlwaysOnTop(flag: boolean): void;
     focus(): void;
 }
 
@@ -61,13 +62,29 @@ export const CLOSE_DIALOG_REQUEST_CHANNEL = 'closeWindow:request';
 export const CLOSE_DIALOG_RESPONSE_CHANNEL = 'closeWindow:response';
 
 /**
+ * Windows 上临时置顶后撤销置顶的延迟（ms）。
+ *
+ * SetForegroundWindow 是在目标窗口的线程上异步生效的：置顶、focus、撤顶挤在同一个
+ * 事件循环 tick 里，撤顶有可能先落地，窗口在真正拿到前台之前就被摘掉置顶，前台锁
+ * 依旧生效。晚一拍再撤销能稳定避开这个竞争，同时置顶只持续极短时间用户感知不到。
+ */
+const WIN32_TOPMOST_REVERT_DELAY_MS = 50;
+
+/**
  * 把主窗口带到前台。
  *
  * 关闭确认弹窗是应用内模态：若窗口处于最小化/隐藏/后台状态（例如用户在任务栏
  * 右键关闭窗口、或窗口被其他应用遮挡），弹窗会在用户看不到的地方弹出，用户会
  * 误以为应用卡死。因此在展示弹窗前必须先恢复并聚焦主窗口。
+ *
+ * 系统通知点击、托盘点击、第二实例也要把窗口带到前台，统一复用这里的实现，
+ * 避免各处只调 show() 而在 Windows 上留下「窗口没真正到前台」的差异。
+ *
+ * 调用方拿到的窗口可能已经被销毁（托盘/第二实例仍持有旧引用），这里统一早退，
+ * 免得在事件回调里抛 "Object has been destroyed"。
  */
 export function bringMainWindowToForeground(window: MainWindowLike): void {
+    if (window.isDestroyed()) return;
     if (window.isMinimized()) {
         window.restore();
     }
@@ -75,6 +92,20 @@ export function bringMainWindowToForeground(window: MainWindowLike): void {
         window.show();
     }
     window.moveTop();
+    if (process.platform === 'win32') {
+        // Windows 的 SetForegroundWindow 受前台锁限制，后台进程直接 focus() 往往只让
+        // 任务栏图标闪一下，窗口仍被其它应用盖住（electron/electron#20911）。
+        // 临时置顶再撤销是通行的规避手段：置顶期间 focus() 不受前台锁约束。
+        // 这里假定主窗口自身不是常驻置顶窗口（目前没有该配置）；将来若要支持窗口置顶，
+        // 撤顶需改为恢复调用前的状态，而不是一律置 false。
+        window.setAlwaysOnTop(true);
+        window.focus();
+        setTimeout(() => {
+            if (window.isDestroyed()) return;
+            window.setAlwaysOnTop(false);
+        }, WIN32_TOPMOST_REVERT_DELAY_MS);
+        return;
+    }
     window.focus();
 }
 
