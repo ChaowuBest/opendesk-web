@@ -1856,8 +1856,15 @@ class AgentGateFloatingWindow extends HTMLElement {
     }
 
     _navigateToDashboard(highlightEventId) {
-        // Navigate to AgentGate application within OpenDesk
-        if (window.globalControlAPI && window.globalControlAPI.openApplication) {
+        // 安全网关已从侧边栏「应用」迁到「设置 → 安全中心」，跳转目标随之改为该页签；
+        // highlightEventId 交给设置面板在内嵌页加载后补发（entry 收到后切到 dashboard 并高亮）
+        if (window.globalControlAPI && window.globalControlAPI.openSettingEditor) {
+            window.globalControlAPI.openSettingEditor({
+                tab: 'security',
+                highlightEventId: highlightEventId || null
+            });
+        } else if (window.globalControlAPI && window.globalControlAPI.openApplication) {
+            // 兜底：更老的主进程没有 openSettingEditor 的新签名时仍走独立应用
             window.globalControlAPI.openApplication('agentgate', { highlightEventId: highlightEventId || null });
         } else if (this._dashboardUrl) {
             window.open(this._dashboardUrl, '_blank');

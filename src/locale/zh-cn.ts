@@ -1573,6 +1573,9 @@ export const zhCn: Record<string, string> = {
     'sp.tab.agents': 'Agent 设置',
     'sp.tab.search': '搜索设置',
     'sp.tab.general': '通用设置',
+    // 安全网关应用的整体开关/策略/审计都在这个页签里（原侧边栏「应用」→ 安全网关）
+    'sp.tab.security': '安全中心',
+    'sp.security.disabledHint': '安全网关已被插件禁用，请先解除禁用再配置安全策略。',
     // 测评集仓库（每个仓库在测评应用里占一个 Tab）
     'sp.tab.registryChannels': '仓库设置',
     'sp.benchmarkChannel.title': '测评集仓库',
@@ -2367,10 +2370,6 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.openConfigDir': '打开配置目录',
     'renderer.toolbar.admin': '管理后台',
     'renderer.toolbar.personalCenter': '个人中心',
-    'renderer.toolbar.securityGateway': '安全网关',
-    'renderer.toolbar.securityGateway.ok': '安全网关运行正常',
-    'renderer.toolbar.securityGateway.warn': '安全网关已开启，AgentMoss 服务不可达',
-    'renderer.toolbar.securityGateway.err': '安全网关不可达',
 
     // Renderer - Admin Panel
     'renderer.admin.title': '管理后台',

@@ -148,8 +148,8 @@ const T: Record<string, { zh: string; en: string }> = {
         en: 'Please ensure the security analysis engine service (AgentMoss HTTP) is running'
     },
     consoleRetry: { zh: '重新加载', en: 'Reload' },
-    sectionMoss: { zh: '安全分析引擎', en: 'Security Analysis Engine' },
-    masterSwitch: { zh: '安全网关总开关', en: 'Security Gateway Master Switch' },
+    sectionMoss: { zh: 'MOSS安全防护引擎', en: 'MOSS Security Protection Engine' },
+    masterSwitch: { zh: 'MOSS防护总开关', en: 'MOSS Protection Master Switch' },
     masterSwitchDesc: {
         zh: '关闭后所有安全审查能力停止工作，即使试验性功能已开启',
         en: 'When disabled, all security inspection capabilities stop working, even if experimental features are enabled'
@@ -252,7 +252,7 @@ const T: Record<string, { zh: string; en: string }> = {
     dashboardLoading: { zh: '加载中...', en: 'Loading...' },
     dashboardLoadFailed: { zh: '实时状态加载失败', en: 'Dashboard failed to load' },
     dashboardUnreachable: { zh: '安全网关服务未连接', en: 'Security gateway service unreachable' },
-    masterSwitchOff: { zh: '安全网关总开关已关闭', en: 'Master Switch Off' },
+    masterSwitchOff: { zh: 'MOSS防护总开关已关闭', en: 'MOSS Protection Master Switch Off' },
     masterSwitchOffHint: {
         zh: '请打开总开关以启用安全监控',
         en: 'Enable the master switch to activate security monitoring'
@@ -1335,7 +1335,7 @@ function injectDashLocale(panel: HTMLElement): void {
         if (el) el.textContent = text;
     };
     // Header
-    replace('.header h1', '安全网关实时状态');
+    replace('.header h1', 'MOSS防护实时信息');
     // Stats card labels ( Agents / Sessions / Tool Calls / Allow / Deny / Avg Latency )
     const labels = panel.querySelectorAll('.card .label');
     const zhLabels = ['智能体', '会话', '工具调用', '放行', '拦截', '平均延迟'];
@@ -1630,15 +1630,18 @@ class AgentGateEntryWidget extends HTMLElement {
     }
 
     async _init() {
+        // 页签顺序：设置 → 实时状态 → 策略控制台。
+        // 「设置」放最左并作为默认页：该页面已迁入设置面板的「安全中心」，
+        // 用户从设置入口进来时先看到配置项，而不是实时状态表格。
         this.root.innerHTML = `
             <div class="ag-tabs">
-                <div class="ag-tab active" data-tab="dashboard">${tr('tabDashboard')}</div>
+                <div class="ag-tab active" data-tab="config">${tr('tabConfig')}</div>
+                <div class="ag-tab" data-tab="dashboard">${tr('tabDashboard')}</div>
                 <div class="ag-tab" data-tab="console">${tr('tabConsole')}</div>
-                <div class="ag-tab" data-tab="config">${tr('tabConfig')}</div>
             </div>
-            <div id="ag-dash" class="ag-panel"></div>
+            <div id="ag-dash" class="ag-panel hidden"></div>
             <div id="ag-console" class="ag-panel hidden"></div>
-            <div id="ag-conf" class="ag-panel hidden"></div>
+            <div id="ag-conf" class="ag-panel"></div>
         `;
 
         // Tabs

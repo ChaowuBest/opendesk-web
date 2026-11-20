@@ -1613,6 +1613,10 @@ export const enUs: Record<string, string> = {
     'sp.tab.agents': 'Agents',
     'sp.tab.search': 'Search',
     'sp.tab.general': 'General',
+    // The whole Security Gateway UI (switch / policy / audit) lives in this tab
+    'sp.tab.security': 'Security Center',
+    'sp.security.disabledHint':
+        'The Security Gateway has been disabled by a plugin. Lift the disablement before configuring security policies.',
     // Registries (each enabled registry becomes a tab in the benchmark app)
     'sp.tab.registryChannels': 'Registries',
     'sp.benchmarkChannel.title': 'Benchmark Registries',
@@ -2457,10 +2461,6 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.openConfigDir': 'Open Config Directory',
     'renderer.toolbar.admin': 'Admin Console',
     'renderer.toolbar.personalCenter': 'Profile',
-    'renderer.toolbar.securityGateway': 'Security Gateway',
-    'renderer.toolbar.securityGateway.ok': 'Security Gateway is running normally',
-    'renderer.toolbar.securityGateway.warn': 'Security Gateway is on, AgentMoss service unreachable',
-    'renderer.toolbar.securityGateway.err': 'Security Gateway unreachable',
 
     // Renderer - Admin Panel
     'renderer.admin.title': 'Admin Console',
