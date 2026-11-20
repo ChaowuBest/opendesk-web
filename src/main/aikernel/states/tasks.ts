@@ -2792,12 +2792,20 @@ export class TaskState {
     }
 
     /**
-     * 流式快照限流判断：同一 (message_id, part_index) 的全量文本快照按最小间隔发送，
-     * 文本增量超过阈值时立即放行。仅作用于增长中的 text/reasoning part。
+     * 流式快照限流判断：同一 (message_id, part_index) 的全量快照按最小间隔发送，
+     * 文本增量超过阈值时立即放行。作用于增长中的 text/reasoning part，以及参数
+     * 仍在流式输出（全部 toolcall 均为 pending）的 tool_call part；执行阶段的
+     * 状态迁移/结果快照不经过本限流器，始终即时发送。
      */
     private shouldSendStreamingFeedback(messageId: string, partIndex: number, part: AssistantMessagePart): boolean {
         const textLength =
-            part.type === 'text' ? part.text.length : part.type === 'reasoning' ? part.content.length : 0;
+            part.type === 'text'
+                ? part.text.length
+                : part.type === 'reasoning'
+                  ? part.content.length
+                  : part.type === 'tool_call' && Array.isArray(part.toolcalls)
+                    ? part.toolcalls.reduce((sum, toolcall) => sum + (toolcall.args_string?.length ?? 0), 0)
+                    : 0;
         return this.streaming_feedback_throttle.shouldSend(`${messageId}:${partIndex}`, textLength);
     }
 
@@ -2863,8 +2871,20 @@ export class TaskState {
                     this.task_status === 'running' &&
                     updated_part_index === content.length - 1 &&
                     (last_part.type === 'text' || last_part.type === 'reasoning');
+                // tool_call 流式快照同样限频：模型正在输出工具参数时（所有 toolcall 仍为
+                // pending），每个 LLM chunk 都会推送一次全量 part 快照，写大文件时 args
+                // 高频增长会把渲染端拖入「每帧全量重建」的节奏。仅限 pending 阶段：
+                // 执行阶段的状态迁移/结果快照保持即时审计语义；且 pending 帧不可能携带
+                // live 增量（tick 只发生在执行阶段），提前返回不会漏清增量。
+                const toolCallArgStreaming =
+                    this.task_status === 'running' &&
+                    updated_part_index === content.length - 1 &&
+                    last_part.type === 'tool_call' &&
+                    Array.isArray(last_part.toolcalls) &&
+                    last_part.toolcalls.length > 0 &&
+                    last_part.toolcalls.every((toolcall) => toolcall.status === 'pending');
                 if (
-                    streaming &&
+                    (streaming || toolCallArgStreaming) &&
                     !this.shouldSendStreamingFeedback(last_message.message_id, updated_part_index, last_part)
                 ) {
                     // 流式快照限频：跳过本次发送。快照始终携带全量累积文本，

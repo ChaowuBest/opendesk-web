@@ -128,7 +128,7 @@ describe('live 增量随快照发布一次后清空', () => {
 
 describe('端到端：跳帧合并后渲染端文本不重不漏', () => {
     /**
-     * 模拟渲染端 patchRunningTerminalToolOutput 的增量分支：
+     * 模拟渲染端 patchToolCallCards 的增量分支：
      * 运行中且带增量的卡片才参与，reset 整体重写、否则追加纯文本。
      */
     function applyIncremental(state: Map<string, string>, payload: any): void {

@@ -140,7 +140,7 @@ describe('ToolCall GUI render payload', () => {
     /**
      * 回归：终端 live tick 的增量字段必须进入 IPC payload。
      *
-     * 背景：渲染端 patchRunningTerminalToolOutput 有「携带 outputDelta 时只追加文本」的
+     * 背景：渲染端 patchToolCallCards 有「携带 outputDelta 时只追加文本」的
      * 快路径（taskview.js），但 ToolCall.toRenderJSON 曾经不导出 outputDelta/outputReset，
      * 导致该分支在生产链路中永远不可达：每个 200ms tick 都退化为
      * 「重新解析整份 part HTML + 整体重写输出区」，超长输出下持续占用渲染进程主线程。

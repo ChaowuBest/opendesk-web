@@ -488,7 +488,7 @@ export class ToolCall implements BaseChatToolCall {
             status: this.status,
             rendered: this.rendered,
             // 终端 live tick 的增量必须先落到 IPC 载荷里，渲染端
-            // patchRunningTerminalToolOutput 的「只追加文本」快路径才可达；
+            // patchToolCallCards 的「只追加文本」快路径才可达；
             // 缺失时每个 tick 都会退化为整份 part HTML 解析 + 输出区重写。
             ...(this.outputDelta !== undefined ? { outputDelta: this.outputDelta } : {}),
             ...(this.outputReset === true ? { outputReset: true } : {}),
@@ -692,8 +692,22 @@ export class ToolCall implements BaseChatToolCall {
     }
 
     /**
-     * 渲染工具调用
+     * 给工具卡片 HTML 补上 data-toolcall-id 根标识（缺失时用无样式 div 包裹）。
+     *
+     * 渲染端按 toolcall 粒度做增量卡片更新（patchToolCallCards）需要在
+     * DOM 中按 id 定位新旧卡片；终端工具的卡片根节点自带该属性，其余工具统一由
+     * 这里补齐。包裹层是无 class 的块级 div，工具卡片的垂直外边距可穿透折叠；
+     * 工具卡片只出现在过程块（.od-process-detail）内，其样式选择器均为后代选择器，
+     * 包裹层不影响既有布局。
      */
+    private stampToolCallId(html: string): string {
+        if (!html) return html;
+        const rootTag = /^<[a-zA-Z][^>]*>/.exec(html.trimStart());
+        if (rootTag && rootTag[0].includes('data-toolcall-id=')) return html;
+        return `<div data-toolcall-id="${escapeHtml(this.id)}">${html}</div>`;
+    }
+
+    /** 渲染工具调用 */
     async render(): Promise<string> {
         if (this.rendered !== undefined) {
             /* 如果已经确认冻结了渲染结果，则直接返回 */
@@ -702,19 +716,19 @@ export class ToolCall implements BaseChatToolCall {
 
         /* 默认统一渲染错误；少数工具可选择保留自身身份信息并负责展示错误内容。 */
         if (this.status === 'error' && this.tool?.renderToolCallOnError !== true) {
-            return this.renderError();
+            return this.stampToolCallId(this.renderError());
         }
 
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
         if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
             const rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
-                return rendered;
+                return this.stampToolCallId(rendered);
             }
         }
 
         if (this.status === 'error') {
-            return this.renderError();
+            return this.stampToolCallId(this.renderError());
         }
 
         const statusIcon =
@@ -724,13 +738,13 @@ export class ToolCall implements BaseChatToolCall {
 
         const displayName = this.getResolvedToolDisplayName();
 
-        return `<div class="od-inline-toolcall-container">
+        return this.stampToolCallId(`<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(displayName)}</span>
                 ${statusIcon}
             </div>
-        </div>`;
+        </div>`);
     }
 
     /** 统一的工具错误内联展开渲染，所有工具报错都走这个入口 */
