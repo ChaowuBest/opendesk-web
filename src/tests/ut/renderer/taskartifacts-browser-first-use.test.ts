@@ -79,6 +79,7 @@ describe('task artifacts first Browser Use after a manual preview', () => {
             FileExplorer: class {
                 mount() {}
                 closeEditor() {}
+                setDirectoryBrowserVisible() {}
                 stopWatchingFile() {}
                 isEditorOpen() {
                     return false;
