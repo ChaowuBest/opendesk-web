@@ -40,6 +40,7 @@ import { buildRequestChatContext } from '../adapters/context.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import {
     collectToolCalls,
+    hasRequestToolCall,
     chunkIntroducesNewToolCall,
     finalizeToolCallArgs,
     removeToolCallsFrom,
@@ -567,8 +568,8 @@ export async function processTaskCompletion(
     const toolCallsBeforeCompletion = new Set(collectToolCalls(assistant_message));
     const getCurrentRequestToolCalls = (): ToolCall[] =>
         collectToolCalls(assistant_message).filter((toolCall) => !toolCallsBeforeCompletion.has(toolCall));
-    // 追踪本次 LLM 请求已 merge 的工具调用数量，用于检测新工具调用到达
-    let prevMergedToolCallCount = 0;
+    // 记录上次合并后是否已有本次请求的工具调用，用于检测新工具调用到达
+    let hadRequestToolCall = false;
     let abortedByToolcallHook = false;
     // 解析本次 turn 的有效推理档位（在 turn 起点固定一次，同一 turn 内所有轮次保持一致）：
     // 1. 调用方（modelRequestOptions）显式指定档位 → 优先级最高；
@@ -696,7 +697,7 @@ export async function processTaskCompletion(
                                 chunk_resp.content,
                                 assistant_message
                             );
-                            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                            if (chunkHasNewToolCall && hadRequestToolCall) {
                                 const existingCalls = collectToolCalls(assistant_message);
                                 const lastExisting = existingCalls[existingCalls.length - 1];
                                 if (lastExisting) {
@@ -756,7 +757,7 @@ export async function processTaskCompletion(
 
                             resolveStreamingToolCallsForTask(task, assistant_message);
 
-                            prevMergedToolCallCount = getCurrentRequestToolCalls().length;
+                            hadRequestToolCall = hasRequestToolCall(assistant_message, toolCallsBeforeCompletion);
 
                             // When content length increases, a new part was created - the previous part is now complete
                             if (assistant_message.content.length > prevPartCount) {
@@ -838,7 +839,7 @@ export async function processTaskCompletion(
                                 preparedContextTokens + estimateTextTokens(requestTailText) < learnedWindow * 0.8
                             ) {
                                 lastSentTextPartIndex = -1;
-                                prevMergedToolCallCount = 0;
+                                hadRequestToolCall = false;
                                 continue;
                             }
                         }
@@ -866,7 +867,7 @@ export async function processTaskCompletion(
                             requestType: 'streamComplete'
                         });
                         lastSentTextPartIndex = -1;
-                        prevMergedToolCallCount = 0;
+                        hadRequestToolCall = false;
                         await task.sendAssistantMessageReplace(assistant_message);
                         continue;
                     } catch (recoveryError) {
@@ -932,7 +933,7 @@ export async function processTaskCompletion(
                             break;
                         }
                     }
-                    prevMergedToolCallCount = getCurrentRequestToolCalls().length;
+                    hadRequestToolCall = hasRequestToolCall(assistant_message, toolCallsBeforeCompletion);
                     await task.sendAssistantMessageReplace(assistant_message);
                     if (!isCurrentTurn()) return false;
                 }
