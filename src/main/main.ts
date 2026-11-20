@@ -101,6 +101,7 @@ import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
 import { refreshRuntimePreferredSystemLanguages } from './utils/system-language-refresh.js';
 import * as taskTransfer from './aikernel/task/transfer.js';
 import { releaseTaskMemory } from './aikernel/task/memory.js';
+import { readExternalizedImageFile } from './aikernel/task/image-externalization.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { exportLogEntries } from './utils/export-log.js';
 import { createLocalExportDestinationHost } from './utils/export-local-destination.js';
@@ -2082,6 +2083,18 @@ const registerTaskManagerAPIHandlers = () => {
         } catch (error: any) {
             logger.error('saving export html failed', error);
             return { status: 'error', message: error.message };
+        }
+    });
+    // 读取外置的工具结果原图（issue #341）：恢复任务时内存里只有缩略图，
+    // 点击查看大图等显式消费场景才通过本通道从磁盘按需加载
+    ipcMain.handle('taskManager:readExternalizedImage', async (_event, taskId, relativePath) => {
+        if (typeof taskId !== 'string' || taskId.length === 0 || typeof relativePath !== 'string') {
+            return { status: 'error', message: 'invalid externalized image request' };
+        }
+        try {
+            return { status: 'ok', data: await readExternalizedImageFile(taskId, relativePath) };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
         }
     });
     // 将任务的 .task.json 导出到用户选择的路径

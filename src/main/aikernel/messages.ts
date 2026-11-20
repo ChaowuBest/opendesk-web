@@ -28,6 +28,7 @@ import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
 import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
+import type { ToolResultImage } from './task/image-externalization.js';
 import type {
     BaseAssistantMessage,
     ChatContextSnapshot,
@@ -2237,7 +2238,8 @@ export class AssistantMessage implements BaseAssistantMessage {
     private buildOpenAIMessagesFromParts(
         parts: ReadonlyArray<AssistantMessagePart>,
         toolResultOverrides?: Map<string, string>,
-        supportsVision: boolean = true
+        supportsVision: boolean = true,
+        hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>
     ): object[] {
         const messages: object[] = [];
 
@@ -2327,7 +2329,8 @@ export class AssistantMessage implements BaseAssistantMessage {
                     }
                     if (supportsVision) {
                         const imageContent = validToolcalls.flatMap((toolcall) =>
-                            toolcall.getResultImages().flatMap((image) => [
+                            // 外置图片优先用请求前回灌的完整原图；未回灌时退回内联缩略图
+                            (hydratedToolImages?.get(toolcall.id) ?? toolcall.getResultImages()).flatMap((image) => [
                                 {
                                     type: 'text',
                                     text: `Image returned by ${toolcall.tool_name} (${toolcall.id}).`
@@ -2364,14 +2367,19 @@ export class AssistantMessage implements BaseAssistantMessage {
         return messages;
     }
 
-    toOpenAIMessages(toolResultOverrides?: Map<string, string>, supportsVision: boolean = true): object[] {
-        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides, supportsVision);
+    toOpenAIMessages(
+        toolResultOverrides?: Map<string, string>,
+        supportsVision: boolean = true,
+        hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>
+    ): object[] {
+        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides, supportsVision, hydratedToolImages);
     }
 
     toOpenAIMessagesFromPartIndex(
         startPartIndex: number,
         toolResultOverrides?: Map<string, string>,
-        supportsVision: boolean = true
+        supportsVision: boolean = true,
+        hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>
     ): object[] {
         if (!Number.isInteger(startPartIndex) || startPartIndex < 0) {
             throw new Error(`invalid assistant replay startPartIndex: ${startPartIndex}`);
@@ -2382,21 +2390,28 @@ export class AssistantMessage implements BaseAssistantMessage {
         return this.buildOpenAIMessagesFromParts(
             this.content.slice(startPartIndex),
             toolResultOverrides,
-            supportsVision
+            supportsVision,
+            hydratedToolImages
         );
     }
 
     toOpenAIMessagesFromRound(
         roundRef: { assistantMessageId: string; startPartIndex: number },
         toolResultOverrides?: Map<string, string>,
-        supportsVision: boolean = true
+        supportsVision: boolean = true,
+        hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>
     ): object[] {
         if (roundRef.assistantMessageId !== this.message_id) {
             throw new Error(
                 `assistant replay roundRef message mismatch: expected ${this.message_id}, got ${roundRef.assistantMessageId}`
             );
         }
-        return this.toOpenAIMessagesFromPartIndex(roundRef.startPartIndex, toolResultOverrides, supportsVision);
+        return this.toOpenAIMessagesFromPartIndex(
+            roundRef.startPartIndex,
+            toolResultOverrides,
+            supportsVision,
+            hydratedToolImages
+        );
     }
 
     getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {

@@ -88,13 +88,16 @@ export async function exportTaskBundle(
         if (task._corrupted) throw new TaskTransferError('invalidTask');
         if (!task._fullyLoaded && task._lazyFilePath) {
             try {
-                const json = JSON.parse(await readFile(task._lazyFilePath, 'utf8'));
-                if (task._corrupted || json.task_id !== id) throw new TaskTransferError('invalidTask');
-                if (!task._fullyLoaded) return deserializeTaskData(json, manager).toJSON();
+                const fileJson = JSON.parse(await readFile(task._lazyFilePath, 'utf8'));
+                if (task._corrupted || fileJson.task_id !== id) throw new TaskTransferError('invalidTask');
+                if (!task._fullyLoaded) return deserializeTaskData(fileJson, manager).toJSON();
             } catch (error) {
                 throw new TaskTransferError('invalidTask', error);
             }
         }
+        // 导出仅保留缩略图 + externalized 标记（不回填原图）：回填需要深拷贝任务图
+        // + 全量读盘，对大任务会直接 OOM（issue #341）；显示安全性由缩略图保证，
+        // 完整原图只存在于源机器的 artifacts（详见 export.ts 的 exportTaskJsonToFile）。
         return task.toJSON();
     });
     return selected.size;

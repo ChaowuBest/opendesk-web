@@ -171,16 +171,38 @@ describe('shared native sandbox preparation and shell execution', () => {
     test('a desktop platform without sandbox components degrades to the ordinary shell', async () => {
         // 桌面端沙箱二进制缺失（未随包/被删除）：宿主未声明 SandboxKit 支持，
         // 平台内置实现也拿不到启动计划，此时降级为宿主 shell 而不是中断任务。
-        const host = new Host();
-        jest.spyOn(host, 'getNativeBridge').mockReturnValue({
-            getSandboxKit: async () => new NaiveSandboxKit()
-        } as any);
-        setPlatform(host);
-        Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-        child();
-        await executeShellCommand(options({ cwd: directory }));
-        expect(kit.prepare).not.toHaveBeenCalled();
-        expect(spawn).toHaveBeenCalledWith('/opaque/runtime/bin/bash', ['-c', 'printf safe'], expect.anything());
+        // dynobox 的开发机产物（native/linux/sandbox/runtime）在构建过的仓库里真实
+        // 存在，resolveLinuxSandboxExecutable 会探测到它并把"降级"变成 dynobox 包装
+        // 启动；把 INIT_CWD 指到空目录以确定性地模拟"组件缺失"，测试不再依赖
+        // 开发机是否构建过沙箱 runtime。
+        const previousInitCwd = process.env.INIT_CWD;
+        const previousDynoBoxOverride = process.env.OPENDESK_DYNOBOX_BIN;
+        process.env.INIT_CWD = path.join(directory, 'no-sandbox-components');
+        // 联调钩子指向真实 dynobox 时同样会破坏"组件缺失"前提，一并钉死
+        process.env.OPENDESK_DYNOBOX_BIN = path.join(directory, 'no-sandbox-components', 'dynobox');
+        try {
+            const host = new Host();
+            jest.spyOn(host, 'getNativeBridge').mockReturnValue({
+                getSandboxKit: async () => new NaiveSandboxKit()
+            } as any);
+            setPlatform(host);
+            Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+            child();
+            await executeShellCommand(options({ cwd: directory }));
+            expect(kit.prepare).not.toHaveBeenCalled();
+            expect(spawn).toHaveBeenCalledWith('/opaque/runtime/bin/bash', ['-c', 'printf safe'], expect.anything());
+        } finally {
+            if (previousInitCwd === undefined) {
+                delete process.env.INIT_CWD;
+            } else {
+                process.env.INIT_CWD = previousInitCwd;
+            }
+            if (previousDynoBoxOverride === undefined) {
+                delete process.env.OPENDESK_DYNOBOX_BIN;
+            } else {
+                process.env.OPENDESK_DYNOBOX_BIN = previousDynoBoxOverride;
+            }
+        }
     });
 
     test('spawn failure disposes native and shared resources exactly once', async () => {

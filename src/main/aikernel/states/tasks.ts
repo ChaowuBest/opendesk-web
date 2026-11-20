@@ -108,6 +108,7 @@ import {
     type SimplifiedTaskSnapshot
 } from '../task/serializer.js';
 import { getTaskChangesFromTask, type TaskChangesResult } from '../task/changes.js';
+import { externalizeToolResultImages, migrateInlineToolResultImages } from '../task/image-externalization.js';
 import {
     buildToolsetsForTask,
     ensureToolsResolvedForTask,
@@ -323,6 +324,10 @@ export class TaskState {
     private _loading: boolean = false;
     /** 任务数据文件已损坏（缺失或无法解析）。ensureLoaded() 降级时标记为 true。 */
     _corrupted: boolean = false;
+    /** 旧任务内联图片外置迁移的单飞 Promise（见 pendingImageMigration）。 */
+    private _imageMigrationPromise?: Promise<number>;
+    /** 本实例已完成过一次迁移检查（提交接缝负责后续新图片，无需重复全量遍历）。 */
+    private _imageMigrationDone: boolean = false;
 
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -980,6 +985,44 @@ export class TaskState {
     }
 
     /**
+     * 旧任务内联图片的外置迁移（issue #341 阶段一）：load 路径是同步的，
+     * 迁移以 fire-and-forget 方式在任务打开（getTaskLoadResult）时触发；同一任务
+     * 单飞，返回可等待的迁移 Promise（迁移完成后脏任务会在下一次落盘时瘦身）。
+     */
+    pendingImageMigration(): Promise<number> {
+        // 提交接缝（processToolCall）负责新产生的图片，本实例完成过检查后无需重复全量遍历
+        if (this._imageMigrationDone) {
+            return Promise.resolve(0);
+        }
+        if (!this._imageMigrationPromise) {
+            const migration = migrateInlineToolResultImages(this)
+                .catch((error) => {
+                    logger.warn(`inline image migration failed for task ${this.task_id}: ${error}`);
+                    return 0;
+                })
+                .then((migrated) => {
+                    this._imageMigrationDone = true;
+                    return migrated;
+                });
+            this._imageMigrationPromise = migration;
+            // 完成后解除占用：unload 的迁移守卫只在迁移进行中生效
+            void migration.then(
+                () => {
+                    if (this._imageMigrationPromise === migration) {
+                        this._imageMigrationPromise = undefined;
+                    }
+                },
+                () => {
+                    if (this._imageMigrationPromise === migration) {
+                        this._imageMigrationPromise = undefined;
+                    }
+                }
+            );
+        }
+        return this._imageMigrationPromise;
+    }
+
+    /**
      * 卸载任务：ensureLoaded() 的逆操作。
      *
      * 将重量级字段写回磁盘后清空，使任务回到轻量壳状态（_fullyLoaded=false），
@@ -1016,6 +1059,9 @@ export class TaskState {
         if (this._turnRunning) return false;
         if (this._sessionMemoryUpdatePromise) return false;
         if (this.compactProgress) return false;
+        // 图片外置迁移进行中：迁移完成后会 persistLater，先卸载会让写回落在
+        // lazy shell 上（被落盘过滤丢弃），等迁移结束再卸载。
+        if (this._imageMigrationPromise) return false;
 
         // 1) 先落盘：此刻 _fullyLoaded 仍为 true，脏数据才会被写入。
         if (this._dirty) {
@@ -3328,6 +3374,14 @@ export class TaskState {
                 await this.renderInWorkspace(() => tool_call.freezeRenderResult());
             }
             recordEvidenceCardToolCall(this, tool_call);
+            // 工具结果图片外置（issue #341）：原地替换大图为缩略图 + artifacts 引用。
+            // 放在 finally 末尾以同时覆盖正常提交与 afterToolCall hook 对 result_object
+            // 的二次赋值；函数内部按条目幂等且吞错，不影响工具结果本身。
+            try {
+                await externalizeToolResultImages(this.task_id, tool_call.result_object);
+            } catch (externalizeError) {
+                logger.warn(`image externalization skipped for task ${this.task_id}: ${externalizeError}`);
+            }
         }
     }
     /**

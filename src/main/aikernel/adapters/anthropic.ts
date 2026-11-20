@@ -33,6 +33,7 @@ import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
+import { withHydratedToolImages } from '../task/image-externalization.js';
 import { readWithIdleTimeout, StreamIdleTimeoutError } from '../../utils/stream-timeout.js';
 import {
     ModelRequestError,
@@ -408,8 +409,9 @@ export class AnthropicAdapter {
         if (!supportsVision) {
             return text;
         }
-        const imageBlocks = toolCall
-            .getResultImages()
+        // 外置图片优先用请求前回灌的完整原图；未回灌（如历史重放）时退回内联缩略图
+        const images = projection.hydratedToolImages?.get(toolCall.id) ?? toolCall.getResultImages();
+        const imageBlocks = images
             .map((image) => AnthropicAdapter.imageUrlToAnthropicBlock(image.image_url))
             .filter((block): block is object => block !== undefined);
         if (imageBlocks.length === 0) {
@@ -787,7 +789,11 @@ export class AnthropicAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<TextCompletionResult> {
-        const messages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const messages = AnthropicAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const output = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget) assertRequestBudget(messages, output, requestOptions.contextBudget.window);
         const response = await this.createMessage(
@@ -822,7 +828,11 @@ export class AnthropicAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<string> {
-        const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const anthropicMessages = AnthropicAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const response = await this.runRequest(
             () =>
                 this.createMessage(
@@ -846,7 +856,11 @@ export class AnthropicAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<AssistantResponse> {
-        const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const anthropicMessages = AnthropicAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const response = await this.runRequest(
             () =>
                 this.createMessage(
@@ -872,7 +886,11 @@ export class AnthropicAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: AnthropicAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
-        const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
+        const anthropicMessages = AnthropicAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const toolOptions = AnthropicAdapter.buildToolOptions(chatContext);
         let maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget)

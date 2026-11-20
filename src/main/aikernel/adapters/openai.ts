@@ -28,6 +28,7 @@ import { extractErrorMessage } from './http-error.js';
 import { lookupKnownMaxOutputTokens } from '../../utils/model-context.js';
 import iconv from 'iconv-lite';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
+import { withHydratedToolImages } from '../task/image-externalization.js';
 import { StreamIdleTimeoutError, withStreamIdleTimeout } from '../../utils/stream-timeout.js';
 import {
     classifyModelRequestError,
@@ -400,7 +401,8 @@ export class OpenAIAdapter {
                         ...message.toOpenAIMessagesFromRound(
                             replayInstruction.roundRef,
                             projection.toolResultOverrides,
-                            supportsVision
+                            supportsVision,
+                            projection.hydratedToolImages
                         )
                     );
                 } else if (typeof replayInstruction?.startPartIndex === 'number') {
@@ -408,11 +410,18 @@ export class OpenAIAdapter {
                         ...message.toOpenAIMessagesFromPartIndex(
                             replayInstruction.startPartIndex,
                             projection.toolResultOverrides,
-                            supportsVision
+                            supportsVision,
+                            projection.hydratedToolImages
                         )
                     );
                 } else {
-                    messages.push(...message.toOpenAIMessages(projection.toolResultOverrides, supportsVision));
+                    messages.push(
+                        ...message.toOpenAIMessages(
+                            projection.toolResultOverrides,
+                            supportsVision,
+                            projection.hydratedToolImages
+                        )
+                    );
                 }
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));
@@ -473,7 +482,11 @@ export class OpenAIAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: OpenAIAdapterRequestOptions
     ): Promise<TextCompletionResult> {
-        const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
+        const messages = OpenAIAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const output = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget) assertRequestBudget(messages, output, requestOptions.contextBudget.window);
         const response: any = await this.client.chat.completions.create(
@@ -540,7 +553,11 @@ export class OpenAIAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: OpenAIAdapterRequestOptions
     ): Promise<string> {
-        const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
+        const messages = OpenAIAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         const response = await this.runCompletionRequest(
             () =>
@@ -632,7 +649,11 @@ export class OpenAIAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: OpenAIAdapterRequestOptions
     ): Promise<AssistantResponse> {
-        const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
+        const messages = OpenAIAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         const response = await this.runCompletionRequest(
@@ -660,7 +681,11 @@ export class OpenAIAdapter {
         options: AdapterMessageBuildOptions = {},
         requestOptions?: OpenAIAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
-        const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
+        const messages = OpenAIAdapter.buildMessages(
+            chatContext,
+            supportsVision,
+            await withHydratedToolImages(chatContext, supportsVision, options)
+        );
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
         let maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         if (requestOptions?.contextBudget)

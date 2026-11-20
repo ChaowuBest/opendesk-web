@@ -19,6 +19,7 @@ import { crc32 } from 'node:zlib';
 import yauzl, { type Entry, type ZipFile } from 'yauzl';
 import yazl from 'yazl';
 import { buildAtomicWriteTmpPath, getTempDir } from './temp.js';
+import { jsonChunksAsBuffers } from './json-stream-write.js';
 
 import { TaskTransferError } from './task-transfer-error.js';
 export { TaskTransferError, type TaskTransferErrorCode } from './task-transfer-error.js';
@@ -256,7 +257,9 @@ export async function writeTaskBundle(
                 .then(load)
                 .then((json) => {
                     if (stream.destroyed) return;
-                    active = Readable.from([Buffer.from(JSON.stringify(json, null, 4))]);
+                    // 流式产出 JSON（与 JSON.stringify(json, null, 4) 字节一致），
+                    // 大任务条目不在内存物化整个输出串（issue #341 导出内存防护）
+                    active = Readable.from(jsonChunksAsBuffers(json, 4));
                     callback(null, active);
                 })
                 .catch((error) => stream.destroy(error));

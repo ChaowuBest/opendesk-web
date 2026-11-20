@@ -24,6 +24,7 @@ import type { TaskManagerState } from './manager.js';
 import type { TaskCompletionStatus, TaskStatus } from './types.js';
 import { logger } from '../../utils/logger.js';
 import { normalizeEvidenceCardState } from '../../utils/evidencecard.js';
+import { rewireExternalizedImagesForTask } from './image-externalization.js';
 
 // ═══════════════════ Helpers ═══════════════════
 
@@ -412,6 +413,15 @@ export function forkTask(task: TaskState, upToMessageId?: string): TaskState {
         if (idx >= 0) {
             messages.splice(idx + 1);
         }
+    }
+    // 外置图片 marker copy-on-fork：继承的 relative_path 指向源任务 artifacts，若不改写，
+    // 源任务删除会连带清掉原图，且 IPC 读取的路径围栏会拒绝跨任务路径（issue #341）。
+    const rewire = rewireExternalizedImagesForTask(forkedTask.chat_context, forkedTask.task_id);
+    if (rewire.rewritten > 0) {
+        logger.info(
+            `fork of task ${task.task_id}: rewired ${rewire.rewritten} externalized image(s) to task ${forkedTask.task_id}` +
+                ` (present ${rewire.present}, missing ${rewire.missing})`
+        );
     }
     forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
     forkedTask.auto_compact_state = AutoCompactStates.clone(task.auto_compact_state);

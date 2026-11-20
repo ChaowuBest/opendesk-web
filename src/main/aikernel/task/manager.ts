@@ -983,6 +983,10 @@ export class TaskManagerState {
         const task = this.tasks.find((task) => task.task_id === taskId);
         if (task) {
             task.ensureLoaded();
+            // 旧任务文件的内联大图片外置（issue #341）：在任务已 attach 到本 manager
+            // 后触发（导入/重建等未 attach 路径不迁移，避免 staging 内容不确定）。
+            // 异步单飞，完成后标脏等待下一次落盘瘦身；已外置的条目会被幂等跳过。
+            void task.pendingImageMigration();
             if (!task.harnessContext.workspace && this._harnessInitializer) {
                 this._harnessInitializer(task);
             }
