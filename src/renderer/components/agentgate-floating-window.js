@@ -1856,7 +1856,7 @@ class AgentGateFloatingWindow extends HTMLElement {
     }
 
     _navigateToDashboard(highlightEventId) {
-        // 安全网关已从侧边栏「应用」迁到「设置 → 安全设置」，跳转目标随之改为该页签；
+        // 安全网关已从侧边栏「应用」迁到「设置 → 安全中心」，跳转目标随之改为该页签；
         // highlightEventId 交给设置面板在内嵌页加载后补发（entry 收到后切到 dashboard 并高亮）
         if (window.globalControlAPI && window.globalControlAPI.openSettingEditor) {
             window.globalControlAPI.openSettingEditor({

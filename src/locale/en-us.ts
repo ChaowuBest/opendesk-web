@@ -1614,7 +1614,7 @@ export const enUs: Record<string, string> = {
     'sp.tab.search': 'Search',
     'sp.tab.general': 'General',
     // The whole Security Gateway UI (switch / policy / audit) lives in this tab
-    'sp.tab.security': 'Security',
+    'sp.tab.security': 'Security Center',
     'sp.security.disabledHint':
         'The Security Gateway has been disabled by a plugin. Lift the disablement before configuring security policies.',
     // Registries (each enabled registry becomes a tab in the benchmark app)

@@ -38,7 +38,7 @@ describe('application menu visibility', () => {
     });
 
     test('hides applications that have no standalone entry', () => {
-        // agentgate 已并入「设置 → 安全设置」；skillmgr 由侧边栏「技能」直达。
+        // agentgate 已并入「设置 → 安全中心」；skillmgr 由侧边栏「技能」直达。
         // 两者都还带 showIcon=true（主进程侧仍在运行），但不应出现在应用列表里。
         expect(
             isApplicationVisibleInMenu({ bundleName: 'agentgate', showIcon: true, isExperimental: false }, undefined)

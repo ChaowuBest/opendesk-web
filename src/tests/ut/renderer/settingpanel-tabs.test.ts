@@ -29,7 +29,7 @@ describe('setting-panel tabs', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
-        // linkedom 不提供 getComputedStyle：安全设置页要用它换算内嵌页高度，这里给个只回 padding 的替身
+        // linkedom 不提供 getComputedStyle：安全中心页要用它换算内嵌页高度，这里给个只回 padding 的替身
         (globalThis as any).getComputedStyle = () => ({ paddingTop: '0px', paddingBottom: '0px' });
         await import('../../../renderer/components/settingpanel.js');
     });
@@ -153,6 +153,20 @@ describe('setting-panel tabs', () => {
         expect(frame).toBeTruthy();
         // 走与侧边栏「应用」同一个壳页，靠 applicationBundleName 决定加载哪个 entry
         expect(frame.getAttribute('src')).toContain('applicationBundleName=agentgate');
+    });
+
+    test('security tab drops the content padding so the embedded page fills the column', () => {
+        const panel = createPanel();
+        panel.render();
+
+        // 内嵌应用页自带整页内边距，内容区再叠一层会多出「卡片套卡片」的一层留白
+        expect(panel.querySelector('.sp-scroll-content')?.classList.contains('sp-scroll-flush')).toBe(false);
+
+        panel._switchTab('security');
+        expect(panel.querySelector('.sp-scroll-content')?.classList.contains('sp-scroll-flush')).toBe(true);
+
+        panel._switchTab('general');
+        expect(panel.querySelector('.sp-scroll-content')?.classList.contains('sp-scroll-flush')).toBe(false);
     });
 
     test('theme change is forwarded into the embedded security frame', () => {

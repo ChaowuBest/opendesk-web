@@ -175,9 +175,9 @@ class SettingPanel extends HTMLElement {
         this.supportedShells = [];
         this.visionSupportMap = {};
         this._hasRendered = false;
-        /** 安全设置内嵌应用页的窗口尺寸监听退订函数 */
+        /** 安全中心内嵌应用页的窗口尺寸监听退订函数 */
         this._securityResizeUnsub = null;
-        /** 安全设置内嵌应用页的主题变更监听退订函数 */
+        /** 安全中心内嵌应用页的主题变更监听退订函数 */
         this._securityThemeUnsub = null;
         this._t = createRendererTranslator();
     }
@@ -985,18 +985,15 @@ class SettingPanel extends HTMLElement {
                 color: var(--sp-color-text-secondary);
             }
 
-            /* ── 安全设置：内嵌安全网关应用页 ── */
+            /* ── 安全中心：内嵌安全网关应用页 ── */
             .sp-security-host { display: block; }
             .sp-security-frame {
                 display: block; width: 100%; border: 0;
-                background: var(--sp-color-bg);
-                border-radius: var(--sp-radius-lg);
-                border: 1px solid var(--sp-color-border);
+                /* 内嵌页本身已是完整页面（自带背景、内边距和卡片），这里不再套外框，
+                   否则「卡片套卡片」会多出一层，和其它页签的观感不一致 */
+                background: transparent;
                 /* 内容区已经自带滚动条，内嵌页自己滚，外层不再多一条 */
                 overflow: hidden;
-            }
-            html[data-theme='dark'] .sp-security-frame {
-                border-color: #3B3835;
             }
             .sp-security-hint {
                 margin: 0; font-size: 12.5px; line-height: 1.6;
@@ -1004,7 +1001,9 @@ class SettingPanel extends HTMLElement {
             }
 
             /* ── Scrollbar ── */
-            .sp-scroll-content { min-width: 0; }
+            .sp-scroll-content { min-width: 0; padding: 16px 22px 8px; }
+            /* 内嵌应用页自带整页内边距，内容区不再叠加，避免两侧留白翻倍 */
+            .sp-scroll-content.sp-scroll-flush { padding: 0; }
             .sp-scroll-content::-webkit-scrollbar { width: 6px; }
             .sp-scroll-content::-webkit-scrollbar-track { background: transparent; }
             .sp-scroll-content::-webkit-scrollbar-thumb {
@@ -1101,7 +1100,7 @@ class SettingPanel extends HTMLElement {
                     </nav>
 
                     <!-- 可滚动内容区 -->
-                    <div class="sp-scroll-content flex-1 overflow-y-auto" style="padding:16px 22px 8px;">
+                    <div class="sp-scroll-content flex-1 overflow-y-auto ${this._activeTab === 'security' ? 'sp-scroll-flush' : ''}">
                         <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-5">
                             ${this.renderUpdateSection()}
                             <div id="general-sections">${this.renderGeneralSection()}</div>
@@ -1151,7 +1150,7 @@ class SettingPanel extends HTMLElement {
 
         this._createSettingPanelToolbar();
         this._hasRendered = true;
-        // 直接以「安全设置」作为初始页签时（initial-tab）也要挂上内嵌页
+        // 直接以「安全中心」作为初始页签时（initial-tab）也要挂上内嵌页
         if (this._activeTab === 'security') this._mountSecurityApp();
     }
 
@@ -1162,7 +1161,7 @@ class SettingPanel extends HTMLElement {
     }
 
     /**
-     * 「安全设置」页签内容。
+     * 「安全中心」页签内容。
      *
      * 安全网关（agentgate）整套界面是独立应用（Dashboard 表格、AgentMoss 策略控制台 iframe、
      * 配置表单，共 3.4k 行），不适合在设置面板里重写一遍，因此这里嵌它的应用页：与侧边栏
@@ -1182,7 +1181,7 @@ class SettingPanel extends HTMLElement {
         return '<div id="security-app-host" class="sp-security-host"></div>';
     }
 
-    /** 首次切到「安全设置」时才创建应用 iframe：不打开该页就不必拉起 AgentGate 界面 */
+    /** 首次切到「安全中心」时才创建应用 iframe：不打开该页就不必拉起 AgentGate 界面 */
     _mountSecurityApp() {
         const host = this.querySelector('#security-app-host');
         if (!host || host.dataset.mounted === '1') return;
@@ -1274,7 +1273,13 @@ class SettingPanel extends HTMLElement {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
-        if (tab === 'security') this._mountSecurityApp();
+        // 安全中心整页交给内嵌应用渲染，内容区不再加内边距（否则留白翻倍）
+        this.querySelector('.sp-scroll-content')?.classList.toggle('sp-scroll-flush', tab === 'security');
+        if (tab === 'security') {
+            this._mountSecurityApp();
+            // 切走再切回时内容区 padding 变了，iframe 高度要跟着重算
+            this._syncSecurityFrameHeight();
+        }
         this._startupController?.setGeneralVisible(tab === 'general');
     }
 
@@ -3920,13 +3925,13 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 窗口尺寸变化时重算安全设置内嵌页的高度（面板可能被 refreshAll 重建，先退订旧监听）
+        // 窗口尺寸变化时重算安全中心内嵌页的高度（面板可能被 refreshAll 重建，先退订旧监听）
         this._securityResizeUnsub?.();
         const onResize = () => this._syncSecurityFrameHeight();
         window.addEventListener('resize', onResize);
         this._securityResizeUnsub = () => window.removeEventListener('resize', onResize);
 
-        // 主题变化时同步给安全设置内嵌页。
+        // 主题变化时同步给安全中心内嵌页。
         // 侧边栏的主题切换按钮只走 broadcastThemeSettings，而它只遍历 appFrameCache（侧边栏「应用」
         // 打开的 iframe），设置面板里这个 frame 不在那张表里，不接这个事件就会停在外层切深色、
         // 内嵌页仍是浅色。opendesk-theme-changed 是主窗口应用主题后统一派发的，系统主题联动同样走它。

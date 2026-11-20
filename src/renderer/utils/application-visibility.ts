@@ -39,7 +39,7 @@ export function isExperimentalApplicationEnabled(
  * 不提供独立入口的应用。
  *
  * - skillmgr：技能中心由侧边栏「技能」按钮直达，不需要在应用列表里重复出现；
- * - agentgate：安全网关整套界面已并入「设置 → 安全设置」页签，独立入口会让同一功能出现两处。
+ * - agentgate：安全网关整套界面已并入「设置 → 安全中心」页签，独立入口会让同一功能出现两处。
  */
 const MENU_HIDDEN_BUNDLES = new Set(['skillmgr', 'agentgate']);
 

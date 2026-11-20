@@ -1574,7 +1574,7 @@ export const zhCn: Record<string, string> = {
     'sp.tab.search': '搜索设置',
     'sp.tab.general': '通用设置',
     // 安全网关应用的整体开关/策略/审计都在这个页签里（原侧边栏「应用」→ 安全网关）
-    'sp.tab.security': '安全设置',
+    'sp.tab.security': '安全中心',
     'sp.security.disabledHint': '安全网关已被插件禁用，请先解除禁用再配置安全策略。',
     // 测评集仓库（每个仓库在测评应用里占一个 Tab）
     'sp.tab.registryChannels': '仓库设置',

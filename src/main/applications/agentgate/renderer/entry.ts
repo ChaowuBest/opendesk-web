@@ -1631,7 +1631,7 @@ class AgentGateEntryWidget extends HTMLElement {
 
     async _init() {
         // 页签顺序：设置 → 实时状态 → 策略控制台。
-        // 「设置」放最左并作为默认页：该页面已迁入设置面板的「安全设置」，
+        // 「设置」放最左并作为默认页：该页面已迁入设置面板的「安全中心」，
         // 用户从设置入口进来时先看到配置项，而不是实时状态表格。
         this.root.innerHTML = `
             <div class="ag-tabs">
