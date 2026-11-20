@@ -1388,8 +1388,14 @@ export async function compactFullContext(
                 if (!plan) throw new ContextPreparationBlockedError('no_safe_usage_boundary');
                 continue;
             }
-            if (!failure.retryableEmpty || attempt > 0 || options.halfOpen || options.canRetryEmpty?.() === false)
-                throw failure;
+            if (!failure.retryableEmpty || attempt > 0 || options.halfOpen) throw failure;
+            if (options.canRetryEmpty) {
+                const allowed = options.canRetryEmpty() !== false;
+                if (options.requestOptions?.signal?.aborted || !isCurrent()) {
+                    throw new ContextPreparationBlockedError('cancelled');
+                }
+                if (!allowed) throw failure;
+            }
         }
     }
 
