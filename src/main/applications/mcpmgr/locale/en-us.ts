@@ -150,6 +150,10 @@ export const enUs: Record<string, string> = {
     'renderer.mcp.registry.empty.hint': 'Search for MCP servers in ${label}',
     'renderer.mcp.registry.install': 'Install',
     'renderer.mcp.registry.installing': 'Installing...',
+    'renderer.mcp.error.networkTitle': 'Network error',
+    'renderer.mcp.error.networkHint': 'Your network appears to be offline. Check your connection and try again',
+    'renderer.mcp.error.searchTimeout': 'Search timed out; check your network and try again',
+    'renderer.mcp.error.retry': 'Retry',
 
     // ========== Renderer：已安装列表 ==========
     'renderer.mcp.installed.empty.title': 'No MCP installed',

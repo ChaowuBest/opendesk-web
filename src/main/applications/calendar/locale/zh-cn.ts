@@ -19,6 +19,18 @@ export const zhCn: Record<string, string> = {
 
     // 配置
     'config.dataSources.outlook.enabled': '是否同步Outlook日历数据',
+    'config.dataSources.systemCalendar.enabled': '显示系统日历日程',
+    'config.dataSources.systemCalendar.defaultCalendarId': '新建日程的系统日历 ID（留空保存到本地）',
+    'system.error.unavailable': '系统日历暂不可用，请稍后重试',
+    'system.error.typeUnsupported': '系统日历不支持此日程分类，请选择默认分类',
+    'system.error.eventChanged': '该系统日程已被其他应用修改，请刷新后重试',
+    'system.error.permissionDenied': '尚未获得系统日历读写权限',
+    'system.error.disabled': '系统日历集成已关闭，请选择本地日历或重新启用',
+    'system.error.calendarMissing': '选定的系统日历不存在，请重新选择',
+    'system.error.readOnly': '所选系统日历为只读，无法保存日程',
+    'system.error.recurring': '重复日程请在系统日历应用中修改或删除',
+    'system.error.invalidItem': '系统日程标识或修改内容无效',
+    'system.error.invalidTime': '日程时间无效，结束时间必须晚于开始时间',
 
     // TUI 状态条
     'status.inMinutes': '${minutes}分钟后',
@@ -112,6 +124,21 @@ export const zhCn: Record<string, string> = {
     'notification.upcoming.body': '日程将在 ${minutes} 分钟后开始（${time}）',
 
     // Renderer（GUI 界面）
+    'renderer.calendar.integration.title': '系统日历',
+    'renderer.calendar.integration.notAuthorized': '未授权',
+    'renderer.calendar.integration.authorized': '已授权',
+    'renderer.calendar.integration.readOnly': '只读',
+    'renderer.calendar.integration.authorize': '授权访问系统日历',
+    'renderer.calendar.integration.show': '显示系统日历',
+    'renderer.calendar.integration.destination': '新日程保存到',
+    'renderer.calendar.integration.local': '本地日历',
+    'renderer.calendar.integration.unavailableCalendar': '所选系统日历暂不可用',
+    'renderer.calendar.integration.unclassified': '未分类',
+    'renderer.calendar.integration.typeUnsupported': '系统日历不支持日程分类，请使用未分类。',
+    'renderer.calendar.integration.permissionDenied': '日历访问权限不足，请授权访问系统日历后重试。',
+    'renderer.calendar.integration.invalidSelection': '日历或日程信息无效，请检查后重试。',
+    'renderer.calendar.integration.operationFailed': '暂时无法完成日历操作，请重试。',
+    'renderer.calendar.integration.recurringReadOnly': '系统日历中的重复日程暂时只读，请在系统日历中修改。',
     'renderer.calendar.today': '今天',
     'renderer.calendar.allDay': '全天',
     'renderer.calendar.noEvents': '暂无日程',

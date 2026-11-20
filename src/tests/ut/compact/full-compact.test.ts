@@ -1769,4 +1769,36 @@ describe('full compact planning', () => {
         expect(anchorHistory[1]).toBeGreaterThan(anchorHistory[0]);
         expect(anchorHistory[2]).toBeGreaterThan(anchorHistory[1]);
     });
+    test.each(['allowed', 'denied', 'half-open', 'superseded', 'superseded and denied'] as const)(
+        'empty-summary retry respects %s admission',
+        async (mode) => {
+            const factory = createMessageFactory();
+            const context = new ChatContext();
+            for (let index = 0; index < 5; index++) {
+                appendMessages(context, [factory.user('u' + index), factory.assistant('a' + index)]);
+            }
+            const generateSummary = jest.fn<() => Promise<string>>()
+                .mockRejectedValueOnce(new CompactError('empty_content'))
+                .mockRejectedValueOnce(new CompactError('empty_content'));
+            const canRetryEmpty = jest.fn(() => {
+                if (mode.startsWith('superseded')) context.appendMessage(factory.user('replacement'));
+                return mode !== 'denied' && mode !== 'superseded and denied';
+            });
+
+            await expect(compactFullContext(context, undefined, {
+                tailMessageCount: 2,
+                tailAssistantToolMessageCount: 0,
+                tailAssistantErrorMessageCount: 0,
+                tailPlanMessageCount: 0,
+                halfOpen: mode === 'half-open',
+                canRetryEmpty,
+                generateSummary
+            })).rejects.toMatchObject({ code: mode.startsWith('superseded') ? 'cancelled' : 'empty_content' });
+
+            expect(generateSummary).toHaveBeenCalledTimes(mode === 'allowed' ? 2 : 1);
+            expect(canRetryEmpty).toHaveBeenCalledTimes(mode === 'half-open' ? 0 : 1);
+            expect(context.findCompactBoundary()).toBeUndefined();
+        }
+    );
+
 });

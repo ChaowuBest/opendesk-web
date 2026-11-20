@@ -10,6 +10,7 @@
  */
 
 import { NativeBridge, NaiveNativeBridge } from './common.js';
+import { dispatchNativeBridgeCall } from './dispatcher.js';
 import { logger } from '../../main/utils/logger.js';
 import { app, ipcMain } from 'electron';
 import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
@@ -54,119 +55,13 @@ export function registerNativeBridge(): void {
 
     ipcMain.handle('native:call', async (event, method, ...args) => {
         logger.info(`native bridge call: ${method}(${args.map((arg) => JSON.stringify(arg)).join(', ')})`);
-        let data: any;
-        switch (method) {
-            case 'getPlatform':
-                data = await registeredBridge.getPlatform();
-                break;
-            case 'getVariant':
-                data = await registeredBridge.getVariant();
-                break;
-            case 'startupKit:getState':
-                data = await registeredBridge.getStartupKit().then((kit) => kit.getState());
-                break;
-            case 'startupKit:delegateSetting':
-                // Unpackaged Electron would register its bare executable without the dev app entrypoint.
-                // Keep removal available so existing development startup entries can be cleaned up.
-                // The internal IPC error token is translated into a localized notice by the renderer.
-                if (args[0] === true && !app.isPackaged) throw new Error('STARTUP_DEV_MODE');
-                data = await registeredBridge.getStartupKit().then((kit) => kit.delegateSetting(args[0]));
-                break;
-            case 'speechKit:available':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.available());
-                break;
-            case 'speechKit:initialize':
-                data = await registeredBridge
-                    .getSpeechKit()
-                    .then((speechKit) => speechKit.initialize(typeof args[0] === 'string' ? args[0] : null));
-                break;
-            case 'speechKit:start':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.start());
-                break;
-            case 'speechKit:peek':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.peek());
-                break;
-            case 'speechKit:stop':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.stop());
-                break;
-            case 'speechKit:release':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.release());
-                break;
-            case 'databaseKit:available':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.available());
-                break;
-            case 'databaseKit:execSql':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.execSql(args[0], args[1]));
-                break;
-            case 'databaseKit:execSqlParams':
-                data = await registeredBridge
-                    .getDatabaseKit()
-                    .then((kit) => kit.execSqlParams(args[0], args[1], args[2]));
-                break;
-            case 'databaseKit:querySqlShort':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.querySqlShort(args[0], args[1]));
-                break;
-            case 'databaseKit:openStore':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.openStore(args[0], args[1]));
-                break;
-            case 'databaseKit:closeStore':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.closeStore(args[0], args[1]));
-                break;
-            case 'databaseKit:executePrepared':
-                data = await registeredBridge
-                    .getDatabaseKit()
-                    .then((kit) => kit.executePrepared(args[0], args[1], args[2], args[3]));
-                break;
-            case 'databaseKit:executePreparedMany':
-                data = await registeredBridge
-                    .getDatabaseKit()
-                    .then((kit) => kit.executePreparedMany(args[0], args[1], args[2], args[3]));
-                break;
-            case 'databaseKit:executePreparedManyBatched':
-                data = await registeredBridge
-                    .getDatabaseKit()
-                    .then((kit) => kit.executePreparedManyBatched(args[0], args[1], args[2], args[3]));
-                break;
-            case 'databaseKit:queryPrepared':
-                data = await registeredBridge
-                    .getDatabaseKit()
-                    .then((kit) => kit.queryPrepared(args[0], args[1], args[2], args[3]));
-                break;
-            case 'databaseKit:beginTransaction':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.beginTransaction(args[0]));
-                break;
-            case 'databaseKit:commitTransaction':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.commitTransaction(args[0], args[1]));
-                break;
-            case 'databaseKit:rollbackTransaction':
-                data = await registeredBridge.getDatabaseKit().then((kit) => kit.rollbackTransaction(args[0], args[1]));
-                break;
-            case 'accountKit:available':
-                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.available());
-                break;
-            case 'accountKit:startLogin':
-                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.startLogin());
-                break;
-            case 'accountKit:peekLogin':
-                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.peekLogin());
-                break;
-            case 'accountKit:closeLogin':
-                data = await registeredBridge.getHuaweiAccountKit().then((kit) => kit.closeLogin());
-                break;
-            case 'quickCaptureKit:getState':
-                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.getState());
-                break;
-            case 'quickCaptureKit:setEnabled':
-                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.setEnabled(args[0] === true));
-                break;
-            case 'quickCaptureKit:takePendingCapture':
-                data = await registeredBridge.getQuickCaptureKit().then((kit) => kit.takePendingCapture());
-                break;
-            default:
-                return { status: 'error', message: `Method not found: ${method}` };
+        // Unpackaged Electron would register its bare executable without the dev app entrypoint.
+        // Keep removal available so existing development startup entries can be cleaned up.
+        // The internal IPC error token is translated into a localized notice by the renderer.
+        if (method === 'startupKit:delegateSetting' && args[0] === true && !app.isPackaged) {
+            throw new Error('STARTUP_DEV_MODE');
         }
-
-        return { status: 'ok', data };
+        return dispatchNativeBridgeCall(registeredBridge, method, args);
     });
 }
 

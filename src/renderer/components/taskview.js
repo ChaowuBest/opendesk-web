@@ -3090,6 +3090,7 @@ class TaskView extends HTMLElement {
     /** 记录视图进入后台不可见状态（切换任务 / 后台创建时由宿主调用）。 */
     markViewHidden() {
         this._chatFind?.hide();
+        this._getRightSidebarEl()?.setWorkspaceSidebarVisible?.(false);
         if (!this._viewHiddenAt) this._viewHiddenAt = Date.now();
     }
 
@@ -4515,6 +4516,7 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
+        rightSidebar.setWorkspaceSidebarVisible?.(false);
         // 收起侧边栏时退出放大布局，但保留用户当前选择的 Browser / Workspace tab。
         if (typeof rightSidebar.suspendPreviewLayout === 'function') {
             rightSidebar.suspendPreviewLayout();
@@ -5381,6 +5383,7 @@ class TaskView extends HTMLElement {
         el.style.pointerEvents = 'none';
         el.style.zIndex = '-1';
         el.dataset.offscreen = '1';
+        el.setWorkspaceSidebarVisible?.(false);
         // 确保浏览器 tab 内容面板不被 display:none 隐藏，
         // 否则即使宿主元素在视口内，内部 webview 也会因 display:none 被暂停渲染
         if (typeof el.keepBrowserPanelRenderable === 'function') {
@@ -5400,6 +5403,7 @@ class TaskView extends HTMLElement {
         el.style.zIndex = '';
         el.style.opacity = '';
         delete el.dataset.offscreen;
+        el.setWorkspaceSidebarVisible?.(true);
         // 恢复浏览器面板的正常布局（清理 keepBrowserPanelRenderable 的临时样式）
         if (typeof el.restoreBrowserPanelLayout === 'function') {
             el.restoreBrowserPanelLayout();
@@ -6656,7 +6660,7 @@ class TaskView extends HTMLElement {
                     // 任务级待办的实时更新已通过 todomgr.taskTodosUpdated 事件单独订阅，
                     // 这里无需再从工具调用进度里反推 TodoWrite 的执行状态。
 
-                    // 文件操作工具完成后，增量刷新工作空间文件浏览器
+                    // 文件树由目录监听更新，文件操作工具完成后只同步变更面板。
                     if (progress.last_part && progress.last_part.type === 'tool_call') {
                         const FILE_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace', 'applyPatch']);
                         const toolcalls = progress.last_part.toolcalls || [];
@@ -6667,9 +6671,6 @@ class TaskView extends HTMLElement {
                         });
                         if (hasFileOp) {
                             const sidebar = this._getRightSidebarEl();
-                            if (sidebar && typeof sidebar.softRefreshWorkspace === 'function') {
-                                sidebar.softRefreshWorkspace();
-                            }
                             if (sidebar && typeof sidebar.refreshChanges === 'function') {
                                 sidebar.refreshChanges();
                             }

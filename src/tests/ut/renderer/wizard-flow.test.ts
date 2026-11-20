@@ -1,7 +1,6 @@
-import { beforeAll, beforeEach, describe, expect, test } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 import { choose, mockModelAPI, settle } from './helpers/model-form.js';
-import { resolveWizardStep2View } from '../../../renderer/utils/wizard-flow.js';
 
 describe('setup wizard flow', () => {
     beforeAll(async () => {
@@ -29,25 +28,25 @@ describe('setup wizard flow', () => {
         await import('../../../renderer/components/wizard.js');
     });
 
-    test('account choices show account login as the second step', () => {
-        expect(resolveWizardStep2View('enterprise', true)).toBe('enterprise-login');
-        expect(resolveWizardStep2View('opendesk', true)).toBe('personal-login');
-    });
-
-    test('no-login and disabled account flows keep model configuration', () => {
-        expect(resolveWizardStep2View('nologin', true)).toBe('model-config');
-        expect(resolveWizardStep2View('opendesk', false)).toBe('model-config');
-    });
-
-    test('stepper labels the second step by login choice', () => {
+    test('account step leads the wizard when the account feature is enabled', () => {
         const wizard = document.createElement('setup-wizard') as any;
         wizard.currentData = { debug: { experimental_features: { account: true } } };
 
-        wizard.loginChoice = 'opendesk';
-        expect(wizard._renderStepper()).toContain('账号登录');
+        const html = wizard._renderStepper();
+        expect(html).toContain('Sign in');
+        expect(html).toContain('Model');
+        expect(html).toContain('Preferences');
+        expect(wizard.steps).toEqual(['account', 'model', 'personalize', 'done']);
+    });
 
-        wizard.loginChoice = 'nologin';
-        expect(wizard._renderStepper()).toContain('模型配置');
+    test('account step disappears entirely when the account feature is disabled', () => {
+        const wizard = document.createElement('setup-wizard') as any;
+        wizard.currentData = { debug: { experimental_features: { account: false } } };
+
+        const html = wizard._renderStepper();
+        expect(html).not.toContain('Sign in');
+        expect(wizard.steps).toEqual(['model', 'personalize', 'done']);
+        expect(wizard.stepKey).toBe('model');
     });
 
     test('renders the enterprise login form after the server address step', () => {
@@ -106,9 +105,9 @@ describe('setup wizard flow', () => {
 
         const html = wizard._renderAccountLogin('personal');
         expect(html).toContain('data-login-field="username"');
-        expect(html).toContain('id="wizard-account-finish"');
         expect(html).toContain('data-browser-method="gitcode"');
         expect(html).toContain('Sign in with GitCode');
+        expect(wizard._renderAccountPrimaryButton()).toContain('id="wizard-account-finish"');
         expect(html.indexOf('data-login-field="username"')).toBeLessThan(html.indexOf('data-browser-method="gitcode"'));
     });
 
@@ -119,8 +118,133 @@ describe('setup wizard flow', () => {
         wizard.loginMethods = [];
 
         const html = wizard._renderAccountLogin('personal');
-        expect(html).toContain('verify-result verify-error');
+        expect(html).toContain('wiz-verify-error');
         expect(html).not.toContain('data-login-field=');
+    });
+
+    describe('account tab and login-method loading', () => {
+        beforeEach(() => {
+            (window as any).globalControlAPI = {};
+            (globalThis as any).accountAPI = { configure: async () => undefined };
+        });
+
+        function accountWizard() {
+            const wizard = document.createElement('setup-wizard') as any;
+            wizard.currentData = { debug: { experimental_features: { account: true } }, gui_config: {} };
+            wizard.loginChoice = 'opendesk';
+            wizard.innerHTML = wizard._renderAccountStep();
+            wizard._bindAccountEvents();
+            return wizard;
+        }
+
+        test('clicking the already-selected personal tab does not reload login methods', async () => {
+            const calls: string[] = [];
+            (globalThis as any).accountAPI = {
+                getLoginMethods: async (kind: string) => {
+                    calls.push(kind);
+                    return [];
+                },
+                configure: async () => undefined
+            };
+
+            const wizard = accountWizard();
+            wizard.querySelector('[data-account-kind="personal"]').click();
+            await settle();
+
+            // loginChoice 里个人账号记作 'opendesk'，用原始值比较会让这个页签每次都重载
+            expect(calls).toEqual([]);
+            expect(wizard.querySelector('[data-account-kind="personal"]').classList.contains('is-on')).toBe(true);
+        });
+
+        test('switching to the enterprise tab asks for the server address first', () => {
+            const wizard = accountWizard();
+            wizard.querySelector('[data-account-kind="enterprise"]').click();
+
+            expect(wizard.loginChoice).toBe('enterprise');
+            expect(wizard.enterpriseBaseUrlStep).toBe(true);
+            expect(wizard.querySelector('#wizard-enterprise-base-url')).toBeTruthy();
+            expect(wizard.querySelector('[data-account-kind="enterprise"]').classList.contains('is-on')).toBe(true);
+        });
+
+        test('a stale login-method response does not overwrite the current tab data', async () => {
+            const gates: Record<string, (methods: unknown[]) => void> = {};
+            (globalThis as any).accountAPI = {
+                getLoginMethods: (kind: string) => new Promise((resolve) => (gates[kind] = resolve)),
+                configure: async () => undefined
+            };
+
+            const wizard = accountWizard();
+            const personal = wizard._loadLoginMethods('personal');
+            const enterprise = wizard._loadLoginMethods('enterprise');
+            gates.enterprise([{ id: 'ent', type: 'form', displayName: 'Enterprise', fields: [] }]);
+            await enterprise;
+            gates.personal([{ id: 'pwd', type: 'form', displayName: 'Password', fields: [] }]);
+            await personal;
+
+            expect(wizard.loginMethods.map((method: { id: string }) => method.id)).toEqual(['ent']);
+            expect(wizard.loginMethodLoading).toBe(false);
+        });
+    });
+
+    describe('personalize step', () => {
+        beforeEach(() => {
+            (window as any).__savedSetting = null;
+            (window as any).settingAPI = {
+                loadSettingObject: async () => ({ gui_config: { output_mode: 'minimal' } }),
+                saveSettingObjectDetailed: async (data: any) => {
+                    (window as any).__savedSetting = data;
+                    return { data, sideEffectFailures: [] };
+                }
+            };
+        });
+
+        function personalizeWizard() {
+            const wizard = document.createElement('setup-wizard') as any;
+            wizard.currentData = { debug: { experimental_features: { account: true } }, gui_config: {} };
+            wizard.innerHTML = wizard._renderPersonalizeStep();
+            wizard._bindPersonalizeEvents();
+            return wizard;
+        }
+
+        test('renders the memory switch, both output options and both previews', () => {
+            const wizard = document.createElement('setup-wizard') as any;
+            wizard.currentData = { debug: { experimental_features: { account: true } }, gui_config: {} };
+            const html = wizard._renderPersonalizeStep();
+            expect(html).toContain('id="wizard-memory-toggle"');
+            expect(html).toContain('data-output-mode="minimal"');
+            expect(html).toContain('data-output-mode="verbose"');
+            expect(html).toContain('data-mode="minimal"');
+            expect(html).toContain('data-mode="verbose"');
+        });
+
+        test('switching output mode updates the option state and the preview container', () => {
+            const wizard = personalizeWizard();
+            wizard.querySelector('[data-output-mode="verbose"]').click();
+            expect(wizard.outputMode).toBe('verbose');
+            expect(wizard.querySelector('#wizard-preview-body').dataset.mode).toBe('verbose');
+            expect(wizard.querySelector('[data-output-mode="verbose"]').classList.contains('is-on')).toBe(true);
+            expect(wizard.querySelector('[data-output-mode="minimal"]').getAttribute('aria-checked')).toBe('false');
+        });
+
+        test('toggling memory switches the sample block and the off hint', () => {
+            const wizard = personalizeWizard();
+            const toggle = wizard.querySelector('#wizard-memory-toggle');
+            toggle.checked = false;
+            toggle.dispatchEvent(new Event('change'));
+            expect(wizard.memoryEnabled).toBe(false);
+            expect(wizard.querySelector('#wizard-memory-sample').classList.contains('is-off')).toBe(true);
+            expect(wizard.querySelector('#wizard-memory-note').classList.contains('is-on')).toBe(true);
+        });
+
+        test('persists memory switch and output mode into gui_config', async () => {
+            const wizard = document.createElement('setup-wizard') as any;
+            wizard.memoryEnabled = false;
+            wizard.outputMode = 'verbose';
+            await expect(wizard._savePersonalize()).resolves.toBe(true);
+            const saved = (window as any).__savedSetting;
+            expect(saved.gui_config.memory_enabled).toBe(false);
+            expect(saved.gui_config.output_mode).toBe('verbose');
+        });
     });
 
     describe('model discovery', () => {
@@ -196,9 +320,9 @@ describe('setup wizard flow', () => {
             expect(error.textContent).toContain('401');
             await wizard._handleSaveOnly();
             const result = wizard.querySelector('#wizard-verify-result');
-            expect(result.classList.contains('hidden')).toBe(false);
+            expect(result.hidden).toBe(false);
             choose(wizard.querySelector('#wizard-model-name'), 'manual-model');
-            expect(result.classList.contains('hidden')).toBe(true);
+            expect(result.hidden).toBe(true);
             const saved = { providers: [], models: [] };
             (window as any).settingAPI.loadSettingObject = async () => saved;
             (window as any).settingAPI.saveSettingObjectDetailed = async () => ({
@@ -207,6 +331,34 @@ describe('setup wizard flow', () => {
             });
             await wizard._handleSaveOnly();
             expect(saved.models).toEqual([expect.objectContaining({ model_name: 'manual-model' })]);
+        });
+
+        test('the delayed auto-advance does not push a step further when the user already jumped', async () => {
+            const wizard = wizardForm();
+            wizard.currentData = {};
+            choose(wizard.querySelector('#wizard-provider-select'), 'preset');
+            const url = wizard.querySelector('#wizard-base-url');
+            url.value = 'https://custom.test/v1';
+            url.dispatchEvent(new Event('input'));
+            choose(wizard.querySelector('#wizard-model-name'), 'manual-model');
+            const saved = { providers: [], models: [] };
+            (window as any).settingAPI.verifyModel = async () => undefined;
+            (window as any).settingAPI.loadSettingObject = async () => saved;
+            (window as any).settingAPI.saveSettingObjectDetailed = async () => ({
+                data: saved,
+                sideEffectFailures: []
+            });
+
+            jest.useFakeTimers();
+            await wizard._handleVerifyAndSave();
+            // 用户在成功提示与自动前进之间的 600ms 里点了里程碑跳到个性化设置
+            wizard._goToStep(2);
+            expect(wizard.stepKey).toBe('personalize');
+            jest.advanceTimersByTime(700);
+            jest.useRealTimers();
+
+            // 定时器若按相对步数前进，会把用户已经跳到的这一步再 +1
+            expect(wizard.stepKey).toBe('personalize');
         });
     });
 });

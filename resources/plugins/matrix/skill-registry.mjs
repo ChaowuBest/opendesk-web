@@ -12,6 +12,24 @@
 const MATRIX_BASE = 'https://matrix.openharmony.cn';
 const REQUEST_TIMEOUT = 30000;
 
+/**
+ * 展开错误的 cause 链取原始原因：undici fetch 网络失败时外层只有
+ * 「fetch failed」，getaddrinfo 等真实原因挂在 e.cause 上。
+ */
+function describeFetchError(e) {
+    const parts = [];
+    let current = e;
+    for (let depth = 0; current && depth < 5; depth += 1) {
+        let message = typeof current.message === 'string' && current.message ? current.message : String(current);
+        if (current.name && current.name !== 'Error' && !message.startsWith(current.name)) {
+            message = `${current.name}: ${message}`;
+        }
+        if (!parts.includes(message)) parts.push(message);
+        current = current.cause;
+    }
+    return parts.join(': ') || String(e);
+}
+
 const HARMONY_PC_CATEGORY = '鸿蒙PC';
 
 /** Matrix 上 OpenHarmonyPC 组织的 ID，对应 https://matrix.openharmony.cn/#/skillSquare?org=OpenHarmonyPC */
@@ -111,14 +129,13 @@ export function createMatrixSkillRegistryDefinition(registryApi) {
                     message: skills.length > 0 ? `显示 ${skills.length} / ${total} 个结果` : undefined
                 };
             } catch (e) {
-                if (e.name === 'AbortError' || e.name === 'TimeoutError') {
-                    return { skills: [], total: 0, hasMore: false, message: 'Matrix Skill 请求超时，请稍后重试' };
-                }
+                // 失败以原始明细放 error 字段回传：渲染层据此在内容区展示醒目错误态
+                //（错误伪装成 message 会被当成信息性计数显示在搜索框右端小字里）
                 return {
                     skills: [],
                     total: 0,
                     hasMore: false,
-                    message: `Matrix Skill 搜索失败: ${e.message || '未知错误'}`
+                    error: describeFetchError(e)
                 };
             }
         }

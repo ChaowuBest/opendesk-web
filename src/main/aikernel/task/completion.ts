@@ -273,6 +273,7 @@ export async function processTaskCompletion(
         const contextWindow = await resolveContextWindow(model);
         const budget = contextWindow > 0 ? calculateCompactionBudget(contextWindow) : undefined;
         const preparation = await prepareContextForModel(task.chat_context, model, {
+            resolvedContextWindow: contextWindow,
             forceCompact:
                 budget !== undefined &&
                 !checkRequestBudget({

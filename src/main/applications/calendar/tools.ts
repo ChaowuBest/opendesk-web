@@ -18,6 +18,20 @@ import { t } from './locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 
+function unwrapCalendarResponse(response: any): any {
+    if (response?.status === 'ok') return response.data;
+    throw Object.assign(new Error(response?.message || t('system.error.unavailable')), {
+        code: response?.code,
+        category: response?.category,
+        details: response?.details
+    });
+}
+
+function nextLocalMidnight(timestamp: number): number {
+    const day = new Date(timestamp);
+    return new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
+}
+
 function fmtTimeGui(ts: number): string {
     const d = new Date(ts);
     const h = d.getHours();
@@ -152,13 +166,10 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
     }
 
     private async handleExecute(args: z.output<typeof GetCalendarItemsArgsSchema>): Promise<string> {
-        const items = await this.calendarApp.callWorker('getCalendarItems', args.dateString);
-        if (items.status !== 'ok') {
-            return `错误: 无法获取日程信息: ${items.message}`;
-        }
+        const items = unwrapCalendarResponse(await this.calendarApp.callWorker('getCalendarItems', args.dateString));
 
         let result = `在${args.dateString}的日程安排列表为: \n`;
-        for (const item of items.data) {
+        for (const item of items) {
             result += `- ${item.subject} (uid: ${item.uid})\n`;
             result += `  - 开始时间: ${new Date(item.startTime).toLocaleString()}\n`;
             result += `  - 结束时间: ${new Date(item.endTime).toLocaleString()}\n`;
@@ -213,7 +224,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
                     ? new Date(dateParts).getTime()
                     : new Date(`${dateParts} ${args['startTime'] || '00:00'}`).getTime();
                 const endTs = args['isAllDay']
-                    ? startTs + 86400000
+                    ? nextLocalMidnight(startTs)
                     : new Date(`${dateParts} ${args['endTime'] || '01:00'}`).getTime();
                 const pseudo = {
                     subject: args['subject'],
@@ -275,7 +286,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
 
         if (isAllDay) {
             startTimestamp = new Date(dateParts).getTime();
-            endTimestamp = startTimestamp + 86400000;
+            endTimestamp = nextLocalMidnight(startTimestamp);
         } else {
             startTimestamp = new Date(`${dateParts} ${startTime}`).getTime();
             endTimestamp = new Date(`${dateParts} ${endTime}`).getTime();
@@ -297,7 +308,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
             isAllDay
         });
 
-        const item = result?.data ?? result;
+        const item = unwrapCalendarResponse(result);
         return JSON.stringify(item);
     }
 }
@@ -348,7 +359,7 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
 
     private async handleExecute(args: z.output<typeof DeleteCalendarItemArgsSchema>): Promise<string> {
         const result = await this.calendarApp.callWorker('deleteCalendarItem', args.uid);
-        const data = result?.data ?? result;
+        const data = unwrapCalendarResponse(result);
         return JSON.stringify({ success: true, uid: args.uid, ...data });
     }
 }
@@ -397,7 +408,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
                     ? new Date(dateParts).getTime()
                     : new Date(`${dateParts} ${args['startTime'] || '00:00'}`).getTime();
                 const endTs = args['isAllDay']
-                    ? startTs + 86400000
+                    ? nextLocalMidnight(startTs)
                     : new Date(`${dateParts} ${args['endTime'] || '01:00'}`).getTime();
                 const pseudo = {
                     subject: args['subject'],
@@ -465,7 +476,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
             const dateParts = dateString.replace(/-/g, '/');
             if (isAllDay) {
                 updates.startTime = new Date(dateParts).getTime();
-                updates.endTime = updates.startTime + 86400000;
+                updates.endTime = nextLocalMidnight(updates.startTime);
             } else {
                 if (startTime !== undefined) {
                     updates.startTime = new Date(`${dateParts} ${startTime}`).getTime();
@@ -478,7 +489,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
             const dateParts = dateString.replace(/-/g, '/');
             if (isAllDay) {
                 updates.startTime = new Date(dateParts).getTime();
-                updates.endTime = updates.startTime + 86400000;
+                updates.endTime = nextLocalMidnight(updates.startTime);
             } else {
                 const baseDate = new Date(dateParts);
                 if (startTime !== undefined) {
@@ -507,7 +518,7 @@ export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSc
         }
 
         const result = await this.calendarApp.callWorker('updateCalendarItem', itemId, updates);
-        const item = result?.data ?? result;
+        const item = unwrapCalendarResponse(result);
         return JSON.stringify(item);
     }
 }

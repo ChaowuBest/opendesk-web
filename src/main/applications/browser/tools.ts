@@ -1264,7 +1264,9 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
             const match = dataUri.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/);
             if (!match) return fail(t('cli.screenshot.badDataUri', { uri: dataUri.slice(0, 64) }));
             const ext = match[1].split('/')[1] || 'png';
-            const fileName = `screenshot-${Date.now()}-${randomUUID()}.${ext}`;
+            // 文件名保持简短：LLM 需要原样复述返回的 path，过长的 UUID 容易抄错
+            const suffix = randomUUID().slice(0, 4);
+            const fileName = `screenshot-${Date.now()}-${suffix}.${ext}`;
             const filePath = path.join(getTaskArtifactDirectory(taskId), fileName);
             await fs.writeFile(filePath, Buffer.from(match[2], 'base64'));
 
@@ -1506,7 +1508,7 @@ export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryAr
             return fail(t('error.deleteHistoryNoFilter'));
         }
 
-        const mainWin = BrowserManager.mainWindow;
+        const mainWin = BrowserManager.rendererHost;
         if (!mainWin || mainWin.isDestroyed()) {
             return fail(t('error.mainWindowUnavailable'));
         }

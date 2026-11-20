@@ -10,6 +10,14 @@
  */
 
 export const enUs: Record<string, string> = {
+    'sandbox.stopped': 'The task stopped before the shell command could start.',
+    'sandbox.unavailable':
+        'The selected shell sandbox is unavailable. Restore its runtime or turn off the sandbox in terminal settings.',
+    'prompt.mode.sandbox.android': '- Execution mode: Android dynamic sandbox',
+    'prompt.sandbox.android.paths':
+        '- Commands use the original Android paths. File access follows task permissions; the Android app permissions still apply.',
+    'prompt.sandbox.android.workspace':
+        '- Workspace access follows the task mode. Access outside permitted paths requires approval or is denied.',
     'app.name': 'Terminal',
     'output.truncated': 'Output too large; display truncated',
     'output.artifactSaved': 'Complete output saved to',

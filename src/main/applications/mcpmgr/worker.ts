@@ -21,6 +21,7 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { buildChildProcessEnv } from '../../utils/shellExec.js';
+import { prepareHostProcess, resolveHostProcessCommand } from '../../../platforms/runtime.js';
 import { t } from './locale/index.js';
 // platformT：读取主 locale 中跨应用共享的平台词条（harmony.localRuntime.*）
 import { t as platformT } from '../../../locale/index.js';
@@ -433,6 +434,7 @@ export default class McpMgrWorker extends BaseWorker {
         const stderrChunks: string[] = [];
 
         try {
+            if (server.transport === 'stdio') await prepareHostProcess('stdio');
             const transport = this.createTransport(server);
 
             if (transport.stderr) {
@@ -573,8 +575,7 @@ export default class McpMgrWorker extends BaseWorker {
                     }
                 }
                 const transport = new StdioClientTransport({
-                    command: server.command!,
-                    args: server.args || [],
+                    ...resolveHostProcessCommand(server.command!, server.args || [], 'stdio'),
                     cwd: server.cwd || this.currentWorkspace || undefined,
                     env,
                     stderr: 'pipe' // 捕获子进程stderr，避免泄漏到主进程stdout/stderr

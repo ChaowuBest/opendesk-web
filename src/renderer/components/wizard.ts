@@ -15,8 +15,7 @@ import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
 import { createRendererTranslator } from '../locale.ts';
 import { showInfoModal } from './confirmModal.ts';
 import { notifySettingSideEffectFailures } from '../utils/setting-side-effect-notice.ts';
-import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.ts';
-import { resolveWizardStep2View } from '../utils/wizard-flow.ts';
+import { isAccountFeatureEnabled } from '../utils/account-feature-visibility.js';
 import {
     formatAccountLoginError,
     getAccountApi,
@@ -29,7 +28,11 @@ import {
 
 type LoginChoice = 'opendesk' | 'enterprise' | 'nologin';
 
+type WizardStepKey = 'account' | 'model' | 'personalize' | 'done';
+
 type ResultType = 'success' | 'error' | 'info';
+
+type OutputMode = 'minimal' | 'verbose';
 
 interface ProviderTemplate {
     name: string;
@@ -58,10 +61,17 @@ declare global {
     }
 }
 
+/**
+ * 首启向导。
+ *
+ * 步骤顺序：账号登录 → 模型配置 → 个性化设置 → 完成。
+ * 账号能力被特性门控关闭（插件 `ctx.features.disable` 或实验特性开关）时，账号步骤整步消失，
+ * 第一步直接是模型配置，总步数随之变成 3。
+ */
 class SetupWizard extends HTMLElement {
+    /** 当前步骤序号（1-based，对应 this.steps 的下标） */
     private currentStep = 1;
-    private readonly totalSteps = 3;
-    private loginChoice: LoginChoice | null = 'nologin';
+    private loginChoice: LoginChoice = 'opendesk';
     private providerTemplates: ProviderTemplate[] = [];
     private currentData: LoadedSettingObject | null = null;
     private _verifying = false;
@@ -74,11 +84,16 @@ class SetupWizard extends HTMLElement {
     private loginMethods: AccountLoginMethod[] = [];
     private loginMethodLoading = false;
     private loginMethodsLoaded = false;
+    // 登录方式请求代次：个人/企业页签可以来回点，晚返回的旧请求不能覆盖当前页签的数据
+    private loginMethodsGeneration = 0;
     private activeLoginFlowId: string | null = null;
     private loginBusy = false;
     private loginError: string | null = null;
     private loginBrowserUrl: string | null = null;
     private enterpriseBaseUrlDraft = '';
+    // 个性化设置
+    private outputMode: OutputMode = 'minimal';
+    private memoryEnabled = true;
 
     async connectedCallback(): Promise<void> {
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
@@ -92,148 +107,189 @@ class SetupWizard extends HTMLElement {
         } catch {
             // 使用默认语言
         }
+        const gui = this._readGuiConfig();
+        this.outputMode = gui.output_mode;
+        this.memoryEnabled = gui.memory_enabled;
+        this._render();
+        this._bindEvents();
+        // 账号步骤可见时立刻拉取登录方式，省掉额外一次点击
+        if (this.stepKey === 'account') {
+            void this._loadLoginMethods(this._accountKind());
+        }
+    }
+
+    // =================== 步骤模型 ===================
+
+    private get steps(): WizardStepKey[] {
+        return isAccountFeatureEnabled(this.currentData)
+            ? ['account', 'model', 'personalize', 'done']
+            : ['model', 'personalize', 'done'];
+    }
+
+    private get totalSteps(): number {
+        return this.steps.length;
+    }
+
+    private get stepKey(): WizardStepKey {
+        return this.steps[this.currentStep - 1] ?? 'done';
+    }
+
+    private _accountKind(): 'personal' | 'enterprise' {
+        return this.loginChoice === 'enterprise' ? 'enterprise' : 'personal';
+    }
+
+    private _readGuiConfig(): { output_mode: OutputMode; memory_enabled: boolean } {
+        const raw = (this.currentData?.gui_config ?? {}) as { output_mode?: unknown; memory_enabled?: unknown };
+        return {
+            output_mode: raw.output_mode === 'verbose' ? 'verbose' : 'minimal',
+            memory_enabled: raw.memory_enabled !== false
+        };
+    }
+
+    private _goToStep(step: number): void {
+        const next = Math.min(this.totalSteps, Math.max(1, step));
+        if (next === this.currentStep) return;
+        this.currentStep = next;
         this._render();
         this._bindEvents();
     }
 
+    private _nextStep(): void {
+        this._goToStep(this.currentStep + 1);
+    }
+
+    private _prevStep(): void {
+        this._goToStep(this.currentStep - 1);
+    }
+
+    // =================== 渲染骨架 ===================
+
     private _render(): void {
         this.innerHTML = `
-        <div class="wizard-root">
-            <div class="wizard-inner">
-                <div class="wizard-rail">
+        <div class="wiz-root">
+            <div class="wiz-inner">
+                <nav class="wiz-rail" aria-label="${escapeHtml(this.t('renderer.wizard.stepNav'))}">
                     ${this._renderStepper()}
-                </div>
-                <div class="wizard-content">
-                    <div class="wizard-body">
+                </nav>
+                <div class="wiz-content">
+                    <div class="wiz-scroll">
                         ${this._renderStepContent()}
                     </div>
-                    <div class="wizard-footer">
-                        ${this._renderNavButtons()}
+                    <div class="wiz-foot" data-step="${this.stepKey}">
+                        <div class="wiz-foot-inner">
+                            ${this._renderNav()}
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         `;
+    }
+
+    private _stepLabel(key: WizardStepKey): string {
+        switch (key) {
+            case 'account':
+                return this.t('renderer.wizard.stepAccount');
+            case 'model':
+                return this.t('renderer.wizard.stepModel');
+            case 'personalize':
+                return this.t('renderer.wizard.stepPersonalize');
+            case 'done':
+                return this.t('renderer.wizard.stepDone');
+        }
     }
 
     private _renderStepper(): string {
-        // 账号登录流程的第二步是账号登录，不登录流程仍是模型配置
-        const step2Label =
-            this.loginChoice === 'nologin' || !isAccountFeatureEnabled(this.currentData) ? '模型配置' : '账号登录';
-        const labels = ['账号选择', step2Label, '完成'];
+        const steps = this.steps;
         let html = '';
-        for (let i = 1; i <= this.totalSteps; i++) {
-            const isActive = i === this.currentStep;
-            const isCompleted = i < this.currentStep;
-            const itemClass = isActive ? 'rail-item active' : isCompleted ? 'rail-item done' : 'rail-item';
+        steps.forEach((key, index) => {
+            const number = index + 1;
+            const isActive = number === this.currentStep;
+            const isDone = number < this.currentStep;
+            const classes = ['wiz-rail-node'];
+            if (isActive) classes.push('is-active');
+            if (isDone) classes.push('is-done');
 
-            const dotContent = isCompleted ? '<i class="fas fa-check" style="font-size:9px"></i>' : `${i}`;
-
-            html += `<div class="${itemClass}">`;
-            html += `<div class="rail-dot">${dotContent}</div>`;
-            html += `<span class="rail-label">${labels[i - 1]}</span>`;
-            html += '</div>';
-
-            if (i < this.totalSteps) {
-                html += '<div class="rail-line"></div>';
+            html += `<button type="button" class="${classes.join(' ')}" data-wizard-step="${number}"${
+                isActive ? ' aria-current="step"' : ''
+            }>`;
+            html += `<span class="wiz-rail-dot">${number}</span>`;
+            html += `<span class="wiz-rail-text">${escapeHtml(this._stepLabel(key))}</span>`;
+            html += '</button>';
+            if (number < steps.length) {
+                html += '<span class="wiz-rail-line" aria-hidden="true"></span>';
             }
-        }
+        });
         return html;
     }
 
+    private _stepTag(key: WizardStepKey): string {
+        return this.t('renderer.wizard.stepTag', {
+            step: String(this.currentStep),
+            label: this._stepLabel(key)
+        });
+    }
+
     private _renderStepContent(): string {
-        switch (this.currentStep) {
-            case 1:
-                return this._renderStep1();
-            case 2:
-                return this._renderStep2();
-            case 3:
-                return this._renderStep3();
+        switch (this.stepKey) {
+            case 'account':
+                return this._renderAccountStep();
+            case 'model':
+                return this._renderModelStep();
+            case 'personalize':
+                return this._renderPersonalizeStep();
             default:
-                return '';
+                return this._renderDoneStep();
         }
     }
 
-    // =================== Step 1 ===================
-    private _renderStep1(): string {
-        const accountFeatureDisabled = !isAccountFeatureEnabled(this.currentData);
+    // =================== Step: 账号登录 ===================
 
+    private _renderAccountStep(): string {
+        const kind = this._accountKind();
         return `
-        <span class="step-tag">Step 1 · 账号选择</span>
-        <h2>您希望如何登录 OpenDesk？</h2>
-        <p class="ob-desc">我们支持使用个人账号或企业账号接入，也支持您配置自己的模型服务。无论使用何种登录方式，我们提供的功能都一视同仁。</p>
-        <div class="opt-grid">
-            ${this._renderChoiceCard('opendesk', 'fa-user', this.t('renderer.wizard.accountPersonal'), this.t('renderer.wizard.accountPersonalDesc'), accountFeatureDisabled)}
-            ${this._renderChoiceCard('enterprise', 'fa-building', this.t('renderer.wizard.accountEnterprise'), this.t('renderer.wizard.accountEnterpriseDesc'), accountFeatureDisabled)}
-            ${this._renderChoiceCard('nologin', 'fa-plug', this.t('renderer.wizard.accountNoLogin'), this.t('renderer.wizard.accountNoLoginDesc'), false)}
+        <div class="wiz-head">
+            <div class="wiz-eyebrow">${escapeHtml(this._stepTag('account'))}</div>
+            <h2 class="wiz-title">${escapeHtml(this.t('renderer.wizard.accountTitle'))}</h2>
+            <p class="wiz-desc">${escapeHtml(this.t('renderer.wizard.accountDesc'))}</p>
         </div>
+        <div class="wiz-card">
+            <div class="wiz-seg" role="tablist" aria-label="${escapeHtml(this.t('renderer.wizard.accountTitle'))}">
+                ${this._renderAccountTypeTab('personal', kind)}
+                ${this._renderAccountTypeTab('enterprise', kind)}
+            </div>
+            ${this._renderAccountLogin(kind)}
+        </div>
+        <p class="wiz-fine-print">${escapeHtml(this.t('renderer.wizard.accountFootnote'))}</p>
         `;
     }
 
-    private _renderChoiceCard(
-        value: LoginChoice,
-        icon: string,
-        title: string,
-        subtitle: string,
-        disabled: boolean
-    ): string {
-        const isSelected = this.loginChoice === value;
-        const classes = ['opt-card', disabled ? 'disabled' : '', isSelected ? 'selected' : '']
-            .filter(Boolean)
-            .join(' ');
-
-        return `
-        <div class="${classes}"
-             data-choice="${value}" ${disabled ? 'data-disabled="true"' : ''}>
-            ${disabled ? '<span class="opt-badge">建设中</span>' : ''}
-            ${disabled ? '<i class="fas fa-lock opt-lock"></i>' : ''}
-            ${isSelected ? '<span class="opt-check"><i class="fas fa-check"></i></span>' : ''}
-            <div class="opt-icon"><i class="fas ${icon}"></i></div>
-            <div class="opt-name">${title}</div>
-            <div class="opt-desc">${subtitle}</div>
-        </div>
-        `;
+    private _renderAccountTypeTab(kind: 'personal' | 'enterprise', current: 'personal' | 'enterprise'): string {
+        const on = kind === current;
+        const label =
+            kind === 'personal'
+                ? this.t('renderer.wizard.accountTypePersonal')
+                : this.t('renderer.wizard.accountTypeEnterprise');
+        return `<button type="button" class="wiz-seg-btn${on ? ' is-on' : ''}" role="tab" data-account-kind="${kind}" aria-selected="${
+            on ? 'true' : 'false'
+        }">${escapeHtml(label)}</button>`;
     }
 
-    // =================== Step 2 ===================
-    private _renderStep2(): string {
-        const view = resolveWizardStep2View(this.loginChoice ?? 'nologin', isAccountFeatureEnabled(this.currentData));
-        switch (view) {
-            case 'personal-login':
-                return this._renderAccountLogin('personal');
-            case 'enterprise-login':
-                return this._renderAccountLogin('enterprise');
-            case 'model-config':
-                return this._renderModelConfig();
-        }
-    }
-
+    /** 账号登录表单本体（不含步骤标题与卡片外壳），企业账号先填服务器地址。 */
     private _renderAccountLogin(kind: 'personal' | 'enterprise'): string {
         const isEnterprise = kind === 'enterprise';
 
-        // 企业账号先配置服务器地址，再进入登录表单
         if (isEnterprise && this.enterpriseBaseUrlStep) {
             return `
-            <span class="step-tag">Step 2 · ${escapeHtml(this.t('renderer.wizard.enterpriseStep'))}</span>
-            <h2>${escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlTitle'))}</h2>
-            <p class="ob-desc">${escapeHtml(this.t('renderer.wizard.enterpriseBaseUrlDesc'))}</p>
-            <div class="form-card">
-                <div class="f-row">
-                    <label class="f-label">${escapeHtml(this.t('renderer.account.enterpriseBaseUrl'))}</label>
-                    <input id="wizard-enterprise-base-url" type="text" class="f-ctl" placeholder="https://your-server.example.com/api/v1" value="${escapeHtml(this.enterpriseBaseUrlDraft)}">
-                </div>
-                <div id="wizard-account-result" class="verify-result hidden"></div>
-                <div class="f-actions">
-                    <button id="wizard-enterprise-next" class="wiz-btn wiz-btn-primary" type="button">
-                        <i class="fas fa-arrow-right"></i>${escapeHtml(this.t('renderer.wizard.next'))}
-                    </button>
-                </div>
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-enterprise-base-url">${escapeHtml(
+                    this.t('renderer.account.enterpriseBaseUrl')
+                )}</label>
+                <input id="wizard-enterprise-base-url" type="text" class="wiz-ctl" placeholder="https://your-server.example.com/api/v1" value="${escapeHtml(
+                    this.enterpriseBaseUrlDraft
+                )}">
             </div>
-            <div class="ob-back">
-                <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
-                    <i class="fas fa-arrow-left"></i>${escapeHtml(this.t('renderer.wizard.useNoLogin'))}
-                </button>
-            </div>
+            <div id="wizard-account-result" class="wiz-verify" hidden></div>
             `;
         }
 
@@ -248,68 +304,79 @@ class SetupWizard extends HTMLElement {
                                   : field.id === 'password'
                                     ? this.loginPassword
                                     : '';
-                          const input = `<input data-login-field="${escapeHtml(field.id)}" type="${field.type}" class="${field.type === 'password' ? 'f-ctl-input' : 'f-ctl'}" autocomplete="${escapeHtml(field.autocomplete || 'off')}" ${field.placeholder ? `placeholder="${escapeHtml(resolveLocalizedText(field.placeholder))}"` : ''} value="${escapeHtml(value)}">`;
-                          return `<div class="f-row"><label class="f-label">${escapeHtml(resolveLocalizedText(field.label))}</label>${field.type === 'password' ? `<div class="f-ctl f-ctl-with-btn">${input}<button class="f-ctl-btn" type="button" data-toggle-login-field="${escapeHtml(field.id)}"><i class="fas fa-eye"></i></button></div>` : input}</div>`;
+                          const input = `<input data-login-field="${escapeHtml(field.id)}" type="${field.type}" class="${
+                              field.type === 'password' ? 'wiz-ctl-input' : 'wiz-ctl'
+                          }" autocomplete="${escapeHtml(field.autocomplete || 'off')}" ${
+                              field.placeholder
+                                  ? `placeholder="${escapeHtml(resolveLocalizedText(field.placeholder))}"`
+                                  : ''
+                          } value="${escapeHtml(value)}">`;
+                          const control =
+                              field.type === 'password'
+                                  ? `<div class="wiz-ctl-group">${input}<button class="wiz-ctl-btn" type="button" data-toggle-login-field="${escapeHtml(
+                                        field.id
+                                    )}" aria-label="${escapeHtml(
+                                        this.t('renderer.wizard.showPassword')
+                                    )}"><i class="fas fa-eye"></i></button></div>`
+                                  : input;
+                          return `<div class="wiz-field"><label class="wiz-label">${escapeHtml(
+                              resolveLocalizedText(field.label)
+                          )}</label>${control}</div>`;
                       })
                       .join('')
                 : '';
+
+        const unavailable =
+            !this.loginMethodLoading && this.loginMethodsLoaded && !passwordMethod && providerMethods.length === 0;
+
+        const result = this.loginError
+            ? `<div id="wizard-account-result" class="wiz-verify wiz-verify-error"><i class="fas fa-circle-exclamation"></i>${escapeHtml(
+                  this.loginError
+              )}</div>`
+            : unavailable
+              ? `<div id="wizard-account-result" class="wiz-verify wiz-verify-error"><i class="fas fa-circle-exclamation"></i>${escapeHtml(
+                    this.t('renderer.wizard.accountServiceUnavailable')
+                )}</div>`
+              : `<div id="wizard-account-result" class="wiz-verify" hidden></div>`;
+
+        const browserHint = this.loginBrowserUrl
+            ? `<p class="wiz-desc">${escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
+               <div class="wiz-inline-actions"><button id="wizard-copy-login-link" class="wiz-btn wiz-btn-secondary" type="button"><i class="fas fa-copy"></i>${escapeHtml(
+                   this.t('renderer.account.copyLoginLink')
+               )}</button></div>`
+            : '';
+
         const providers = providerMethods.length
-            ? `<div class="f-row"><div class="f-actions">${providerMethods
+            ? `<div class="wiz-inline-actions">${providerMethods
                   .map((providerMethod) => {
                       const provider = resolveLocalizedText(providerMethod.displayName);
                       const label = this.t('renderer.account.loginWithProvider', { provider });
-                      return `<button class="wiz-btn wiz-btn-secondary" type="button" data-browser-method="${escapeHtml(providerMethod.id)}" ${this.loginBusy ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
+                      return `<button class="wiz-btn wiz-btn-secondary" type="button" data-browser-method="${escapeHtml(
+                          providerMethod.id
+                      )}" ${this.loginBusy ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
                   })
-                  .join('')}</div></div>`
-            : '';
-        const unavailable =
-            !this.loginMethodLoading && this.loginMethodsLoaded && !passwordMethod && providerMethods.length === 0;
-        const result = this.loginError
-            ? `<div id="wizard-account-result" class="verify-result verify-error">${escapeHtml(this.loginError)}</div>`
-            : unavailable
-              ? `<div id="wizard-account-result" class="verify-result verify-error">${escapeHtml(this.t('renderer.wizard.accountServiceUnavailable'))}</div>`
-              : `<div id="wizard-account-result" class="verify-result hidden"></div>`;
-        const browserHint = this.loginBrowserUrl
-            ? `<p class="ob-desc">${escapeHtml(this.t('renderer.account.browserLoginHint'))}</p>
-                <div class="f-actions"><button id="wizard-copy-login-link" class="wiz-btn wiz-btn-secondary" type="button"><i class="fas fa-copy"></i>${escapeHtml(this.t('renderer.account.copyLoginLink'))}</button></div>`
-            : '';
-        const submit = passwordMethod
-            ? `<div class="f-actions">
-                <button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" ${this.loginBusy || this.loginMethodLoading ? 'disabled' : ''}>
-                    ${this.loginBusy || this.loginMethodLoading ? '<i class="fas fa-spinner fa-spin"></i>' : '<i class="fas fa-check-double"></i>'}${escapeHtml(this.t('renderer.wizard.loginAndFinish'))}
-                </button>
-            </div>`
+                  .join('')}</div>`
             : '';
 
-        return `
-        <span class="step-tag">Step 2 · ${escapeHtml(this.t('renderer.wizard.accountLoginStep'))}</span>
-        <h2>${escapeHtml(kind === 'enterprise' ? this.t('renderer.wizard.enterpriseLoginTitle') : this.t('renderer.wizard.personalLoginTitle'))}</h2>
-        <p class="ob-desc">${escapeHtml(this.t('renderer.wizard.accountLoginDesc'))}</p>
-        <div class="form-card">
-            ${fields}
-            ${result}
-            ${browserHint}
-            ${submit}
-            ${providers}
-        </div>
-        <div class="ob-back">
-            <button id="wizard-account-back" class="wiz-btn-ghost" type="button">
-                <i class="fas fa-arrow-left"></i>${escapeHtml(this.t('renderer.wizard.useNoLogin'))}
-            </button>
-        </div>
-        `;
+        if (!fields && !providers && !unavailable && this.loginMethodLoading) {
+            return `<div class="wiz-verify wiz-verify-info"><i class="fas fa-spinner fa-spin"></i>${escapeHtml(
+                this.t('renderer.wizard.loadingLoginMethods')
+            )}</div>`;
+        }
+
+        return `${fields}${result}${browserHint}${providers}`;
     }
 
-    private _renderPlaceholder(title: string, description: string): string {
+    // =================== Step: 模型配置 ===================
+
+    private _renderModelStep(): string {
         return `
-        <span class="step-tag">Step 2 · ${escapeHtml(title)}</span>
-        <h2>${escapeHtml(title)}</h2>
-        <p class="ob-desc">${escapeHtml(description)}</p>
-        <div class="placeholder-card">
-            <div class="placeholder-icon"><i class="fas fa-hard-hat"></i></div>
-            <p class="placeholder-title">正在建设中</p>
-            <p class="placeholder-sub">此功能尚未上线，请选择其他登录方式</p>
+        <div class="wiz-head">
+            <div class="wiz-eyebrow">${escapeHtml(this._stepTag('model'))}</div>
+            <h2 class="wiz-title">${escapeHtml(this.t('renderer.wizard.modelTitle'))}</h2>
+            <p class="wiz-desc">${escapeHtml(this.t('renderer.wizard.modelDesc'))}</p>
         </div>
+        ${this._renderModelConfig()}
         `;
     }
 
@@ -323,163 +390,424 @@ class SetupWizard extends HTMLElement {
 
         return `
         <style>${MODEL_SELECT_CSS}</style>
-        <span class="step-tag">Step 2 · 模型配置</span>
-        <h2>配置您的模型服务</h2>
-        <p class="ob-desc">请选择一个模型提供方并填入对应的密钥和模型名称。</p>
-        <div class="form-card">
-            <div class="f-row">
-                <label class="f-label">模型提供方</label>
-                <select id="wizard-provider-select" class="f-ctl f-select">
-                    <option value="">请选择模型提供方</option>
+        <div class="wiz-card">
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-provider-select">${escapeHtml(
+                    this.t('renderer.wizard.fieldProvider')
+                )}</label>
+                <select id="wizard-provider-select" class="wiz-ctl wiz-select">
+                    <option value="">${escapeHtml(this.t('renderer.wizard.fieldProviderPlaceholder'))}</option>
                     ${templateOptions}
-                    <option value="__custom__">自定义</option>
+                    <option value="__custom__">${escapeHtml(this.t('renderer.wizard.fieldProviderCustom'))}</option>
                 </select>
             </div>
-            <div class="f-row">
-                <label class="f-label">协议类型</label>
-                <select id="wizard-provider-type" class="f-ctl f-select">
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-provider-type">${escapeHtml(
+                    this.t('renderer.wizard.fieldProviderType')
+                )}</label>
+                <select id="wizard-provider-type" class="wiz-ctl wiz-select">
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                 </select>
             </div>
-            <div class="f-row">
-                <label class="f-label">API 地址 (Base URL)</label>
-                <input id="wizard-base-url" type="text" class="f-ctl" placeholder="https://api.example.com/v1">
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-base-url">${escapeHtml(this.t('renderer.wizard.fieldBaseUrl'))}</label>
+                <input id="wizard-base-url" type="text" class="wiz-ctl" placeholder="https://api.example.com/v1">
             </div>
-            <div class="f-row">
-                <label class="f-label">API 密钥</label>
-                <div class="f-ctl f-ctl-with-btn">
-                    <input id="wizard-api-key" type="password" class="f-ctl-input" placeholder="sk-...">
-                    <button id="wizard-toggle-key" class="f-ctl-btn" type="button">
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-api-key">${escapeHtml(this.t('renderer.wizard.fieldApiKey'))}</label>
+                <div class="wiz-ctl-group">
+                    <input id="wizard-api-key" type="password" class="wiz-ctl-input" placeholder="sk-..." autocomplete="off">
+                    <button id="wizard-toggle-key" class="wiz-ctl-btn" type="button" aria-label="${escapeHtml(
+                        this.t('renderer.wizard.showPassword')
+                    )}">
                         <i class="fas fa-eye"></i>
                     </button>
                 </div>
             </div>
-            <div class="f-row f-checks">
-                <label class="f-check">
+            <div class="wiz-checks">
+                <label class="wiz-check">
                     <input id="wizard-no-proxy" type="checkbox">
-                    <span>禁用代理</span>
+                    <span>${escapeHtml(this.t('renderer.wizard.noProxy'))}</span>
                 </label>
-                <label class="f-check">
+                <label class="wiz-check">
                     <input id="wizard-no-ssl" type="checkbox">
-                    <span>跳过 SSL 证书校验</span>
+                    <span>${escapeHtml(this.t('renderer.wizard.noSsl'))}</span>
                 </label>
             </div>
-            <div class="f-row">
-                <label class="f-label">${escapeHtml(this.t('config.model.field.model_name'))}</label>
-                <div class="wizard-model-fetch-row">
-                    <div class="wizard-model-select model-combo">
-                        <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="f-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${escapeHtml(this.t('config.model.field.model_name'))}">
-                        <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${escapeHtml(this.t('config.model.discovery.showSuggestions'))}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+            <div class="wiz-field">
+                <label class="wiz-label" for="wizard-model-name">${escapeHtml(
+                    this.t('config.model.field.model_name')
+                )}</label>
+                <div class="wiz-model-fetch-row">
+                    <div class="wiz-model-select model-combo">
+                        <input id="wizard-model-name" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="wizard-model-suggestions" class="wiz-ctl" disabled autocomplete="off" aria-describedby="wizard-model-error" aria-label="${escapeHtml(
+                            this.t('config.model.field.model_name')
+                        )}">
+                        <button id="wizard-model-name-toggle" class="model-suggestions-toggle" type="button" tabindex="-1" disabled aria-label="${escapeHtml(
+                            this.t('config.model.discovery.showSuggestions')
+                        )}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
                         <div id="wizard-model-suggestions" class="model-suggestions" role="listbox" hidden></div>
-                        <span id="wizard-model-loading" class="wizard-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
+                        <span id="wizard-model-loading" class="wiz-model-loading" hidden role="status"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i></span>
                     </div>
-                    <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${escapeHtml(this.t('config.model.discovery.fetch'))}</button>
+                    <button id="wizard-fetch-models" class="wiz-btn wiz-btn-secondary" type="button" disabled>${escapeHtml(
+                        this.t('config.model.discovery.fetch')
+                    )}</button>
                 </div>
-                <p id="wizard-model-error" class="wizard-model-error" role="alert" hidden></p>
+                <p id="wizard-model-error" class="wiz-model-error" role="alert" hidden></p>
             </div>
-            <div id="wizard-verify-result" class="verify-result hidden"></div>
-            <div class="f-actions">
-                <button id="wizard-save-btn" class="wiz-btn wiz-btn-secondary" type="button">
-                    <i class="fas fa-save"></i>仅保存
-                </button>
-                <button id="wizard-verify-btn" class="wiz-btn wiz-btn-primary" type="button">
-                    <i class="fas fa-check-double"></i>验证配置并保存
-                </button>
-            </div>
+            <div id="wizard-verify-result" class="wiz-verify" hidden></div>
         </div>
         `;
     }
 
-    // =================== Step 3 ===================
-    private _renderStep3(): string {
+    // =================== Step: 个性化设置 ===================
+
+    private _renderPersonalizeStep(): string {
         return `
-        <span class="step-tag">Step 3 · 完成</span>
-        <h2>配置已完成</h2>
-        <p class="ob-desc">使用 OpenDesk 完成你的第一个任务吧！</p>
-        <div class="done-card">
-            <div class="done-icon"><i class="fas fa-check-circle"></i></div>
-            <p class="done-title">一切就绪！</p>
-            <button id="wizard-create-task-btn" class="wiz-btn wiz-btn-primary wiz-btn-lg" type="button">
-                <i class="fas fa-plus"></i>点击创建任务
-            </button>
+        <div class="wiz-head">
+            <div class="wiz-eyebrow">${escapeHtml(this._stepTag('personalize'))}</div>
+            <h2 class="wiz-title">${escapeHtml(this.t('renderer.wizard.personalizeTitle'))}</h2>
+            <p class="wiz-desc">${escapeHtml(this.t('renderer.wizard.personalizeDesc'))}</p>
+        </div>
+        <div class="wiz-split">
+            <div class="wiz-split-main">
+                <section class="wiz-block">
+                    <div class="wiz-block-head">
+                        <h3 class="wiz-block-title">${escapeHtml(this.t('renderer.wizard.memoryTitle'))}</h3>
+                        <label class="wiz-switch">
+                            <input type="checkbox" role="switch" id="wizard-memory-toggle" ${
+                                this.memoryEnabled ? 'checked' : ''
+                            } aria-label="${escapeHtml(this.t('renderer.wizard.memoryTitle'))}">
+                            <span class="wiz-switch-track" aria-hidden="true"><span class="wiz-switch-knob"></span></span>
+                        </label>
+                    </div>
+                    <p class="wiz-block-desc">${escapeHtml(this.t('renderer.wizard.memoryDesc'))}</p>
+                    <div class="wiz-memory-sample${this.memoryEnabled ? '' : ' is-off'}" id="wizard-memory-sample">
+                        <span class="wiz-memory-row">· ${escapeHtml(this.t('renderer.wizard.memorySampleStyle'))}</span>
+                        <span class="wiz-memory-row">· ${escapeHtml(this.t('renderer.wizard.memorySamplePath'))}</span>
+                        <span class="wiz-memory-row">· ${escapeHtml(this.t('renderer.wizard.memorySampleLang'))}</span>
+                    </div>
+                    <p class="wiz-memory-note${this.memoryEnabled ? '' : ' is-on'}" id="wizard-memory-note">${escapeHtml(
+                        this.t('renderer.wizard.memoryOffNote')
+                    )}</p>
+                </section>
+
+                <section class="wiz-block">
+                    <h3 class="wiz-block-title">${escapeHtml(this.t('renderer.wizard.outputTitle'))}</h3>
+                    <div class="wiz-radio-list" role="radiogroup" aria-label="${escapeHtml(
+                        this.t('renderer.wizard.outputTitle')
+                    )}">
+                        ${this._renderOutputOption('minimal')}
+                        ${this._renderOutputOption('verbose')}
+                    </div>
+                </section>
+            </div>
+
+            <aside class="wiz-split-preview">
+                <div class="wiz-preview">
+                    <div class="wiz-preview-bar">
+                        <span class="wiz-preview-bar-title"><i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i>${escapeHtml(
+                            this.t('renderer.wizard.previewTitle')
+                        )}</span>
+                        <span class="wiz-preview-pill">${escapeHtml(this.t('renderer.wizard.previewLive'))}</span>
+                    </div>
+                    <div class="wiz-preview-body" id="wizard-preview-body" data-mode="${this.outputMode}">
+                        ${this._renderPreviewMinimal()}
+                        ${this._renderPreviewVerbose()}
+                    </div>
+                </div>
+            </aside>
         </div>
         `;
     }
 
-    // =================== Nav ===================
-    private _renderNavButtons(): string {
-        const showBack = this.currentStep > 1;
-        const showNext = this.currentStep === 1;
-        const nextDisabled = this.currentStep === 1 && !this.loginChoice;
-        const returnLabel = window.globalControlAPI.getWizardReturnLabel?.() || '返回';
+    private _renderOutputOption(mode: OutputMode): string {
+        const on = this.outputMode === mode;
+        const label = this.t(mode === 'minimal' ? 'renderer.wizard.outputMinimal' : 'renderer.wizard.outputVerbose');
+        const desc = this.t(
+            mode === 'minimal' ? 'renderer.wizard.outputMinimalDesc' : 'renderer.wizard.outputVerboseDesc'
+        );
+        const icon = mode === 'minimal' ? 'fa-list-ul' : 'fa-layer-group';
+        return `
+        <button type="button" class="wiz-option${on ? ' is-on' : ''}" role="radio" aria-checked="${
+            on ? 'true' : 'false'
+        }" data-output-mode="${mode}">
+            <span class="wiz-option-icon"><i class="fas ${icon}" aria-hidden="true"></i></span>
+            <span class="wiz-option-text">
+                <span class="wiz-option-title">${escapeHtml(label)}</span>
+                <span class="wiz-option-desc">${escapeHtml(desc)}</span>
+            </span>
+            <span class="wiz-option-check" aria-hidden="true"><i class="fas fa-check"></i></span>
+        </button>
+        `;
+    }
 
-        if (showBack) {
+    /**
+     * 简洁模式的预览：照 taskview 的真实结构复刻 —— 一条「查看过程（本轮共耗时 …）」折叠条
+     * + 正文结论；已完成态没有「最终结果」小标签，也没有过程卡片外壳。
+     */
+    private _renderPreviewMinimal(): string {
+        const duration = this.t('renderer.taskview.output.duration.seconds', { seconds: 12 });
+        const summary = this.t('renderer.taskview.output.completedProcessWithDuration', { duration });
+        return `
+        <div class="wiz-pv-flow" data-mode="minimal">
+            <div class="wiz-pv-process">
+                <div class="wiz-pv-summary">
+                    <span class="wiz-pv-summary-text">${escapeHtml(summary)}</span>
+                    <span class="wiz-pv-chevron" aria-hidden="true"><i class="fas fa-chevron-right"></i></span>
+                </div>
+            </div>
+            <div class="wiz-pv-final">${escapeHtml(this.t('renderer.wizard.previewFinal'))}</div>
+        </div>
+        `;
+    }
+
+    /** 详细模式的预览：琥珀色「深度思考」头 + 左侧竖线正文 + 工具行 + 结论前分隔线。 */
+    private _renderPreviewVerbose(): string {
+        const elapsed = this.t('reasoning.elapsed.seconds', { seconds: 6 });
+        const chars = this.t('reasoning.elapsed.chars', { chars: 320 });
+        const reasoningTime = this.t('renderer.wizard.previewReasoningTime', { time: `${elapsed}${chars}` });
+        return `
+        <div class="wiz-pv-flow" data-mode="verbose">
+            <div class="wiz-pv-detail">
+                <div class="wiz-pv-reasoning">
+                    <div class="wiz-pv-reasoning-head">
+                        <i class="fa-regular fa-lightbulb" aria-hidden="true"></i>
+                        <span class="wiz-pv-reasoning-title">${escapeHtml(this.t('reasoning.card.title'))}</span>
+                        <span class="wiz-pv-reasoning-time">${escapeHtml(reasoningTime)}</span>
+                    </div>
+                    <div class="wiz-pv-reasoning-body">${escapeHtml(this.t('renderer.wizard.previewReasoning'))}</div>
+                </div>
+                <div class="wiz-pv-tool">
+                    <i class="fas fa-file-lines" aria-hidden="true"></i>
+                    <span class="wiz-pv-tool-title">${escapeHtml(this.t('renderer.wizard.previewToolTitle'))}</span>
+                    <span class="wiz-pv-tool-detail">${escapeHtml(this.t('renderer.wizard.previewToolDetail'))}</span>
+                </div>
+                <div class="wiz-pv-terminal">
+                    <div class="wiz-pv-terminal-head">
+                        <i class="fas fa-terminal" aria-hidden="true"></i>
+                        <span class="wiz-pv-terminal-cmd">${escapeHtml(
+                            this.t('renderer.wizard.previewTerminalCmd')
+                        )}</span>
+                        <span class="wiz-pv-terminal-tag">${escapeHtml(
+                            this.t('renderer.wizard.previewTerminalTag')
+                        )}</span>
+                        <i class="fas fa-chevron-down wiz-pv-terminal-chevron" aria-hidden="true"></i>
+                    </div>
+                    <div class="wiz-pv-terminal-body">${escapeHtml(
+                        this.t('renderer.wizard.previewTerminalOutput')
+                    )}</div>
+                </div>
+            </div>
+            <div class="wiz-pv-final wiz-pv-final-divider">${escapeHtml(this.t('renderer.wizard.previewFinal'))}</div>
+        </div>
+        `;
+    }
+
+    // =================== Step: 完成 ===================
+
+    private _renderDoneStep(): string {
+        const memoryLabel = this.memoryEnabled
+            ? this.t('renderer.wizard.memoryOn')
+            : this.t('renderer.wizard.memoryOff');
+        const outputLabel = this.t(
+            this.outputMode === 'minimal' ? 'renderer.wizard.outputMinimal' : 'renderer.wizard.outputVerbose'
+        );
+        return `
+        <div class="wiz-head">
+            <div class="wiz-eyebrow">${escapeHtml(this._stepTag('done'))}</div>
+            <div class="wiz-done-head">
+                <span class="wiz-done-icon" aria-hidden="true"><i class="fas fa-check"></i></span>
+                <div>
+                    <h2 class="wiz-title">${escapeHtml(this.t('renderer.wizard.doneTitle'))}</h2>
+                    <p class="wiz-desc">${escapeHtml(this.t('renderer.wizard.doneDesc'))}</p>
+                </div>
+            </div>
+        </div>
+        <div class="wiz-summary">
+            <div class="wiz-summary-row">
+                <span class="wiz-summary-key">${escapeHtml(this.t('renderer.wizard.summaryModel'))}</span>
+                <span class="wiz-summary-value">${escapeHtml(this.t('renderer.wizard.configured'))}</span>
+            </div>
+            <div class="wiz-summary-row">
+                <span class="wiz-summary-key">${escapeHtml(this.t('renderer.wizard.summaryMemory'))}</span>
+                <span class="wiz-summary-value" id="wizard-summary-memory">${escapeHtml(memoryLabel)}</span>
+            </div>
+            <div class="wiz-summary-row">
+                <span class="wiz-summary-key">${escapeHtml(this.t('renderer.wizard.summaryOutput'))}</span>
+                <span class="wiz-summary-value" id="wizard-summary-output">${escapeHtml(outputLabel)}</span>
+            </div>
+        </div>
+        `;
+    }
+
+    // =================== 底部导航 ===================
+
+    private _renderNav(): string {
+        const step = this.stepKey;
+        const hasPrev = this.currentStep > 1;
+        const returnLabel = window.globalControlAPI?.getWizardReturnLabel?.() || this.t('renderer.wizard.back');
+
+        const prevButton = hasPrev
+            ? `<button id="wizard-prev-btn" class="wiz-btn-ghost" type="button"><i class="fas fa-arrow-left"></i>${escapeHtml(
+                  this.t('renderer.wizard.previous')
+              )}</button>`
+            : `<button id="wizard-return-btn" class="wiz-btn-ghost" type="button"><i class="fas fa-arrow-left"></i>${escapeHtml(
+                  returnLabel
+              )}</button>`;
+
+        if (step === 'account') {
             return `
-        <button id="wizard-back-btn" class="wiz-btn-ghost" type="button">
-            <i class="fas fa-arrow-left"></i>上一步
-        </button>
-        `;
+            <button id="wizard-skip-login" class="wiz-btn-ghost" type="button">${escapeHtml(
+                this.t('renderer.wizard.skipLogin')
+            )}<i class="fas fa-arrow-right"></i></button>
+            <span class="wiz-foot-spacer"></span>
+            ${this._renderAccountPrimaryButton()}
+            `;
+        }
+
+        if (step === 'model') {
+            return `
+            ${prevButton}
+            <span class="wiz-foot-spacer"></span>
+            <button id="wizard-save-btn" class="wiz-btn wiz-btn-secondary" type="button">${escapeHtml(
+                this.t('renderer.wizard.saveOnly')
+            )}</button>
+            <button id="wizard-verify-btn" class="wiz-btn wiz-btn-primary" type="button">
+                <i class="fas fa-check-double"></i>${escapeHtml(this.t('renderer.wizard.verifyAndSave'))}
+            </button>
+            `;
+        }
+
+        if (step === 'personalize') {
+            return `
+            ${prevButton}
+            <span class="wiz-foot-spacer"></span>
+            <button id="wizard-next-btn" class="wiz-btn wiz-btn-primary" type="button">${escapeHtml(
+                this.t('renderer.wizard.nextStep')
+            )}</button>
+            `;
         }
 
         return `
-        <button id="wizard-return-btn" class="wiz-btn-ghost" type="button">
-            <i class="fas fa-arrow-left"></i>${escapeHtml(returnLabel)}
-        </button>
-        ${
-            showNext
-                ? `
-        <button id="wizard-next-btn" class="wiz-btn wiz-btn-primary" type="button" ${nextDisabled ? 'disabled' : ''}>
-            下一步<i class="fas fa-arrow-right"></i>
-        </button>`
-                : ''
-        }
+        ${prevButton}
+        <span class="wiz-foot-spacer"></span>
+        <button id="wizard-create-task-btn" class="wiz-btn wiz-btn-primary" type="button">${escapeHtml(
+            this.t('renderer.wizard.createTask')
+        )}</button>
         `;
     }
 
-    // =================== Events ===================
+    /** 账号步的主按钮：企业账号先填服务器地址（下一步），否则是登录（仅当存在账号密码表单）。 */
+    private _renderAccountPrimaryButton(): string {
+        if (this._accountKind() === 'enterprise' && this.enterpriseBaseUrlStep) {
+            return `<button id="wizard-enterprise-next" class="wiz-btn wiz-btn-primary" type="button">${escapeHtml(
+                this.t('renderer.wizard.nextStep')
+            )}</button>`;
+        }
+        const hasPasswordForm = splitLoginMethods(this.loginMethods).passwordMethod?.type === 'form';
+        if (this.loginBusy) {
+            return `<button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button" disabled><i class="fas fa-spinner fa-spin"></i>${escapeHtml(
+                this.t('renderer.wizard.loggingIn')
+            )}</button>`;
+        }
+        if (!hasPasswordForm) return '';
+        return `<button id="wizard-account-finish" class="wiz-btn wiz-btn-primary" type="button">${escapeHtml(
+            this.t('renderer.wizard.login')
+        )}</button>`;
+    }
+
+    // =================== 事件 ===================
+
     private _bindEvents(): void {
-        this.querySelectorAll<HTMLElement>('.opt-card').forEach((card) => {
-            card.addEventListener('click', () => {
-                if (card.dataset.disabled === 'true') return;
-                this.loginChoice = card.dataset.choice as LoginChoice;
-                this.enterpriseBaseUrlStep = true;
-                this.loginBrowserUrl = null;
-                this._render();
-                this._bindEvents();
-            });
-        });
+        this.querySelectorAll<HTMLButtonElement>('[data-wizard-step]').forEach((node) =>
+            node.addEventListener('click', () => this._goToStep(Number(node.dataset.wizardStep ?? '1')))
+        );
 
-        this.querySelector('#wizard-next-btn')?.addEventListener('click', () => {
-            if (this.loginChoice) {
-                this.currentStep = 2;
-                this._render();
-                this._bindEvents();
-                if (this.loginChoice === 'opendesk') void this._loadLoginMethods('personal');
-            }
-        });
+        this.querySelector('#wizard-prev-btn')?.addEventListener('click', () => this._prevStep());
+        this.querySelector('#wizard-return-btn')?.addEventListener('click', () =>
+            window.globalControlAPI.returnFromWizard()
+        );
+        this.querySelector('#wizard-skip-login')?.addEventListener('click', () => this._handleSkipLogin());
+        this.querySelector('#wizard-create-task-btn')?.addEventListener('click', () =>
+            window.globalControlAPI.openHomePage()
+        );
+        this.querySelector('#wizard-next-btn')?.addEventListener('click', () => void this._handlePersonalizeNext());
 
-        this.querySelector('#wizard-back-btn')?.addEventListener('click', () => {
-            if (this.currentStep > 1) {
-                this.currentStep--;
-                this._render();
-                this._bindEvents();
-            }
-        });
-
-        this.querySelector('#wizard-return-btn')?.addEventListener('click', () => {
-            window.globalControlAPI.returnFromWizard();
-        });
-
-        this._bindModelConfigEvents();
         this._bindAccountEvents();
+        this._bindModelConfigEvents();
+        this._bindPersonalizeEvents();
+    }
 
-        this.querySelector('#wizard-create-task-btn')?.addEventListener('click', () => {
-            window.globalControlAPI.openHomePage();
+    private _bindPersonalizeEvents(): void {
+        const memoryToggle = this.querySelector<HTMLInputElement>('#wizard-memory-toggle');
+        const sample = this.querySelector<HTMLElement>('#wizard-memory-sample');
+        const note = this.querySelector<HTMLElement>('#wizard-memory-note');
+
+        memoryToggle?.addEventListener('change', () => {
+            this.memoryEnabled = !!memoryToggle.checked;
+            sample?.classList.toggle('is-off', !this.memoryEnabled);
+            note?.classList.toggle('is-on', !this.memoryEnabled);
         });
+
+        this.querySelectorAll<HTMLButtonElement>('[data-output-mode]').forEach((option) =>
+            option.addEventListener('click', () => {
+                this.outputMode = option.dataset.outputMode === 'verbose' ? 'verbose' : 'minimal';
+                this._syncOutputMode();
+            })
+        );
+    }
+
+    /** 切输出模式：选项选中态 + 右侧预览面板同步切换（预览两版都渲染，靠 data-mode 显隐）。 */
+    private _syncOutputMode(): void {
+        this.querySelectorAll<HTMLButtonElement>('[data-output-mode]').forEach((option) => {
+            const on = option.dataset.outputMode === this.outputMode;
+            option.classList.toggle('is-on', on);
+            option.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+        const body = this.querySelector<HTMLElement>('#wizard-preview-body');
+        if (body) body.dataset.mode = this.outputMode;
+    }
+
+    private async _handleSkipLogin(): Promise<void> {
+        if (this.activeLoginFlowId) {
+            void getAccountApi()?.cancelLogin?.(this.activeLoginFlowId);
+            this.activeLoginFlowId = null;
+        }
+        this.loginChoice = 'nologin';
+        this.loginError = null;
+        this.loginBusy = false;
+        this.loginBrowserUrl = null;
+        this.enterpriseBaseUrlStep = true;
+        try {
+            await this.requireAccountApi().configure?.({ mode: 'nologin' });
+        } catch (error) {
+            // 账号模式是次要副作用，失败不阻塞进入模型配置
+            console.warn('failed to switch account mode to nologin:', error);
+        }
+        this._nextStep();
     }
 
     private _bindAccountEvents(): void {
+        this.querySelectorAll<HTMLButtonElement>('[data-account-kind]').forEach((button) =>
+            button.addEventListener('click', () => {
+                const kind = button.dataset.accountKind === 'enterprise' ? 'enterprise' : 'personal';
+                // loginChoice 里个人账号记作 'opendesk'，必须用归一化后的 _accountKind() 比较，
+                // 否则点已选中的个人页签也会重载登录方式、整块重绘
+                if (this._accountKind() === kind) return;
+                this.loginChoice = kind === 'enterprise' ? 'enterprise' : 'opendesk';
+                this.enterpriseBaseUrlStep = kind === 'enterprise';
+                this.loginError = null;
+                this.loginBrowserUrl = null;
+                this.loginMethods = [];
+                this.loginMethodsLoaded = false;
+                this._render();
+                this._bindEvents();
+                if (kind === 'personal') void this._loadLoginMethods('personal');
+            })
+        );
+
         this.querySelectorAll<HTMLButtonElement>('[data-toggle-login-field]').forEach((toggleBtn) =>
             toggleBtn.addEventListener('click', () => {
                 const input = this.querySelector<HTMLInputElement>(
@@ -487,13 +815,9 @@ class SetupWizard extends HTMLElement {
                 );
                 const icon = toggleBtn.querySelector('i');
                 if (!input || !icon) return;
-                if (input.type === 'password') {
-                    input.type = 'text';
-                    icon.classList.replace('fa-eye', 'fa-eye-slash');
-                } else {
-                    input.type = 'password';
-                    icon.classList.replace('fa-eye-slash', 'fa-eye');
-                }
+                const show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                icon.classList.replace(show ? 'fa-eye' : 'fa-eye-slash', show ? 'fa-eye-slash' : 'fa-eye');
             })
         );
 
@@ -504,28 +828,28 @@ class SetupWizard extends HTMLElement {
                 if (fieldId === 'password') this.loginPassword = (event.target as HTMLInputElement).value;
             })
         );
+
         this.querySelectorAll<HTMLButtonElement>('[data-browser-method]').forEach((button) =>
             button.addEventListener('click', () => {
                 void this._handleBrowserLogin(button.dataset.browserMethod ?? '');
             })
         );
-        this.querySelector<HTMLButtonElement>('#wizard-copy-login-link')?.addEventListener('click', () => {
+
+        this.querySelector('#wizard-copy-login-link')?.addEventListener('click', () => {
             const url = this.loginBrowserUrl;
             if (url) void navigator.clipboard?.writeText(url).catch(() => {});
         });
+
         this.querySelector<HTMLInputElement>('#wizard-enterprise-base-url')?.addEventListener('input', (event) => {
             this.enterpriseBaseUrlDraft = (event.target as HTMLInputElement).value;
         });
 
-        this.querySelector<HTMLButtonElement>('#wizard-enterprise-next')?.addEventListener('click', () => {
-            void this._handleEnterpriseBaseUrlNext();
-        });
         this.querySelector<HTMLButtonElement>('#wizard-account-finish')?.addEventListener('click', () => {
             void this._handleAccountLogin();
         });
-        this.querySelector<HTMLButtonElement>('#wizard-account-back')?.addEventListener('click', () => {
-            this._handleBackToNoLogin();
-        });
+        // 企业地址页没有表单按钮，用底栏主按钮承载「下一步」
+        const enterpriseNext = this.querySelector<HTMLElement>('#wizard-enterprise-next');
+        enterpriseNext?.addEventListener('click', () => void this._handleEnterpriseBaseUrlNext());
     }
 
     /** accountAPI 缺失（preload 未注入或账号能力被裁剪）时的统一失败路径。 */
@@ -571,7 +895,7 @@ class SetupWizard extends HTMLElement {
         await this._performAccountLogin(method, values);
     }
 
-    /** Provider 按钮直接发起浏览器登录，无需再点击“登录并继续”。 */
+    /** Provider 按钮直接发起浏览器登录，无需再点击登录按钮。 */
     private async _handleBrowserLogin(methodId: string): Promise<void> {
         if (this.loginBusy) return;
         const method = this.loginMethods.find((candidate) => candidate.id === methodId);
@@ -587,7 +911,7 @@ class SetupWizard extends HTMLElement {
         this._bindEvents();
         try {
             const api = this.requireAccountApi();
-            const kind = this.loginChoice === 'enterprise' ? 'enterprise' : 'personal';
+            const kind = this._accountKind();
             await runAccountLoginFlow({
                 api,
                 kind,
@@ -612,10 +936,8 @@ class SetupWizard extends HTMLElement {
             await this._saveAccountMode();
             this.loginBusy = false;
             this.loginBrowserUrl = null;
-            // 账号登录自带内置模型，跳过模型配置直接进入完成页
-            this.currentStep = 3;
-            this._render();
-            this._bindEvents();
+            // 登录后仍需配置自己的模型，下一步进入模型配置
+            this._nextStep();
         } catch (error: unknown) {
             this.activeLoginFlowId = null;
             this.loginBrowserUrl = null;
@@ -627,6 +949,7 @@ class SetupWizard extends HTMLElement {
     }
 
     private async _loadLoginMethods(kind: 'personal' | 'enterprise'): Promise<void> {
+        const generation = ++this.loginMethodsGeneration;
         this.loginMethodLoading = true;
         this.loginMethodsLoaded = false;
         this.loginError = null;
@@ -635,29 +958,22 @@ class SetupWizard extends HTMLElement {
         try {
             const api = this.requireAccountApi();
             if (!api.getLoginMethods) throw new Error('account:backend_unavailable');
-            this.loginMethods = await api.getLoginMethods(kind);
+            const methods = await api.getLoginMethods(kind);
+            // 请求期间用户可能已切到另一种账号类型：丢弃这次的结果，不能覆盖当前页签的数据
+            if (generation === this.loginMethodsGeneration) this.loginMethods = methods;
         } catch (error: unknown) {
-            this.loginError = error instanceof Error ? error.message : String(error);
+            if (generation === this.loginMethodsGeneration) {
+                this.loginError = error instanceof Error ? error.message : String(error);
+            }
         } finally {
-            this.loginMethodLoading = false;
-            this.loginMethodsLoaded = true;
-            this._render();
-            this._bindEvents();
+            // 只有最新一次请求负责收尾渲染，旧请求的 loading/loaded 状态由它自己那份不再生效
+            if (generation === this.loginMethodsGeneration) {
+                this.loginMethodLoading = false;
+                this.loginMethodsLoaded = true;
+                this._render();
+                this._bindEvents();
+            }
         }
-    }
-
-    private _handleBackToNoLogin(): void {
-        if (this.activeLoginFlowId) {
-            void getAccountApi()?.cancelLogin?.(this.activeLoginFlowId);
-            this.activeLoginFlowId = null;
-        }
-        this.loginChoice = 'nologin';
-        this.loginError = null;
-        this.loginBusy = false;
-        this.loginBrowserUrl = null;
-        this.currentStep = 1;
-        this._render();
-        this._bindEvents();
     }
 
     private async _saveAccountMode(): Promise<void> {
@@ -693,7 +1009,8 @@ class SetupWizard extends HTMLElement {
         const clearVerifyResult = () => {
             const result = this.querySelector<HTMLElement>('#wizard-verify-result');
             if (result) {
-                result.className = 'verify-result hidden';
+                result.className = 'wiz-verify';
+                result.hidden = true;
                 result.textContent = '';
             }
         };
@@ -771,17 +1088,12 @@ class SetupWizard extends HTMLElement {
             const input = this.querySelector<HTMLInputElement>('#wizard-api-key');
             const icon = toggleKeyBtn.querySelector('i');
             if (!input || !icon) return;
-            if (input.type === 'password') {
-                input.type = 'text';
-                icon.classList.replace('fa-eye', 'fa-eye-slash');
-            } else {
-                input.type = 'password';
-                icon.classList.replace('fa-eye-slash', 'fa-eye');
-            }
+            const show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            icon.classList.replace(show ? 'fa-eye' : 'fa-eye-slash', show ? 'fa-eye-slash' : 'fa-eye');
         });
 
         verifyBtn?.addEventListener('click', () => this._handleVerifyAndSave());
-
         saveBtn?.addEventListener('click', () => this._handleSaveOnly());
     }
 
@@ -791,7 +1103,7 @@ class SetupWizard extends HTMLElement {
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
 
         if (!baseUrl) {
-            this._showResult(resultDiv, 'error', '请填写 API 地址');
+            this._showResult(resultDiv, 'error', this.t('renderer.wizard.baseUrlRequired'));
             return;
         }
         if (!modelName) {
@@ -800,9 +1112,7 @@ class SetupWizard extends HTMLElement {
         }
 
         if (!(await this._doSave())) return;
-        this.currentStep = 3;
-        this._render();
-        this._bindEvents();
+        this._nextStep();
     }
 
     /**
@@ -877,16 +1187,40 @@ class SetupWizard extends HTMLElement {
         }
         // 配置已落盘：提示放在 catch 之外，避免提示自身出错被误报成「保存失败」
         notifySettingSideEffectFailures(sideEffectFailures, this.t);
-        if (this.loginChoice === 'nologin') {
-            try {
-                await this.requireAccountApi().configure?.({ mode: 'nologin' });
-            } catch (error) {
-                // 配置已经写进磁盘：账号模式切换是次要步骤，失败只记日志，不能反过来把本次保存判为失败
-                console.warn('failed to switch account mode to nologin:', error);
-            }
-        }
         this.currentData = data;
         return true;
+    }
+
+    /** 个性化设置落盘：输出模式与记忆开关都写在 gui_config 上。 */
+    private async _savePersonalize(): Promise<boolean> {
+        let data: LoadedSettingObject;
+        try {
+            data = await window.settingAPI.loadSettingObject();
+        } catch (error) {
+            await this._showSaveFailedModal(error);
+            return false;
+        }
+        data.gui_config = {
+            ...(data.gui_config ?? {}),
+            output_mode: this.outputMode,
+            memory_enabled: this.memoryEnabled
+        } as typeof data.gui_config;
+
+        let sideEffectFailures: SettingSideEffectFailure[];
+        try {
+            ({ sideEffectFailures } = await window.settingAPI.saveSettingObjectDetailed(data));
+        } catch (error) {
+            await this._showSaveFailedModal(error);
+            return false;
+        }
+        notifySettingSideEffectFailures(sideEffectFailures, this.t);
+        this.currentData = data;
+        return true;
+    }
+
+    private async _handlePersonalizeNext(): Promise<void> {
+        if (!(await this._savePersonalize())) return;
+        this._nextStep();
     }
 
     /**
@@ -919,7 +1253,7 @@ class SetupWizard extends HTMLElement {
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
 
         if (!baseUrl) {
-            this._showResult(resultDiv, 'error', '请填写 API 地址');
+            this._showResult(resultDiv, 'error', this.t('renderer.wizard.baseUrlRequired'));
             return;
         }
         if (!modelName) {
@@ -930,9 +1264,11 @@ class SetupWizard extends HTMLElement {
         this._verifying = true;
         if (verifyBtn) {
             verifyBtn.disabled = true;
-            verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>正在验证...';
+            verifyBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i>${escapeHtml(
+                this.t('renderer.wizard.verifying')
+            )}`;
         }
-        this._showResult(resultDiv, 'info', '正在验证模型配置，请稍候...');
+        this._showResult(resultDiv, 'info', this.t('renderer.wizard.verifyRunning'));
 
         try {
             await window.settingAPI.verifyModel({
@@ -945,34 +1281,36 @@ class SetupWizard extends HTMLElement {
                 no_ssl: noSSL
             });
 
-            this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');
+            this._showResult(resultDiv, 'success', this.t('renderer.wizard.verifySuccess'));
 
             if (!(await this._doSave())) return;
 
             setTimeout(() => {
-                this.currentStep = 3;
-                this._render();
-                this._bindEvents();
+                // 用户可能在验证成功的这 600ms 里点里程碑跳到别的步骤：只在仍停在模型配置时前进，
+                // 否则 _nextStep() 会把「用户已经跳到的那一步」再 +1
+                if (this.stepKey === 'model') this._nextStep();
             }, 600);
         } catch (error: unknown) {
             const msg = error instanceof Error ? error.message : String(error);
-            this._showResult(resultDiv, 'error', `验证失败：${msg}`);
+            this._showResult(resultDiv, 'error', this.t('renderer.wizard.verifyFailed', { message: msg }));
         } finally {
             this._verifying = false;
             if (verifyBtn) {
                 verifyBtn.disabled = false;
-                verifyBtn.innerHTML = '<i class="fas fa-check-double"></i>验证配置并保存';
+                verifyBtn.innerHTML = `<i class="fas fa-check-double"></i>${escapeHtml(
+                    this.t('renderer.wizard.verifyAndSave')
+                )}`;
             }
         }
     }
 
     private _showResult(el: HTMLElement | null, type: ResultType, message: string): void {
         if (!el) return;
-        el.classList.remove('hidden');
-        el.className = `verify-result verify-${type}`;
+        el.hidden = false;
+        el.className = `wiz-verify wiz-verify-${type}`;
         const iconMap: Record<ResultType, string> = {
             success: 'fa-check-circle',
-            error: 'fa-times-circle',
+            error: 'fa-circle-exclamation',
             info: 'fa-info-circle'
         };
         el.innerHTML = `<i class="fas ${iconMap[type]}"></i>${escapeHtml(message)}`;

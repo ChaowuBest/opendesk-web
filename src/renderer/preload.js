@@ -705,6 +705,24 @@ function exposeOpenDeskAppAPI() {
 }
 
 function exposeFSAPI() {
+    const watchPath = async (filePath, callback, directory = false) => {
+        const id = globalThis.crypto.randomUUID();
+        const listener = (_event, watchId, change) => {
+            if (watchId === id) callback(change);
+        };
+        const dispose = () => {
+            ipcRenderer.removeListener('fs:fileChanged', listener);
+            ipcRenderer.send('fs:unwatchFile', id);
+        };
+        ipcRenderer.on('fs:fileChanged', listener);
+        try {
+            await ipcRenderer.invoke('fs:watchFile', id, filePath, directory);
+            return dispose;
+        } catch (error) {
+            dispose();
+            throw error;
+        }
+    };
     safeExposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
             const result = await ipcRenderer.invoke(
@@ -828,24 +846,8 @@ function exposeFSAPI() {
             }
             return result.data;
         },
-        watchFile: async (filePath, callback) => {
-            const id = globalThis.crypto.randomUUID();
-            const listener = (_event, watchId, change) => {
-                if (watchId === id) callback(change);
-            };
-            const dispose = () => {
-                ipcRenderer.removeListener('fs:fileChanged', listener);
-                ipcRenderer.send('fs:unwatchFile', id);
-            };
-            ipcRenderer.on('fs:fileChanged', listener);
-            try {
-                await ipcRenderer.invoke('fs:watchFile', id, filePath);
-                return dispose;
-            } catch (error) {
-                dispose();
-                throw error;
-            }
-        },
+        watchFile: (filePath, callback) => watchPath(filePath, callback),
+        watchDirectory: (dirPath, callback) => watchPath(dirPath, callback, true),
         getFileSize: async (filePath) => {
             const result = await ipcRenderer.invoke('fs:getFileSize', filePath);
             if (result.status !== 'ok') throw new Error(result.message);
@@ -1782,8 +1784,8 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        pickDirectoryDialog: async () => {
-            const result = await ipcRenderer.invoke('workspace:pickDirectoryDialog');
+        pickDirectoryDialog: async (defaultPath) => {
+            const result = await ipcRenderer.invoke('workspace:pickDirectoryDialog', defaultPath);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

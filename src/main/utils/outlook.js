@@ -74,6 +74,8 @@ export class OutlookUtils {
      * @returns {Promise<z.output<OutlookCalendarItemSchema>[]>}
      */
     static async getOutlookCalendarItems(daysBefore, daysAfter) {
+        // Outlook's COM automation is a Windows capability; other hosts keep their local calendar.
+        if (process.platform !== 'win32') return [];
         const cmd = POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS(daysBefore, daysAfter);
         const result = spawnSync('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-Command', cmd]);
         if (result.status !== 0) {

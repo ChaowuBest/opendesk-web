@@ -8,6 +8,20 @@ import os from 'node:os';
 import path from 'node:path';
 
 describe('设置 schema', () => {
+    test('JSON Schema describes editor input defaults rather than transformed runtime output', () => {
+        const schema = Setting.getSettingJSONSchema() as {
+            type: string;
+            properties: {
+                default_model: { type: string; default: string };
+                models: { type: string };
+            };
+        };
+
+        expect(schema.type).toBe('object');
+        expect(schema.properties.default_model).toMatchObject({ type: 'string', default: '' });
+        expect(schema.properties.models.type).toBe('array');
+    });
+
     test('开发者模式默认关闭', () => {
         const setting = Setting.getSettingSchema().parse({});
 

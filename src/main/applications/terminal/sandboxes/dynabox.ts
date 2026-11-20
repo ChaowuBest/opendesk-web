@@ -21,6 +21,7 @@ import { createSandboxDecideEndpoint } from './sandbox-decide.js';
 import { policyText } from './dynabox-policy.js';
 import { serializePolicyForSandbox } from './policy-guard.js';
 import { normalizeTrashExcludeDirs } from './trash-exclude.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 
 export interface DynamicSandboxLaunch {
     file: string;
@@ -34,7 +35,11 @@ export interface DynamicSandboxLaunch {
     cleanup: () => Promise<void>;
 }
 
-function resolveSandboxExecutable(): string | null {
+/**
+ * 解析 Windows 沙箱可执行文件。运行与可用性探测（设置页是否暴露沙箱开关）共用
+ * 这一份解析，保证"能看到开关"与"能真正拉起沙箱"一致。
+ */
+export function resolveWindowsSandboxExecutable(): string | null {
     if (process.platform !== 'win32') return null;
     const electronProcess = process as NodeJS.Process & {
         defaultApp?: boolean;
@@ -150,8 +155,8 @@ export async function prepareDynamicSandbox(options: {
     // 与 detours hook 不兼容（注入后 fork 挂死且基本文件操作异常），bash/zsh 只
     // 作为普通 shell 使用（scan.ts 不为其注册沙箱变体）。
 
-    const executable = resolveSandboxExecutable();
-    if (!executable) throw new Error(t('sandbox.executableMissing'));
+    const executable = resolveWindowsSandboxExecutable();
+    if (!executable) throw sandboxUnavailableError(t('sandbox.executableMissing'));
     // 校验并映射工作目录必须先于任何宿主侧资源（授权端点、策略文件）的分配，
     // 否则不可映射的 cwd（UNC/相对路径）抛错时会泄漏已监听的服务器与临时文件。
     const childArgs = withSandboxWorkingDirectory(options.shellPath, options.shellArgs, options.cwd);

@@ -95,6 +95,9 @@ export const enUs: Record<string, string> = {
     'renderer.skill.error.searchFailed': 'Search failed',
     'renderer.skill.error.searchTimeout': 'Search timed out; check your network and try again',
     'renderer.skill.error.loadTimeout': 'Load timed out',
+    'renderer.skill.error.networkTitle': 'Network error',
+    'renderer.skill.error.networkHint': 'Your network appears to be offline. Check your connection and try again',
+    'renderer.skill.error.retry': 'Retry',
 
     // ========== Renderer：安装 / 删除 / 启停 ==========
     'renderer.skill.install.success': 'Installed',

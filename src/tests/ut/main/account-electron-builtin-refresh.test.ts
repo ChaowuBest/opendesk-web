@@ -9,6 +9,13 @@ const session = {
     baseUrl: 'https://personal.example.com/api/v1',
     user: { id: 'u-1', username: 'alice' }
 };
+const getSession = jest.fn(() => session);
+const refreshBuiltinModels = jest.fn(async () => {
+    await Promise.resolve();
+    settingData.builtin_models = [{ alias: 'opendesk/auto' }];
+    return false;
+});
+let backendChanged: () => void;
 
 jest.unstable_mockModule('electron', () => ({
     BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: {} }] },
@@ -45,7 +52,12 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getData: () => settingData }) }
 }));
 jest.unstable_mockModule('../../../main/applications/account/backend-registry.js', () => ({
-    accountBackendRegistry: { onBackendsChanged: () => () => undefined }
+    accountBackendRegistry: {
+        onBackendsChanged: (listener: () => void) => {
+            backendChanged = listener;
+            return () => undefined;
+        }
+    }
 }));
 jest.unstable_mockModule('../../../main/applications/account/factory.js', () => ({
     getAccountRuntime: () => ({
@@ -56,7 +68,7 @@ jest.unstable_mockModule('../../../main/applications/account/factory.js', () => 
             isAvailable: () => true
         },
         getService: () => ({
-            getSession: () => session,
+            getSession,
             getUserInfo: async () => null,
             getLoginMethods: async () => [],
             startLogin: async () => ({ flowId: 'flow-1', state: { status: 'ready' } }),
@@ -70,10 +82,7 @@ jest.unstable_mockModule('../../../main/applications/account/factory.js', () => 
     })
 }));
 jest.unstable_mockModule('../../../main/applications/account/model-provider.js', () => ({
-    refreshBuiltinModels: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        settingData.builtin_models = [{ alias: 'opendesk/auto' }];
-    }
+    refreshBuiltinModels
 }));
 
 describe('account electron integration builtin model refresh', () => {
@@ -85,6 +94,8 @@ describe('account electron integration builtin model refresh', () => {
         handlers.clear();
         broadcasts.length = 0;
         settingData.builtin_models = [];
+        getSession.mockReset().mockReturnValue(session);
+        refreshBuiltinModels.mockClear();
     });
 
     test('broadcasts setting:changed after builtin models are refreshed on login completion', async () => {
@@ -95,7 +106,7 @@ describe('account electron integration builtin model refresh', () => {
         expect(poll).toBeDefined();
         await poll!({}, 'flow-1');
 
-        await new Promise((resolve) => setTimeout(resolve, 40));
+        await new Promise(setImmediate);
 
         expect(broadcasts[0]?.[0]).toBe('account:sessionChanged');
         const settingChanged = broadcasts.filter(([channel]) => channel === 'setting:changed');
@@ -103,5 +114,63 @@ describe('account electron integration builtin model refresh', () => {
         expect((settingChanged[0][1] as { builtin_models: unknown[] }).builtin_models).toEqual([
             { alias: 'opendesk/auto' }
         ]);
+    });
+
+    test('does not duplicate the settings broadcast produced by a successful model commit', async () => {
+        const { registerElectronAccountIntegration } = await import('../../../main/applications/account/electron.js');
+        refreshBuiltinModels.mockImplementationOnce(async () => {
+            settingData.builtin_models = [{ alias: 'opendesk/auto' }];
+            broadcasts.push(['setting:changed', { ...settingData, resolved_locale: 'zh-CN' }]);
+            return true;
+        });
+        registerElectronAccountIntegration();
+
+        await handlers.get('account:pollLogin')!({}, 'flow-1');
+        await new Promise(setImmediate);
+
+        expect(broadcasts.map(([channel]) => channel)).toEqual(['account:sessionChanged', 'setting:changed']);
+    });
+
+    test('backend activation publishes the current session before its refreshed settings', async () => {
+        const { registerElectronAccountIntegration } = await import('../../../main/applications/account/electron.js');
+        registerElectronAccountIntegration();
+
+        backendChanged();
+        await new Promise(setImmediate);
+
+        expect(broadcasts[0]).toEqual(['account:sessionChanged', session]);
+        expect(broadcasts[1]).toEqual([
+            'setting:changed',
+            { builtin_models: [{ alias: 'opendesk/auto' }], resolved_locale: 'zh-CN' }
+        ]);
+    });
+
+    test('backend removal publishes null and refreshes the model availability', async () => {
+        const { registerElectronAccountIntegration } = await import('../../../main/applications/account/electron.js');
+        registerElectronAccountIntegration();
+        getSession.mockImplementationOnce(() => {
+            throw new Error('backend removed');
+        });
+
+        backendChanged();
+        await new Promise(setImmediate);
+
+        expect(broadcasts[0]).toEqual(['account:sessionChanged', null]);
+        expect(refreshBuiltinModels).toHaveBeenCalledTimes(1);
+    });
+
+    test('a non-Electron registrar uses the same account integration', async () => {
+        const { registerAccountIntegration } = await import('../../../main/applications/account/integration.js');
+        const broadcast = jest.fn();
+        registerAccountIntegration({ handle: (name, handler) => handlers.set(name, handler) }, broadcast);
+
+        await handlers.get('account:logout')!({});
+        await new Promise(setImmediate);
+
+        expect(broadcast.mock.calls[0]).toEqual(['account:sessionChanged', null]);
+        expect(broadcast).toHaveBeenCalledWith(
+            'setting:changed',
+            expect.objectContaining({ resolved_locale: 'zh-CN' })
+        );
     });
 });

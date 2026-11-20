@@ -1,4 +1,4 @@
-import { jest } from '@jest/globals';
+import { beforeEach, jest } from '@jest/globals';
 import { selectSupportedShell } from '../../../common/shells.js';
 
 let taskConfig: Record<string, unknown> = {};
@@ -20,6 +20,8 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     }
 }));
 jest.unstable_mockModule('../../../main/applications/base.js', () => ({ BaseApplication: class {} }));
+const warn = jest.fn();
+jest.unstable_mockModule('../../../main/utils/logger.js', () => ({ logger: { warn, error: jest.fn(), info: jest.fn() } }));
 const scan = jest.fn(() => shells);
 jest.unstable_mockModule('../../../main/applications/terminal/scan.js', () => ({
     scanSupportedShells: scan,
@@ -48,6 +50,14 @@ jest.unstable_mockModule('../../../main/applications/terminal/shells/status.js',
 }));
 const { TerminalApplication } = await import('../../../main/applications/terminal/app.js');
 
+beforeEach(() => {
+    taskConfig = {};
+    launches.length = 0;
+    warn.mockReset();
+    scan.mockReset();
+    scan.mockReturnValue(shells);
+});
+
 test('only the selected execution tool and status tool are registered, using the exact selected path', async () => {
     const app = new TerminalApplication();
     for (const shell of shells) {
@@ -64,10 +74,10 @@ test('only the selected execution tool and status tool are registered, using the
                   : [shell.path, shell.sandboxed, false];
         expect(launches[0]).toEqual({ name, args });
     }
-    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledTimes(shells.length);
 });
 
-test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: true }])(
+test.each([{}, { shell_path: 'C:/missing.exe', shell_sandboxed: false }])(
     'unset or unavailable selection uses the first shell',
     async (config) => {
         taskConfig = config;
@@ -89,7 +99,7 @@ test('unlimited mode forces every shell to run without the sandbox and drops the
         { kind: 'zsh', path: '/bin/zsh', sandboxed: false },
         { kind: 'zsh', path: '/bin/zsh', sandboxed: true }
     ];
-    scan.mockReturnValueOnce(platformShells);
+    scan.mockReturnValue(platformShells);
     const app = new TerminalApplication();
 
     // Windows PowerShell 沙箱变体 + 回收站偏好：unlimited 下强制降级为非沙箱
@@ -139,18 +149,29 @@ test('empty discovery registers no terminal tools', async () => {
     expect(await new TerminalApplication().getToolsets()).toEqual([]);
 });
 
-test('a saved sandboxed selection falls back to the plain shell when the platform offers no sandbox variant', async () => {
-    // CLI 平台不注册沙箱变体（见 scan.test.ts 的平台门控），桌面端保存的
-    // shell_sandboxed: true 必须回退到同路径的普通 PowerShell，而不是报错
+test('a requested sandbox degrades to the host shell when its selected capability disappears', async () => {
     taskConfig = { shell_path: 'C:/Windows/powershell.exe', shell_sandboxed: true, shell_sandbox_del_to_trash: true };
     scan.mockReturnValueOnce([
         { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false },
         { kind: 'bash', path: 'C:/Git/bash.exe', sandboxed: false }
     ]);
     launches.length = 0;
-    await new TerminalApplication().getToolsets();
+    const [toolset] = await new TerminalApplication().getToolsets();
+    // 沙箱组件缺失时不能阻断任务：非沙箱执行，且不把回收站偏好透传给普通 shell
+    expect([...toolset.tools.keys()]).toEqual(['executePwsh', 'checkShellStatus']);
     expect(launches[0]).toEqual({ name: 'executePwsh', args: ['C:/Windows/powershell.exe', false, false] });
-    expect(launches[1]).toEqual({ name: 'checkShellStatus', args: ['powershell', false] });
+    expect(warn).toHaveBeenCalledTimes(1);
+});
+
+test('an empty inventory registers no tools instead of failing the whole toolset build', async () => {
+    taskConfig = { shell_path: '/host/bin/bash', shell_sandboxed: true };
+    scan.mockReturnValue([]);
+    expect(await new TerminalApplication().getToolsets()).toEqual([]);
+
+    // unlimited 模式同样只是不注册沙箱工具
+    scan.mockReturnValue([{ kind: 'bash', path: '/host/bin/bash', sandboxed: false }]);
+    await new TerminalApplication().getToolsets({ activeModeId: 'unlimited' } as never);
+    expect(launches[0]).toEqual({ name: 'executeBash', args: ['/host/bin/bash', false, false] });
 });
 
 test('reads the latest shell selection without registering an eager task refresh', async () => {
@@ -162,4 +183,45 @@ test('reads the latest shell selection without registering an eager task refresh
     taskConfig = { shell_path: shells[2].path, shell_sandboxed: false };
     expect([...(await app.getToolsets())[0].tools.keys()]).toEqual(['executeBash', 'checkShellStatus']);
     expect(afterSetDataCallbacks).toHaveLength(callbackCount);
+});
+
+test('the same application discovers a shell that becomes ready after its initial empty inventory', async () => {
+    let available: typeof shells = [];
+    scan.mockImplementation(() => available);
+    const app = new TerminalApplication();
+
+    expect(await app.getToolsets()).toEqual([]);
+    expect(launches).toEqual([]);
+    expect(scan).toHaveBeenCalledTimes(1);
+
+    available = [{ kind: 'bash', path: '/host/runtime/bin/bash', sandboxed: false }];
+    const recovered = await app.getToolsets();
+    expect(recovered).toHaveLength(1);
+    const [toolset] = recovered;
+    expect([...toolset.tools.keys()]).toEqual(['executeBash', 'checkShellStatus']);
+    expect(launches).toEqual([
+        { name: 'executeBash', args: ['/host/runtime/bin/bash', false, false] },
+        { name: 'checkShellStatus', args: ['bash', false] }
+    ]);
+    expect(scan).toHaveBeenCalledTimes(2);
+});
+
+test('the same application drops an unavailable shell and uses its new path on a later resolution', async () => {
+    let available = [{ kind: 'bash', path: '/host/runtime-old/bin/bash', sandboxed: false }];
+    scan.mockImplementation(() => available);
+    const app = new TerminalApplication();
+    taskConfig = { shell_path: available[0].path, shell_sandboxed: false };
+    await app.getToolsets();
+    expect(launches[0]).toEqual({ name: 'executeBash', args: ['/host/runtime-old/bin/bash', false, false] });
+
+    available = [];
+    launches.length = 0;
+    expect(await app.getToolsets()).toEqual([]);
+    expect(launches).toEqual([]);
+
+    available = [{ kind: 'bash', path: '/host/runtime-new/bin/bash', sandboxed: false }];
+    const [toolset] = await app.getToolsets();
+    expect([...toolset.tools.keys()]).toEqual(['executeBash', 'checkShellStatus']);
+    expect(launches[0]).toEqual({ name: 'executeBash', args: ['/host/runtime-new/bin/bash', false, false] });
+    expect(scan).toHaveBeenCalledTimes(3);
 });

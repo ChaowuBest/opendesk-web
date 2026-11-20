@@ -8,13 +8,26 @@ jest.unstable_mockModule('../../../main/utils/shellExec.js', () => ({
     findOpenHarmonyZsh: () => paths.get('zsh') ?? null,
     findOpenHarmonyBash: () => paths.get('bash') ?? null
 }));
-const { scanSupportedShells, selectSupportedShell } = await import('../../../main/applications/terminal/scan.js');
+// 沙箱组件探测：测试按需切换"组件是否随包"，避免依赖本机是否构建过产物
+const sandboxComponents = { windows: true, darwin: true };
+jest.unstable_mockModule('../../../main/applications/terminal/sandboxes/dynabox.js', () => ({
+    resolveWindowsSandboxExecutable: () => (sandboxComponents.windows ? 'sandbox/sandbox.exe' : null)
+}));
+jest.unstable_mockModule('../../../main/applications/terminal/sandboxes/darwin-sandbox.js', () => ({
+    resolveDarwinSandboxDylib: () => (sandboxComponents.darwin ? 'sandbox/dynobox-darwin.dylib' : null)
+}));
+const { scanSupportedShells, selectSupportedShell, isSandboxRuntimeAvailable } =
+    await import('../../../main/applications/terminal/scan.js');
 const { resolveOpenHarmonySandboxExecutable } =
     await import('../../../main/applications/terminal/sandboxes/resolve-ohos.js');
 
 const fakePlatform = (name: string): AbstractPlatform => ({ getName: () => name }) as unknown as AbstractPlatform;
 
-beforeEach(() => paths.clear());
+beforeEach(() => {
+    paths.clear();
+    sandboxComponents.windows = true;
+    sandboxComponents.darwin = true;
+});
 
 test('Windows exposes pwsh sandbox variants but keeps bash unsandboxed (cygwin is detours-incompatible)', () => {
     paths.set('powershell', 'C:/Windows/powershell.exe');
@@ -32,6 +45,35 @@ test('Windows exposes pwsh sandbox variants but keeps bash unsandboxed (cygwin i
 test('Windows does not advertise command wrappers that cannot be launched as a shell executable', () => {
     paths.set('pwsh', 'C:/tools/pwsh.cmd');
     expect(scanSupportedShells('win32', null)).toEqual([]);
+});
+
+test('Windows hides sandbox variants when the sandbox executable is missing', () => {
+    paths.set('powershell', 'C:/Windows/powershell.exe');
+    sandboxComponents.windows = false;
+    expect(isSandboxRuntimeAvailable('win32')).toBe(false);
+    expect(scanSupportedShells('win32', null)).toEqual([
+        { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false }
+    ]);
+});
+
+test('darwin hides sandbox variants when the sandbox dylib is missing', () => {
+    paths.set('zsh', '/bin/zsh');
+    sandboxComponents.darwin = false;
+    expect(isSandboxRuntimeAvailable('darwin')).toBe(false);
+    expect(scanSupportedShells('darwin', null)).toEqual([{ kind: 'zsh', path: '/bin/zsh', sandboxed: false }]);
+});
+
+test('CLI mode never advertises sandbox variants even when desktop components exist', () => {
+    paths.set('powershell', 'C:/Windows/powershell.exe');
+    setPlatform(fakePlatform('cli'));
+    try {
+        expect(isSandboxRuntimeAvailable('win32')).toBe(false);
+        expect(scanSupportedShells('win32', null)).toEqual([
+            { kind: 'powershell', path: 'C:/Windows/powershell.exe', sandboxed: false }
+        ]);
+    } finally {
+        setPlatform(fakePlatform('electron'));
+    }
 });
 
 test('darwin exposes all available supported kinds plus sandbox variants', () => {

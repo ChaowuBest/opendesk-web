@@ -14,7 +14,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
             static getInstance() {
                 return {
                     data: { locale: 'zh-CN' },
-                    // TerminalApplication 构造时通过 shell 选择读取 task_config
+                    // TerminalApplication 解析工具集时通过 shell 选择读取 task_config
                     getData: () => ({ task_config: {} }),
                     getEffectiveWorkspace: () => '/'
                 };

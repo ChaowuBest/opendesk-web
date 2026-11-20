@@ -21,6 +21,7 @@
 
 import { logger } from '../utils/logger';
 import { BaseWorker } from '../applications/base';
+import { serializeAppError } from '../../../packages/app-sdk/src/index.js';
 import { getOpendeskDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
 import { toErrorMessage } from '../../common/utils/error.js';
@@ -265,6 +266,7 @@ export async function handleWorkerRequest(
                     type: 'response_complete',
                     id: requestId,
                     status: 'error',
+                    ...serializeAppError(error),
                     message: toErrorMessage(error)
                 });
             } else {
@@ -272,6 +274,7 @@ export async function handleWorkerRequest(
                     type: 'response',
                     id: requestId,
                     status: 'error',
+                    ...serializeAppError(error),
                     message: toErrorMessage(error)
                 });
             }

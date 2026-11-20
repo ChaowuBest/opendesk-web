@@ -18,6 +18,7 @@ import type { BaseApplication } from '../applications/base.js';
 import { REASONING_EFFORT_VALUES, type ReasoningEffort } from '../aikernel/types/reasoning.js';
 import { parseTokenCount, DEFAULT_MODEL_TIMEOUT_SECONDS } from '../../utils/model.js';
 import { OUTPUT_DISPLAY_LEVELS } from '../../common/output-display.js';
+import { getHostRuntime } from '../../platforms/runtime.js';
 import {
     getHarmonyHomeDirectory,
     getHarmonyRuntimeEnvironment,
@@ -237,6 +238,11 @@ const GUIConfigSchema = z.object({
         .default('inline')
         .describe('思考内容显示模式: inline=内联式, bubble=气泡式'),
     output_mode: OutputDisplaySchema.describe('GUI 输出模式: minimal=极简, verbose=详细'),
+    memory_enabled: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('长期记忆开关: false 时以 user-setting 身份禁用 memory 特性, 未设置时视为开启'),
     on_mainwindow_close: z
         .enum(['quit', 'minimize'])
         .optional()
@@ -450,7 +456,9 @@ const AccountConfigSchema = z
 
 export type AccountConfig = z.infer<typeof AccountConfigSchema>;
 
-let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
+// Settings are loaded and may be saved before every application has registered its schema.
+// Retain those sections until registration can validate them, including apps unavailable on this host.
+let ApplicationConfigSchema = z.object({}).catchall(z.unknown());
 
 function getSettingSchema() {
     return z.object({
@@ -491,6 +499,7 @@ function getSettingSchema() {
             sidebar_width: 320,
             gui_reason_display: 'inline',
             output_mode: 'minimal',
+            memory_enabled: true,
             floating_window_mode: 'card'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
@@ -898,7 +907,7 @@ export class Setting {
         ).getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: applicationConfigSchema.optional()
-        }) as z.ZodObject<z.ZodRawShape>;
+        });
         Setting.applicationConfigChangedCallbacks.set(application.bundleName, configChangedCallback);
     }
 
@@ -1098,6 +1107,12 @@ export class Setting {
         return getSettingSchema();
     }
 
+    static getSettingJSONSchema() {
+        // Editors submit configuration input; ACP and plugin schemas may transform
+        // that input into runtime values which JSON Schema cannot describe.
+        return z.toJSONSchema(getSettingSchema(), { io: 'input' });
+    }
+
     getDefaultVisionModelInstance(): ModelInstance | null {
         if (!this.data.default_vision_model) {
             return null;
@@ -1278,12 +1293,15 @@ function ensureDirectoryExists(directory: string): string {
 
 /**
  * 获取临时工作空间目录。
+ * - 宿主注入 defaultWorkspace 时优先使用；创建失败直接报错，不回退到其他存储。
  * - HarmonyOS PC: userHomeDir/Documents/OpenDesk（权限不足时回退到 userHomeDir/OpenDesk）
  * - HarmonyOS tablet: appDataDir/workspace
  * - Windows: $USERPROFILE/opendesk
  * - 类 Unix: $HOME/.opendesk/workspace
  */
 function getTempWorkspaceDirectory(): string {
+    const hostWorkspace = getHostRuntime().defaultWorkspace?.();
+    if (hostWorkspace !== undefined) return ensureDirectoryExists(hostWorkspace);
     let workspacePath: string;
     const harmonyRuntime = getHarmonyRuntimeEnvironment();
     if (harmonyRuntime) {

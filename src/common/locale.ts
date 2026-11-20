@@ -17,6 +17,16 @@ export { BUILTIN_LOCALES };
 export type SupportedLocale = (typeof BUILTIN_LOCALES)[number];
 export type LocaleSetting = 'auto' | SupportedLocale;
 
+export interface LocaleRuntimeSnapshot {
+    readonly setting: LocaleSetting;
+    // 语言包可注册内置两种之外的 locale，快照按解析后的 tag 原样携带。
+    readonly locale: string;
+    readonly preferredSystemLanguages: readonly string[];
+    readonly revision: number;
+}
+
+export type LocaleRuntimeListener = (snapshot: LocaleRuntimeSnapshot) => void;
+
 export function isSupportedLocale(locale: unknown): locale is SupportedLocale {
     return locale === 'zh-CN' || locale === 'en-US';
 }
@@ -86,4 +96,72 @@ export function resolveLocaleSetting(
         return normalized;
     }
     return resolvePreferredLocale(preferredLanguages, availableLocales);
+}
+
+/**
+ * Shared runtime state for hosts that can observe a system-language change.
+ *
+ * The host owns how preferred languages are discovered. Consumers only receive
+ * a normalized snapshot and a monotonically increasing revision, so workers,
+ * renderers, and platform adapters can discard stale notifications uniformly.
+ */
+export class LocaleRuntime {
+    private snapshot: LocaleRuntimeSnapshot;
+    private readonly listeners = new Set<LocaleRuntimeListener>();
+
+    constructor(setting: LocaleSetting = 'auto', preferredSystemLanguages: readonly unknown[] = []) {
+        this.snapshot = this.createSnapshot(setting, preferredSystemLanguages, 0);
+    }
+
+    getSnapshot(): LocaleRuntimeSnapshot {
+        return this.snapshot;
+    }
+
+    subscribe(listener: LocaleRuntimeListener): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    /**
+     * Publish a new setting or host language list only when the effective
+     * locale changes. Fixed locales therefore ignore system-language changes.
+     */
+    update(
+        setting: LocaleSetting,
+        preferredSystemLanguages: readonly unknown[] = this.snapshot.preferredSystemLanguages
+    ): boolean {
+        const next = this.createSnapshot(setting, preferredSystemLanguages, this.snapshot.revision);
+        if (next.setting === this.snapshot.setting && next.locale === this.snapshot.locale) {
+            // Even a fixed locale must retain the latest host languages for a
+            // later transition back to auto, without emitting a locale change.
+            this.snapshot = next;
+            return false;
+        }
+
+        this.snapshot = Object.freeze({ ...next, revision: this.snapshot.revision + 1 });
+        for (const listener of this.listeners) {
+            try {
+                listener(this.snapshot);
+            } catch {
+                // A failed observer must not prevent other consumers from updating.
+            }
+        }
+        return true;
+    }
+
+    private createSnapshot(
+        setting: LocaleSetting,
+        preferredSystemLanguages: readonly unknown[],
+        revision: number
+    ): LocaleRuntimeSnapshot {
+        const languages = preferredSystemLanguages.filter(
+            (language): language is string => typeof language === 'string' && language.trim().length > 0
+        );
+        return Object.freeze({
+            setting,
+            locale: resolveLocaleSetting(setting, languages),
+            preferredSystemLanguages: Object.freeze([...languages]),
+            revision
+        });
+    }
 }

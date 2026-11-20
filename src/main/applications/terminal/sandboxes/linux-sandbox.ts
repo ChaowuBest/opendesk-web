@@ -11,14 +11,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { getLogDirectory, getOpendeskDirectory } from '../../../utils/setting.js';
-import type { TaskState } from '../../../aikernel/states/tasks.js';
 import { t } from '../locale/index.js';
-import { createSandboxDecideEndpoint } from './sandbox-decide.js';
-import { policyTextLinux } from './dynabox-policy.js';
-import { serializePolicyForSandbox } from './policy-guard.js';
+import { preparePosixSandbox, type PosixSandboxOptions } from './posix-sandbox.js';
+import { sandboxUnavailableError } from './sandbox-errors.js';
 import { normalizeTrashExcludeDirs } from './trash-exclude.js';
 
 export interface DynamicSandboxLaunch {
@@ -174,138 +170,60 @@ export function detectToolchainReadOnlyDirs(env: NodeJS.ProcessEnv = process.env
  * 路径无映射——沙箱内路径与宿主一致（无 [[roots]] 整根/局部视图概念），策略规则
  * 直接作用于宿主真实路径；受控路径为任务工作区，ask 请求 path 即宿主真实路径。
  */
-export async function prepareLinuxSandbox(options: {
-    shellPath: string;
-    shellArgs: string[];
-    command: string;
-    cwd?: string;
-    taskState?: TaskState;
-    /** 发起本次命令的工具名（弹窗展示来源，如 executeBash） */
-    toolName?: string;
-    /** 删除送回收站（OpenDesk 统一回收站，目录见 trashDir） */
-    deleteToTrash?: boolean;
-    /** 任务级统一回收站目录（<opendesk>/trash/<taskId>），每次拉起都传入 */
-    trashDir?: string;
-    /**
-     * 删除分流排除清单（--trash-exclude 可重复）：命中目录前缀的删除直接
-     * 真删、不入回收站——已知临时目录由宿主传入（构建零时产物零噪音）
-     */
-    trashExcludeDirs?: string[];
-    onPermissionWaitChange?: (waiting: boolean) => void;
-}): Promise<DynamicSandboxLaunch | null> {
+export async function prepareLinuxSandbox(options: PosixSandboxOptions): Promise<DynamicSandboxLaunch | null> {
     if (process.platform !== 'linux') return null;
     const executable = resolveLinuxSandboxExecutable();
-    if (!executable) throw new Error(t('sandbox.executableMissing.linux'));
+    if (!executable) throw sandboxUnavailableError(t('sandbox.executableMissing.linux'));
 
-    const workspace = options.cwd || options.taskState?.getWorkspace();
-    if (!workspace) throw new Error(t('sandbox.cwdMissing.linux'));
-    if (!fs.existsSync(workspace)) {
-        throw new Error(t('sandbox.cwdUnsupported.linux', { path: workspace }));
-    }
-
-    const configDirectory = getOpendeskDirectory();
-    fs.mkdirSync(configDirectory, { recursive: true });
-    // crypto.randomUUID：并发任务下进程唯一（避免 Date.now+Math.random 碰撞）
-    const runId = `dynamic-sandbox-linux-${crypto.randomUUID()}`;
-    const policyPath = path.join(configDirectory, `${runId}.toml`);
-    const logDirectory = path.join(getLogDirectory(), 'sandbox');
-    fs.mkdirSync(logDirectory, { recursive: true });
-    const logPath = path.join(logDirectory, `${runId}.log`);
-
-    const decide = await createSandboxDecideEndpoint({
-        taskState: options.taskState,
-        onPermissionWaitChange: options.onPermissionWaitChange,
-        // 透明路径：沙箱内路径即宿主路径，恒等映射
-        pathMapper: (sandboxPath) => sandboxPath,
-        invocation: { toolName: options.toolName, command: options.command }
-    });
-    let cleanupPromise: Promise<void> | undefined;
-    const cleanup = (): Promise<void> => {
-        if (!cleanupPromise) {
-            cleanupPromise = (async () => {
-                await decide.cleanup();
-                fs.rmSync(policyPath, { force: true });
-            })();
-        }
-        return cleanupPromise;
-    };
-    try {
-        fs.writeFileSync(
-            policyPath,
-            serializePolicyForSandbox(
-                policyTextLinux(
-                    decide.endpoint,
-                    decide.token,
+    return preparePosixSandbox(
+        options,
+        async ({ workspace, policyPath, endpoint, logPath }) => {
+            const roDirs = detectToolchainReadOnlyDirs();
+            const childArgs = [options.shellPath, ...options.shellArgs];
+            return {
+                file: executable,
+                args: [
+                    'run',
+                    '--policy',
+                    policyPath,
+                    '--upstream',
+                    endpoint,
+                    '--cwd',
                     workspace,
-                    options.taskState?.harnessContext.permission?.getRules?.(),
-                    process.env.HOME,
-                    // 回收站写保护 deny 需要真实数据目录（debug/自定义目录布局）
-                    getOpendeskDirectory()
-                ),
-                { keepPrefixes: [workspace] }
-            ),
-            'utf8'
-        );
-        // 策略文件含 ask token：收紧权限，防其他本地用户读取后伪造授权请求。
-        // writeFileSync 的 mode 仅对新建文件生效，chmod 兜底（防 umask 影响/预存在）
-        fs.chmodSync(policyPath, 0o600);
-    } catch (error) {
-        await cleanup();
-        throw error;
-    }
-
-    const roDirs = detectToolchainReadOnlyDirs();
-    const childArgs = [options.shellPath, ...options.shellArgs];
-    return {
-        file: executable,
-        args: [
-            'run',
-            '--policy',
-            policyPath,
-            '--upstream',
-            decide.endpoint,
-            '--cwd',
-            workspace,
-            '--log-file',
-            logPath,
-            ...(options.deleteToTrash ? ['--del-to-trash'] : []),
-            // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建，与
-            // Windows/OpenHarmony 的 --trash-dir 格式一致）；原生层仅在
-            // --del-to-trash 启用时使用
-            ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
-            // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）；
-            // 非绝对路径会让 dynobox 拒绝启动，统一在下发前过滤
-            ...normalizeTrashExcludeDirs(options.trashExcludeDirs).flatMap((dir) => ['--trash-exclude', dir]),
-            ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
-            '--',
-            ...childArgs
-        ],
-        cwd: undefined,
-        // 工具链缓存重定向到宿主持久缓存目录（~/.cache/opendesk-sandbox/...）：
-        // 避免写宿主家目录不可见路径或把宿主可写缓存暴露进沙箱；持久目录让
-        // CARGO_HOME/npm 缓存跨沙箱实例复用（首次构建才需网络下载依赖）。
-        // 注意：RUSTUP_HOME 不在此列——工具链目录已由 --ro-dirs 从宿主 ~/.rustup
-        // 以只读（write-deny）方式暴露，重定向会导致 rustc 找不到 toolchain。
-        env: {
-            CARGO_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/cargo`,
-            npm_config_cache: `${process.env.HOME || ''}/.cache/opendesk-sandbox/npm`,
-            GOCACHE: `${process.env.HOME || ''}/.cache/opendesk-sandbox/go`,
-            GOPATH: `${process.env.HOME || ''}/.cache/opendesk-sandbox/gopath`,
-            XDG_CACHE_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/xdg`,
-            // Python 字节码缓存重定向：3.8+ 的 import 写 __pycache__ 到镜像树
-            //（源码目录零落盘），落点在 ~/.cache/opendesk-sandbox/pycache（读已由
-            // node app 策略 {home}/.cache/opendesk-sandbox/** read allow 覆盖）。旧版
-            // Python（<3.8）不认此变量时不落盘字节码，避免开放任意目录写权限。
-            PYTHONPYCACHEPREFIX: `${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`
-        },
-        attach: (proc) => {
-            const finish = () => {
-                void cleanup().catch(() => undefined);
+                    '--log-file',
+                    logPath,
+                    ...(options.deleteToTrash ? ['--del-to-trash'] : []),
+                    // 任务级回收站目录无论删除开关与否都传入（值由宿主统一构建，与
+                    // Windows/OpenHarmony 的 --trash-dir 格式一致）；原生层仅在
+                    // --del-to-trash 启用时使用
+                    ...(options.trashDir ? ['--trash-dir', options.trashDir] : []),
+                    // 排除清单：命中目录前缀的删除真删不入站（构建零时产物零噪音）；
+                    // 非绝对路径会让 dynobox 拒绝启动，统一在下发前过滤
+                    ...normalizeTrashExcludeDirs(options.trashExcludeDirs).flatMap((dir) => ['--trash-exclude', dir]),
+                    ...(roDirs.length > 0 ? ['--ro-dirs', roDirs.join(',')] : []),
+                    '--',
+                    ...childArgs
+                ],
+                cwd: undefined,
+                // 工具链缓存重定向到宿主持久缓存目录（~/.cache/opendesk-sandbox/...）：
+                // 避免写宿主家目录不可见路径或把宿主可写缓存暴露进沙箱；持久目录让
+                // CARGO_HOME/npm 缓存跨沙箱实例复用（首次构建才需网络下载依赖）。
+                // 注意：RUSTUP_HOME 不在此列——工具链目录已由 --ro-dirs 从宿主 ~/.rustup
+                // 以只读（write-deny）方式暴露，重定向会导致 rustc 找不到 toolchain。
+                env: {
+                    CARGO_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/cargo`,
+                    npm_config_cache: `${process.env.HOME || ''}/.cache/opendesk-sandbox/npm`,
+                    GOCACHE: `${process.env.HOME || ''}/.cache/opendesk-sandbox/go`,
+                    GOPATH: `${process.env.HOME || ''}/.cache/opendesk-sandbox/gopath`,
+                    XDG_CACHE_HOME: `${process.env.HOME || ''}/.cache/opendesk-sandbox/xdg`,
+                    // Python 字节码缓存重定向：3.8+ 的 import 写 __pycache__ 到镜像树
+                    //（源码目录零落盘），落点在 ~/.cache/opendesk-sandbox/pycache（读已由
+                    // node app 策略 {home}/.cache/opendesk-sandbox/** read allow 覆盖）。旧版
+                    // Python（<3.8）不认此变量时不落盘字节码，避免开放任意目录写权限。
+                    PYTHONPYCACHEPREFIX: `${process.env.HOME || ''}/.cache/opendesk-sandbox/pycache`
+                }
             };
-            proc.once('exit', finish);
-            proc.once('close', finish);
-            proc.once('error', finish);
         },
-        cleanup
-    };
+        process.env.HOME
+    );
 }

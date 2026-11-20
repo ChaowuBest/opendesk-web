@@ -16,6 +16,7 @@
 import { OVERLAY_CSS } from '../../../../common/overlay-styles.js';
 import { createTranslatorForCalendar } from '../locale/renderer.js';
 import { onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 const EVENT_TYPES = [
     { id: 'meeting', icon: 'fa-users', color: '#34C759', bg: '#ECFDF5' },
@@ -43,6 +44,16 @@ const HOUR_HEIGHT = 60;
  * ═══════════════════════════════════════════════════ */
 
 const CALENDAR_CSS = `
+.cal-system-integration { display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding:10px 16px; border-bottom:1px solid var(--border-color, #E5E5EA); font-size:12px; color:var(--text-color, #3A3A3C); }
+.cal-system-integration[hidden], .cal-feedback[hidden] { display:none; }
+.cal-system-integration label { display:flex; align-items:center; gap:6px; }
+.cal-system-status { color:var(--text-secondary, #636366); }
+.cal-system-integration button, .cal-system-integration select { border:1px solid var(--border-color, #D1D1D6); border-radius:7px; padding:5px 8px; background:var(--bg-color, #fff); color:inherit; font:inherit; }
+.cal-system-integration select { max-width:240px; }
+.cal-system-integration :disabled { opacity:.55; cursor:not-allowed; }
+.cal-feedback { margin:0; padding:8px 16px; color:#C43A31; font-size:12px; }
+.cal-readonly-hint { color:var(--text-secondary, #636366); font-size:12px; line-height:1.5; }
+.cal-detail-edit-btn:disabled, .cal-detail-delete-btn:disabled, .cal-ctx-item[aria-disabled="true"] { opacity:.45; cursor:not-allowed; }
 :where(.cal-root) :where(button, input, select, textarea, option, optgroup) { font-family: inherit; }
 ${OVERLAY_CSS}
 /* ---- Root ---- */
@@ -1014,6 +1025,16 @@ class CalendarEntryWidget extends HTMLElement {
         this.selectedEvent = null;
         this.eventsMap = new Map();
         this._nowTimer = null;
+        this._calendarIntegration = null;
+        this._integrationReadSequence = 0;
+        this._eventReadSequence = 0;
+        this._integrationBusy = false;
+        this._integrationError = null;
+        this._eventLoadError = null;
+        this._actionError = null;
+        this._resumeCalendar = () => {
+            if (this.isConnected && !document.hidden) void this._refreshAll();
+        };
     }
 
     async connectedCallback() {
@@ -1032,6 +1053,9 @@ class CalendarEntryWidget extends HTMLElement {
         this._render();
         this._bindCore();
         if (!(await this._subscribeCalendarChanges())) return;
+        window.addEventListener('focus', this._resumeCalendar);
+        document.addEventListener('visibilitychange', this._resumeCalendar);
+        window.addEventListener('pageshow', this._resumeCalendar);
         this._refreshAll();
         this._nowTimer = setInterval(() => this._updateNowIndicator(), 60000);
     }
@@ -1041,6 +1065,10 @@ class CalendarEntryWidget extends HTMLElement {
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
         this._calendarEventsGeneration++;
+        this._integrationBusy = false;
+        window.removeEventListener('focus', this._resumeCalendar);
+        document.removeEventListener('visibilitychange', this._resumeCalendar);
+        window.removeEventListener('pageshow', this._resumeCalendar);
         const subscription = this._calendarEventsSubscription;
         this._calendarEventsSubscription = null;
         if (subscription) {
@@ -1152,6 +1180,8 @@ class CalendarEntryWidget extends HTMLElement {
                 <div slot="right" class="cal-right-panel w-full h-full overflow-hidden">
                     <div class="flex flex-col h-full">
                         <div id="cal-toolbar" class="cal-toolbar"></div>
+                        <div id="cal-system-integration" class="cal-system-integration" hidden></div>
+                        <p id="cal-feedback" class="cal-feedback" role="alert" hidden></p>
                         <div id="cal-view" class="flex-1 overflow-hidden relative" style="display:flex;flex-direction:column;"></div>
                     </div>
                 </div>
@@ -1187,34 +1217,190 @@ class CalendarEntryWidget extends HTMLElement {
     }
 
     async _refreshAll() {
-        await this._loadEvents();
+        const generation = this._calendarEventsGeneration;
+        await Promise.all([this._loadIntegrationState(generation), this._loadEvents(generation)]);
+        if (!this.isConnected || generation !== this._calendarEventsGeneration) return;
         if (this.selectedEvent) this.selectedEvent = this._findEvent(this.selectedEvent.uid) || null;
         this._renderLeftHeader();
         this._renderMiniCalendar();
         this._renderToolbar();
         this._renderView();
         this._renderDetail();
+        this._renderIntegration();
+        this._renderFeedback();
+    }
+
+    _describeCalendarError(error) {
+        const message = String(error?.code || '') + ' ' + String(error?.message || error || '');
+        if (/calendar.type.unsupported|not.support.*(?:type|categor)|不支持.*分类/i.test(message)) {
+            return this._t('renderer.calendar.integration.typeUnsupported');
+        }
+        if (/permission|access.denied|not.authorized|权限|授权/i.test(message)) {
+            return this._t('renderer.calendar.integration.permissionDenied');
+        }
+        if (/recurr/i.test(message)) return this._t('renderer.calendar.integration.recurringReadOnly');
+        if (/read.only|not.writable/i.test(message)) return this._t('renderer.calendar.integration.readOnly');
+        if (/invalid|not.found|missing.calendar/i.test(message)) {
+            return this._t('renderer.calendar.integration.invalidSelection');
+        }
+        return this._t('renderer.calendar.integration.operationFailed');
+    }
+
+    _renderFeedback() {
+        const feedback = this.querySelector('#cal-feedback');
+        if (!feedback) return;
+        const error = this._actionError || this._integrationError || this._eventLoadError;
+        feedback.hidden = !error;
+        feedback.textContent = error || '';
+    }
+
+    async _loadIntegrationState(generation) {
+        const sequence = ++this._integrationReadSequence;
+        try {
+            const state = window.applicationAPI.callMainWorld
+                ? await window.applicationAPI.callMainWorld('getCalendarIntegrationState')
+                : { supported: false };
+            if (
+                !this.isConnected ||
+                generation !== this._calendarEventsGeneration ||
+                sequence !== this._integrationReadSequence
+            )
+                return;
+            if (!state || typeof state.supported !== 'boolean') throw new Error('Invalid integration state');
+            this._calendarIntegration = state;
+            this._integrationError = null;
+        } catch (error) {
+            if (
+                !this.isConnected ||
+                generation !== this._calendarEventsGeneration ||
+                sequence !== this._integrationReadSequence
+            )
+                return;
+            this._integrationError = this._describeCalendarError(error);
+        }
+    }
+
+    _renderIntegration() {
+        const container = this.querySelector('#cal-system-integration');
+        if (!container) return;
+        const state = this._calendarIntegration;
+        container.hidden = !state?.supported;
+        if (container.hidden) {
+            container.replaceChildren();
+            return;
+        }
+        const t = (key) => escapeHtml(this._t(`renderer.calendar.integration.${key}`));
+        const disabled = this._integrationBusy ? 'disabled' : '';
+        const status = !state.readGranted ? 'notAuthorized' : state.writeGranted ? 'authorized' : 'readOnly';
+        const calendars = state.calendars || [];
+        let options = calendars
+            .map((calendar) => {
+                const writable = state.readGranted && state.writeGranted && calendar.canWrite;
+                const label = calendar.accountName ? `${calendar.name} (${calendar.accountName})` : calendar.name;
+                return `<option value="${escapeHtml(String(calendar.id))}" ${calendar.id === state.defaultCalendarId ? 'selected' : ''} ${writable ? '' : 'disabled'}>${escapeHtml(label)}${writable ? '' : ` · ${t('readOnly')}`}</option>`;
+            })
+            .join('');
+        if (state.defaultCalendarId && !calendars.some((calendar) => calendar.id === state.defaultCalendarId)) {
+            options += `<option value="${escapeHtml(state.defaultCalendarId)}" selected disabled>${t('unavailableCalendar')}</option>`;
+        }
+        container.innerHTML = `
+            <span>${t('title')} <span class="cal-system-status">${t(status)}</span></span>
+            ${!state.readGranted || !state.writeGranted ? `<button type="button" id="cal-system-authorize" ${disabled}>${t('authorize')}</button>` : ''}
+            <label><input id="cal-system-enabled" type="checkbox" ${state.enabled ? 'checked' : ''} ${disabled}>${t('show')}</label>
+            <label>${t('destination')}<select id="cal-system-destination" ${disabled}>
+                <option value="" ${state.defaultCalendarId ? '' : 'selected'}>${t('local')}</option>${options}
+            </select></label>`;
+        container.querySelector('#cal-system-authorize')?.addEventListener('click', () => {
+            void this._changeCalendarIntegration('requestCalendarAccess');
+        });
+        container.querySelector('#cal-system-enabled').addEventListener('change', (event) => {
+            void this._changeCalendarIntegration('configureCalendarIntegration', { enabled: event.target.checked });
+        });
+        container.querySelector('#cal-system-destination').addEventListener('change', (event) => {
+            void this._changeCalendarIntegration('configureCalendarIntegration', {
+                defaultCalendarId: event.target.value
+            });
+        });
+    }
+
+    async _changeCalendarIntegration(method, patch) {
+        if (this._integrationBusy) return;
+        const generation = this._calendarEventsGeneration;
+        this._integrationBusy = true;
+        this._actionError = null;
+        this._renderIntegration();
+        this._renderFeedback();
+        try {
+            // A user click reaches the permission request directly, without a preceding state query.
+            await window.applicationAPI.callMainWorld(method, ...(patch ? [patch] : []));
+            if (!this.isConnected || generation !== this._calendarEventsGeneration) return;
+            await this._refreshAll();
+        } catch (error) {
+            if (this.isConnected && generation === this._calendarEventsGeneration) {
+                this._actionError = this._describeCalendarError(error);
+            }
+        } finally {
+            if (this.isConnected && generation === this._calendarEventsGeneration) {
+                this._integrationBusy = false;
+                this._renderIntegration();
+                this._renderFeedback();
+            }
+        }
+    }
+
+    _readOnlyReason(event) {
+        if (event?.source !== 'system') return null;
+        if (event.recurring) return this._t('renderer.calendar.integration.recurringReadOnly');
+        if (event.canWrite === false || !this._calendarIntegration?.writeGranted) {
+            return this._t('renderer.calendar.integration.readOnly');
+        }
+        return null;
+    }
+
+    _showCalendarError(error) {
+        this._actionError = this._describeCalendarError(error);
+        this._renderFeedback();
+        const modalError = this.querySelector('#cal-modal-error');
+        if (modalError) {
+            modalError.hidden = false;
+            modalError.textContent = this._actionError;
+        }
     }
 
     /* ═══════════════════════════════════════════════════
      *  DATA
      * ═══════════════════════════════════════════════════ */
 
-    async _loadEvents() {
+    async _loadEvents(generation = this._calendarEventsGeneration) {
+        const sequence = ++this._eventReadSequence;
         const y = this.currentDate.getFullYear();
         const m = this.currentDate.getMonth();
         const start = new Date(y, m - 1, 1, 0, 0, 0, 0).getTime();
         const end = new Date(y, m + 2, 0, 23, 59, 59, 999).getTime();
         try {
             const items = await window.applicationAPI.call('getCalendarItemsInRange', start, end);
-            this.eventsMap.clear();
+            if (
+                !this.isConnected ||
+                generation !== this._calendarEventsGeneration ||
+                sequence !== this._eventReadSequence
+            )
+                return;
+            const eventsMap = new Map();
             for (const item of items) {
                 const dk = dateKey(new Date(item.startTime));
-                if (!this.eventsMap.has(dk)) this.eventsMap.set(dk, []);
-                this.eventsMap.get(dk).push(item);
+                if (!eventsMap.has(dk)) eventsMap.set(dk, []);
+                eventsMap.get(dk).push(item);
             }
-        } catch {
-            this.eventsMap.clear();
+            this.eventsMap = eventsMap;
+            this._eventLoadError = null;
+        } catch (error) {
+            if (
+                !this.isConnected ||
+                generation !== this._calendarEventsGeneration ||
+                sequence !== this._eventReadSequence
+            )
+                return;
+            this._eventLoadError = this._describeCalendarError(error);
         }
     }
 
@@ -1356,10 +1542,10 @@ class CalendarEntryWidget extends HTMLElement {
                 html += `<div class="cal-detail-label">${this._t('renderer.calendar.allDay')}</div>`;
                 for (const ev of allDayEvents) {
                     const c = getEventColor(ev);
-                    html += `<div style="display:flex;gap:12px;padding:10px 12px;border-radius:12px;background:${c.bg};margin-bottom:4px;cursor:pointer;border-left:4px solid ${c.border};" data-detail-uid="${ev.uid}">
+                    html += `<div style="display:flex;gap:12px;padding:10px 12px;border-radius:12px;background:${c.bg};margin-bottom:4px;cursor:pointer;border-left:4px solid ${c.border};" data-detail-uid="${escapeHtml(ev.uid)}">
                         <div style="flex:1;min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ev.subject}</div>
-                            ${ev.location ? `<div class="cal-detail-all-day-location"><i class="fa-solid fa-location-dot"></i>${ev.location}</div>` : ''}
+                            <div style="font-size:13px;font-weight:600;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(ev.subject)}</div>
+                            ${ev.location ? `<div class="cal-detail-all-day-location"><i class="fa-solid fa-location-dot"></i>${escapeHtml(ev.location)}</div>` : ''}
                         </div>
                     </div>`;
                 }
@@ -1378,12 +1564,12 @@ class CalendarEntryWidget extends HTMLElement {
                 html += '<div style="display:flex;flex-direction:column;gap:8px;">';
                 for (const ev of timedEvents) {
                     const c = getEventColor(ev);
-                    html += `<div class="cal-detail-event-card" data-detail-uid="${ev.uid}">
+                    html += `<div class="cal-detail-event-card" data-detail-uid="${escapeHtml(ev.uid)}">
                         <div style="width:4px;border-radius:4px;background:${c.border};flex-shrink:0;"></div>
                         <div style="flex:1;min-width:0;">
-                            <div class="cal-detail-event-title">${ev.subject}</div>
+                            <div class="cal-detail-event-title">${escapeHtml(ev.subject)}</div>
                             <div class="cal-detail-event-time">${this.fmtTime(ev.startTime)} — ${this.fmtTime(ev.endTime)}</div>
-                            ${ev.location ? `<div class="cal-detail-event-location"><i class="fa-solid fa-location-dot" style="font-size:10px;margin-right:4px;"></i>${ev.location}</div>` : ''}
+                            ${ev.location ? `<div class="cal-detail-event-location"><i class="fa-solid fa-location-dot" style="font-size:10px;margin-right:4px;"></i>${escapeHtml(ev.location)}</div>` : ''}
                         </div>
                     </div>`;
                 }
@@ -1401,6 +1587,7 @@ class CalendarEntryWidget extends HTMLElement {
         }
 
         const ev = this.selectedEvent;
+        const readOnlyReason = this._readOnlyReason(ev);
         const c = getEventColor(ev);
         const start = new Date(ev.startTime);
         const typeDef = EVENT_TYPES.find((t) => t.id === ev.type);
@@ -1413,7 +1600,7 @@ class CalendarEntryWidget extends HTMLElement {
                 ${this._t('renderer.calendar.back')}
             </button>
 
-            <div class="cal-detail-card-title">${ev.subject}</div>
+            <div class="cal-detail-card-title">${escapeHtml(ev.subject)}</div>
             ${
                 typeDef
                     ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:6px;background:${c.bg};margin-bottom:20px;">
@@ -1441,18 +1628,19 @@ class CalendarEntryWidget extends HTMLElement {
                         ev.location
                             ? `<div class="cal-detail-date-location">
                         <i class="fa-solid fa-location-dot" style="font-size:13px;"></i>
-                        ${ev.location}
+                        ${escapeHtml(ev.location)}
                     </div>`
                             : ''
                     }
                 </div>
             </div>
 
+            ${readOnlyReason ? `<p class="cal-readonly-hint">${escapeHtml(readOnlyReason)}</p>` : ''}
             <div style="display:flex;gap:8px;">
-                <button id="cal-detail-edit" class="cal-detail-edit-btn">
+                <button id="cal-detail-edit" class="cal-detail-edit-btn" ${readOnlyReason ? 'disabled' : ''}>
                     <i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i>${this._t('renderer.calendar.edit')}
                 </button>
-                <button id="cal-detail-delete" class="cal-detail-delete-btn">
+                <button id="cal-detail-delete" class="cal-detail-delete-btn" ${readOnlyReason ? 'disabled' : ''}>
                     <i class="fa-solid fa-trash-can" style="font-size:11px;margin-right:4px;"></i>${this._t('renderer.calendar.delete')}
                 </button>
             </div>
@@ -1644,10 +1832,10 @@ class CalendarEntryWidget extends HTMLElement {
                 const ev = evts[j];
                 const c = getEventColor(ev);
                 const timeLabel = ev.isAllDay ? this._t('renderer.calendar.allDay') : this.fmtTime(ev.startTime);
-                html += `<div class="cal-month-pill" style="background:${c.bg};color:${c.text};" data-event-uid="${ev.uid}">
+                html += `<div class="cal-month-pill" style="background:${c.bg};color:${c.text};" data-event-uid="${escapeHtml(ev.uid)}">
                     <div class="cal-month-pill-dot" style="background:${c.border};"></div>
                     <span class="cal-month-pill-time">${timeLabel}</span>
-                    <span class="cal-month-pill-subject">${ev.subject}</span>
+                    <span class="cal-month-pill-subject">${escapeHtml(ev.subject)}</span>
                 </div>`;
             }
             if (evts.length > maxShow) {
@@ -1716,7 +1904,7 @@ class CalendarEntryWidget extends HTMLElement {
                 html += '<div class="cal-allday-col">';
                 for (const ev of allDayEvts) {
                     const cc = getEventColor(ev);
-                    html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${ev.uid}">${ev.subject}</div>`;
+                    html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${escapeHtml(ev.uid)}">${escapeHtml(ev.subject)}</div>`;
                 }
                 html += '</div>';
             }
@@ -1759,8 +1947,8 @@ class CalendarEntryWidget extends HTMLElement {
                 const width = (1 / ev._totalCols) * 100;
                 const cc = getEventColor(ev);
                 const compact = height < 36;
-                html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
-                    <div class="cal-ev-block-title">${ev.subject}</div>
+                html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${escapeHtml(ev.uid)}">
+                    <div class="cal-ev-block-title">${escapeHtml(ev.subject)}</div>
                     <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${this.fmtTime(ev.startTime)} – ${this.fmtTime(ev.endTime)}`}</div>
                 </div>`;
             }
@@ -1809,7 +1997,7 @@ class CalendarEntryWidget extends HTMLElement {
                 '<div class="cal-allday-cols"><div class="cal-allday-col" style="flex-direction:row;flex-wrap:wrap;gap:4px;padding:6px 8px;">';
             for (const ev of allDayEvts) {
                 const cc = getEventColor(ev);
-                html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${ev.uid}">${ev.subject}</div>`;
+                html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${escapeHtml(ev.uid)}">${escapeHtml(ev.subject)}</div>`;
             }
             html += '</div></div></div>';
         }
@@ -1842,10 +2030,10 @@ class CalendarEntryWidget extends HTMLElement {
             const width = (1 / ev._totalCols) * 100;
             const cc = getEventColor(ev);
             const compact = height < 36;
-            html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 4px);width:calc(${width}% - 8px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
-                <div class="cal-ev-block-title" style="${compact ? '' : 'font-size:13px;'}">${ev.subject}</div>
+            html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 4px);width:calc(${width}% - 8px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${escapeHtml(ev.uid)}">
+                <div class="cal-ev-block-title" style="${compact ? '' : 'font-size:13px;'}">${escapeHtml(ev.subject)}</div>
                 <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${this.fmtTime(ev.startTime)} — ${this.fmtTime(ev.endTime)}`}</div>
-                ${!compact && ev.location ? `<div style="font-size:10px;opacity:0.6;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:8px;margin-right:3px;"></i>${ev.location}</div>` : ''}
+                ${!compact && ev.location ? `<div style="font-size:10px;opacity:0.6;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:8px;margin-right:3px;"></i>${escapeHtml(ev.location)}</div>` : ''}
             </div>`;
         }
         html += '</div>';
@@ -1989,9 +2177,11 @@ class CalendarEntryWidget extends HTMLElement {
         let html = '<div class="cal-ctx">';
         html += `<div class="cal-ctx-item" data-action="add"><i class="fa-solid fa-plus"></i>${this._t('renderer.calendar.addEvent')}</div>`;
         if (eventUid) {
+            const readOnlyReason = this._readOnlyReason(this._findEvent(eventUid));
+            const disabled = readOnlyReason ? `aria-disabled="true" title="${escapeHtml(readOnlyReason)}"` : '';
             html += '<div class="cal-ctx-sep"></div>';
-            html += `<div class="cal-ctx-item" data-action="edit" data-uid="${eventUid}"><i class="fa-solid fa-pen"></i>${this._t('renderer.calendar.editEvent')}</div>`;
-            html += `<div class="cal-ctx-item danger" data-action="delete" data-uid="${eventUid}"><i class="fa-solid fa-trash-can"></i>${this._t('renderer.calendar.deleteEvent')}</div>`;
+            html += `<div class="cal-ctx-item" data-action="edit" data-uid="${escapeHtml(eventUid)}" ${disabled}><i class="fa-solid fa-pen"></i>${this._t('renderer.calendar.editEvent')}</div>`;
+            html += `<div class="cal-ctx-item danger" data-action="delete" data-uid="${escapeHtml(eventUid)}" ${disabled}><i class="fa-solid fa-trash-can"></i>${this._t('renderer.calendar.deleteEvent')}</div>`;
         }
         html += '</div>';
         ctx.innerHTML = html;
@@ -2030,13 +2220,26 @@ class CalendarEntryWidget extends HTMLElement {
      * ═══════════════════════════════════════════════════ */
 
     _showModal(event, defaultDate) {
+        if (this._readOnlyReason(event)) return;
         const modal = this.querySelector('#cal-modal');
         if (!modal) return;
         modal.classList.remove('hidden');
 
         const isEdit = !!event;
+        const systemTarget = isEdit ? event.source === 'system' : !!this._calendarIntegration?.defaultCalendarId;
         const d = event ? new Date(event.startTime) : defaultDate || this.currentDate;
         const dEnd = event ? new Date(event.endTime) : new Date(d.getTime() + 3600000);
+        // Compare calendar dates without their UTC offsets, then construct local midnights below.
+        const allDaySpan = event?.isAllDay
+            ? Math.max(
+                  1,
+                  Math.round(
+                      (Date.UTC(dEnd.getFullYear(), dEnd.getMonth(), dEnd.getDate()) -
+                          Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())) /
+                          86400000
+                  )
+              )
+            : 1;
 
         const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const startTimeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -2069,7 +2272,7 @@ class CalendarEntryWidget extends HTMLElement {
                     <div style="display:flex;flex-direction:column;gap:18px;">
                         <div>
                             <label class="cal-label">${this._t('renderer.calendar.modal.labelTitle')}</label>
-                            <input id="cal-m-subject" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderTitle')}" value="${event?.subject || ''}" />
+                            <input id="cal-m-subject" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderTitle')}" value="${escapeHtml(event?.subject || '')}" />
                         </div>
 
                         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -2089,15 +2292,15 @@ class CalendarEntryWidget extends HTMLElement {
 
                         <div>
                             <label class="cal-label">${this._t('renderer.calendar.modal.labelType')}</label>
-                            <select id="cal-m-type" class="cal-select">
-                                <option value="">${this._t('renderer.calendar.modal.placeholderType')}</option>
-                                ${typeOptions}
+                            <select id="cal-m-type" class="cal-select" ${systemTarget ? 'disabled' : ''}>
+                                <option value="" ${systemTarget ? 'selected' : ''}>${this._t(systemTarget ? 'renderer.calendar.integration.unclassified' : 'renderer.calendar.modal.placeholderType')}</option>
+                                ${systemTarget ? '' : typeOptions}
                             </select>
                         </div>
 
                         <div>
                             <label class="cal-label">${this._t('renderer.calendar.modal.labelLocation')}</label>
-                            <input id="cal-m-location" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderLocation')}" value="${event?.location || ''}" />
+                            <input id="cal-m-location" class="cal-input" type="text" placeholder="${this._t('renderer.calendar.modal.placeholderLocation')}" value="${escapeHtml(event?.location || '')}" />
                         </div>
 
                         <div class="cal-modal-allday">
@@ -2106,6 +2309,7 @@ class CalendarEntryWidget extends HTMLElement {
                         </div>
                     </div>
 
+                    <p id="cal-modal-error" class="cal-feedback" role="alert" hidden></p>
                     <div class="cal-modal-footer">
                         <button id="cal-modal-cancel" class="cal-btn-secondary">${this._t('renderer.calendar.modal.cancel')}</button>
                         <button id="cal-modal-save" class="cal-btn-primary">${isEdit ? this._t('renderer.calendar.modal.save') : this._t('renderer.calendar.modal.add')}</button>
@@ -2141,8 +2345,12 @@ class CalendarEntryWidget extends HTMLElement {
             const endParts = modal.querySelector('#cal-m-end').value.split(':');
             const isAllDay = modal.querySelector('#cal-m-allday').checked;
 
-            const startDate = new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2], +startParts[0], +startParts[1]);
-            const endDate = new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2], +endParts[0], +endParts[1]);
+            const startDate = isAllDay
+                ? new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2])
+                : new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2], +startParts[0], +startParts[1]);
+            const endDate = isAllDay
+                ? new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2] + allDaySpan)
+                : new Date(+dateParts[0], +dateParts[1] - 1, +dateParts[2], +endParts[0], +endParts[1]);
 
             if (endDate <= startDate && !isAllDay) endDate.setDate(endDate.getDate() + 1);
 
@@ -2151,11 +2359,12 @@ class CalendarEntryWidget extends HTMLElement {
                 startTime: startDate.getTime(),
                 endTime: endDate.getTime(),
                 location: modal.querySelector('#cal-m-location').value.trim(),
-                type: modal.querySelector('#cal-m-type').value,
+                type: systemTarget ? '' : modal.querySelector('#cal-m-type').value,
                 isAllDay
             };
 
             try {
+                this._actionError = null;
                 if (isEdit) await window.applicationAPI.call('updateCalendarItem', event.uid, data);
                 else await window.applicationAPI.call('addCalendarItem', data);
                 close();
@@ -2163,10 +2372,12 @@ class CalendarEntryWidget extends HTMLElement {
                 await this._refreshAll();
             } catch (err) {
                 console.error('保存日程失败:', err);
+                this._showCalendarError(err);
             }
         });
 
         const allDayCheckbox = modal.querySelector('#cal-m-allday');
+        allDayCheckbox.checked = event?.isAllDay ?? false;
         const startInput = modal.querySelector('#cal-m-start');
         const endInput = modal.querySelector('#cal-m-end');
         const syncAllDay = () => {
@@ -2204,6 +2415,7 @@ class CalendarEntryWidget extends HTMLElement {
                 const uid = el.dataset.eventUid;
                 const ev = this._findEvent(uid);
                 if (!ev) return;
+                if (this._readOnlyReason(ev)) return;
                 e.preventDefault();
 
                 this._drag = {
@@ -2509,7 +2721,7 @@ class CalendarEntryWidget extends HTMLElement {
                 </div>
                 <div style="padding:16px 24px;">
                     <div style="margin-bottom:20px;">
-                        <div class="cal-drag-subject">${ev.subject}</div>
+                        <div class="cal-drag-subject">${escapeHtml(ev.subject)}</div>
                         <div style="display:flex;flex-direction:column;gap:8px;">
                             <div style="display:flex;align-items:center;gap:8px;">
                                 <span class="cal-drag-label-old">${this._t('renderer.calendar.drag.old')}</span>
@@ -2556,6 +2768,8 @@ class CalendarEntryWidget extends HTMLElement {
         modal.querySelector('#cal-drag-close')?.addEventListener('click', close);
         modal.querySelector('#cal-drag-confirm').addEventListener('click', async () => {
             try {
+                if (this._readOnlyReason(ev)) return;
+                this._actionError = null;
                 await window.applicationAPI.call('updateCalendarItem', ev.uid, {
                     startTime: newStart.getTime(),
                     endTime: newEnd.getTime()
@@ -2565,6 +2779,7 @@ class CalendarEntryWidget extends HTMLElement {
             } catch (err) {
                 console.error('移动日程失败:', err);
                 close();
+                this._showCalendarError(err);
             }
         });
     }
@@ -2574,12 +2789,15 @@ class CalendarEntryWidget extends HTMLElement {
      * ═══════════════════════════════════════════════════ */
 
     async _deleteEvent(uid) {
+        if (this._readOnlyReason(this._findEvent(uid))) return;
         try {
+            this._actionError = null;
             await window.applicationAPI.call('deleteCalendarItem', uid);
             if (this.selectedEvent?.uid === uid) this.selectedEvent = null;
             await this._refreshAll();
         } catch (err) {
             console.error('删除日程失败:', err);
+            this._showCalendarError(err);
         }
     }
 }

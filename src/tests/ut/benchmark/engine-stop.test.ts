@@ -247,7 +247,8 @@ describe('benchmark 停止链路', () => {
         // 提交返回时任务会被真实 TaskState 置回 running（新的 turn），引擎必须在提交后补停
         releaseSubmit?.();
 
-        await waitFor(() => manager.getRun(runId)!.status !== 'running', 2000);
+        // 收尾状态要经过多次磁盘落盘才可见，并行跑全量测试时 2s 预算在 Windows 上偶发不够，放到与其他用例一致的量级
+        await waitFor(() => manager.getRun(runId)!.status !== 'running', 5000);
         const record = manager.getRun(runId)!;
         expect(record.status).toBe('stopped');
         expect(record.cases[0].status).toBe('stopped');

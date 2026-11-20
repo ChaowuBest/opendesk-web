@@ -35,7 +35,10 @@ export interface SearchResult {
     mcps: RegistryMcp[];
     total?: number;
     hasMore?: boolean;
+    /** 信息性提示（如「显示 x / y 个结果」），渲染在搜索框右端的计数位 */
     message?: string;
+    /** 搜索失败的原始错误明细（网络/超时/HTTP 等）；渲染层据此在内容区展示醒目错误态 */
+    error?: string;
     nextCursor?: string;
 }
 

@@ -147,3 +147,13 @@ test('Harmony delegation rejects a toggle request instead of silently discarding
     expect(arktsCall).not.toHaveBeenCalled();
     expect(app.setLoginItemSettings).not.toHaveBeenCalled();
 });
+
+test('unpackaged Electron cannot enable startup after shared dispatch extraction', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    app.isPackaged = false;
+    registerNativeBridge();
+    await expect(handlers.get('native:call')!({}, 'startupKit:delegateSetting', true)).rejects.toThrow(
+        'STARTUP_DEV_MODE'
+    );
+    expect(app.setLoginItemSettings).not.toHaveBeenCalled();
+});

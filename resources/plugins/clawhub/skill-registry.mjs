@@ -12,6 +12,24 @@
 const CLAWHUB_BASE = 'https://wry-manatee-359.convex.site';
 const REQUEST_TIMEOUT = 30000;
 
+/**
+ * 展开错误的 cause 链取原始原因：undici fetch 网络失败时外层只有
+ * 「fetch failed」，getaddrinfo 等真实原因挂在 e.cause 上。
+ */
+function describeFetchError(e) {
+    const parts = [];
+    let current = e;
+    for (let depth = 0; current && depth < 5; depth += 1) {
+        let message = typeof current.message === 'string' && current.message ? current.message : String(current);
+        if (current.name && current.name !== 'Error' && !message.startsWith(current.name)) {
+            message = `${current.name}: ${message}`;
+        }
+        if (!parts.includes(message)) parts.push(message);
+        current = current.cause;
+    }
+    return parts.join(': ') || String(e);
+}
+
 /** 发布者 handle：下载接口在 slug 撞名（多个发布者使用同一 slug）时要求 ownerHandle 消歧 */
 function resolveOwnerHandle(s) {
     if (typeof s?.ownerHandle === 'string' && s.ownerHandle) return s.ownerHandle;
@@ -100,14 +118,13 @@ export function createClawHubRegistryDefinition(registryApi) {
                     message: skills.length > 0 ? `共 ${skills.length} 个结果` : undefined
                 };
             } catch (e) {
-                if (e.name === 'AbortError' || e.name === 'TimeoutError') {
-                    return { skills: [], total: 0, hasMore: false, message: 'ClawHub 请求超时，请稍后重试' };
-                }
+                // 失败以原始明细放 error 字段回传：渲染层据此在内容区展示醒目错误态
+                //（错误伪装成 message 会被当成信息性计数显示在搜索框右端小字里）
                 return {
                     skills: [],
                     total: 0,
                     hasMore: false,
-                    message: `ClawHub 搜索失败: ${e.message || '未知错误'}`
+                    error: describeFetchError(e)
                 };
             }
         }

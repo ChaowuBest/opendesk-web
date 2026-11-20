@@ -10,6 +10,10 @@
  */
 
 import {
+    type CalendarKit,
+    NaiveCalendarKit,
+    type SandboxKit,
+    NaiveSandboxKit,
     ArkDataBridgeError,
     executePreparedManyBatchedWith,
     type ArkDataBatchOptions,
@@ -220,6 +224,17 @@ class QuickCaptureKitProxy implements QuickCaptureKit {
 }
 
 export class NativeBridgeProxy implements NativeBridge {
+    private readonly calendarKit: CalendarKit = new NaiveCalendarKit();
+    private readonly sandboxKit: SandboxKit = new NaiveSandboxKit();
+
+    async getSandboxKit(): Promise<SandboxKit> {
+        return this.sandboxKit;
+    }
+
+    async getCalendarKit(): Promise<CalendarKit> {
+        return this.calendarKit;
+    }
+
     async getStartupKit(): Promise<StartupKit> {
         return new StartupKitProxy();
     }

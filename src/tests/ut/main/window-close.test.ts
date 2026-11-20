@@ -10,7 +10,7 @@
  * 主窗口；quit/minimize 配置不触发弹窗；应用退出中直接放行关闭并保存窗口 bounds。
  */
 
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 
 import {
     createMainWindowCloseHandler,
@@ -21,6 +21,25 @@ import {
 import type { MainWindowLike, MainWindowCloseHandlerDeps } from '../../../main/utils/window-close.js';
 
 type CloseEvent = { preventDefault(): void };
+
+const realPlatform = process.platform;
+
+/** 把 process.platform 临时伪装成指定平台：前台锁规避只在 Windows 生效 */
+function stubPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+}
+
+// 置顶撤销走 setTimeout，统一用假定时器，避免跨用例残留的定时器打到下一个用例的 mock 上
+beforeEach(() => {
+    jest.useFakeTimers();
+    // 默认固定成非 Windows 平台，让用例断言不随宿主机平台漂移；平台相关用例自己覆盖
+    stubPlatform('darwin');
+});
+
+afterEach(() => {
+    jest.useRealTimers();
+    stubPlatform(realPlatform);
+});
 
 function makeWindow(overrides: Record<string, unknown> = {}): MainWindowLike {
     const win = {
@@ -34,6 +53,7 @@ function makeWindow(overrides: Record<string, unknown> = {}): MainWindowLike {
         show: jest.fn(),
         hide: jest.fn(),
         moveTop: jest.fn(),
+        setAlwaysOnTop: jest.fn(),
         focus: jest.fn()
     };
     return { ...win, ...overrides } as unknown as MainWindowLike;
@@ -94,6 +114,59 @@ describe('bringMainWindowToForeground', () => {
         expect(win.restore).not.toHaveBeenCalled();
         expect(win.show).not.toHaveBeenCalled();
         expect(win.moveTop).toHaveBeenCalledTimes(1);
+        expect(win.focus).toHaveBeenCalledTimes(1);
+    });
+
+    it('窗口已销毁时直接返回，不做任何窗口操作', () => {
+        // 托盘/第二实例可能还持有已销毁的旧窗口引用
+        const win = makeWindow({ isDestroyed: () => true });
+        bringMainWindowToForeground(win);
+
+        expect(win.restore).not.toHaveBeenCalled();
+        expect(win.show).not.toHaveBeenCalled();
+        expect(win.moveTop).not.toHaveBeenCalled();
+        expect(win.focus).not.toHaveBeenCalled();
+    });
+
+    it('Windows 上用临时置顶绕过前台锁，聚焦后再撤销置顶', () => {
+        // 复现：Windows 前台锁让后台进程的 focus() 只闪任务栏，窗口仍被盖住
+        const setAlwaysOnTop = jest.fn();
+        const win = makeWindow({ isVisible: () => false, setAlwaysOnTop });
+        stubPlatform('win32');
+
+        bringMainWindowToForeground(win);
+
+        expect(win.show).toHaveBeenCalledTimes(1);
+        expect(win.focus).toHaveBeenCalledTimes(1);
+        // 置顶必须先于 focus 生效，且不能在同一个 tick 里撤销：
+        // SetForegroundWindow 在目标窗口线程上异步生效，抢在它之前撤顶会让前台锁重新生效
+        expect(setAlwaysOnTop.mock.calls).toEqual([[true]]);
+
+        jest.advanceTimersByTime(50);
+        expect(setAlwaysOnTop.mock.calls).toEqual([[true], [false]]);
+    });
+
+    it('窗口在撤顶前已销毁时不再操作窗口', () => {
+        const setAlwaysOnTop = jest.fn();
+        let destroyed = false;
+        const win = makeWindow({ isVisible: () => false, setAlwaysOnTop, isDestroyed: () => destroyed });
+        stubPlatform('win32');
+
+        bringMainWindowToForeground(win);
+        destroyed = true;
+        jest.advanceTimersByTime(50);
+
+        expect(setAlwaysOnTop.mock.calls).toEqual([[true]]);
+    });
+
+    it('非 Windows 平台不做置顶切换', () => {
+        const setAlwaysOnTop = jest.fn();
+        const win = makeWindow({ isVisible: () => false, setAlwaysOnTop });
+        stubPlatform('linux');
+
+        bringMainWindowToForeground(win);
+
+        expect(setAlwaysOnTop).not.toHaveBeenCalled();
         expect(win.focus).toHaveBeenCalledTimes(1);
     });
 });

@@ -16,6 +16,7 @@ import {
 } from '../main/aikernel/states/tasks.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { WorkerPlatform } from './worker.js';
+import { getGuiApplicationClasses } from './applications.js';
 import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
@@ -206,7 +207,7 @@ export class ElectronPlatform extends WorkerPlatform {
     }
 
     getApplicationClasses() {
-        return [...super.getApplicationClasses(), SlidesApplication];
+        return [...getGuiApplicationClasses(), SlidesApplication];
     }
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {

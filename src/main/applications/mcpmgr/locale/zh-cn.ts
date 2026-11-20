@@ -142,6 +142,10 @@ export const zhCn: Record<string, string> = {
     'renderer.mcp.registry.empty.hint': '可以搜索 ${label} 中的 MCP server',
     'renderer.mcp.registry.install': '安装',
     'renderer.mcp.registry.installing': '安装中…',
+    'renderer.mcp.error.networkTitle': '网络连接失败',
+    'renderer.mcp.error.networkHint': '网络连接不可用，请检查网络后重试',
+    'renderer.mcp.error.searchTimeout': '搜索超时，请检查网络或稍后重试',
+    'renderer.mcp.error.retry': '重试',
 
     // ========== Renderer：已安装列表 ==========
     'renderer.mcp.installed.empty.title': '暂无已安装 MCP',

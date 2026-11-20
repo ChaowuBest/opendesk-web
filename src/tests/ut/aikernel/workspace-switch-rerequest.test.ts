@@ -17,7 +17,8 @@ const { HarnessContext } = await import('../../../main/aikernel/security/harness
 const { MAIN_AGENT_STANDARD_MODE } = await import('../../../main/aikernel/agents/main/modes/standard.js');
 const { AgentRegistry } = await import('../../../main/aikernel/agents/registry.js');
 const { TaskManagerState, TaskState } = await import('../../../main/aikernel/states/tasks.js');
-const { replaceTaskHarnessForWorkspace } = await import('../../../main/aikernel/task/mode.js');
+const { BaseTaskManagerUpdateSubscriber } = await import('../../../main/aikernel/task/manager.js');
+const { replaceTaskHarnessForWorkspace, updateTaskWorkspace } = await import('../../../main/aikernel/task/mode.js');
 
 const taskAgentRef = AgentRegistry.getMainAgent();
 
@@ -138,5 +139,160 @@ describe('workspace switch re-checks queued permission prompts', () => {
         expect(task.harnessContext).toBe(previousContext);
         expect(task.activeModeId).toBe(MAIN_AGENT_STANDARD_MODE.id);
         expect(task.workspace).toBe(OLD_WORKSPACE);
+    });
+});
+
+describe('shared task workspace operation', () => {
+    const standard: ModeDecl = {
+        ...MAIN_AGENT_STANDARD_MODE,
+        id: 'workspace-standard',
+        onEnterMode: undefined
+    };
+    const selected: ModeDecl = { ...standard, id: 'workspace-selected' };
+    const worker: ModeDecl = { ...standard, id: 'workspace-worker' };
+    const mainAgent = {
+        agentId: 'workspace-main',
+        supportedModes: () => [standard, selected],
+        getDefaultMode: () => standard
+    } as ReturnType<typeof AgentRegistry.getMainAgent>;
+
+    function fixture(options: { customAgent?: boolean; existingProvider?: boolean } = {}) {
+        const calls: string[] = [];
+        const task = new TaskState(new TaskManagerState());
+        task.task_id = 'workspace-operation';
+        task.workspace = '/old';
+        task.harnessContext = new HarnessContext();
+        task.harnessContext.workspace = '/old';
+        const environment = { PRIVATE_TASK_ENV: 'retained' };
+        task.harnessContext.environ = environment;
+        const executionHost = {
+            type: 'node' as const,
+            nodeId: 'remote-host',
+            capabilities: { nodeId: 'remote-host', commands: [], shells: [] }
+        };
+        task.harnessContext.executionHost = executionHost;
+        const provider = createRecordingProvider().provider;
+        if (options.existingProvider) task.harnessContext.permissionPrompt = provider;
+        const createProvider = jest.fn(() => provider);
+        const agent = options.customAgent
+            ? ({
+                  agentId: 'workspace-worker',
+                  supportedModes: () => [worker],
+                  getDefaultMode: () => worker
+              } as typeof mainAgent)
+            : mainAgent;
+        jest.spyOn(AgentRegistry, 'getMainAgent').mockReturnValue(mainAgent);
+        jest.spyOn(task, 'getAgent').mockReturnValue(agent);
+        jest.spyOn(task, 'getAgentMode').mockReturnValue(worker);
+        const build = jest.spyOn(task, 'buildSystemPrompt').mockImplementation(async () => {
+            calls.push('prompt');
+            return 'workspace operation prompt';
+        });
+        jest.spyOn(task, 'installBuiltSystemPrompt').mockImplementation(() => calls.push('install'));
+        jest.spyOn(task.task_manager_state, 'clearLazyTaskSystemPromptRefresh').mockImplementation(() => {});
+        jest.spyOn(task, 'refreshBaseToolsets').mockImplementation(async () => {
+            calls.push('base-tools');
+        });
+        jest.spyOn(task, 'persistLater').mockImplementation(() => {
+            calls.push('persist');
+        });
+        jest.spyOn(task, 'refreshToolsets').mockImplementation(async () => {
+            calls.push('all-tools');
+        });
+        const createContext = jest.spyOn(HarnessContext, 'createForMode').mockImplementation(async (workspace) => {
+            calls.push('harness');
+            const context = new HarnessContext();
+            context.workspace = workspace;
+            jest.spyOn(context, 'grantTaskArtifactAccess').mockImplementation(async () => {
+                calls.push('artifact');
+            });
+            return context;
+        });
+        return { task, calls, environment, executionHost, provider, createProvider, createContext, build };
+    }
+
+    afterEach(() => jest.restoreAllMocks());
+
+    test('publishes the new workspace in the task list after switching', async () => {
+        const { task, createProvider } = fixture();
+        task.activeModeId = selected.id;
+        task.task_manager_state.tasks.push(task);
+        const published: object[][] = [];
+        task.task_manager_state.addSubscriber(
+            new (class extends BaseTaskManagerUpdateSubscriber {
+                send(taskList: object[]) {
+                    published.push(taskList);
+                }
+            })()
+        );
+
+        await updateTaskWorkspace(task, '/new', {
+            currentModeId: standard.id,
+            permissionPromptFactory: createProvider
+        });
+
+        expect(published).toHaveLength(1);
+        expect(published[0]).toEqual([expect.objectContaining({ task_id: task.task_id, workspace: '/new' })]);
+    });
+
+    test('main task mode wins over global defaults while preserving environment, node and permission owner', async () => {
+        const { task, calls, environment, executionHost, provider, createProvider, createContext } = fixture({
+            existingProvider: true
+        });
+        task.activeModeId = selected.id;
+        await updateTaskWorkspace(task, '/new', {
+            currentModeId: standard.id,
+            permissionPromptFactory: createProvider
+        });
+        expect(createContext).toHaveBeenCalledWith('/new', selected);
+        expect(task.harnessContext.environ).toBe(environment);
+        expect(task.harnessContext.executionHost).toBe(executionHost);
+        expect(task.harnessContext.permissionPrompt).toBe(provider);
+        expect(createProvider).not.toHaveBeenCalled();
+        expect(task.workspace).toBe('/new');
+        expect(calls).toEqual(['harness', 'artifact', 'prompt', 'install', 'base-tools', 'persist', 'all-tools']);
+    });
+
+    test.each([
+        { active: undefined, global: selected.id, expected: selected },
+        { active: 'removed-mode', global: selected.id, expected: standard },
+        { active: undefined, global: 'removed-mode', expected: standard }
+    ])('resolves main mode for active=$active and global=$global', async ({ active, global, expected }) => {
+        const { task, createProvider, createContext, provider } = fixture();
+        task.activeModeId = active;
+        await updateTaskWorkspace(task, '/new', { currentModeId: global, permissionPromptFactory: createProvider });
+        expect(createContext).toHaveBeenCalledWith('/new', expected);
+        expect(createProvider).toHaveBeenCalledTimes(1);
+        expect(task.harnessContext.permissionPrompt).toBe(provider);
+    });
+
+    test('custom agents retain their bound mode instead of a main/global mode', async () => {
+        const { task, createProvider, createContext } = fixture({ customAgent: true });
+        task.activeModeId = worker.id;
+        await updateTaskWorkspace(task, '/new', {
+            currentModeId: selected.id,
+            permissionPromptFactory: createProvider
+        });
+        expect(createContext).toHaveBeenCalledWith('/new', worker);
+        expect(task.activeModeId).toBe(worker.id);
+    });
+
+    test('a failed transition keeps the original provider and harness without persistence or full refresh', async () => {
+        const { task, calls, createProvider, build } = fixture();
+        task.activeModeId = selected.id;
+        const previous = task.harnessContext;
+        build.mockRejectedValueOnce(new Error('cannot build task prompt'));
+        await expect(
+            updateTaskWorkspace(task, '/new', {
+                currentModeId: standard.id,
+                permissionPromptFactory: createProvider
+            })
+        ).rejects.toThrow('cannot build task prompt');
+        expect(task.harnessContext).toBe(previous);
+        expect(task.harnessContext.permissionPrompt).toBeNull();
+        expect(task.workspace).toBe('/old');
+        expect(task.activeModeId).toBe(selected.id);
+        expect(calls).not.toContain('persist');
+        expect(calls).not.toContain('all-tools');
     });
 });

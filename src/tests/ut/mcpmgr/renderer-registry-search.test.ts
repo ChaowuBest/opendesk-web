@@ -136,7 +136,7 @@ describe('MCP manager registry search experience', () => {
         expect(widget.shadowRoot.querySelector('#panel-registry .mcp-grid')?.textContent).not.toContain('Alpha');
     });
 
-    test('registry errors render on their own row instead of inside the input', async () => {
+    test('registry errors render as a prominent content-area error state instead of inside the input', async () => {
         const widget = createWidget([mcp('a', 'Alpha')], null);
         callMainWorld.mockImplementation(async (method: string) => {
             if (method === 'searchMcpRegistry') throw new Error('boom');
@@ -146,10 +146,14 @@ describe('MCP manager registry search experience', () => {
         await widget.searchRegistry('x', 1);
         await new Promise((resolve) => setTimeout(resolve, 200));
 
-        const errorRow = widget.shadowRoot.querySelector('#panel-registry .registry-msg.error');
-        expect(errorRow).not.toBeNull();
-        expect(errorRow?.closest('.registry-body')).not.toBeNull();
+        // 错误以内容区醒目错误态呈现（不再画在输入框里，也不退回「未找到 MCP」空态）
+        const errorState = widget.shadowRoot.querySelector('#panel-registry .registry-error-state');
+        expect(errorState).not.toBeNull();
+        expect(errorState?.closest('.registry-body')).not.toBeNull();
         expect(widget.shadowRoot.querySelector('#panel-registry .search-count')).toBeNull();
+        expect(widget.shadowRoot.querySelector('#panel-registry .registry-body')?.textContent).not.toContain(
+            '未找到 MCP'
+        );
     });
 
     test('an empty registry search box ignores the clear button', () => {

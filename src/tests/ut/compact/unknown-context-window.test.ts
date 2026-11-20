@@ -125,6 +125,24 @@ describe('unknown context windows', () => {
         expect(await resolveMaxOutputTokens('local')).toBe(16384);
     });
 
+    test('reuses the initial model window for preflight and auto compaction', async () => {
+        const platform = new TestPlatform();
+        setPlatform(platform);
+        const fetch = jest.spyOn(platform, 'fetch').mockImplementation(async () =>
+            Response.json({ context_window: 32768 })
+        );
+        const task = createTask();
+        const stream = jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
+            yield response(1000);
+        });
+
+        await task.processCompletion();
+
+        expect(stream).toHaveBeenCalledTimes(1);
+        expect(stream.mock.calls[0][3]?.contextBudget?.window).toBe(32768);
+        expect(fetch.mock.calls.filter(([url]) => String(url).includes('/models/'))).toHaveLength(2);
+    });
+
     test('successful usage stays unknown until a real overflow, then enables the 80 percent threshold', async () => {
         const task = createTask();
         jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {

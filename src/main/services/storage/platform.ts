@@ -18,8 +18,11 @@
  */
 import { createRequire } from 'module';
 import { logger } from '../../utils/logger.js';
+import { getHostRuntime } from '../../../platforms/runtime.js';
 
 export function shouldUseWasm(): boolean {
+    const backend = getHostRuntime().sqliteBackend;
+    if (backend) return backend === 'wasm';
     return (process.platform as string) === 'openharmony' || (process.platform === 'win32' && process.arch === 'arm64');
 }
 

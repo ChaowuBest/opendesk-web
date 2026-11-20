@@ -19,6 +19,20 @@ export const enUs: Record<string, string> = {
 
     // 配置
     'config.dataSources.outlook.enabled': 'Sync Outlook calendar data',
+    'config.dataSources.systemCalendar.enabled': 'Show system calendar events',
+    'config.dataSources.systemCalendar.defaultCalendarId':
+        'System calendar ID for new events (leave empty to save locally)',
+    'system.error.unavailable': 'The system calendar is unavailable. Try again later.',
+    'system.error.typeUnsupported':
+        'The system calendar does not support this event category. Use the default category.',
+    'system.error.eventChanged': 'Another app changed this event. Refresh and try again.',
+    'system.error.permissionDenied': 'System calendar read and write access has not been granted.',
+    'system.error.disabled': 'System calendar integration is disabled. Select the local calendar or enable it.',
+    'system.error.calendarMissing': 'The selected system calendar no longer exists. Select another calendar.',
+    'system.error.readOnly': 'The selected system calendar is read-only.',
+    'system.error.recurring': 'Edit or delete recurring events in your system calendar app.',
+    'system.error.invalidItem': 'The system event identity or changes are invalid.',
+    'system.error.invalidTime': 'Event times are invalid. The end must be after the start.',
 
     // TUI 状态条
     'status.inMinutes': 'in ${minutes}m',
@@ -112,6 +126,25 @@ export const enUs: Record<string, string> = {
     'notification.upcoming.body': 'Event starts in ${minutes} min (${time})',
 
     // Renderer（GUI 界面）
+    'renderer.calendar.integration.title': 'System calendars',
+    'renderer.calendar.integration.notAuthorized': 'Access not granted',
+    'renderer.calendar.integration.authorized': 'Access granted',
+    'renderer.calendar.integration.readOnly': 'Read only',
+    'renderer.calendar.integration.authorize': 'Allow access to system calendars',
+    'renderer.calendar.integration.show': 'Show system calendars',
+    'renderer.calendar.integration.destination': 'Save new events to',
+    'renderer.calendar.integration.local': 'Local calendar',
+    'renderer.calendar.integration.unavailableCalendar': 'Selected system calendar unavailable',
+    'renderer.calendar.integration.unclassified': 'Uncategorized',
+    'renderer.calendar.integration.typeUnsupported':
+        'System calendars do not support event categories. Use Uncategorized.',
+    'renderer.calendar.integration.permissionDenied':
+        'Calendar access is not allowed. Grant access to system calendars and try again.',
+    'renderer.calendar.integration.invalidSelection':
+        'The calendar or event details are invalid. Check them and try again.',
+    'renderer.calendar.integration.operationFailed': 'Unable to complete the calendar operation. Please try again.',
+    'renderer.calendar.integration.recurringReadOnly':
+        'Recurring system events are read only here. Edit them in your system calendar.',
     'renderer.calendar.today': 'Today',
     'renderer.calendar.allDay': 'All day',
     'renderer.calendar.noEvents': 'No events',

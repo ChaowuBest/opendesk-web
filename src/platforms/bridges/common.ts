@@ -142,6 +142,146 @@ export class NaiveQuickCaptureKit implements QuickCaptureKit {
     }
 }
 
+export interface NativeCalendar {
+    id: string;
+    name: string;
+    accountName?: string;
+    canWrite: boolean;
+    visible?: boolean;
+    primary?: boolean;
+}
+
+/** Native event identifiers are opaque to business code; times are epoch milliseconds. */
+export interface CalendarEvent {
+    uid: string;
+    calendarId: string;
+    subject: string;
+    startTime: number;
+    endTime: number;
+    location: string;
+    isAllDay: boolean;
+    isCancelled: boolean;
+    type: string;
+    canWrite: boolean;
+    recurring: boolean;
+}
+
+export type CalendarEventInput = Pick<CalendarEvent, 'subject' | 'startTime' | 'endTime'> &
+    Partial<Pick<CalendarEvent, 'location' | 'isAllDay' | 'type'>>;
+export type CalendarEventUpdates = Partial<CalendarEventInput>;
+
+export interface CalendarKitState {
+    supported: boolean;
+    readGranted: boolean;
+    writeGranted: boolean;
+    calendars: NativeCalendar[];
+    revision?: string | number;
+}
+
+export interface CalendarKitChange {
+    revision?: string | number;
+}
+
+/** OS calendar capabilities only; local storage, configuration and reminders belong to the application. */
+export interface CalendarKit {
+    getState(): Promise<CalendarKitState>;
+    /** Requests permission UI; completion is observed through state and change notifications. */
+    requestAccess(): Promise<void>;
+    listEvents(startTime: number, endTime: number): Promise<CalendarEvent[]>;
+    addEvent(calendarId: string, item: CalendarEventInput): Promise<CalendarEvent>;
+    updateEvent(uid: string, updates: CalendarEventUpdates): Promise<CalendarEvent>;
+    deleteEvent(uid: string): Promise<{ deleted: boolean; uid: string }>;
+    /** Recognizes identities belonging to this provider without exposing their encoding. */
+    ownsEvent(uid: string): boolean;
+    /** Returns an idempotent disposer that releases this listener alone. */
+    onDidChange(listener: (change: CalendarKitChange) => void): () => void;
+}
+
+export class NaiveCalendarKit implements CalendarKit {
+    async getState(): Promise<CalendarKitState> {
+        return { supported: false, readGranted: false, writeGranted: false, calendars: [] };
+    }
+
+    ownsEvent(_uid: string): boolean {
+        return false;
+    }
+
+    onDidChange(_listener: (change: CalendarKitChange) => void): () => void {
+        return () => undefined;
+    }
+
+    private unavailable(): never {
+        // Internal capability error; calendar services localize it for the user.
+        throw Object.assign(new Error('Native calendar is unavailable'), { code: 'CALENDAR_UNAVAILABLE' });
+    }
+
+    async requestAccess(): Promise<void> {
+        this.unavailable();
+    }
+
+    async listEvents(_startTime: number, _endTime: number): Promise<CalendarEvent[]> {
+        this.unavailable();
+    }
+
+    async addEvent(_calendarId: string, _item: CalendarEventInput): Promise<CalendarEvent> {
+        this.unavailable();
+    }
+
+    async updateEvent(_uid: string, _updates: CalendarEventUpdates): Promise<CalendarEvent> {
+        this.unavailable();
+    }
+
+    async deleteEvent(_uid: string): Promise<{ deleted: boolean; uid: string }> {
+        this.unavailable();
+    }
+}
+
+export interface SandboxKitState {
+    supported: boolean;
+    ready: boolean;
+    reason?: 'unsupported' | 'unavailable' | 'initializing';
+}
+
+export interface NativeSandboxRequest {
+    shellPath: string;
+    shellArgs: string[];
+    cwd: string;
+    policyPath: string;
+    endpoint: string;
+    logPath: string;
+    readOnly: boolean;
+    deleteToTrash?: boolean;
+    trashDir?: string;
+    trashExcludeDirs?: string[];
+}
+
+export interface NativeSandboxLaunch {
+    file: string;
+    args: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    detached?: boolean;
+    runtimePaths?: { readExecute: string[]; writable: string[] };
+    cleanup?: () => void | Promise<void>;
+}
+
+/** Native launch mechanics only; shared services own task policies, approvals and process execution. */
+export interface SandboxKit {
+    getState(): Promise<SandboxKitState>;
+    prepare(request: NativeSandboxRequest): Promise<NativeSandboxLaunch>;
+}
+
+export class NaiveSandboxKit implements SandboxKit {
+    async getState(): Promise<SandboxKitState> {
+        return { supported: false, ready: false, reason: 'unsupported' };
+    }
+
+    async prepare(_request: NativeSandboxRequest): Promise<NativeSandboxLaunch> {
+        // Internal capability error; terminal services localize it for the user.
+        throw Object.assign(new Error('Native shell sandbox is unavailable'), { code: 'SANDBOX_UNAVAILABLE' });
+    }
+}
+
 /**
  * 原生平台功能桥接的接口定义。这个桥接设计用于封装不同操作系统和硬件平台的差异。
  */
@@ -164,6 +304,8 @@ export interface NativeBridge {
     getDatabaseKit(): Promise<DatabaseKit>;
     getHuaweiAccountKit(): Promise<HuaweiAccountKit>;
     getQuickCaptureKit(): Promise<QuickCaptureKit>;
+    getCalendarKit(): Promise<CalendarKit>;
+    getSandboxKit(): Promise<SandboxKit>;
 }
 
 export class NaiveSpeechKit implements SpeechKit {
@@ -236,6 +378,8 @@ export class NaiveNativeBridge implements NativeBridge {
     _databaseKit: DatabaseKit = new NaiveDatabaseKit();
     _huaweiAccountKit: HuaweiAccountKit = new NaiveHuaweiAccountKit();
     _quickCaptureKit: QuickCaptureKit = new NaiveQuickCaptureKit();
+    private readonly fallbackCalendarKit: CalendarKit = new NaiveCalendarKit();
+    private readonly fallbackSandboxKit: SandboxKit = new NaiveSandboxKit();
 
     async getPlatform(): Promise<string> {
         return process.platform;
@@ -263,6 +407,14 @@ export class NaiveNativeBridge implements NativeBridge {
 
     async getQuickCaptureKit(): Promise<QuickCaptureKit> {
         return this._quickCaptureKit;
+    }
+
+    async getCalendarKit(): Promise<CalendarKit> {
+        return this.fallbackCalendarKit;
+    }
+
+    async getSandboxKit(): Promise<SandboxKit> {
+        return this.fallbackSandboxKit;
     }
 }
 

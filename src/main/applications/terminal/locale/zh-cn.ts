@@ -10,6 +10,11 @@
  */
 
 export const zhCn: Record<string, string> = {
+    'sandbox.stopped': '任务已停止，终端命令未启动。',
+    'sandbox.unavailable': '所选终端沙箱不可用。请恢复沙箱运行时，或在终端设置中关闭沙箱。',
+    'prompt.mode.sandbox.android': '- 当前运行模式：Android 动态沙箱',
+    'prompt.sandbox.android.paths': '- 命令使用原始 Android 路径，文件访问遵循任务权限，同时受 Android 应用权限约束。',
+    'prompt.sandbox.android.workspace': '- 工作区访问遵循当前任务模式；访问未授权路径时需要确认或会被拒绝。',
     'app.name': '终端',
     'output.truncated': '输出过大，已截断显示',
     'output.artifactSaved': '完整输出已保存至',

@@ -41,6 +41,8 @@ type WorkerRuntimeOptions = {
     disabledFeatures?: readonly string[];
     /** 启动时已被插件禁用的应用列表，随 workerData 注入（被禁用的应用要停掉自身后台资源） */
     disabledApplications?: readonly string[];
+    /** Hosts can supply a live source so a restarted worker gets the latest language snapshot. */
+    getPreferredSystemLanguages?: () => readonly string[];
 };
 
 const DATABASE_KIT_METHODS = new Set([
@@ -322,7 +324,15 @@ export class ApplicationRegistry {
                 this: BaseApplication,
                 taskState?: TaskState
             ) => Promise<BaseToolset[]>;
-            result.push(...(await getToolsets.call(application, taskState)));
+            try {
+                result.push(...(await getToolsets.call(application, taskState)));
+            } catch (error) {
+                // 单个应用（含插件提供的后装应用）构建工具集失败时不能让整轮任务失败：
+                // 其余应用的工具集照常可用，缺失的这部分由错误日志追踪。
+                logger.error(
+                    `[registry] application ${application.bundleName} failed to provide toolsets: ${toErrorMessage(error)}`
+                );
+            }
         }
 
         return result;
@@ -446,7 +456,7 @@ export class ApplicationRegistry {
             ApplicationRegistry.pendingRequests.delete(requestId);
             return { status: 'ok', data: data };
         } catch (error) {
-            return { status: 'error', message: String(error) };
+            return { status: 'error', ...serializeAppError(error), message: String(error) };
         }
     }
 }
@@ -503,9 +513,11 @@ export async function notifyWorkerSettingUpdate(
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
+    const preferredSystemLanguages =
+        runtimeOptions.getPreferredSystemLanguages?.() ?? runtimeOptions.preferredSystemLanguages;
     const args: unknown[] = [settingData];
-    if (runtimeOptions.preferredSystemLanguages) {
-        args.push([...runtimeOptions.preferredSystemLanguages]);
+    if (preferredSystemLanguages) {
+        args.push([...preferredSystemLanguages]);
     }
     await requestSystemWorker('__updateGlobalSetting', args, 'worker settings sync timed out');
 }
@@ -648,6 +660,8 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
     const spawnAttempt = {};
     let worker: Worker;
     try {
+        const preferredSystemLanguages =
+            runtimeOptions.getPreferredSystemLanguages?.() ?? runtimeOptions.preferredSystemLanguages;
         worker = new Worker(getPlatform().getWorkerPath(), {
             workerData: {
                 paths: {
@@ -655,9 +669,7 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
                     mainBundleDir: path.dirname(getPlatform().getWorkerPath())
                 },
                 setting: Setting.getInstance().getData(),
-                preferredSystemLanguages: runtimeOptions.preferredSystemLanguages
-                    ? [...runtimeOptions.preferredSystemLanguages]
-                    : undefined,
+                preferredSystemLanguages: preferredSystemLanguages ? [...preferredSystemLanguages] : undefined,
                 disabledFeatures: runtimeOptions.disabledFeatures ? [...runtimeOptions.disabledFeatures] : undefined,
                 disabledApplications: runtimeOptions.disabledApplications
                     ? [...runtimeOptions.disabledApplications]
@@ -687,10 +699,16 @@ function spawnGlobalWorker(runtimeOptions: WorkerRuntimeOptions) {
             pending.reject(error);
         }
         ApplicationRegistry.pendingRequests.clear();
-        for (const callback of ApplicationRegistry.pendingStreamRequests.values()) {
-            callback(undefined);
-        }
+        const streams = Array.from(ApplicationRegistry.pendingStreamRequests.values());
         ApplicationRegistry.pendingStreamRequests.clear();
+        for (const callback of streams) {
+            try {
+                callback(undefined, error.message);
+            } catch (callbackError) {
+                // A renderer may already have closed; still terminate the other clients.
+                logger.warn('failed to notify a stream client after worker failure', callbackError);
+            }
+        }
         // 清理所有活跃的 fetch reader
         for (const [id, reader] of ApplicationRegistry.activeFetchReaders) {
             try {
@@ -794,7 +812,13 @@ export function dispatchWorkerMessage(event: any, worker: Worker): void {
                 if (event.status === 'ok') {
                     pending.resolve(event.data);
                 } else {
-                    pending.reject(new Error(event.message || 'unknown error'));
+                    pending.reject(
+                        Object.assign(new Error(event.message || 'unknown error'), {
+                            code: event.code,
+                            category: event.category,
+                            details: event.details
+                        })
+                    );
                 }
                 break;
             }

@@ -18,24 +18,26 @@ import {
     type HarmonyLocalRuntimeState
 } from '../../../platforms/bridges/harmonyos/local-runtime.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { getHostRuntime } from '../../../platforms/runtime.js';
 import { resolveOpenHarmonySandboxExecutable } from './sandboxes/resolve-ohos.js';
 import { resolveLinuxSandboxExecutable, resolveLinuxSandboxLibrary } from './sandboxes/linux-sandbox.js';
+import { resolveWindowsSandboxExecutable } from './sandboxes/dynabox.js';
+import { resolveDarwinSandboxDylib } from './sandboxes/darwin-sandbox.js';
 
 /**
- * CLI 模式不会安装沙箱的二进制与 hook DLL（仅桌面安装包携带），注册沙箱变体
- * 只会让选中的 PowerShell 在运行时报 executableMissing，并让 TUI 设置页暴露
- * 无效选项；因此沙箱变体仅在非 CLI 平台（桌面版）注册。
+ * 沙箱组件是否可用。CLI 模式不随包分发沙箱二进制，始终为 false；桌面端则与
+ * 各 prepare*Sandbox 共用同一份解析，组件缺失时设置页不暴露沙箱开关，
+ * 已保存的沙箱配置在执行时降级为宿主 shell。
  * @param targetPlatform 目标平台（与运行时平台分离，便于跨平台测试模拟）
  */
-function sandboxVariantsAvailable(targetPlatform: string): boolean {
+export function isSandboxRuntimeAvailable(targetPlatform: string): boolean {
     try {
         if (getPlatform().getName() === 'cli') return false;
     } catch {
         // 平台未初始化（如单元测试）时保持原有行为
     }
-    // 仅 Linux/OpenHarmony 沙箱变体依赖本地二进制（dynobox + libdynobox.so）；
-    // win32/darwin 的沙箱组件随桌面安装包提供，无需本机探测
-    if (targetPlatform === 'win32' || targetPlatform === 'darwin') return true;
+    if (targetPlatform === 'win32') return resolveWindowsSandboxExecutable() !== null;
+    if (targetPlatform === 'darwin') return resolveDarwinSandboxDylib() !== null;
     if (targetPlatform === 'openharmony') {
         // 与 openharmony-sandbox.ts 共用同一解析：OPENDESK_DYNOBOX_BIN →
         // /data/app/bin/dynobox（真机壳工程部署）→ resources/sandbox → 仓库 runtime
@@ -53,8 +55,10 @@ export function scanSupportedShells(
     platform: NodeJS.Platform | string = process.platform,
     harmonyState: HarmonyLocalRuntimeState | null = getHarmonyLocalRuntimeState()
 ): SupportedShell[] {
+    const configured = getHostRuntime().shells?.(platform);
+    if (configured) return configured.map((shell) => ({ ...shell }));
     const shells: SupportedShell[] = [];
-    const allowSandboxVariant = sandboxVariantsAvailable(platform);
+    const allowSandboxVariant = isSandboxRuntimeAvailable(platform);
     const add = (kind: SupportedShellKind, shellPath: string | null | undefined, sandboxed = false) => {
         if (!shellPath || shells.some((shell) => shell.path === shellPath && shell.sandboxed === sandboxed)) return;
         // Windows command wrappers require cmd.exe and cannot be spawned as the selected shell.

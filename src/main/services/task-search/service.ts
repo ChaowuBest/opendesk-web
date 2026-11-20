@@ -15,6 +15,49 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TaskSearchMessage, TaskSearchRequest } from './protocol.js';
 import type { TaskSearchResponse } from '../../../common/task-search.js';
+import { TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../../../common/task-search.js';
+
+export type SearchTaskMetadata = {
+    task_id: string;
+    task_name?: string | null;
+    workspace?: string | null;
+    internal?: boolean;
+    name_pending?: boolean;
+};
+
+/** Validate requests and recheck live metadata without loading task histories. */
+export async function searchVisibleTasks(
+    service: Pick<TaskSearchService, 'search'>,
+    getTasks: () => readonly SearchTaskMetadata[],
+    query: unknown,
+    limit: unknown,
+    clientId = 0
+): Promise<TaskSearchResponse> {
+    if (
+        typeof query !== 'string' ||
+        query.length > TASK_SEARCH_MAX_QUERY ||
+        typeof limit !== 'number' ||
+        !Number.isInteger(limit) ||
+        limit < 1 ||
+        limit > TASK_SEARCH_MAX_RESULTS
+    )
+        throw new Error('Invalid task search request');
+    const data = await service.search(query, limit, clientId);
+    const visible = new Map(
+        getTasks()
+            .filter((task) => task.internal !== true && Boolean(task.task_name?.trim() || task.name_pending))
+            .map((task) => [task.task_id, task])
+    );
+    return {
+        ...data,
+        items: data.items
+            .filter((item) => visible.has(item.taskId))
+            .map((item) => {
+                const task = visible.get(item.taskId)!;
+                return { ...item, title: task.task_name || '', workspace: task.workspace || '' };
+            })
+    };
+}
 
 export class TaskSearchService {
     private worker?: Worker;
@@ -37,6 +80,9 @@ export class TaskSearchService {
         if (this.worker || this.disposed) return;
         const root = path.dirname(fileURLToPath(import.meta.url));
         const filename = [
+            // Hosts without a package.json module declaration need an explicit ESM extension.
+            path.join(root, 'task-search-worker.mjs'),
+            path.join(root, '..', 'task-search-worker.mjs'),
             path.join(root, 'task-search-worker.js'),
             path.join(root, '..', 'task-search-worker.js')
         ].find(existsSync);

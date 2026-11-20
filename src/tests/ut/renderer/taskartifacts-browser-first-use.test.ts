@@ -79,7 +79,11 @@ describe('task artifacts first Browser Use after a manual preview', () => {
             FileExplorer: class {
                 mount() {}
                 closeEditor() {}
+                setDirectoryBrowserVisible() {}
                 stopWatchingFile() {}
+                // task-artifacts 在切换工作区/断开连接时会同步目录区可见性，
+                // 真实 FileExplorer 提供该方法，mock 必须同形否则 TypeError。
+                setDirectoryBrowserVisible(_visible: boolean) {}
                 isEditorOpen() {
                     return false;
                 }
