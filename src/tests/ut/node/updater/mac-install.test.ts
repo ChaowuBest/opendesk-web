@@ -57,7 +57,7 @@ test('resolveAppBundlePath rejects paths outside an application bundle', () => {
 
 test('findAppBundleOnVolume picks the first app bundle deterministically', async () => {
     const runner = createListOnlyRunner(['readme.txt', 'Extra.app', 'OpenDesk.app']);
-    assert.equal(await findAppBundleOnVolume('/Volumes/x', runner), '/Volumes/x/Extra.app');
+    assert.equal(await findAppBundleOnVolume('/Volumes/x', runner), path.join('/Volumes/x', 'Extra.app'));
 });
 
 test('findAppBundleOnVolume fails when the image has no app bundle', async () => {
