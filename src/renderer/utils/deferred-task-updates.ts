@@ -40,6 +40,9 @@ export class DeferredTaskUpdateQueue<T extends DeferrableProgress> {
                 return;
             }
             this.keyToIndex.set(key, this.items.length);
+        } else {
+            // A control or tool update must observe the preceding snapshots before later writes to the same part.
+            this.keyToIndex.clear();
         }
         this.items.push(progress);
     }
