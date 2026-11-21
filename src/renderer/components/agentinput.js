@@ -49,7 +49,9 @@ const fallbackSupportedFileExtensions = [
     'pdf',
     'ofd',
     'rtf',
-    'txt'
+    'txt',
+    'log',
+    'json'
 ];
 const bridgeProxy = new NativeBridgeProxy();
 

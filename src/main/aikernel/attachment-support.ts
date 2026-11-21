@@ -24,7 +24,9 @@ export const SUPPORTED_ATTACHMENT_FILE_EXTENSIONS = [
     'pdf',
     'ofd',
     'rtf',
-    'txt'
+    'txt',
+    'log',
+    'json'
 ] as const;
 
 export const KNOWN_UNSUPPORTED_ATTACHMENT_FILE_EXTENSIONS = ['ppt', 'md', 'html'] as const;

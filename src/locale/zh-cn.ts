@@ -2408,6 +2408,23 @@ export const zhCn: Record<string, string> = {
     'renderer.admin.feedbackEmpty': '暂无反馈',
     'renderer.admin.openAttachment': '下载附件',
     'renderer.admin.attachmentSaved': '附件已保存到 ${path}',
+    'renderer.admin.oneClickDevelop': '一键开发',
+    'renderer.admin.oneClickFix': '一键修复',
+    'renderer.admin.oneClickPreparing': '准备中…',
+    'renderer.admin.composeButtonTitle': '把这条反馈填入新任务',
+    'renderer.admin.composeReady': '已填入新任务输入框，按发送即可开始',
+    'renderer.admin.composeReadyWithFailed': '已填入新任务输入框，按发送即可开始（${count} 个附件下载失败，已跳过）',
+    'renderer.admin.composeFailed': '未能填入新任务输入框，请重试',
+    'renderer.admin.composeBusy': '上一次预填尚未完成，请稍后再试',
+    'renderer.admin.composeNeedsMainWindow': '请在主窗口的管理后台中打开此功能，独立窗口无法填入新任务',
+    'renderer.admin.composeBugPrompt': '请修复以下用户反馈的问题（反馈 #${id}）：\n\n${content}',
+    'renderer.admin.composeFeaturePrompt': '请开发以下用户需求（反馈 #${id}）：\n\n${content}',
+
+    // Renderer - 新任务预填（管理后台一键开发/一键修复）
+    'renderer.taskCompose.source': '新任务',
+    'renderer.taskCompose.failedTitle': '未能填入新任务',
+    'renderer.taskCompose.failed': '没能把反馈填入新任务输入框，请回到管理后台重试，或手动新建任务。',
+    'renderer.taskCompose.busy': '上一次预填还没结束，请稍后重试。',
 
     // Renderer - Personal Center
     'renderer.personal.title': '个人中心',

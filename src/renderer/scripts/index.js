@@ -44,6 +44,7 @@ import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
 import { installQuickCaptureInbox } from './quickcaptureInbox.ts';
+import { installTaskComposeListener } from './taskCompose.ts';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { handleTaskViewLinkClick } from '../utils/task-view-links.js';
 
@@ -153,6 +154,27 @@ document.addEventListener('auxclick', handleTaskViewLinkClick, true);
 
 // Alt+Space 快速截图发送后，主窗口获得焦点时把截图投递到新任务输入框。
 installQuickCaptureInbox();
+
+// 应用 iframe（管理后台「一键开发/一键修复」）经 postMessage 投递的 composeTask：
+// 切到新任务页并预填 prompt 与附件 pill。
+// 失败提示由主窗口发出：预填会先把应用视图切走，发起方面板里的 toast 用户看不到。
+installTaskComposeListener({
+    notifyFailure: (reason) => {
+        const t = createRendererTranslator();
+        try {
+            const pending = window.notificationAPI?.sendNotification?.(
+                'error',
+                t('renderer.taskCompose.source'),
+                t('renderer.taskCompose.failedTitle'),
+                t(reason === 'busy' ? 'renderer.taskCompose.busy' : 'renderer.taskCompose.failed')
+            );
+            // 提示失败不能影响预填流程本身
+            Promise.resolve(pending).catch(() => {});
+        } catch {
+            // 通知能力不可用时静默降级
+        }
+    }
+});
 
 window.Alpine = Alpine;
 Alpine.start();

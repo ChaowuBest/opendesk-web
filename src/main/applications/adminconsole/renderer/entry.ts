@@ -29,6 +29,10 @@ interface AdminApi {
     getSummaryStats(): Promise<AdminSummaryStats>;
     getFeedbackList(limit: number): Promise<AdminFeedbackList>;
     downloadAttachment(attachmentId: number, filename: string): Promise<{ canceled?: boolean; filePath?: string }>;
+    prepareTaskCompose(
+        type: 'feature' | 'bug',
+        id: number
+    ): Promise<{ item: AdminFeedbackItem; attachmentPaths: string[]; failedFilenames: string[] }>;
 }
 
 function unwrapAdminResult(result: any): any {
@@ -52,7 +56,8 @@ function createAdminApi(): AdminApi | null {
         getSummaryStats: async () => unwrapAdminResult(await call('getSummaryStats')),
         getFeedbackList: async (limit) => unwrapAdminResult(await call('getFeedbackList', limit)),
         downloadAttachment: async (attachmentId, filename) =>
-            unwrapAdminResult(await call('downloadAttachment', attachmentId, filename))
+            unwrapAdminResult(await call('downloadAttachment', attachmentId, filename)),
+        prepareTaskCompose: async (type, id) => unwrapAdminResult(await call('prepareTaskCompose', type, id))
     };
 }
 
@@ -188,6 +193,11 @@ export class AdminConsoleEntryWidget extends HTMLElement {
 
     disconnectedCallback(): void {
         document.removeEventListener(OPENDESK_THEME_CHANGED, this.onThemeChanged);
+        // toast 的隐藏定时器要随组件卸载撤销，否则卸载后仍持有 toast 节点引用
+        if (this.toastTimer) {
+            clearTimeout(this.toastTimer);
+            this.toastTimer = null;
+        }
     }
 
     private readonly onThemeChanged = (event: Event): void => {
@@ -328,6 +338,96 @@ export class AdminConsoleEntryWidget extends HTMLElement {
         }
     }
 
+    /**
+     * 一键开发/一键修复：经 main 拉取反馈详情并暂存附件后，
+     * 把 prompt 与本地附件路径 postMessage 给主窗口（composeTask），
+     * 由主窗口切到新任务页并预填输入框，用户按发送即开始任务。
+     * 提示文案按主窗口回执（composeTaskResult）决定，不凭「消息已发出」就宣布成功。
+     */
+    private async startCompose(type: 'feature' | 'bug', feedbackId: number, button: HTMLButtonElement): Promise<void> {
+        const adminApi = createAdminApi();
+        if (!adminApi?.prepareTaskCompose) return;
+        // composeTask 只有主窗口的监听会消费。管理后台也能被「在新窗口打开」，
+        // 那种壳页面里 parent 就是自己，消息没人接：提前拦下，避免白下载附件再白等回执超时
+        if (!this.isEmbeddedInHost()) {
+            this.showToast(this.t('renderer.admin.composeNeedsMainWindow'));
+            return;
+        }
+        const originalLabel = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = this.renderComposeLabel(this.t('renderer.admin.oneClickPreparing'));
+        try {
+            const payload = await adminApi.prepareTaskCompose(type, feedbackId);
+            const prompt = this.buildComposePrompt(payload.item);
+            const target = window.parent as Window;
+            // 先注册回执监听再投递，避免回执先于监听到达
+            const requestId = `compose-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const resultPromise = this.awaitComposeResult(requestId);
+            target.postMessage(
+                { type: 'composeTask', requestId, prompt, filePaths: payload.attachmentPaths ?? [] },
+                '*'
+            );
+            this.showComposeResult(await resultPromise, payload.failedFilenames?.length ?? 0);
+        } catch (error: any) {
+            this.showToast(this.t('renderer.admin.loadFailed', { message: error?.message ?? String(error) }));
+        } finally {
+            button.disabled = false;
+            button.innerHTML = originalLabel;
+        }
+    }
+
+    /** 是否嵌在宿主窗口（主窗口）的 iframe 里；独立应用窗口的 parent 指向自身 */
+    private isEmbeddedInHost(): boolean {
+        const parent = window.parent as Window | null;
+        return !!parent && parent !== window && typeof parent.postMessage === 'function';
+    }
+
+    private renderComposeLabel(text: string): string {
+        return `${AP_ICONS.bolt}<span class="ap-compose-btn-label">${escapeHtml(text)}</span>`;
+    }
+
+    private showComposeResult(result: 'ok' | 'failed' | 'busy', failedAttachmentCount: number): void {
+        if (result === 'ok') {
+            this.showToast(
+                failedAttachmentCount > 0
+                    ? this.t('renderer.admin.composeReadyWithFailed', { count: String(failedAttachmentCount) })
+                    : this.t('renderer.admin.composeReady')
+            );
+            return;
+        }
+        this.showToast(this.t(result === 'busy' ? 'renderer.admin.composeBusy' : 'renderer.admin.composeFailed'));
+    }
+
+    /**
+     * 等待主窗口对本次 composeTask 的回执。主窗口最多轮询 2s 等输入框挂载，
+     * 这里留足余量后按失败处理（先注册监听再投递，超时兜底避免监听泄漏）。
+     * 只认与自己 requestId 匹配的回执：同一 iframe 可能有多条 compose 并发。
+     */
+    private awaitComposeResult(requestId: string): Promise<'ok' | 'failed' | 'busy'> {
+        return new Promise((resolve) => {
+            const finish = (result: 'ok' | 'failed' | 'busy'): void => {
+                window.removeEventListener('message', onMessage);
+                clearTimeout(timer);
+                resolve(result);
+            };
+            const onMessage = (event: MessageEvent): void => {
+                const data = event?.data;
+                if (!data || data.type !== 'composeTaskResult' || data.requestId !== requestId) return;
+                finish(data.ok ? 'ok' : data.reason === 'busy' ? 'busy' : 'failed');
+            };
+            const timer = setTimeout(() => finish('failed'), this.composeResultTimeoutMs);
+            window.addEventListener('message', onMessage);
+        });
+    }
+
+    /** compose 回执超时（ms）：主窗口侧最坏情况要等满 2s 的挂载轮询 */
+    composeResultTimeoutMs = 6000;
+
+    private buildComposePrompt(item: AdminFeedbackItem): string {
+        const key = item.type === 'bug' ? 'renderer.admin.composeBugPrompt' : 'renderer.admin.composeFeaturePrompt';
+        return this.t(key, { id: String(item?.id ?? ''), content: item?.content ?? '' });
+    }
+
     private toastTimer: ReturnType<typeof setTimeout> | null = null;
     private showToast(message: string): void {
         const toast = this.root.querySelector('.ap-toast');
@@ -400,6 +500,16 @@ export class AdminConsoleEntryWidget extends HTMLElement {
             element.addEventListener('click', () => {
                 const el = element as HTMLElement;
                 void this.downloadAttachment(Number(el.dataset.attachment), el.dataset.filename || 'attachment');
+            });
+        });
+        this.root.querySelectorAll('[data-compose-type]').forEach((element) => {
+            element.addEventListener('click', () => {
+                const el = element as HTMLElement;
+                void this.startCompose(
+                    el.dataset.composeType as 'feature' | 'bug',
+                    Number(el.dataset.composeId),
+                    element as HTMLButtonElement
+                );
             });
         });
     }
@@ -678,6 +788,7 @@ export class AdminConsoleEntryWidget extends HTMLElement {
                     `<button class="ap-attachment" data-attachment="${a.attachment_id}" data-filename="${escapeHtml(a.filename)}" type="button" title="${escapeHtml(this.t('renderer.admin.openAttachment'))}">${AP_ICONS.paperclip}${escapeHtml(a.filename)}</button>`
             )
             .join('');
+        const composeKey = item.type === 'bug' ? 'renderer.admin.oneClickFix' : 'renderer.admin.oneClickDevelop';
         return `<article class="ap-feedback">
             <header class="ap-feedback-head">
                 <span class="ap-badge ${item.type}">${escapeHtml(this.t(typeKey))}</span>
@@ -687,6 +798,9 @@ export class AdminConsoleEntryWidget extends HTMLElement {
             <p class="ap-feedback-content">${escapeHtml(item.content)}</p>
             ${(item.contact || attachments) && item.contact ? `<div class="ap-feedback-meta"><span class="ap-meta-label">${escapeHtml(this.t('renderer.admin.feedbackContact'))}</span><span>${escapeHtml(item.contact)}</span></div>` : ''}
             ${attachments ? `<div class="ap-feedback-meta"><span class="ap-meta-label">${escapeHtml(this.t('renderer.admin.feedbackAttachments'))}</span><div class="ap-attachments">${attachments}</div></div>` : ''}
+            <footer class="ap-feedback-actions">
+                <button class="ap-compose-btn ${escapeHtml(item.type)}" data-compose-type="${escapeHtml(item.type)}" data-compose-id="${escapeHtml(String(item.id))}" type="button" title="${escapeHtml(this.t('renderer.admin.composeButtonTitle'))}">${AP_ICONS.bolt}<span class="ap-compose-btn-label">${escapeHtml(this.t(composeKey))}</span></button>
+            </footer>
         </article>`;
     }
 }
@@ -697,7 +811,8 @@ const AP_ICONS = {
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>',
     logout: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
     paperclip:
-        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+    bolt: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>'
 };
 
 customElements.define('adminconsole-entry-widget', AdminConsoleEntryWidget);
