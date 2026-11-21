@@ -166,7 +166,8 @@ test('dismiss records the version so the next startup skips the modal', async ()
         status: 'ok',
         data: true
     });
-    expect(JSON.parse(fs.readFileSync(path.join(userDataDir, 'Cache', 'whats-new-seen.json'), 'utf8'))).toEqual({
+    // seen 账本落在 userData 根目录：缓存目录会被运行环境清理，持久状态不能住在那里
+    expect(JSON.parse(fs.readFileSync(path.join(userDataDir, 'whats-new-seen.json'), 'utf8'))).toEqual({
         seen: ['0.3.7']
     });
 
@@ -177,6 +178,33 @@ test('dismiss records the version so the next startup skips the modal', async ()
         data: undefined
     });
     expect(platformFetch).not.toHaveBeenCalled();
+});
+
+test('a wiped Cache directory does not reset the seen history', async () => {
+    // 鸿蒙PC运行环境每次启动会清理 Cache 子目录；seen 账本放在 userData 根下才能存活，
+    // 否则每次启动都会误判未预览过而重弹更新内容弹窗
+    platformFetch.mockRejectedValue(new Error('offline'));
+    registerService();
+    await expect(registeredHandler('updater:getPendingReleaseNotes')()).resolves.toEqual({
+        status: 'ok',
+        data: { version: '0.3.7' }
+    });
+    await expect(registeredHandler('updater:dismissReleaseNotes')()).resolves.toEqual({
+        status: 'ok',
+        data: true
+    });
+
+    // 模拟鸿蒙PC启动清理：整个 Cache 子目录被清空
+    fs.rmSync(path.join(userDataDir, 'Cache'), { recursive: true, force: true });
+
+    // 已读账本仍存活：下次启动判定跳过弹窗，不再发起网络请求
+    platformFetch.mockClear();
+    await expect(registeredHandler('updater:getPendingReleaseNotes')()).resolves.toEqual({
+        status: 'ok',
+        data: undefined
+    });
+    expect(platformFetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(userDataDir, 'whats-new-seen.json'))).toBe(true);
 });
 
 test('getReleaseNotes serves the requested version without touching the seen history', async () => {
@@ -197,7 +225,7 @@ test('getReleaseNotes serves the requested version without touching the seen his
         }
     });
     // 查看场景不落账：seen 文件不出现，重复查看也重新拉取（不因已看过而短路）
-    expect(fs.existsSync(path.join(userDataDir, 'Cache', 'whats-new-seen.json'))).toBe(false);
+    expect(fs.existsSync(path.join(userDataDir, 'whats-new-seen.json'))).toBe(false);
     await expect(registeredHandler('updater:getReleaseNotes')(null, '0.4.2')).resolves.toEqual({
         status: 'ok',
         data: {

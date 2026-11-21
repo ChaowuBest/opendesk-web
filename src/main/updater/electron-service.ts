@@ -104,11 +104,13 @@ function platformProxyFetch(input: string | URL | Request, init?: RequestInit): 
  * What's New：启动流程独立判定，与自动更新升级流程（coordinator）解耦，全平台注册。
  * 无条目 / 断网 / 拉取失败统一按"无更新说明"返回，通用弹窗仍会展示；
  * 通道名保留 updater: 前缀以便 preload 归口 updateAPI。
+ * seen 账本必须落在 userData 根目录：Cache 子目录会被运行环境清理（鸿蒙PC每次启动
+ * 清空），持久状态放进缓存目录会导致每次启动都误判未预览过而重弹。
  */
-function registerWhatsNewHandlers(stateDirectory: string, feedUrl: string): void {
+function registerWhatsNewHandlers(userDataDirectory: string, feedUrl: string): void {
     ipcMain.handle('updater:getPendingReleaseNotes', async () => {
         const version = app.getVersion();
-        if (await hasPreviewedReleaseNotes(stateDirectory, version)) {
+        if (await hasPreviewedReleaseNotes(userDataDirectory, version)) {
             return { status: 'ok', data: undefined };
         }
         let notes: string | undefined;
@@ -120,7 +122,7 @@ function registerWhatsNewHandlers(stateDirectory: string, feedUrl: string): void
         return { status: 'ok', data: { version, notes } };
     });
     ipcMain.handle('updater:dismissReleaseNotes', async () => {
-        await markReleaseNotesSeen(stateDirectory, app.getVersion());
+        await markReleaseNotesSeen(userDataDirectory, app.getVersion());
         return { status: 'ok', data: true };
     });
     // 设置页"查看版本说明"按钮：按指定版本拉取更新内容，与 seen 记录无关，
@@ -142,7 +144,7 @@ function registerWhatsNewHandlers(stateDirectory: string, feedUrl: string): void
 export function registerElectronUpdateService(options: ElectronUpdateServiceOptions): UpdateCoordinator | undefined {
     const stateDirectory = resolveUpdateCacheDirectory(app.getPath('userData'));
     const feedUrl = process.env.OPENDESK_UPDATE_FEED_URL || DEFAULT_UPDATE_FEED_URL;
-    registerWhatsNewHandlers(stateDirectory, feedUrl);
+    registerWhatsNewHandlers(app.getPath('userData'), feedUrl);
     if (!updaterEnabled()) {
         ipcMain.handle('updater:getState', () => ({
             status: 'ok',
