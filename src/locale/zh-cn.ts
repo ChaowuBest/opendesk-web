@@ -1908,6 +1908,8 @@ export const zhCn: Record<string, string> = {
     'sp.update.installing': '正在安装',
     'sp.update.installNow': '立即安装',
     'sp.update.restart': '立即重启',
+    'sp.update.viewCurrentNotes': '查看当前版本说明',
+    'sp.update.viewLatestNotes': '查看最新版本说明',
     'update.installed.title': '新版本已安装',
     'update.installed.message': 'OpenDesk ${version} 已安装。是否立即重启并使用新版本？',
     'update.installed.activeMessage': 'OpenDesk ${version} 已安装。立即重启会停止正在执行的任务，是否继续？',

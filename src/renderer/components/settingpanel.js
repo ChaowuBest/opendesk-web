@@ -28,6 +28,7 @@ import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/a
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
+    showWhatsNewModal,
     escapeModalText,
     MODAL_CSS,
     MODAL_ANIM_DURATION_OUT,
@@ -2881,6 +2882,21 @@ class SettingPanel extends HTMLElement {
                         ${actionText}
                     </button>
                 </div>
+                <div class="sp-toggle-row">
+                    <button id="view-current-release-notes" class="sp-btn sp-btn-secondary">
+                        <i class="fas fa-file-lines"></i>
+                        ${this._t('sp.update.viewCurrentNotes')}
+                    </button>
+                    ${
+                        'version' in state
+                            ? `
+                    <button id="view-latest-release-notes" class="sp-btn sp-btn-secondary">
+                        <i class="fas fa-arrow-up"></i>
+                        ${this._t('sp.update.viewLatestNotes')}
+                    </button>`
+                            : ''
+                    }
+                </div>
             </div>
         </section>`;
     }
@@ -2934,6 +2950,35 @@ class SettingPanel extends HTMLElement {
             this.updateState = await window.updateAPI.check();
             this.refreshUpdateSection();
         });
+        // 设置页"查看版本说明"：仅展示更新内容，不调用 dismissReleaseNotes 落账
+        this.querySelector('#view-current-release-notes')?.addEventListener('click', () => {
+            if (this.appVersion) this._showReleaseNotesModal(this.appVersion);
+        });
+        this.querySelector('#view-latest-release-notes')?.addEventListener('click', () => {
+            const state = this.updateState;
+            if (state && 'version' in state) this._showReleaseNotesModal(state.version);
+        });
+    }
+
+    _showReleaseNotesModal(version) {
+        void (async () => {
+            let notes;
+            try {
+                ({ notes } = (await window.updateAPI.getReleaseNotes(version)) ?? {});
+            } catch {
+                notes = undefined; // 断网 / 社区无条目统一走 noNotes 占位文案
+            }
+            await showWhatsNewModal({
+                title: this._t('update.whatsNew.title', { version }),
+                notes: notes ?? '',
+                noNotesText: this._t('update.whatsNew.noNotes'),
+                communityText: this._t('update.whatsNew.community'),
+                communityLinkText: this._t('update.whatsNew.communityLink'),
+                communityUrl: 'https://opendesk.matrix.openharmony.cn',
+                confirmText: this._t('update.whatsNew.confirm'),
+                mountTarget: this
+            });
+        })();
     }
 
     renderConfigManagementSection() {

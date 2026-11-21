@@ -1983,6 +1983,8 @@ export const enUs: Record<string, string> = {
     'sp.update.installing': 'Installing',
     'sp.update.installNow': 'Install Now',
     'sp.update.restart': 'Restart Now',
+    'sp.update.viewCurrentNotes': 'Current Version Notes',
+    'sp.update.viewLatestNotes': 'Latest Version Notes',
     'update.installed.title': 'Update Installed',
     'update.installed.message': 'OpenDesk ${version} was installed. Restart and use it now?',
     'update.installed.activeMessage':

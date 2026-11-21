@@ -66,6 +66,23 @@ const newsDetailHtml = `<!doctype html><html><body>
     <p>下载安装包覆盖安装。</p>
 </body></html>`;
 
+// 0.4.2 条目：getReleaseNotes 的查看场景按请求版本取内容，与 app.getVersion() 无关
+const newsListHtmlV042 = `<!doctype html><html><body><ol class="release-list">
+    <li data-release-category="stable-release"><article class="release-item">
+        <span class="release-item__title">OpenDesk 0.4.2 更新内容</span>
+        <a href="/news/2026-12-01-stable-release/">查看详情</a>
+    </article></li>
+</ol></body></html>`;
+
+const newsDetailHtmlV042 = `<!doctype html><html><body>
+    <h1>OpenDesk 0.4.2 正式版本更新内容</h1>
+    <p>本次发布带来以下改进。</p>
+    <h2>修复与优化</h2>
+    <ul><li>优化更新体验</li></ul>
+    <h2>如何升级</h2>
+    <p>下载安装包覆盖安装。</p>
+</body></html>`;
+
 function registeredHandler(channel: string): RegisteredIpcHandler {
     const handler = ipcHandle.mock.calls.filter(([registered]) => registered === channel).at(-1)?.[1];
     if (typeof handler !== 'function') throw new Error(`missing IPC handler for ${channel}`);
@@ -98,6 +115,7 @@ test('whats-new channels stay registered on platforms without updater support', 
     registerService();
     expect(() => registeredHandler('updater:getPendingReleaseNotes')).not.toThrow();
     expect(() => registeredHandler('updater:dismissReleaseNotes')).not.toThrow();
+    expect(() => registeredHandler('updater:getReleaseNotes')).not.toThrow();
 });
 
 test('getPendingReleaseNotes fetches the current version notes when unseen', async () => {
@@ -158,5 +176,53 @@ test('dismiss records the version so the next startup skips the modal', async ()
         status: 'ok',
         data: undefined
     });
+    expect(platformFetch).not.toHaveBeenCalled();
+});
+
+test('getReleaseNotes serves the requested version without touching the seen history', async () => {
+    platformFetch.mockImplementation(async (input) => {
+        const url = input instanceof URL ? input.href : String(input);
+        if (url.endsWith('/news/')) {
+            return new Response(newsListHtmlV042, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+        }
+        return new Response(newsDetailHtmlV042, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    });
+    registerService();
+
+    await expect(registeredHandler('updater:getReleaseNotes')(null, '0.4.2')).resolves.toEqual({
+        status: 'ok',
+        data: {
+            version: '0.4.2',
+            notes: '# OpenDesk 0.4.2 更新内容\n\n本次发布带来以下改进。\n\n## 修复与优化\n- 优化更新体验'
+        }
+    });
+    // 查看场景不落账：seen 文件不出现，重复查看也重新拉取（不因已看过而短路）
+    expect(fs.existsSync(path.join(userDataDir, 'Cache', 'whats-new-seen.json'))).toBe(false);
+    await expect(registeredHandler('updater:getReleaseNotes')(null, '0.4.2')).resolves.toEqual({
+        status: 'ok',
+        data: {
+            version: '0.4.2',
+            notes: '# OpenDesk 0.4.2 更新内容\n\n本次发布带来以下改进。\n\n## 修复与优化\n- 优化更新体验'
+        }
+    });
+    expect(platformFetch).toHaveBeenCalledTimes(4);
+});
+
+test('a network failure still yields the generic payload for the requested version', async () => {
+    platformFetch.mockRejectedValue(new Error('offline'));
+    registerService();
+
+    await expect(registeredHandler('updater:getReleaseNotes')(null, '0.4.0')).resolves.toEqual({
+        status: 'ok',
+        data: { version: '0.4.0' }
+    });
+});
+
+test('getReleaseNotes rejects a missing or malformed version', async () => {
+    registerService();
+    const handler = registeredHandler('updater:getReleaseNotes');
+
+    await expect(handler(null, '')).rejects.toThrow('A version is required to fetch release notes');
+    await expect(handler(null, 42)).rejects.toThrow('A version is required to fetch release notes');
     expect(platformFetch).not.toHaveBeenCalled();
 });

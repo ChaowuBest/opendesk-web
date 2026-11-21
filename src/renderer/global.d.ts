@@ -158,6 +158,8 @@ declare global {
             getPendingReleaseNotes: () => Promise<{ version: string; notes?: string } | undefined>;
             /** What's New 弹窗关闭后落账：当前版本记入已预览历史 */
             dismissReleaseNotes: () => Promise<boolean>;
+            /** 设置页查看版本说明：按指定版本返回 { version, notes? }，不读写已预览历史 */
+            getReleaseNotes: (version: string) => Promise<{ version: string; notes?: string }>;
             onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
         };
         /** preload 注入的语言包 API：快照由 preload 缓存，供翻译器同步读取 */

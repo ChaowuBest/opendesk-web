@@ -123,6 +123,20 @@ function registerWhatsNewHandlers(stateDirectory: string, feedUrl: string): void
         await markReleaseNotesSeen(stateDirectory, app.getVersion());
         return { status: 'ok', data: true };
     });
+    // 设置页"查看版本说明"按钮：按指定版本拉取更新内容，与 seen 记录无关，
+    // 因此不读 hasPreviewedReleaseNotes 也不落 markReleaseNotesSeen。
+    ipcMain.handle('updater:getReleaseNotes', async (_event, version: unknown) => {
+        if (typeof version !== 'string' || version.trim() === '') {
+            throw new Error('A version is required to fetch release notes');
+        }
+        let notes: string | undefined;
+        try {
+            notes = await fetchReleaseNotesForVersion(feedUrl, version, platformProxyFetch);
+        } catch {
+            notes = undefined;
+        }
+        return { status: 'ok', data: { version, notes } };
+    });
 }
 
 export function registerElectronUpdateService(options: ElectronUpdateServiceOptions): UpdateCoordinator | undefined {

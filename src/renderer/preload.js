@@ -1349,6 +1349,12 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
+        // 设置页"查看版本说明"：按指定版本拉取更新内容，不读写已预览历史
+        getReleaseNotes: async (version) => {
+            const result = await ipcRenderer.invoke('updater:getReleaseNotes', version);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
         onStateChanged: (callback) => {
             const listener = (_event, state) => callback(state);
             ipcRenderer.on('updater:stateChanged', listener);
