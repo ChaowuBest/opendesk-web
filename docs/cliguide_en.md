@@ -118,7 +118,6 @@ Type `/` in the input box to see available commands.
 | `/log`          | Log panel                                      | `/log [off\|last\|all]`                                  |
 | `/debug`        | Debug helpers                                  | `/debug log [on\|off]` or `/debug taskid`                |
 | `/quickpass`    | Export quickpass                               | `/quickpass config base\|all`                            |
-| `/dashboard`    | Open dashboard                                 | `/dashboard`                                             |
 | `/stop`         | Stop the running task                          | `/stop`                                                  |
 | `/upgrade`      | Check for updates                              | `/upgrade`                                               |
 | `/rename`       | Rename current task                            | `/rename [new name]`                                     |

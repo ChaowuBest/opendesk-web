@@ -1199,8 +1199,6 @@
     "cron.desc.dowNames.4": "목",
     "cron.desc.dowNames.5": "금",
     "cron.desc.dowNames.6": "토",
-    "dashboard.bar.description": "상태 표시줄 표시/숨기기",
-    "dashboard.description": "전체 화면 대시보드를 열고, /dashboard bar로 상태 표시줄을 전환합니다",
     "date.dow.0": "일",
     "date.dow.1": "월",
     "date.dow.2": "화",

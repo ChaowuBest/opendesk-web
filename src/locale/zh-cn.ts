@@ -762,10 +762,6 @@ export const zhCn: Record<string, string> = {
     // Commands - Notification
     'notification.description': '打开通知中心，查看所有通知',
 
-    // Commands - Dashboard
-    'dashboard.description': '打开全屏仪表盘，/dashboard bar 可切换底栏状态条',
-    'dashboard.bar.description': '显示/隐藏底栏状态条',
-
     // Commands - Usage
     'usage.description': '查看模型用量统计',
     'usage.title': '模型用量统计',

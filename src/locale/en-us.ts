@@ -786,10 +786,6 @@ export const enUs: Record<string, string> = {
     // Commands - Notification
     'notification.description': 'Open notification center, view all notifications',
 
-    // Commands - Dashboard
-    'dashboard.description': 'Open fullscreen dashboard, /dashboard bar toggles status bar',
-    'dashboard.bar.description': 'Show/hide status bar',
-
     // Commands - Usage
     'usage.description': 'View model usage statistics',
     'usage.title': 'Model Usage Statistics',

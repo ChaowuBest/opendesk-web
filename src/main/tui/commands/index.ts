@@ -20,7 +20,6 @@ import { registerCancelCommand } from './cancel.js';
 import { registerClearCommand } from './clear.js';
 import { registerExportCommand } from './export.js';
 import { registerImportCommand } from './import.js';
-import { registerDashboardCommand } from './dashboard.js';
 import { registerConfigCommand } from './config.js';
 import { registerLogCommand } from './log.js';
 import { registerDebugCommand } from './debug.js';
@@ -59,7 +58,6 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerClearCommand(tui);
     registerExportCommand(tui);
     registerImportCommand(tui);
-    registerDashboardCommand(tui);
     registerConfigCommand(tui);
     registerLogCommand(tui);
     registerDebugCommand(tui);

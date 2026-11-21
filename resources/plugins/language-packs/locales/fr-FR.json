@@ -1177,8 +1177,6 @@
     "cron.desc.dowNames.4": "Jeu",
     "cron.desc.dowNames.5": "Ven",
     "cron.desc.dowNames.6": "Sam",
-    "dashboard.bar.description": "Afficher/masquer la barre d'état",
-    "dashboard.description": "Ouvre le tableau de bord plein écran ; /dashboard bar bascule la barre d'état",
     "date.dow.0": "Dim",
     "date.dow.1": "Lun",
     "date.dow.2": "Mar",

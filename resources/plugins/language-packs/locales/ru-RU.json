@@ -1177,8 +1177,6 @@
     "cron.desc.dowNames.4": "Чт",
     "cron.desc.dowNames.5": "Пт",
     "cron.desc.dowNames.6": "Сб",
-    "dashboard.bar.description": "Показать/скрыть строку состояния",
-    "dashboard.description": "Открыть полноэкранную панель; /dashboard bar переключает строку состояния",
     "date.dow.0": "Вс",
     "date.dow.1": "Пн",
     "date.dow.2": "Вт",

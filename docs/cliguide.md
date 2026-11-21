@@ -120,7 +120,6 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/log`          | 显示日志面板                                  | `/log [off\|last\|all]`                                  |
 | `/debug`        | 调试命令                                      | `/debug log [on\|off]` 或 `/debug taskid`                |
 | `/quickpass`    | 导出快捷口令                                  | `/quickpass config base\|all`                            |
-| `/dashboard`    | 打开仪表盘                                    | `/dashboard`                                             |
 | `/stop`         | 停止当前正在执行的任务                        | `/stop`                                                  |
 | `/upgrade`      | 检查并升级 OpenDesk                           | `/upgrade`                                               |
 | `/rename`       | 重命名当前任务                                | `/rename [新名称]`                                       |

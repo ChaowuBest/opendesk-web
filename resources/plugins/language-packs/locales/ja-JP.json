@@ -1199,8 +1199,6 @@
     "cron.desc.dowNames.4": "木",
     "cron.desc.dowNames.5": "金",
     "cron.desc.dowNames.6": "土",
-    "dashboard.bar.description": "ステータスバーの表示/非表示",
-    "dashboard.description": "フルスクリーンダッシュボードを開く。/dashboard barでステータスバーを切り替え",
     "date.dow.0": "日",
     "date.dow.1": "月",
     "date.dow.2": "火",
