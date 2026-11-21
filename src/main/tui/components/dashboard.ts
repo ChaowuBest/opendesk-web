@@ -14,6 +14,7 @@ import { defaultSelectListTheme, getAdaptiveGreen } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { Card, type CardStatus, type BorderConfig } from './card';
 import { ApplicationRegistry } from '../../applications/registry';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
 import { getNotificationBadge } from './notification';
 import chalk from 'chalk';
@@ -30,6 +31,9 @@ import { t } from '../../../locale/index.js';
 const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
 
 export function shouldShowDashboardStatusBlock(bundleName: string): boolean {
+    // 被插件禁用的应用（disableApplication）不再贡献状态块：图标已隐藏、工具集与事件已停用。
+    // 仅隐藏入口（hideApplication）的应用仍在后台运行，状态照常显示。
+    if (getFeatureManager().isApplicationDisabled(bundleName)) return false;
     return !HIDDEN_DASHBOARD_STATUS_BUNDLES.has(bundleName);
 }
 

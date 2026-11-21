@@ -198,6 +198,14 @@ export abstract class AgentDecl {
     }
 
     /**
+     * 该 Agent 的归属应用 bundleName（内置 Agent 为 undefined）。
+     * applications 层据此把「应用被插件禁用」换算成 Agent 不可见。
+     */
+    get applicationScope(): string | undefined {
+        return this.agentScope;
+    }
+
+    /**
      * 释放 agent 持有的资源。
      * 在 agent 被卸载或不再使用时调用。
      */

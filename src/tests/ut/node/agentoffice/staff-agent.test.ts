@@ -168,6 +168,7 @@ test('Staff prompt uses its own Agent definition without subtask completion inst
     );
     fs.writeFileSync(path.join(skillDirectory, 'SKILL.md'), SKILL_MD);
     const agent = await CustomAgent.loadFromPath(agentDirectory, {
+        applicationBundleName: 'agentoffice',
         purpose: 'staff',
         agentName: 'staff:test',
         whenToUse: 'Staff runtime test',

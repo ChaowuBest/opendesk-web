@@ -1254,7 +1254,7 @@ export class PluginHost {
                 }
             },
             features: {
-                disable: (featureId: string) => {
+                disableFeature: (featureId: string) => {
                     addCapability('features');
                     const normalizedFeatureId = typeof featureId === 'string' ? featureId.trim() : '';
                     if (!normalizedFeatureId || !getFeatureDefinition(normalizedFeatureId)) {
@@ -1264,13 +1264,15 @@ export class PluginHost {
                 },
                 disableApplication: (bundleName: string) => {
                     addCapability('features');
-                    const normalizedBundleName = typeof bundleName === 'string' ? bundleName.trim() : '';
-                    // 应用在插件宿主初始化前已注册（main/cli 均先 initializeRegistry 再 initializePluginHost），
-                    // 这里按当前注册表校验 bundleName，防止插件禁用不存在的应用
-                    if (!normalizedBundleName || !ApplicationRegistry.getApplication(normalizedBundleName)) {
-                        throw new Error(`features.unknown_application:${bundleName}`);
-                    }
-                    return this.registerApplicationDisable(entry, normalizedBundleName, track);
+                    return this.registerApplicationDisable(
+                        entry,
+                        this.normalizeApplicationBundleName(bundleName),
+                        track
+                    );
+                },
+                hideApplication: (bundleName: string) => {
+                    addCapability('features');
+                    return this.registerApplicationHide(entry, this.normalizeApplicationBundleName(bundleName), track);
                 }
             },
             registry: {
@@ -1351,6 +1353,45 @@ export class PluginHost {
     ): PluginRegistration {
         const release = getFeatureManager().acquireApplicationDisable(bundleName, entry.id);
         return track(new HostRegistration(release));
+    }
+
+    /**
+     * 记录插件对 OpenDesk 应用入口的隐藏；与禁用不同，应用能力照常运行。
+     *
+     * 只收起 UI 入口（菜单/桌面的图标）：Skill、Agent、MCP、工具集、事件、worker 调用与
+     * 已打开的应用窗口全部保留。需要让这些贡献一并停用时必须用 disableApplication。
+     */
+    private registerApplicationHide(
+        entry: ActivePlugin,
+        bundleName: string,
+        track: (registration: PluginRegistration) => PluginRegistration
+    ): PluginRegistration {
+        const release = getFeatureManager().acquireApplicationHide(bundleName, entry.id);
+        return track(new HostRegistration(release));
+    }
+
+    /**
+     * 归一化并校验应用 bundleName。
+     *
+     * 应用在插件宿主初始化前已注册（GUI/CLI 主流程均先 initializeRegistry 再 initializePluginHost），
+     * 这里按当前注册表校验，防止插件操作不存在的应用。但 `plugins status` 这类一次性子命令不会
+     * 初始化应用注册表，此时任何 bundleName 都查不到，不能因此让插件 setup 失败：注册表为空时
+     * 跳过存在性校验，状态只活在本次进程内存里。
+     */
+    private normalizeApplicationBundleName(bundleName: unknown): string {
+        const normalizedBundleName = typeof bundleName === 'string' ? bundleName.trim() : '';
+        if (!normalizedBundleName) throw new Error(`features.unknown_application:${String(bundleName)}`);
+        if (ApplicationRegistry.applications.size === 0) {
+            // 跳过校验时拼错的 bundleName 会和合法值一样静默生效，留一条日志便于诊断
+            logger.warn(
+                `[pluginmgr] application registry is empty, skip bundleName validation: ${normalizedBundleName}`
+            );
+            return normalizedBundleName;
+        }
+        if (!ApplicationRegistry.getApplication(normalizedBundleName)) {
+            throw new Error(`features.unknown_application:${String(bundleName)}`);
+        }
+        return normalizedBundleName;
     }
 
     private notifyAppearanceChanged(): void {

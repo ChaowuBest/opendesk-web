@@ -6,9 +6,11 @@ import {
 } from '../../../common/features/registry.js';
 
 describe('feature registry', () => {
-    test('内置特性列表包含 memory 与 filesystem 且文案完整', () => {
+    test('内置特性列表包含 memory / filesystem / telemetry 且文案完整', () => {
         const ids = OPENDESK_FEATURES.map((feature) => feature.id);
-        expect(ids).toEqual(expect.arrayContaining(['memory', 'filesystem']));
+        expect(ids).toEqual(expect.arrayContaining(['memory', 'filesystem', 'telemetry']));
+        // 浏览器能力不通过特性门控（use-browser / manage-browser 不受影响），只由 hideApplication 收起入口
+        expect(ids).not.toContain('browser');
         for (const feature of OPENDESK_FEATURES) {
             expect(feature.displayName).toBeTruthy();
             expect(feature.description).toBeTruthy();
@@ -18,6 +20,8 @@ describe('feature registry', () => {
     test('getFeatureDefinition 命中已知 id、未知的返回 undefined', () => {
         expect(getFeatureDefinition('memory')?.id).toBe('memory');
         expect(getFeatureDefinition('filesystem')?.id).toBe('filesystem');
+        expect(getFeatureDefinition('telemetry')?.id).toBe('telemetry');
+        expect(getFeatureDefinition('browser')).toBeUndefined();
         expect(getFeatureDefinition('unknown-feature')).toBeUndefined();
     });
 
@@ -50,7 +54,11 @@ describe('FeatureManager', () => {
     test('初始状态无任何禁用', () => {
         expect(manager.isFeatureDisabled('memory')).toBe(false);
         expect(manager.isApplicationDisabled('filemgr')).toBe(false);
-        expect(manager.getSnapshot()).toEqual({ disabledFeatures: [], disabledApplications: [] });
+        expect(manager.getSnapshot()).toEqual({
+            disabledFeatures: [],
+            disabledApplications: [],
+            hiddenApplications: []
+        });
     });
 
     test('setFeatureDisabled 记录禁用并在释放后恢复', () => {
@@ -60,7 +68,11 @@ describe('FeatureManager', () => {
 
         manager.setFeatureDisabled('memory', 'plugin-a', false);
         expect(manager.isFeatureDisabled('memory')).toBe(false);
-        expect(manager.getSnapshot()).toEqual({ disabledFeatures: [], disabledApplications: [] });
+        expect(manager.getSnapshot()).toEqual({
+            disabledFeatures: [],
+            disabledApplications: [],
+            hiddenApplications: []
+        });
     });
 
     test('多插件叠加禁用：全部回退后才恢复', () => {
@@ -152,6 +164,43 @@ describe('FeatureManager', () => {
         releaseApp();
         expect(manager.isApplicationDisabled('filemgr')).toBe(false);
         expect(applicationNotifications).toEqual(['application', 'application']);
+    });
+
+    test('hideApplication 只隐藏入口，不影响应用的禁用状态', () => {
+        const notifications: string[] = [];
+        manager.onApplicationsChanged(() => notifications.push('application'));
+
+        manager.setApplicationHidden('mailbox', 'plugin-a', true);
+        expect(manager.isApplicationHidden('mailbox')).toBe(true);
+        expect(manager.isApplicationDisabled('mailbox')).toBe(false);
+        expect(manager.getHiddenApplications()).toEqual(['mailbox']);
+        expect(manager.getDisabledApplications()).toEqual([]);
+        expect(notifications).toEqual(['application']);
+
+        manager.setApplicationHidden('mailbox', 'plugin-a', false);
+        expect(manager.isApplicationHidden('mailbox')).toBe(false);
+        expect(manager.getSnapshot()).toEqual({
+            disabledFeatures: [],
+            disabledApplications: [],
+            hiddenApplications: []
+        });
+    });
+
+    test('acquireApplicationHide 按持有次数计数：全部释放后才恢复', () => {
+        const releaseFirst = manager.acquireApplicationHide('mailbox', 'plugin-a');
+        const releaseSecond = manager.acquireApplicationHide('plugin-app', 'plugin-a');
+        expect(manager.listHiddenApplications()).toEqual([
+            { bundleName: 'mailbox', pluginIds: ['plugin-a'] },
+            { bundleName: 'plugin-app', pluginIds: ['plugin-a'] }
+        ]);
+
+        releaseFirst();
+        releaseFirst();
+        expect(manager.isApplicationHidden('mailbox')).toBe(false);
+        expect(manager.isApplicationHidden('plugin-app')).toBe(true);
+
+        releaseSecond();
+        expect(manager.getHiddenApplications()).toEqual([]);
     });
 
     test('setFeatureDisabled(false) 清除该 owner 的全部持有次数', () => {

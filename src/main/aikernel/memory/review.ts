@@ -331,7 +331,7 @@ export function registerMemoryReviewHook(options: RegisterMemoryReviewHookOption
 
 /**
  * 注销任务回顾钩子并丢弃尚未处理的回顾请求。
- * ctx.features.disable('memory') 禁用记忆特性时由 main 调用；重新启用时再次 register 即可。
+ * ctx.features.disableFeature('memory') 禁用记忆特性时由 main 调用；重新启用时再次 register 即可。
  */
 export function unregisterMemoryReviewHook(): void {
     if (!reviewHookRegistered) {

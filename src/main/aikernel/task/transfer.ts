@@ -39,7 +39,8 @@ export async function importTaskEntries(
             try {
                 const json = normalizeImportedTask(source, ids, workspace);
                 if (json.model && !Setting.getInstance().getModelInstance(json.model, 'chat')) delete json.model;
-                if (json.agentId && !AgentRegistry.resolveAgentReference(json.agentId)) json.agentId = null;
+                // 只清掉真正不存在的 Agent：应用被插件禁用不等于 Agent 失效，绑定应当保留
+                if (json.agentId && !AgentRegistry.hasRegisteredAgent(json.agentId)) json.agentId = null;
                 yield deserializeTaskData(json, manager);
             } catch (error) {
                 throw new TaskTransferError('invalidTask', error, 'prepareTasks');

@@ -39,7 +39,7 @@ const workerInitPromises: Map<string, Promise<void>> = new Map();
  * 在worker线程中无法使用 */
 // workerData.setting 由主进程注入，形态为 { applications: { [bundleName]: config } }
 const setting = (workerData?.setting ?? {}) as { applications?: Record<string, object> };
-// workerData.disabledFeatures 由主进程注入：插件通过 ctx.features.disable 已禁用的特性列表，
+// workerData.disabledFeatures 由主进程注入：插件通过 ctx.features.disableFeature 已禁用的特性列表，
 // 供支持特性门控的 worker（如 filemgr 的 AI 索引）在 initialize() 前就位
 const disabledFeatures = (workerData?.disabledFeatures ?? []) as string[];
 // workerData.disabledApplications 由主进程注入：插件通过 ctx.features.disableApplication 已禁用的

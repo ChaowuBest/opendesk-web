@@ -20,6 +20,7 @@ import { NotificationManager } from '../utils/notificationmgr.js';
 import { getPlatform, type PlatformFetchOptions } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
+import { AgentRegistry } from '../aikernel/agents/registry.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
@@ -297,9 +298,12 @@ export class ApplicationRegistry {
         const featureManager = getFeatureManager();
         return Array.from(this.applications.values()).map((application) => {
             const json = application.toJSON() as { bundleName: string; showIcon?: boolean };
-            // 被插件禁用的应用对渲染进程表现为不显示图标（菜单/侧栏弹层据此隐藏）
-            if (featureManager.isApplicationDisabled(json.bundleName)) {
-                return { ...json, showIcon: false };
+            // 被插件禁用/隐藏的应用对渲染进程表现为不显示图标（菜单/侧栏弹层、桌面图标据此隐藏）。
+            // 只有禁用会停掉工具集与事件，故单独给一个 disabledByPlugin 标记：桌面据此关掉已打开
+            // 的浮动窗口，而仅隐藏入口的应用（hideApplication）仍在后台运行，窗口保持不变
+            const disabled = featureManager.isApplicationDisabled(json.bundleName);
+            if (disabled || featureManager.isApplicationHidden(json.bundleName)) {
+                return { ...json, showIcon: false, disabledByPlugin: disabled };
             }
             return json;
         });
@@ -544,10 +548,24 @@ export async function notifyWorkerFeatureUpdate(
     );
 }
 
-/** 当前禁用状态推给 Worker（fire-and-forget，失败只记日志） */
-function pushDisabledStateToWorker(): void {
+/** 上一次成功推给 Worker 的禁用状态签名，用于按内容去重 */
+let lastPushedDisabledStateKey: string | null = null;
+
+/**
+ * 当前禁用状态推给 Worker（fire-and-forget，失败只记日志）。
+ * 特性级与应用级任一变化都会走到这里，但隐藏入口（hideApplication）不改变 Worker 关心的状态，
+ * 故按内容去重；Worker 重启时用 force 强制补推，新实例只带了启动值。
+ */
+function pushDisabledStateToWorker(options: { force?: boolean } = {}): void {
     const manager = getFeatureManager();
-    void notifyWorkerFeatureUpdate(manager.getDisabledFeatures(), manager.getDisabledApplications()).catch((error) => {
+    const features = manager.getDisabledFeatures();
+    const applications = manager.getDisabledApplications();
+    const key = JSON.stringify([features, applications]);
+    if (!options.force && key === lastPushedDisabledStateKey) return;
+    lastPushedDisabledStateKey = key;
+    void notifyWorkerFeatureUpdate(features, applications).catch((error) => {
+        // 推送失败时清掉签名，让下一次状态变化能重新尝试
+        lastPushedDisabledStateKey = null;
         logger.warn(`push disabled features to worker failed: ${error}`);
     });
 }
@@ -565,9 +583,9 @@ export function ensureFeatureWorkerSync(): void {
     if (featureWorkerSyncRegistered) return;
     featureWorkerSyncRegistered = true;
     const manager = getFeatureManager();
-    manager.onFeaturesChanged(pushDisabledStateToWorker);
-    manager.onApplicationsChanged(pushDisabledStateToWorker);
-    onGlobalWorkerRestarted(pushDisabledStateToWorker);
+    manager.onFeaturesChanged(() => pushDisabledStateToWorker());
+    manager.onApplicationsChanged(() => pushDisabledStateToWorker());
+    onGlobalWorkerRestarted(() => pushDisabledStateToWorker({ force: true }));
 }
 
 /**
@@ -577,14 +595,35 @@ export function ensureFeatureWorkerSync(): void {
 let featureApplicationListenerRegistered = false;
 
 /**
- * 订阅插件特性禁用变更：ctx.features.disableApplication 生效/回退时向渲染进程
- * 推送刷新后的应用列表。由 initializeRegistry 调用；测试可单独触发。
+ * 订阅插件特性禁用变更：ctx.features.disableApplication / hideApplication 生效/回退时
+ * 向渲染进程推送刷新后的应用列表。由 initializeRegistry 调用；测试可单独触发。
  */
 export function ensureFeatureDisableSubscription(): void {
     if (featureApplicationListenerRegistered) return;
     featureApplicationListenerRegistered = true;
     getFeatureManager().onApplicationsChanged(() => {
         ApplicationRegistry.notifyApplicationListChanged();
+    });
+}
+
+let applicationFeatureFiltersRegistered = false;
+
+/**
+ * 把「应用被插件禁用」注入到 Skill / Agent 的可见性判断。
+ *
+ * disableApplication 停用应用的全部贡献：图标、工具集、事件、Skill、Agent、TUI 斜杠命令与
+ * worker 调用。SkillRegistry / AgentRegistry 属于 aikernel 层，保持与 applications 层解耦，
+ * 因此这里注入过滤函数而不是让它们直接依赖 FeatureManager。
+ * hideApplication 不参与：它只收起入口，应用的 Skill / Agent / 工具集照常工作。
+ */
+function ensureApplicationFeatureFilters(): void {
+    if (applicationFeatureFiltersRegistered) return;
+    applicationFeatureFiltersRegistered = true;
+    const isDisabled = (bundleName: string) => getFeatureManager().isApplicationDisabled(bundleName);
+    SkillRegistry.registerProviderFilter((bundleName) => !isDisabled(bundleName));
+    AgentRegistry.registerVisibilityFilter((agent) => {
+        const scope = agent.applicationScope;
+        return scope === undefined || !isDisabled(scope);
     });
 }
 
@@ -598,6 +637,7 @@ export function initializeRegistry() {
         }
     }
     ApplicationRegistry.reloadExternalApplications();
+    ensureApplicationFeatureFilters();
 
     // 应用注册的时候会改变设置的Schema，所以这里需要清空一下重新载入
     Setting.clearCache();

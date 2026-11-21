@@ -1580,12 +1580,16 @@ export class ImmersiveDesktop extends HTMLElement {
         this.renderAppList();
     }
 
-    /** 关掉桌面上已打开、但应用已被插件禁用的浮动窗口（主进程列表对其 showIcon=false） */
+    /**
+     * 关掉桌面上已打开、但应用已被插件停用的浮动窗口。
+     * 以主进程列表的 disabledByPlugin 标记为准：仅隐藏入口（hideApplication）的应用仍在后台运行，
+     * 不会带上这个标记，窗口不能关；用户/应用自身声明 showIcon=false 的应用同样不受影响。
+     */
     private closeDisabledApplicationWindows(apps: unknown): void {
         if (!Array.isArray(apps)) return;
         const disabled = new Set(
-            (apps as Array<{ bundleName?: unknown; showIcon?: unknown }>)
-                .filter((app) => app?.showIcon === false && typeof app.bundleName === 'string')
+            (apps as Array<{ bundleName?: unknown; disabledByPlugin?: unknown }>)
+                .filter((app) => app?.disabledByPlugin === true && typeof app.bundleName === 'string')
                 .map((app) => app.bundleName as string)
         );
         if (disabled.size === 0) return;

@@ -1194,9 +1194,10 @@ GUI 中通过“插件中心”应用安装和管理插件；TUI 中通过“设
 启停和重新加载会通过 `plugin` 权限资源请求用户确认。Agent 安装仍遵循上述 OpenDesk
 插件校验、plugins 目录和 `--ignore-scripts` 规则。
 
-## features capability：禁用 OpenDesk 内置特性
+## features capability：禁用 OpenDesk 内置特性、停用或隐藏应用
 
-声明 `features` capability 后，插件可以通过 `ctx.features` 禁用 OpenDesk 自身的特性或整个应用：
+声明 `features` capability 后，插件可以通过 `ctx.features` 禁用 OpenDesk 自身的特性、停用整个应用，
+或只收起应用入口：
 
 ```js
 export default definePlugin({
@@ -1204,9 +1205,11 @@ export default definePlugin({
     capabilities: ['features'],
     setup(ctx) {
         // 禁用长期记忆特性：隐藏记忆入口，不再注册任务回顾钩子、不再注入记忆工具与提示词段落
-        ctx.features.disable('memory');
+        ctx.features.disableFeature('memory');
         // 禁用整个应用：应用图标从菜单隐藏、延迟资源不再加载、工具集与事件停用
         ctx.features.disableApplication('filemgr');
+        // 只收起应用入口：图标不显示，但应用照常在后台运行（工具集、事件、worker 调用都不受影响）
+        ctx.features.hideApplication('mailbox');
     }
 });
 ```
@@ -1217,20 +1220,28 @@ export default definePlugin({
 | ------------ | ---------------------------------------------------------------------------- | ---------------------------------- |
 | `memory`     | 长期记忆与用户画像：记忆入口、任务回顾自动维护、记忆工具与提示词段落         | 无                                 |
 | `filesystem` | AI 文件系统的索引与语义搜索：文件系统入口、semanticSearch 工具、搜索文件按钮 | 普通文件读写/grep 工具、@ 添加文件 |
+| `telemetry`  | 全部远程遥测：OTLP / Langfuse 上报（含环境变量端点）与设备心跳               | 用户主动提交的反馈、本地用量统计   |
 
 行为约定：
 
-- 禁用状态**动态生效、跟随插件生命周期**：插件每次启动在 `setup()` 中重新调用即可保持禁用；
-  返回的 `PluginRegistration` 释放（或插件停用/卸载/宿主重载）后自动恢复。禁用不落盘。
-- 同一目标被多个插件同时禁用时，全部释放后才视为恢复；同一插件多次调用 `disable` 会各自得到
-  一个 registration，需要全部释放（按持有次数计数，释放其中一个不会整体解锁）。
-- `disable` 传入未知 featureId、`disableApplication` 传入未注册的 bundleName 会抛错
-  （`features.unknown_feature:<id>` / `features.unknown_application:<bundleName>`）。
-- `disableApplication` 对系统应用与用户应用都生效，但只校验 `setup()` 执行时**已注册**的应用：
-  插件加载之后才安装的用户应用在本次 setup 中不可禁用（需要在插件重新加载时再调用）。
+- 状态**动态生效、跟随插件生命周期**：插件每次启动在 `setup()` 中重新调用即可保持生效；
+  返回的 `PluginRegistration` 释放（或插件停用/卸载/宿主重载）后自动恢复。状态不落盘。
+- 同一目标被多个插件同时操作时，全部释放后才视为恢复；同一插件多次调用 `disableFeature`
+  会各自得到一个 registration，需要全部释放（按持有次数计数，释放其中一个不会整体解锁）。
+- `disableFeature` 传入未知 featureId、`disableApplication` / `hideApplication` 传入未注册的
+  bundleName 会抛错（`features.unknown_feature:<id>` / `features.unknown_application:<bundleName>`）。
+- `disableApplication` / `hideApplication` 对系统应用与用户应用都生效，但只校验 `setup()` 执行时
+  **已注册**的应用：插件加载之后才安装的用户应用在本次 setup 中不可操作（需要在插件重新加载时再调用）。
   应用恢复后其事件与工具集随之恢复。
-- 禁用应用会停掉该应用的 UI 入口、工具集、事件与主进程 worker 调用；自身持有后台资源的应用
-  （如 `filemgr` 的索引扫描）同时停止后台工作，不会在界面上不可见时继续跑。
+- 禁用应用会停掉该应用的全部贡献：UI 入口、工具集、事件、Skill、Agent（含其携带的 MCP
+  server）、TUI 斜杠命令与其状态块、主进程 worker 调用，已打开的应用窗口会被关闭；
+  自身持有后台资源的应用（如 `filemgr` 的索引扫描）同时停止后台工作，不会在界面上不可见时继续跑。
+- 隐藏应用（`hideApplication`）只让入口图标消失，**不改变任何注册项**：工具集、事件、Skill、
+  Agent、MCP、TUI 斜杠命令、worker 调用与已打开的应用窗口都保持不变，适合「入口收起但能力继续
+  在后台工作」的场景。需要连能力一起停用请用 `disableApplication`。
+- `telemetry` 特性作用于远程上报通道：禁用后遥测协议不再初始化（已初始化的会立即关闭并刷新在途数据），
+  设备心跳同时停止，设置页与 TUI 设置菜单的遥测入口一并隐藏（`setting.json` 里的配置保留不动）；
+  `feedback` 能力走独立通道，不受该特性影响。
 
 ## 生命周期和安全边界
 

@@ -73,6 +73,27 @@ describe('插件语言包清单契约', () => {
         expect(resources.locales?.[1].sourceFile).toBe('locales/tr-tr.json');
     });
 
+    test('插件根目录含符号链接时 sourceFile 仍是插件内相对路径', () => {
+        // 真实路径与传入的根目录路径不一致（macOS 的 /var -> /private/var 就属于这种情况）
+        const realRoot = path.join(root, 'real-plugin');
+        writePack(realRoot, {
+            'opendesk.plugin.json': {
+                id: 'pack',
+                apiVersion: 1,
+                capabilities: ['locale'],
+                resources: { locales: ['locales'] }
+            },
+            'locales/tr-TR.json': { key: 'değer' }
+        });
+        const linkedRoot = path.join(root, 'linked-plugin');
+        fs.symlinkSync(realRoot, linkedRoot, 'dir');
+        const manifest = parsePluginManifest(
+            JSON.parse(fs.readFileSync(path.join(linkedRoot, 'opendesk.plugin.json'), 'utf-8'))
+        );
+        const resources = loadPluginResources(manifest, linkedRoot);
+        expect(resources.locales?.[0].sourceFile).toBe('locales/tr-TR.json');
+    });
+
     test('@priority 并入语言包定义，未声明时缺省为 1', () => {
         writePack(root, {
             'opendesk.plugin.json': {

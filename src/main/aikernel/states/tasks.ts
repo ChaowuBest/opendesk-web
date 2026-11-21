@@ -394,12 +394,17 @@ export class TaskState {
 
         const mainAgent = AgentRegistry.getMainAgent();
         if (this.agentId !== mainAgent.agentId) {
+            // 应用被插件禁用时 Agent 仍注册着、只是不可见：本次回退 main 执行，但不改写任务绑定，
+            // 插件停用后任务能回到原来的 Agent（真正不存在的 Agent 才会被永久改写为 main）
+            if (AgentRegistry.hasRegisteredAgent(this.agentId)) {
+                return mainAgent;
+            }
             logger.warn(
                 `TaskState: agent "${this.agentId}" not found for task ${this.task_id}, ` +
                     `falling back to ${mainAgent.agentId}`
             );
+            this.agentId = mainAgent.agentId;
         }
-        this.agentId = mainAgent.agentId;
         return mainAgent;
     }
 
