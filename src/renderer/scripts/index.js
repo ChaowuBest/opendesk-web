@@ -38,7 +38,7 @@ import '../components/agentgate-floating-window.js';
 import '../components/trashFloatingWindow.ts';
 import '../components/desktop/entry.ts';
 import '../../main/applications/browser/renderer/entry.ts';
-import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts';
+import { showConfirmModal, showCloseDialog, showWhatsNewModal } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
 import { createRendererTranslator, notifyRendererSettingChanged, onLocalePacksChanged } from '../locale.ts';
@@ -73,6 +73,27 @@ function getLocalizedString(key, locale = 'en-us') {
 
 // 暴露翻译器实例给 index.html 内联脚本使用
 window.__odT = createRendererTranslator();
+// What's New：启动时检查当前版本更新内容是否已预览过，未预览则拉取并弹窗。
+// 无更新说明（断网 / 社区无条目）时展示通用社区引导弹窗；dismiss 后落账，下次启动不再弹。
+async function showWhatsNewOnce() {
+    try {
+        const pending = await window.updateAPI?.getPendingReleaseNotes();
+        if (!pending) return;
+        const t = window.__odT;
+        await showWhatsNewModal({
+            title: t('update.whatsNew.title', { version: pending.version }),
+            notes: pending.notes ?? '',
+            noNotesText: t('update.whatsNew.noNotes'),
+            communityText: t('update.whatsNew.community'),
+            communityLinkText: t('update.whatsNew.communityLink'),
+            communityUrl: 'https://opendesk.matrix.openharmony.cn',
+            confirmText: t('update.whatsNew.confirm')
+        });
+        await window.updateAPI?.dismissReleaseNotes();
+    } catch {
+        /* What's New 是增强展示：任何失败都静默跳过 */
+    }
+}
 (async () => {
     try {
         const settings = await window.settingAPI.loadSettingObject();
@@ -81,6 +102,8 @@ window.__odT = createRendererTranslator();
     } catch {
         /* fallback to browser locale */
     }
+    // 等翻译器按用户语言就绪后再弹窗，避免 What's New 使用错误语言
+    await showWhatsNewOnce();
 })();
 window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);

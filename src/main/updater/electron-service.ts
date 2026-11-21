@@ -25,10 +25,16 @@ import {
 } from './config.js';
 import { copyLocalInstaller, downloadInstaller } from './download.js';
 import { createMacInstallRunner, installFromDmg, resolveAppBundlePath } from './mac-install.js';
-import { fetchLatestRelease, type UpdaterTargetArch, type UpdaterTargetPlatform } from './release-feed.js';
+import {
+    fetchLatestRelease,
+    fetchReleaseNotesForVersion,
+    type UpdaterTargetArch,
+    type UpdaterTargetPlatform
+} from './release-feed.js';
 import { resolveUpdateRelaunchCommand } from './restart.js';
 import { reportUpdateHealthToService, submitUpdateToService } from './update-service-client.js';
 import { verifyUpdateInstaller } from './verification.js';
+import { hasPreviewedReleaseNotes, markReleaseNotesSeen } from './whats-new.js';
 import type { ReadyUpdateRecord, UpdateState } from './types.js';
 
 export interface ElectronUpdateServiceOptions {
@@ -94,7 +100,35 @@ function platformProxyFetch(input: string | URL | Request, init?: RequestInit): 
     return getPlatform().fetch(input, init);
 }
 
+/**
+ * What's New：启动流程独立判定，与自动更新升级流程（coordinator）解耦，全平台注册。
+ * 无条目 / 断网 / 拉取失败统一按"无更新说明"返回，通用弹窗仍会展示；
+ * 通道名保留 updater: 前缀以便 preload 归口 updateAPI。
+ */
+function registerWhatsNewHandlers(stateDirectory: string, feedUrl: string): void {
+    ipcMain.handle('updater:getPendingReleaseNotes', async () => {
+        const version = app.getVersion();
+        if (await hasPreviewedReleaseNotes(stateDirectory, version)) {
+            return { status: 'ok', data: undefined };
+        }
+        let notes: string | undefined;
+        try {
+            notes = await fetchReleaseNotesForVersion(feedUrl, version, platformProxyFetch);
+        } catch {
+            notes = undefined;
+        }
+        return { status: 'ok', data: { version, notes } };
+    });
+    ipcMain.handle('updater:dismissReleaseNotes', async () => {
+        await markReleaseNotesSeen(stateDirectory, app.getVersion());
+        return { status: 'ok', data: true };
+    });
+}
+
 export function registerElectronUpdateService(options: ElectronUpdateServiceOptions): UpdateCoordinator | undefined {
+    const stateDirectory = resolveUpdateCacheDirectory(app.getPath('userData'));
+    const feedUrl = process.env.OPENDESK_UPDATE_FEED_URL || DEFAULT_UPDATE_FEED_URL;
+    registerWhatsNewHandlers(stateDirectory, feedUrl);
     if (!updaterEnabled()) {
         ipcMain.handle('updater:getState', () => ({
             status: 'ok',
@@ -111,8 +145,6 @@ export function registerElectronUpdateService(options: ElectronUpdateServiceOpti
 
     const manualInstall = process.platform === 'darwin';
     const installerExtension = manualInstall ? '.dmg' : '.exe';
-    const stateDirectory = resolveUpdateCacheDirectory(app.getPath('userData'));
-    const feedUrl = process.env.OPENDESK_UPDATE_FEED_URL || DEFAULT_UPDATE_FEED_URL;
     const allowUnverified = process.env.OPENDESK_UPDATE_ALLOW_UNVERIFIED === '1';
     const localTestInstaller = process.env.OPENDESK_UPDATE_TEST_INSTALLER;
     const localTestVersion = process.env.OPENDESK_UPDATE_TEST_VERSION;
