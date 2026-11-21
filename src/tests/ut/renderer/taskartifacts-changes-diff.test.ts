@@ -40,6 +40,9 @@ describe('task artifacts changes panel diff display', () => {
         await jest.unstable_mockModule('../../../renderer/browser.ts', () => ({
             EmbeddedBrowser: class {}
         }));
+        await jest.unstable_mockModule('../../../renderer/theme/theme-iframe-bridge.ts', () => ({
+            OPENDESK_THEME_CHANGED: 'opendesk-theme-changed'
+        }));
         await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
             syncShadowHostTheme: jest.fn()
         }));
