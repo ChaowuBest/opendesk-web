@@ -89,8 +89,10 @@ export class SlashCommandRegistry {
         }));
     }
 
-    // 快捷键来自用户配置（setting schema 中为 string），这里接受任意字符串并做展示格式化
-    static formatKeyLabel(key: string): string {
+    // 快捷键来自用户配置（setting schema 中为 string），这里接受任意字符串并做展示格式化。
+    // 配置里可能缺字段或是空串（旧版配置文件），空值一律返回空串，避免在状态栏等渲染热路径抛错
+    static formatKeyLabel(key: string | undefined): string {
+        if (!key) return '';
         return key
             .split('+')
             .map((part) => {

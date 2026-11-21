@@ -939,8 +939,6 @@ export const zhCn: Record<string, string> = {
     'channel.disable.success': '插件已禁用: ${id}\n\n消息渠道已自动重新加载。',
 
     // Input StatusBar
-    'input.statusbar.switchmode': '切换模式',
-    'input.statusbar.switchDisplay': '切换显示',
     'input.statusbar.help': '帮助',
 
     // Help Command

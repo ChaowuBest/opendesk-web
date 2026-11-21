@@ -134,6 +134,9 @@ export class OpenDeskTUI {
     private pendingOutputDisplayLevel?: OutputDisplayLevel;
     private lastConfiguredOutputDisplayLevel: OutputDisplayLevel = getConfiguredOutputDisplayLevel();
 
+    /** 设置提交后刷新任务状态栏的回调（exit() 时退订） */
+    private refreshStatusBarOnSettingChange?: () => void;
+
     /** 在尚未创建任务时通过 /rename 预设的任务名称 */
     public pendingTaskName: string | null = null;
 
@@ -455,6 +458,22 @@ export class OpenDeskTUI {
             this.dashboardBar.invalidate();
             this.tui.requestRender();
         });
+
+        // 设置提交后刷新任务状态栏：状态栏渲染内容取自配置（快捷键提示、输出显示标签等），
+        // 用事件驱动失效取代「在 render 里轮询配置算缓存键」，也顺带覆盖语言与主题变化。
+        this.refreshStatusBarOnSettingChange = () => {
+            this.inputArea.statusBar.invalidate();
+            this.tui.requestRender();
+        };
+        Setting.afterSetDataCallbacks.push(this.refreshStatusBarOnSettingChange);
+    }
+
+    /** 退订设置变更回调，避免已退出的 TUI 实例继续被回调引用 */
+    private unsubscribeStatusBarSettingRefresh(): void {
+        if (!this.refreshStatusBarOnSettingChange) return;
+        const index = Setting.afterSetDataCallbacks.indexOf(this.refreshStatusBarOnSettingChange);
+        if (index !== -1) Setting.afterSetDataCallbacks.splice(index, 1);
+        this.refreshStatusBarOnSettingChange = undefined;
     }
 
     private setupCommands() {
@@ -1408,6 +1427,7 @@ export class OpenDeskTUI {
         const resumeTaskId = this.activeTaskId;
 
         try {
+            this.unsubscribeStatusBarSettingRefresh();
             this.dashboardBar.stop();
             this.toastManager.stop();
             this.inputArea.statusBar.stopTimer();

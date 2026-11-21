@@ -1732,8 +1732,6 @@
     "input.hint.running": "タスク実行中です。入力は引き続き可能です...",
     "input.hint.shell.executing": "⏳ 実行中: ${cmd}",
     "input.statusbar.help": "ヘルプ",
-    "input.statusbar.switchDisplay": "表示切替",
-    "input.statusbar.switchmode": "モード切替",
     "install.result.noneNew": "新しくインストールされたMCPはありません。一致する${skipped}件は既にインストール済みです",
     "install.result.summary": "インストール: ${installed}件、アップデート: ${updated}件、スキップ: ${skipped}件",
     "kb.ask.name": "ナレッジベースQ&A",

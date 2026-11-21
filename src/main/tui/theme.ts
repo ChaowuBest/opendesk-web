@@ -157,6 +157,7 @@ export function getStatusBarColors() {
             bg: '#d8d8d8',
             fg: '#333333',
             fgDim: '#666666',
+            fgGhost: '#6f6f6f',
             fgAccent: '#1a7f37'
         };
     }
@@ -164,6 +165,7 @@ export function getStatusBarColors() {
         bg: '#3a3a3a',
         fg: '#d4d4d4',
         fgDim: '#d4d4d4',
+        fgGhost: '#8a8a8a',
         fgAccent: '#00e676'
     };
 }

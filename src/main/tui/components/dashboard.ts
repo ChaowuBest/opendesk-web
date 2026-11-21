@@ -134,14 +134,9 @@ export class DashboardBar implements Component {
         }
     }
 
-    private buildShortcutCell(): string {
-        const shortcuts = getShortcuts();
-        const fmtKey = (key: string) => SlashCommandRegistry.formatKeyLabel(key);
-        return `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost(
-            '•'
-        )} ${fmtKey(shortcuts.output_display)} ${t('input.statusbar.switchDisplay')} ${C.ghost('•')} ${fmtKey(
-            shortcuts.show_help
-        )} ${t('input.statusbar.help')}`;
+    private buildHelpHintCell(): string {
+        // 模式与输出显示的切换提示已并入 TaskStatusBar 的对应显示项（`模式名 [快捷键]`），这里只保留帮助
+        return `${SlashCommandRegistry.formatKeyLabel(getShortcuts().show_help)} ${t('input.statusbar.help')}`;
     }
 
     private async refresh(): Promise<void> {
@@ -157,13 +152,12 @@ export class DashboardBar implements Component {
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
-        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
         const weekdayKey = `datetime.weekday.${['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()]}`;
         const weekdayName = t(weekdayKey);
         cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
         // 快捷键提示（键位从 TUI 快捷键配置中读取）
-        cells.push(this.buildShortcutCell());
+        cells.push(this.buildHelpHintCell());
 
         // 通知角标
         const badge = getNotificationBadge();

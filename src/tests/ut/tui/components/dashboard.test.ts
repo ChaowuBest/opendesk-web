@@ -85,7 +85,7 @@ describe('DashboardBar status filters', () => {
         ).toBe(false);
     });
 
-    test('shows the configured output display shortcut beside Ctrl+K', async () => {
+    test('keeps only the help shortcut in the bottom bar', async () => {
         Setting.updateInstanceData({
             cli_config: {
                 shortcuts: {
@@ -97,7 +97,11 @@ describe('DashboardBar status filters', () => {
         await (dashboard as any).refresh();
 
         const output = stripAnsi(dashboard.render(200).join('\n'));
-        expect(output).toContain('Ctrl+K switch mode • Ctrl+U switch display • Ctrl+H help');
+        // 模式/输出显示的切换提示已并入 TaskStatusBar 的对应显示项，DashboardBar 只保留帮助
+        expect(output).toContain('Ctrl+H help');
+        // 断言键位本身不再出现，避免只依赖已删除的本地化文案
+        expect(output).not.toContain('Ctrl+U');
+        expect(output).not.toContain('Ctrl+K');
         expect(output).not.toContain('Display: Minimal');
     });
 });

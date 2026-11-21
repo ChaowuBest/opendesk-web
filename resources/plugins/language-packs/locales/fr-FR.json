@@ -1708,8 +1708,6 @@
     "input.hint.running": "Tâche en cours, vous pouvez continuer à taper...",
     "input.hint.shell.executing": "⏳ Exécution : ${cmd}",
     "input.statusbar.help": "aide",
-    "input.statusbar.switchDisplay": "changer l'affichage",
-    "input.statusbar.switchmode": "changer de mode",
     "install.result.noneNew": "Aucun nouveau MCP installé ; ${skipped} déjà présents avec une configuration identique",
     "install.result.summary": "${installed} installés, ${updated} mis à jour, ${skipped} ignorés",
     "kb.ask.name": "FAQ de la base de connaissances",

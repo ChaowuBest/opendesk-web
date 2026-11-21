@@ -966,8 +966,6 @@ export const enUs: Record<string, string> = {
     'channel.disable.success': 'Plugin disabled: ${id}\n\nChannel reloaded automatically.',
 
     // Input StatusBar
-    'input.statusbar.switchmode': 'switch mode',
-    'input.statusbar.switchDisplay': 'switch display',
     'input.statusbar.help': 'help',
 
     // Help Command

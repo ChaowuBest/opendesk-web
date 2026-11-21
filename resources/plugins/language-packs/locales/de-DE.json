@@ -1708,8 +1708,6 @@
     "input.hint.running": "Aufgabe läuft, Sie können weiterhin tippen...",
     "input.hint.shell.executing": "⏳ Wird ausgeführt: ${cmd}",
     "input.statusbar.help": "Hilfe",
-    "input.statusbar.switchDisplay": "Ansicht wechseln",
-    "input.statusbar.switchmode": "Modus wechseln",
     "install.result.noneNew": "Keine neuen MCP installiert; ${skipped} mit identischer Konfiguration vorhanden",
     "install.result.summary": "${installed} installiert, ${updated} aktualisiert, ${skipped} übersprungen",
     "kb.ask.name": "Wissensdatenbank Q&A",

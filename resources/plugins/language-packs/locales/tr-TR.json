@@ -1708,8 +1708,6 @@
     "input.hint.running": "Görev sürüyor; yine de yazmaya devam edebilirsiniz...",
     "input.hint.shell.executing": "⏳ Yürütülüyor: ${cmd}",
     "input.statusbar.help": "yardım",
-    "input.statusbar.switchDisplay": "görünümü değiştir",
-    "input.statusbar.switchmode": "modu değiştir",
     "install.result.noneNew": "Yeni MCP kurulmadı; ${skipped} tanesi aynı yapılandırmayla zaten kurulu",
     "install.result.summary": "${installed} kuruldu, ${updated} güncellendi, ${skipped} atlandı",
     "kb.ask.name": "KB Soru-Cevap",

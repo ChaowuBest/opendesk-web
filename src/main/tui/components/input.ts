@@ -31,6 +31,7 @@ import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { t } from '../../../locale/index.js';
+import { getShortcuts } from '../../utils/setting.js';
 import type { OutputDisplayLevel } from '../display.js';
 
 type AgentInputStatus = 'idle' | 'running';
@@ -104,6 +105,30 @@ function clipAnsiToWidth(text: string, maxWidth: number, ellipsis: string): stri
         index = end;
     }
     return result + tail;
+}
+
+/**
+ * 可切换显示项的弱提示：`[Ctrl+K]`。
+ * 键位取自 TUI 快捷键配置，用户改键后随状态栏重绘生效；
+ * 用比普通文字更暗的颜色（状态栏的 fgGhost），避免和主信息抢注意力。
+ * 不包含前导留白——留白由 hintGapWidth 按终端宽度决定。
+ * 未配置键位时返回 undefined（而不是空串），让调用方用「有没有提示」判断，而不是「是不是空」。
+ */
+function buildSwitchHint(hintColor: string, shortcutKey: string | undefined): string | undefined {
+    const keyLabel = SlashCommandRegistry.formatKeyLabel(shortcutKey);
+    if (!keyLabel) return undefined;
+    return chalk.hex(hintColor)(`[${keyLabel}]`);
+}
+
+/**
+ * 提示与主文本之间的留白宽度（空格数）：终端越宽留白越多，变窄时逐级收窄到 1 个空格，
+ * 空间实在不够时提示会被整体隐藏（见 TaskStatusBar.render）。
+ */
+function hintGapWidth(width: number): number {
+    if (width >= 160) return 4;
+    if (width >= 120) return 3;
+    if (width >= 96) return 2;
+    return 1;
 }
 
 /**
@@ -216,6 +241,7 @@ export class TaskStatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
+        const shortcuts = getShortcuts();
         const {
             elapsedMs,
             totalTokens,
@@ -230,18 +256,23 @@ export class TaskStatusBar implements Component {
         } = this.data;
         const colors = getStatusBarColors();
 
-        // 构建左侧 cells（任务级信息）
-        const leftCells: { text: string }[] = [];
+        // 构建左侧 cells（任务级信息）。可切换的显示项各自带一个弱提示，
+        // 提示先不拼进文本，等右侧宽度确定后再按剩余空间决定是否展示。
+        const leftCells: { text: string; hint?: string; showHint?: boolean }[] = [];
 
         // 模式指示器始终显示在最左侧
         if (modeDisplay) {
             const colorFn = modeColor ? chalk.hex(modeColor) : chalk.hex(colors.fg);
-            leftCells.push({ text: colorFn(modeDisplay) });
+            leftCells.push({
+                text: colorFn(modeDisplay),
+                hint: buildSwitchHint(colors.fgGhost, shortcuts.switch_mode)
+            });
         }
 
         if (outputDisplayLevel) {
             leftCells.push({
-                text: chalk.hex(colors.fgDim)(t(`display.level.${outputDisplayLevel}`))
+                text: chalk.hex(colors.fgDim)(t(`display.level.${outputDisplayLevel}`)),
+                hint: buildSwitchHint(colors.fgGhost, shortcuts.output_display)
             });
         }
 
@@ -265,8 +296,6 @@ export class TaskStatusBar implements Component {
                 leftCells.push({ text: chalk.hex(colors.fgDim)(`📁 ${workspace}`) });
             }
         }
-
-        const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
         // 右侧：任务名称
         let rightText: string;
@@ -292,11 +321,36 @@ export class TaskStatusBar implements Component {
             rightW = visibleWidth(finalRight);
         }
 
-        // 左侧内容优先截断，并为左右之间保留至少 1 列间隔。
+        // 左侧可用的总宽度：右侧任务名优先，左右之间至少留 1 列间隔
+        const availableLeftW = Math.max(0, width - rightW - 1);
+
+        // 组装左侧内容：提示与主文本之间留一段随终端宽度收窄的空白，
+        // 剩余空间不足时直接不显示提示，避免被截断成半个括号。
+        // 分隔符左右各一个空格，紧贴 `]` 之类的收尾字符。
+        const gapWidth = hintGapWidth(width);
+        const hintGap = ' '.repeat(gapWidth);
+        const buildLeftContent = (): string =>
+            leftCells.length === 0
+                ? ''
+                : ` ${leftCells
+                      .map((cell) => (cell.showHint ? `${cell.text}${hintGap}${cell.hint}` : cell.text))
+                      .join(' │ ')}`;
+
+        // 逐个放提示：从左侧开始，谁放得下就显示谁，放不下的整条隐藏
+        let remaining = availableLeftW - visibleWidth(buildLeftContent());
+        for (const cell of leftCells) {
+            if (!cell.hint) continue;
+            const cost = gapWidth + visibleWidth(cell.hint);
+            if (cost > remaining) continue;
+            cell.showHint = true;
+            remaining -= cost;
+        }
+        const leftContent = buildLeftContent();
+
+        // 左侧内容优先截断。
         // 这里必须避免使用会插入 \x1b[0m 的裸 truncateToWidth，
         // 否则右侧区域会丢失状态栏背景色。
-        const maxLeftW = Math.max(0, width - rightW - 1);
-        const finalLeft = clipAnsiToWidth(leftContent, maxLeftW, dimEllipsis);
+        const finalLeft = clipAnsiToWidth(leftContent, availableLeftW, dimEllipsis);
         const leftW = visibleWidth(finalLeft);
 
         const gap = Math.max(0, width - leftW - rightW);
