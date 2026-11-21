@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    extractReleaseNotesFromDetailPage,
     fetchLatestRelease,
+    fetchReleaseNotesForVersion,
+    findNewsReleaseEntry,
     parseNewsReleasePage,
     parseReleaseResponse
 } from '../../../../main/updater/release-feed.js';
@@ -455,4 +458,181 @@ test('fetchLatestRelease still passes the abort signal to fetch implementations 
 
     assert.equal(release.version, '0.3.7');
     assert.ok(receivedSignal instanceof AbortSignal, 'expected an AbortSignal on the fetch init');
+});
+
+test('findNewsReleaseEntry returns the matching stable entry with its safe detail page URL', () => {
+    const entry = findNewsReleaseEntry(
+        `<!doctype html><html><body><ol class="release-list">
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</span>
+                <a href="/news/2026-11-12-stable-release/">阅读全文</a>
+            </article></li>
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.4.0：旧版本</span>
+                <a href="/news/2026-10-01-stable-release/">阅读全文</a>
+            </article></li>
+        </ol></body></html>`,
+        'https://opendesk.matrix.openharmony.cn/news/',
+        '0.4.1'
+    );
+
+    assert.deepEqual(entry, {
+        title: 'OpenDesk 0.4.1：支持鸿蒙PC应用本地开发',
+        notesUrl: 'https://opendesk.matrix.openharmony.cn/news/2026-11-12-stable-release/'
+    });
+});
+
+test('findNewsReleaseEntry returns undefined when the requested version is absent', () => {
+    const entry = findNewsReleaseEntry(
+        `<!doctype html><html><body><ol class="release-list">
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</span>
+                <a href="/news/2026-11-12-stable-release/">阅读全文</a>
+            </article></li>
+        </ol></body></html>`,
+        'https://opendesk.matrix.openharmony.cn/news/',
+        '0.4.2'
+    );
+
+    assert.equal(entry, undefined);
+});
+
+test('findNewsReleaseEntry drops unsafe detail links instead of failing', () => {
+    const entry = findNewsReleaseEntry(
+        `<!doctype html><html><body><ol class="release-list">
+            <li data-release-category="stable-release"><article class="release-item">
+                <span class="release-item__title">OpenDesk 0.4.1：测试更新服务</span>
+                <a href="http://updates.example.test/news/fake-release/">阅读全文</a>
+            </article></li>
+        </ol></body></html>`,
+        'https://opendesk.matrix.openharmony.cn/news/',
+        '0.4.1'
+    );
+
+    assert.deepEqual(entry, { title: 'OpenDesk 0.4.1：测试更新服务', notesUrl: undefined });
+});
+
+test('extractReleaseNotesFromDetailPage converts the news detail body into line-marked notes', () => {
+    const notes = extractReleaseNotesFromDetailPage(
+        `<!doctype html><html><body>
+            <h1>OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</h1>
+            <div class="download-links"><a href="/download/opendesk-win-x86-0.4.1.exe">Windows 安装包下载</a></div>
+            <h1 id="opendesk-041-正式版本更新内容">OpenDesk 0.4.1 正式版本更新内容</h1>
+            <h2 id="主要更新">主要更新</h2>
+            <p>相对于上个版本，本次更新聚焦稳定性。</p>
+            <h2 id="新功能">新功能</h2>
+            <ul>
+                <li>内置支持 <code>hdcthis</code> 无线调试</li>
+                <li>技能支持
+                    符号链接</li>
+            </ul>
+            <h2 id="如何升级">如何升级</h2>
+            <p>打开设置中心立即更新。</p>
+        </body></html>`,
+        'OpenDesk 0.4.1：支持鸿蒙PC应用本地开发'
+    );
+
+    assert.equal(
+        notes,
+        [
+            '# OpenDesk 0.4.1：支持鸿蒙PC应用本地开发',
+            '',
+            '## 主要更新',
+            '',
+            '相对于上个版本，本次更新聚焦稳定性。',
+            '',
+            '## 新功能',
+            '- 内置支持 hdcthis 无线调试',
+            '- 技能支持 符号链接'
+        ].join('\n')
+    );
+});
+
+test('extractReleaseNotesFromDetailPage returns undefined when the detail body heading is missing', () => {
+    assert.equal(
+        extractReleaseNotesFromDetailPage(
+            '<!doctype html><html><body><h1>页面不存在</h1><p>请返回列表页。</p></body></html>',
+            'OpenDesk 0.4.1：测试更新服务'
+        ),
+        undefined
+    );
+});
+
+test('fetchReleaseNotesForVersion fetches the list entry and its detail page', async () => {
+    const listHtml = `<li data-release-category="stable-release"><article>
+        <span class="release-item__title">OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</span>
+        <a href="/news/2026-11-12-stable-release/">阅读全文</a>
+    </article></li>`;
+    const detailHtml = `<!doctype html><html><body>
+        <h1>OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</h1>
+        <h1 id="opendesk-041-正式版本更新内容">OpenDesk 0.4.1 正式版本更新内容</h1>
+        <h2 id="新功能">新功能</h2>
+        <ul><li>定时任务支持 <code>wait</code> 等待语法</li></ul>
+        <h2 id="如何升级">如何升级</h2>
+        <p>打开设置中心立即更新。</p>
+    </body></html>`;
+    const requested: string[] = [];
+    const fetchImpl = (async (input: string | URL) => {
+        requested.push(String(input));
+        return new Response(requested.length === 1 ? listHtml : detailHtml, {
+            headers: { 'content-type': 'text/html; charset=utf-8' }
+        });
+    }) as unknown as typeof fetch;
+
+    const notes = await fetchReleaseNotesForVersion('https://opendesk.matrix.openharmony.cn/news/', '0.4.1', fetchImpl);
+
+    assert.deepEqual(requested, [
+        'https://opendesk.matrix.openharmony.cn/news/',
+        'https://opendesk.matrix.openharmony.cn/news/2026-11-12-stable-release/'
+    ]);
+    assert.equal(
+        notes,
+        ['# OpenDesk 0.4.1：支持鸿蒙PC应用本地开发', '', '## 新功能', '- 定时任务支持 wait 等待语法'].join('\n')
+    );
+});
+
+test('fetchReleaseNotesForVersion returns undefined when no news entry matches the version', async () => {
+    const requested: string[] = [];
+    const fetchImpl = (async (input: string | URL) => {
+        requested.push(String(input));
+        return new Response(
+            `<li data-release-category="stable-release"><article>
+                <span class="release-item__title">OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</span>
+                <a href="/news/2026-11-12-stable-release/">阅读全文</a>
+            </article></li>`,
+            { headers: { 'content-type': 'text/html; charset=utf-8' } }
+        );
+    }) as unknown as typeof fetch;
+
+    const notes = await fetchReleaseNotesForVersion('https://opendesk.matrix.openharmony.cn/news/', '0.4.2', fetchImpl);
+
+    assert.equal(notes, undefined);
+    assert.deepEqual(requested, ['https://opendesk.matrix.openharmony.cn/news/']);
+});
+
+test('fetchReleaseNotesForVersion throws when either request fails', async () => {
+    const listHtml = `<li data-release-category="stable-release"><article>
+        <span class="release-item__title">OpenDesk 0.4.1：支持鸿蒙PC应用本地开发</span>
+        <a href="/news/2026-11-12-stable-release/">阅读全文</a>
+    </article></li>`;
+
+    await assert.rejects(
+        fetchReleaseNotesForVersion(
+            'https://opendesk.matrix.openharmony.cn/news/',
+            '0.4.1',
+            (async () => new Response('Service Unavailable', { status: 503 })) as typeof fetch
+        ),
+        /HTTP 503/
+    );
+
+    let calls = 0;
+    await assert.rejects(
+        fetchReleaseNotesForVersion('https://opendesk.matrix.openharmony.cn/news/', '0.4.1', (async () => {
+            calls++;
+            return calls === 1
+                ? new Response(listHtml, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+                : new Response('Service Unavailable', { status: 503 });
+        }) as unknown as typeof fetch),
+        /HTTP 503/
+    );
 });

@@ -16,6 +16,12 @@ import { isValidVersion, isNewerVersion } from '../utils/version.js';
 
 const STABLE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const SHA256 = /^[a-f\d]{64}$/i;
+/** news 条目内指向本版本详情页的链接（`/news/<date>-stable-release/` 形式，相对或绝对） */
+const NEWS_DETAIL_HREF = /\/news\/[^/?#]+\/?$/;
+/** 详情页正文起点标题「OpenDesk X.Y.Z 正式版本更新内容」 */
+const DETAIL_BODY_HEADING = /正式版本更新内容/;
+/** 详情页尾部「如何升级」章节不属于更新说明，据此截断 */
+const DETAIL_TERMINATOR_HEADING = '如何升级';
 type ReleaseTrustMode = 'strict' | 'trusted-source';
 
 /** 更新器目标架构：process.arch 在 Windows/macOS 上都只有 x64 / arm64 两种发布形态 */
@@ -258,6 +264,115 @@ export async function fetchLatestRelease(
         return parseNewsReleasePage(body, response.url || url.toString(), trustMode, targetArch, platform);
     }
     return parseReleaseResponse(JSON.parse(body), trustMode, targetArch, platform);
+}
+
+/** news 列表页单条稳定版条目：标题 + 指向本版本详情页的安全链接（链接缺失或不安全时为空） */
+export interface NewsReleaseEntry {
+    title: string;
+    notesUrl?: string;
+}
+
+/**
+ * 在 news 列表页按版本号查找稳定版条目，供启动时的「更新内容」弹窗使用，
+ * 与更新检查的 parseNewsReleasePage 互不影响：这里不需要安装包信息，
+ * 也无需假设页面上存在任何条目。条目内指向 `/news/<date>-stable-release/`
+ * 的链接是本版本详情页；链接不安全时丢弃而非报错，调用方据此回退通用弹窗。
+ */
+export function findNewsReleaseEntry(html: string, pageUrl: string, version: string): NewsReleaseEntry | undefined {
+    const { document } = parseHTML(html);
+    for (const item of Array.from(document.querySelectorAll('li[data-release-category="stable-release"]'))) {
+        const title = item.querySelector('.release-item__title')?.textContent?.trim();
+        if (!title || title.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] !== version) continue;
+        let notesUrl: string | undefined;
+        const detailHref = Array.from(item.querySelectorAll('a'))
+            .map((anchor) => anchor.getAttribute('href') || '')
+            .find((candidate) => NEWS_DETAIL_HREF.test(candidate));
+        if (detailHref) {
+            try {
+                notesUrl = validateUpdateUrl(new URL(detailHref, pageUrl).toString(), 'Update notes URL').toString();
+            } catch {
+                notesUrl = undefined;
+            }
+        }
+        return { title, notesUrl };
+    }
+    return undefined;
+}
+
+/**
+ * 将 news 详情页正文转换为行级标记 notes：`# ` 总标题 / `## ` 章节 / `- ` 列表项 / 其余为段落。
+ * 正文起点是「OpenDesk X.Y.Z 正式版本更新内容」h1，其后为平铺的 h2/p/ul，
+ * 遇「如何升级」章节截断；下载区位于正文流之前，天然不会混入。
+ * 页面结构不符合预期时返回 undefined，由调用方回退通用弹窗。
+ */
+export function extractReleaseNotesFromDetailPage(html: string, listTitle: string): string | undefined {
+    const { document } = parseHTML(html);
+    const bodyHeading = Array.from(document.querySelectorAll('h1')).find((heading) =>
+        DETAIL_BODY_HEADING.test(heading.textContent || '')
+    );
+    if (!bodyHeading) return undefined;
+    const lines: string[] = [`# ${listTitle}`];
+    let node: Element | null = bodyHeading.nextElementSibling;
+    while (node) {
+        const tag = node.tagName.toLowerCase();
+        // 行内标签（code/strong 等）拼接会产生换行与连续空白，统一压缩为单个空格
+        const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (tag === 'h2') {
+            if (text === DETAIL_TERMINATOR_HEADING) break;
+            if (text) lines.push('', `## ${text}`);
+        } else if (tag === 'p') {
+            if (text) lines.push('', text);
+        } else if (tag === 'ul') {
+            for (const listItem of Array.from(node.querySelectorAll('li'))) {
+                const itemText = (listItem.textContent || '').replace(/\s+/g, ' ').trim();
+                if (itemText) lines.push(`- ${itemText}`);
+            }
+            lines.push('');
+        }
+        node = node.nextElementSibling;
+    }
+    const notes = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    return notes || undefined;
+}
+
+/**
+ * 启动时按当前版本拉取「更新内容」：先取 news 列表页找到该版本条目，
+ * 再抓其详情页组装行级标记 notes。返回 undefined 表示该版本没有可用的
+ * 更新内容（列表无条目、详情链接不安全或页面结构不符），调用方弹通用窗；
+ * 网络失败（含非 2xx）则抛错，由调用方 catch 后同样弹通用窗。
+ */
+export async function fetchReleaseNotesForVersion(
+    feedUrl: string,
+    version: string,
+    fetchImpl: typeof fetch = fetch,
+    timeoutMs = 30_000
+): Promise<string | undefined> {
+    const url = validateUpdateUrl(feedUrl, 'Update feed URL');
+    const response = await raceWithForceTimeout(
+        fetchImpl(url, {
+            headers: { accept: 'text/html', 'user-agent': 'OpenDesk-Updater' },
+            signal: AbortSignal.timeout(timeoutMs)
+        }),
+        timeoutMs
+    );
+    if (!response.ok) throw new Error(`Update feed request failed with HTTP ${response.status}`);
+    if (response.url) validateUpdateUrl(response.url, 'Update feed redirect');
+    const entry = findNewsReleaseEntry(await response.text(), response.url || url.toString(), version);
+    if (!entry?.notesUrl) return undefined;
+    const detailResponse = await raceWithForceTimeout(
+        fetchImpl(entry.notesUrl, {
+            headers: { accept: 'text/html', 'user-agent': 'OpenDesk-Updater' },
+            signal: AbortSignal.timeout(timeoutMs)
+        }),
+        timeoutMs
+    );
+    if (!detailResponse.ok) {
+        throw new Error(`Update notes page request failed with HTTP ${detailResponse.status}`);
+    }
+    return extractReleaseNotesFromDetailPage(await detailResponse.text(), entry.title);
 }
 
 /**
