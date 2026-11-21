@@ -134,14 +134,24 @@ onLocalePacksChanged?.(() => {
 })();
 
 let latestUpdateState = null;
+// renderer 拿不到 process.platform，用 UA 判定 macOS（Electron UA 恒含 Macintosh），
+// 与 setting-panel 的 _isManualUpdateInstall 判定保持一致
+function _isMacManualUpdateInstall() {
+    return typeof navigator !== 'undefined' && !!navigator.userAgent?.includes('Macintosh');
+}
+
 function updateUpdateReadyButton(state) {
     latestUpdateState = state;
     const updateReadyButton = document.getElementById('update-ready-btn');
     if (!updateReadyButton) return;
-    updateReadyButton.hidden = state?.status !== 'installed';
-    if (state?.status !== 'installed') return;
+    const installed = state?.status === 'installed';
+    // macOS 手动安装模式：下载校验完成停在 ready，标题栏入口引导用户到设置页安装；
+    // 其他平台的 ready 是自动安装的中间态，不点亮入口
+    const macReady = state?.status === 'ready' && _isMacManualUpdateInstall();
+    updateReadyButton.hidden = !installed && !macReady;
+    if (!installed && !macReady) return;
     const t = window.__odT || createRendererTranslator();
-    const label = t('update.available.button', { version: state.version });
+    const label = t(installed ? 'update.available.button' : 'update.ready.button', { version: state.version });
     const text = t('update.available.short');
     updateReadyButton.title = label;
     updateReadyButton.setAttribute('aria-label', label);

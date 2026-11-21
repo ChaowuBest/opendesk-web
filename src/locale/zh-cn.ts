@@ -1918,6 +1918,7 @@ export const zhCn: Record<string, string> = {
     'update.installed.later': '稍后',
     'update.available.button': 'OpenDesk ${version} 已安装，重启后使用新版本',
     'update.available.short': '升级',
+    'update.ready.button': 'OpenDesk ${version} 已下载就绪，点击前往安装',
     'update.whatsNew.title': 'OpenDesk ${version} 更新内容',
     'update.whatsNew.noNotes': '本次更新包含稳定性与性能优化。',
     'update.whatsNew.community': '欢迎加入社区，与我们交流反馈：',

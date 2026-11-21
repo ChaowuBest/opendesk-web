@@ -1994,6 +1994,7 @@ export const enUs: Record<string, string> = {
     'update.installed.later': 'Later',
     'update.available.button': 'OpenDesk ${version} is installed; restart to use the new version',
     'update.available.short': 'Upgrade',
+    'update.ready.button': 'OpenDesk ${version} is downloaded and ready; click to install',
     'update.whatsNew.title': "What's New in OpenDesk ${version}",
     'update.whatsNew.noNotes': 'This update includes stability and performance improvements.',
     'update.whatsNew.community': 'Join the community and share your feedback:',
