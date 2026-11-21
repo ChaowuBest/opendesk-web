@@ -2100,7 +2100,7 @@ export const zhCn: Record<string, string> = {
     'renderer.filemgr.status.readonly': '查询模式',
     'renderer.filemgr.status.disabled': '已停用',
     'renderer.filemgr.status.error': '异常',
-    // 插件特性门控（ctx.features.disable / ctx.features.disableApplication）
+    // 插件特性门控（ctx.features.disableFeature / ctx.features.disableApplication）
     'feature.memory.disabled': '记忆功能已停用',
     'feature.application.disabled': '应用 ${bundleName} 已被插件停用',
     'renderer.filemgr.mode.full': '完整索引',

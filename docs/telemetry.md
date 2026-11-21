@@ -108,6 +108,25 @@ Provider。
 GUI 在主窗口显示后初始化运行期遥测，CLI 在 Headless runner 就绪或 TUI 首次渲染后初始化。
 启动加载阶段本身不再创建遥测 span；真正进入 AI Kernel 工作前仍应等待 `initTelemetry()` 完成。
 
+### 特性门控（telemetry）
+
+插件可以通过 `ctx.features.disableFeature('telemetry')` 停用全部远程遥测：
+
+- `initTelemetry()` 在门控命中时直接短路，不装配任何协议，因此 Langfuse 的**环境变量端点**这类
+  不受设置项控制的旁路也会一起挡住；
+- 已经初始化过的协议在特性禁用时立即 `shutdown`（先刷新在途 span 再关闭），
+  `syncTelemetryFeatureGate()` 负责这条运行期联动；特性恢复后按既有请求状态重新初始化，
+  没有请求过的场景仍遵守「主窗口显示后才初始化」的约定；
+- 设备心跳（`reporter.ts` 的 `/api/heartbeat`）完全绕开遥测协议，但跟随同一特性状态：
+  GUI 主进程与 CLI 默认入口都通过 `telemetry/heartbeat.ts` 启停它（实现只有一份），
+  禁用后调度立即停止。两者的启动时机不同：GUI 在插件宿主初始化之后启动，插件在 `setup()`
+  里禁用时不会发出首次上报；CLI 在插件宿主初始化之前启动，宿主初始化失败也照常上报，
+  插件禁用生效后再把后续上报停掉；
+- 设置页与 TUI 设置菜单的遥测入口同步隐藏，用户无法再主动增删/修改端点；`setting.json` 里的
+  `telemetry` 配置保持原样，插件停用后入口与配置一并恢复；
+- 用户主动提交的反馈（`utils/feedback.ts`）走独立通道，不受 `telemetry` 特性影响；
+  本地用量统计（`local-telemetry.ts`）照常记录。
+
 ## 两类公共插桩
 
 ### AgentExecutionInstrumentation

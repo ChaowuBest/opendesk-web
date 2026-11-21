@@ -143,7 +143,7 @@ class FileMgrApplication extends BaseApplication {
             }
         });
 
-        // ctx.features.disable('filesystem') 只关闭 AI 索引相关能力（语义搜索），
+        // ctx.features.disableFeature('filesystem') 只关闭 AI 索引相关能力（语义搜索），
         // 纯文件读写/grep 等工具不受影响；isAvailable 里的门控是任务构建期的第二道防线
         if (!getFeatureManager().isFeatureDisabled('filesystem')) {
             toolset.addTool(

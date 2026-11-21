@@ -4229,7 +4229,7 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
     }
 
     // 未配置向量嵌入模型时语义搜索必然失败（EMBED_UNAVAILABLE），直接从工具集中屏蔽；
-    // ctx.features.disable('filesystem') 禁用 AI 文件系统时同样屏蔽（getToolsets 已跳过，这里是兜底）
+    // ctx.features.disableFeature('filesystem') 禁用 AI 文件系统时同样屏蔽（getToolsets 已跳过，这里是兜底）
     isAvailable(_taskState?: TaskState): boolean {
         if (getFeatureManager().isFeatureDisabled('filesystem')) {
             return false;

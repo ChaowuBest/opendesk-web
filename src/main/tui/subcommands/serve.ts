@@ -11,7 +11,8 @@
 
 import type { Command } from 'commander';
 import process from 'process';
-import { initTelemetry } from '../../telemetry/index.js';
+import { getFeatureManager } from '../../../common/features/manager.js';
+import { initTelemetry, syncTelemetryFeatureGate } from '../../telemetry/index.js';
 import { t } from '../../../locale/index.js';
 
 interface ServeOptions {
@@ -121,6 +122,14 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     GlobalState.initialize();
     GlobalState.getInstance().setServerMode(true);
     await initializePluginHost();
+    // serve 的遥测初始化早于插件宿主：插件在 setup 里禁用 telemetry 时在这里撤掉已装上的协议，
+    // 运行期插件启停也走同一条联动
+    await syncTelemetryFeatureGate();
+    getFeatureManager().onFeaturesChanged(() => {
+        void syncTelemetryFeatureGate().catch((error: unknown) => {
+            console.warn(`sync telemetry feature gate failed: ${String(error)}`);
+        });
+    });
     AgentRegistry.initBuiltinAgents();
     initializeHarnesses();
 

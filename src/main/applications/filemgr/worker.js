@@ -718,7 +718,7 @@ class FileManagerWorker extends BaseWorker {
         this._readonlyMode = false;
         /**
          * @type {boolean} — AI 索引被插件门控时为 true（索引与语义搜索关闭）：
-         * ctx.features.disable('filesystem') 或本应用自身被 ctx.features.disableApplication 禁用
+         * ctx.features.disableFeature('filesystem') 或本应用自身被 ctx.features.disableApplication 禁用
          */
         this._filesystemFeatureDisabled = false;
         this._releaseScanLock = null;
@@ -1014,7 +1014,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async initialize() {
-        // 插件通过 ctx.features.disable('filesystem') 禁用 AI 文件系统时，
+        // 插件通过 ctx.features.disableFeature('filesystem') 禁用 AI 文件系统时，
         // 跳过索引/嵌入初始化，仅保持 worker 存活以服务 @ 添加文件等纯文件搜索
         if (this._filesystemFeatureDisabled) {
             this._initializing = false;

@@ -1327,7 +1327,7 @@ if (shouldExposeMainWindowAPIs()) {
             return () => ipcRenderer.removeListener('updater:stateChanged', listener);
         }
     });
-    // 插件特性禁用状态（ctx.features.disable / disableApplication）：
+    // 插件特性禁用状态（ctx.features.disableFeature / disableApplication）：
     // sidebar 记忆与文件系统图标、agentinput 搜索按钮等据此显隐
     safeExposeInMainWorld('featuresAPI', {
         getState: async () => {

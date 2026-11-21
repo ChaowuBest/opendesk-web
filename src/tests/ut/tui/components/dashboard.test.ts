@@ -6,6 +6,7 @@ import {
 } from '../../../../main/tui/components/dashboard';
 import { Setting } from '../../../../main/utils/setting';
 import { setRuntimeLocale } from '../../../../locale/index';
+import { getFeatureManager, resetFeatureManagerForTests } from '../../../../common/features/manager.js';
 import stripAnsi from 'strip-ansi';
 
 describe('DashboardBar status filters', () => {
@@ -45,6 +46,18 @@ describe('DashboardBar status filters', () => {
         expect(shouldShowDashboardStatusBlock('todomgr')).toBe(false);
         expect(shouldShowDashboardStatusBlock('filemgr')).toBe(false);
         expect(shouldShowDashboardStatusBlock('calendar')).toBe(true);
+    });
+
+    test('被插件禁用的应用不再贡献状态块，仅隐藏入口的应用照常显示', () => {
+        expect(shouldShowDashboardStatusBlock('browser')).toBe(true);
+
+        getFeatureManager().setApplicationHidden('browser', 'plugin-a', true);
+        expect(shouldShowDashboardStatusBlock('browser')).toBe(true);
+
+        getFeatureManager().setApplicationDisabled('browser', 'plugin-a', true);
+        expect(shouldShowDashboardStatusBlock('browser')).toBe(false);
+
+        resetFeatureManagerForTests();
     });
 
     test('shows Python prompt only when current environment may be used', () => {

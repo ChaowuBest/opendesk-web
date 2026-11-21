@@ -39,4 +39,29 @@ describe('telemetry startup initialization', () => {
         const tuiBranch = cliSource.slice(cliSource.indexOf('} else {', cliSource.indexOf('if (args.headless')));
         expect(tuiBranch.indexOf('tui.start()')).toBeLessThan(tuiBranch.indexOf('await initTelemetry()'));
     });
+
+    test('设备心跳统一交给 telemetry/heartbeat.ts，两个入口不再各写一份', () => {
+        const heartbeatSource = readFileSync(new URL('../../../main/telemetry/heartbeat.ts', import.meta.url), 'utf8');
+        expect(heartbeatSource).toContain('isFeatureDisabled(TELEMETRY_FEATURE_ID)');
+        expect(heartbeatSource).toContain('export function syncHeartbeatReporter(): void {');
+
+        // 启停判定只存在于 heartbeat.ts 一处：GUI 与 CLI 只声明启动时机
+        expect(mainSource).not.toContain('function syncHeartbeatReporter(): void {');
+        expect(cliSource).not.toContain('function syncHeartbeatReporter(): void {');
+        expect(mainSource).not.toMatch(/from '\.\/utils\/reporter\.js'/);
+        expect(cliSource).not.toMatch(/from '\.\/utils\/reporter\.js'/);
+        expect(cliSource).toContain('function applyTelemetryFeatureGate(): void {');
+        expect(cliSource.match(/applyTelemetryFeatureGate\(\);/g)?.length).toBe(2);
+    });
+
+    test('GUI 在插件宿主之后启动心跳，CLI 在宿主之前启动', () => {
+        // GUI：插件 setup 里禁用 telemetry 时连首次上报都不发
+        const guiStart = mainSource.indexOf("startHeartbeatReporter('desktop');");
+        expect(guiStart).toBeGreaterThan(mainSource.indexOf('await initializePluginHost();'));
+
+        // CLI：插件宿主初始化失败也照常上报；插件禁用后由特性变更订阅把调度停掉
+        const cliStart = cliSource.indexOf("startHeartbeatReporter('cli');");
+        expect(cliStart).toBeGreaterThan(cliSource.indexOf('initTempDir();'));
+        expect(cliStart).toBeLessThan(cliSource.indexOf('await initializePluginHost();'));
+    });
 });

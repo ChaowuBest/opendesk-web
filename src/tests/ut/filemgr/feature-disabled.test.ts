@@ -4,7 +4,7 @@ import path from 'path';
 import FileManagerWorker from '../../../main/applications/filemgr/worker.js';
 
 /**
- * ctx.features.disable('filesystem') 的 filemgr worker 门控行为：
+ * ctx.features.disableFeature('filesystem') 的 filemgr worker 门控行为：
  * 禁用时停机进入 disabled 状态，重新启用时重建索引，初始化时跳过索引启动。
  */
 describe('filemgr worker filesystem 特性门控', () => {

@@ -35,6 +35,7 @@ import {
 import { GlobalState } from '../aikernel/states/global';
 import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
+import { getFeatureManager } from '../../common/features/manager.js';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import {
@@ -860,20 +861,30 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 从应用中收集 CLI 斜杠命令并注册
+     * 从应用中收集 CLI 斜杠命令并注册。
+     *
+     * 被插件禁用的应用（disableApplication）不再注册命令；命令注册是启动时的快照，
+     * 因此运行期禁用后还在注册表里的命令会在 execute 前再校验一次并直接拦下。
+     * 仅隐藏入口（hideApplication）的应用命令照常注册与执行。
      */
     private registerApplicationCommands() {
-        const apps = ApplicationRegistry.getApplicationList();
-        for (const appInfo of apps) {
-            const appInfoTyped = appInfo as { bundleName: string; name: string; showIcon: boolean };
-            const app = ApplicationRegistry.getApplication(appInfoTyped.bundleName);
-            if (app) {
-                const commands = app.getCliSlashCommands(this);
-                for (const cmd of commands) {
-                    // 设置命令来源为应用名称
-                    cmd.source = app.getName();
-                    this.commandRegistry.register(cmd);
-                }
+        for (const appInfo of ApplicationRegistry.getApplicationList()) {
+            const bundleName = (appInfo as { bundleName: string }).bundleName;
+            const app = ApplicationRegistry.getApplication(bundleName);
+            if (!app) continue;
+            if (getFeatureManager().isApplicationDisabled(bundleName)) continue;
+            for (const cmd of app.getCliSlashCommands(this)) {
+                // 设置命令来源为应用名称
+                cmd.source = app.getName();
+                const run = cmd.execute.bind(cmd);
+                cmd.execute = (args: string) => {
+                    if (getFeatureManager().isApplicationDisabled(bundleName)) {
+                        this.showTextPage(app.getName(), t('feature.application.disabled', { bundleName }));
+                        return;
+                    }
+                    return run(args);
+                };
+                this.commandRegistry.register(cmd);
             }
         }
         // 刷新自动补全，确保新注册的命令能被提示

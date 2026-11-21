@@ -1073,6 +1073,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 }
 
 export interface SkillProvider {
+    /**
+     * 技能归属的应用 bundleName。
+     *
+     * 大多数 provider 直接由应用实现，provider key 就是 bundleName，无需声明；
+     * 应用内 agent 的专属技能（key 形如 `staff:xxx`）必须声明归属，
+     * 否则应用被插件禁用时这组技能会漏过应用级门控。
+     */
+    readonly ownerBundleName?: string;
     getSkills(): Promise<Skill[]>;
 }
 
@@ -1102,6 +1110,26 @@ export class SkillRegistry {
     static skillFilters: Array<(bundleName: string, skillName: string) => boolean> = [];
 
     /**
+     * 由 applications 层注入的 provider 级过滤函数：返回 false 时该 bundle 的全部技能视为不存在
+     * （被插件禁用的应用）。所有 filter 都返回 true 时 provider 才可用（AND 逻辑）。
+     * 与 skillFilters 分开是因为这里要挡住整组技能，包括 getCachedSkill / getSkillProvider
+     * 这类不经过 isSkillEnabled 的查找路径。
+     */
+    static providerFilters: Array<(bundleName: string) => boolean> = [];
+
+    /**
+     * 注册 provider 级过滤函数。通常由 applications 层注入「应用是否被插件禁用」的判断。
+     */
+    static registerProviderFilter(filter: (bundleName: string) => boolean): void {
+        SkillRegistry.providerFilters.push(filter);
+    }
+
+    static unregisterProviderFilter(filter: (bundleName: string) => boolean): void {
+        const idx = SkillRegistry.providerFilters.indexOf(filter);
+        if (idx !== -1) SkillRegistry.providerFilters.splice(idx, 1);
+    }
+
+    /**
      * 注册技能过滤函数。所有已注册的 filter 都返回 true 时，技能才算启用（AND 逻辑）。
      * 通常在 applications 层调用，注入状态管理逻辑。
      */
@@ -1126,8 +1154,17 @@ export class SkillRegistry {
     /** Skill 缓存，用于同步获取已加载的 Skill */
     private skillCache: Map<string, Map<string, Skill>> = new Map();
 
+    /** provider 是否可用（被插件禁用的应用整组技能不可见） */
+    private isProviderEnabled(bundleName: string): boolean {
+        // 按归属应用判断：provider key 通常就是应用名；应用内 agent 的技能 provider
+        // （key 形如 staff:xxx）通过 ownerBundleName 声明归属，随应用一起停用
+        const owner = this.providers.get(bundleName)?.ownerBundleName ?? bundleName;
+        return SkillRegistry.providerFilters.every((f) => f(owner));
+    }
+
     /** 检查技能是否被禁用（无 filter 时默认全部启用，所有 filter AND 通过才算启用） */
     private isSkillEnabled(bundleName: string, skillName: string): boolean {
+        if (!this.isProviderEnabled(bundleName)) return false;
         return SkillRegistry.skillFilters.every((f) => f(bundleName, skillName));
     }
 
@@ -1157,6 +1194,8 @@ export class SkillRegistry {
     }
 
     getSkillProvider(bundleName: string): SkillProvider | undefined {
+        // 应用被插件禁用时整组技能不可用：provider 视为不存在，所有依赖它的查找都会失败
+        if (!this.isProviderEnabled(bundleName)) return undefined;
         return this.providers.get(bundleName);
     }
 
@@ -1167,6 +1206,7 @@ export class SkillRegistry {
      * @returns 缓存中的 Skill，如果未缓存则返回 undefined
      */
     getCachedSkill(bundleName: string, skillName: string): Skill | undefined {
+        if (!this.isProviderEnabled(bundleName)) return undefined;
         const bundleCache = this.skillCache.get(bundleName);
         if (!bundleCache) {
             return undefined;
@@ -1220,6 +1260,8 @@ export class SkillRegistry {
     async getAvailableSkills(agentId?: string): Promise<Map<string, Skill[]>> {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
+            // 被插件禁用的应用整组技能直接跳过：连 getSkills 都不调用，避免残留注册与副作用
+            if (!this.isProviderEnabled(bundleName)) continue;
             try {
                 const allSkills = await this.loadProviderSkills(bundleName, provider);
                 // 缓存全部技能（包括禁用的，确保 LoadSkill/CallSkill 可查找）
@@ -1245,6 +1287,8 @@ export class SkillRegistry {
     async getAllSkillsRaw(): Promise<Map<string, Skill[]>> {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
+            // 被插件禁用的应用整组技能直接跳过：连 getSkills 都不调用，避免残留注册与副作用
+            if (!this.isProviderEnabled(bundleName)) continue;
             try {
                 const skills = await this.loadProviderSkills(bundleName, provider);
                 result.set(bundleName, skills);
@@ -1259,6 +1303,8 @@ export class SkillRegistry {
         const shouldExposeSkill = createSkillFrontmatterExposureMatcher(exposure);
         let result = '<available_skills>\n';
         for (const [bundleName, provider] of this.providers) {
+            // 被插件禁用的应用整组技能直接跳过：连 getSkills 都不调用，避免残留注册与副作用
+            if (!this.isProviderEnabled(bundleName)) continue;
             const skills = await this.loadProviderSkills(bundleName, provider);
             for (const skill of skills) {
                 // disable-model-invocation=true 的 Skill 不向 LLM 暴露描述
@@ -1285,6 +1331,8 @@ export class SkillRegistry {
     async getUserInvocableSkills(agentId?: string): Promise<{ bundleName: string; skill: Skill }[]> {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
+            // 被插件禁用的应用整组技能直接跳过：连 getSkills 都不调用，避免残留注册与副作用
+            if (!this.isProviderEnabled(bundleName)) continue;
             try {
                 const skills = await this.loadProviderSkills(bundleName, provider);
                 for (const skill of skills) {
@@ -1309,6 +1357,8 @@ export class SkillRegistry {
     async getAllSkillsFlat(agentId?: string): Promise<{ bundleName: string; skill: Skill }[]> {
         const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
+            // 被插件禁用的应用整组技能直接跳过：连 getSkills 都不调用，避免残留注册与副作用
+            if (!this.isProviderEnabled(bundleName)) continue;
             try {
                 const skills = await this.loadProviderSkills(bundleName, provider);
                 for (const skill of skills) {

@@ -2,6 +2,19 @@ import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globa
 import { parseHTML } from 'linkedom';
 import { choose, mockModelAPI, settle } from './helpers/model-form.js';
 
+/** 插件特性状态夹具：settings 面板按 telemetry 特性决定是否渲染遥测设置块 */
+let featuresState = {
+    disabledFeatures: [] as string[],
+    disabledApplications: [] as string[],
+    hiddenApplications: [] as string[],
+    features: []
+};
+const featuresPushListeners = new Set<(state: unknown) => void>();
+
+function pushFeatureState(): void {
+    for (const listener of featuresPushListeners) listener(featuresState);
+}
+
 describe('setting-panel config management', () => {
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -22,17 +35,27 @@ describe('setting-panel config management', () => {
             value: { languages: ['zh-CN'], language: 'zh-CN' },
             configurable: true
         });
+        window.featuresAPI = {
+            getState: async () => featuresState,
+            onChanged: (listener: (state: unknown) => void) => {
+                featuresPushListeners.add(listener);
+                return () => featuresPushListeners.delete(listener);
+            }
+        } as any;
 
         await import('../../../renderer/components/settingpanel.js');
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
         document.body.innerHTML = '';
         delete window.showSaveFilePicker;
         window.settingAPI = mockModelAPI() as any;
         window.notificationAPI = {
             sendNotification: jest.fn(async () => undefined)
         };
+        featuresState = { disabledFeatures: [], disabledApplications: [], hiddenApplications: [], features: [] };
+        pushFeatureState();
+        await settle();
     });
 
     function createPanel() {
@@ -91,6 +114,35 @@ describe('setting-panel config management', () => {
         expect(telemetryIndex).toBeGreaterThanOrEqual(0);
         expect(debugIndex).toBe(telemetryIndex + 1);
         expect(debugIndex).toBe(sections.length - 1);
+    });
+
+    test('遥测特性被插件禁用时不渲染遥测设置块，恢复后按原位置插回', async () => {
+        const panel = createPanel();
+        panel.currentData.telemetry = {
+            opentelemetry: { endpoints: [{ name: 'local', url: 'http://localhost:4318/v1/traces', enabled: true }] },
+            langfuse: { endpoints: [], environment: 'development', max_payload_chars: 20_000 }
+        };
+        panel.innerHTML = panel.renderGeneralSection();
+        expect(panel.querySelector('#telemetry-section')).not.toBeNull();
+
+        // 插件启用 test-disable-telemetry 之类的门控：整块设置入口消失，用户无法再改端点
+        featuresState = { ...featuresState, disabledFeatures: ['telemetry'] };
+        pushFeatureState();
+        await settle();
+        panel.refreshTelemetrySection();
+        expect(panel.querySelector('#telemetry-section')).toBeNull();
+        expect(panel.querySelector('#telemetry-add-btn')).toBeNull();
+        // 配置本身不动：数据仍在面板副本里
+        expect(panel.currentData.telemetry.opentelemetry.endpoints).toHaveLength(1);
+
+        // 插件停用后入口恢复，且仍排在「开发与调试」之前
+        featuresState = { ...featuresState, disabledFeatures: [] };
+        pushFeatureState();
+        await settle();
+        panel.refreshTelemetrySection();
+        const telemetrySection = panel.querySelector('#telemetry-section');
+        expect(telemetrySection).not.toBeNull();
+        expect(telemetrySection?.nextElementSibling?.id).toBe('debug-mode-section');
     });
 
     test('renders development and debugging as a gated panel with independent experimental features', () => {

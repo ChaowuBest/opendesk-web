@@ -2178,7 +2178,7 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.status.readonly': 'Query Mode',
     'renderer.filemgr.status.disabled': 'Disabled',
     'renderer.filemgr.status.error': 'Error',
-    // Plugin feature gating (ctx.features.disable / ctx.features.disableApplication)
+    // Plugin feature gating (ctx.features.disableFeature / ctx.features.disableApplication)
     'feature.memory.disabled': 'Memory is disabled',
     'feature.application.disabled': 'Application ${bundleName} has been disabled by a plugin',
     'renderer.filemgr.mode.full': 'Full Index',

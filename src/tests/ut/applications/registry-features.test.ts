@@ -50,10 +50,13 @@ describe('ApplicationRegistry feature-disable gating', () => {
         const list = ApplicationRegistry.getApplicationList() as Array<{
             bundleName: string;
             showIcon?: boolean;
+            disabledByPlugin?: boolean;
         }>;
         const filemgr = list.find((app) => app.bundleName === 'filemgr');
         const other = list.find((app) => app.bundleName === 'other');
         expect(filemgr?.showIcon).toBe(false);
+        // 渲染进程（沉浸式桌面）按这个标记关掉已打开的浮动窗口
+        expect(filemgr?.disabledByPlugin).toBe(true);
         // 其它应用的 showIcon 保持原值（构造时默认 true）
         expect(other?.showIcon).toBe(true);
 
@@ -62,6 +65,31 @@ describe('ApplicationRegistry feature-disable gating', () => {
             bundleName: string;
             showIcon?: boolean;
         }>;
+        expect(restored.find((app) => app.bundleName === 'filemgr')?.showIcon).toBe(true);
+    });
+
+    test('隐藏应用只收起图标，不改变禁用状态与事件能力', async () => {
+        getFeatureManager().setApplicationHidden('filemgr', 'plugin-a', true);
+
+        const list = ApplicationRegistry.getApplicationList() as Array<{
+            bundleName: string;
+            showIcon?: boolean;
+            disabledByPlugin?: boolean;
+        }>;
+        const filemgr = list.find((app) => app.bundleName === 'filemgr');
+        expect(filemgr?.showIcon).toBe(false);
+        // 隐藏不是禁用：渲染进程只按 disabledByPlugin 关窗，仍在运行的应用窗口保持不变
+        expect(filemgr?.disabledByPlugin).toBe(false);
+
+        // 工具集与事件都不受隐藏影响（禁用才停）
+        const toolsets = await ApplicationRegistry.listAvailableToolsets();
+        expect(Array.isArray(toolsets)).toBe(true);
+        const events = await ApplicationRegistry.getAllSupportedEvents();
+        expect(events.has('filemgr')).toBe(true);
+        expect(getFeatureManager().isApplicationDisabled('filemgr')).toBe(false);
+
+        getFeatureManager().setApplicationHidden('filemgr', 'plugin-a', false);
+        const restored = ApplicationRegistry.getApplicationList() as Array<{ bundleName: string; showIcon?: boolean }>;
         expect(restored.find((app) => app.bundleName === 'filemgr')?.showIcon).toBe(true);
     });
 

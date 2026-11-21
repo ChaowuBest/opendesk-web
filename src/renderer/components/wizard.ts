@@ -65,7 +65,7 @@ declare global {
  * 首启向导。
  *
  * 步骤顺序：账号登录 → 模型配置 → 个性化设置 → 完成。
- * 账号能力被特性门控关闭（插件 `ctx.features.disable` 或实验特性开关）时，账号步骤整步消失，
+ * 账号能力被特性门控关闭（插件 `ctx.features.disableFeature` 或实验特性开关）时，账号步骤整步消失，
  * 第一步直接是模型配置，总步数随之变成 3。
  */
 class SetupWizard extends HTMLElement {

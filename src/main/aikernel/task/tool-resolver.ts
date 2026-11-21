@@ -45,7 +45,7 @@ export async function buildToolsetsForTask(
 ): Promise<BaseToolset[]> {
     const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets(task);
     const skillToolset = SkillRegistry.getInstance().getToolset();
-    // 记忆特性被插件禁用（ctx.features.disable('memory')）时不注入记忆工具集
+    // 记忆特性被插件禁用（ctx.features.disableFeature('memory')）时不注入记忆工具集
     const memoryToolset = getFeatureManager().isFeatureDisabled('memory') ? null : createMemoryToolset();
     const planningToolset = task.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
 
