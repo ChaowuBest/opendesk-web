@@ -170,10 +170,9 @@ describe('task artifacts cleanup on delete', () => {
         expect(fs.existsSync(path.join(directory, forkedRelativePath))).toBe(true);
     });
 
-    test('forkTask rewrites embedded artifact paths inside replacement text and microcompact hints', () => {
-        // 替代文本内嵌完整输出文件的绝对路径（buildToolResultReplacementText 产出），
-        // microcompact.artifact_path_hint 亦为绝对路径；fork 改写 relative_path 时这两处
-        // 必须同步改写到 fork 命名空间，否则源任务删除后模型按提示读文件必然失败
+    test('forkTask rewires structured artifact references (preview/microcompact hint/state record)', () => {
+        // 新格式：存储层只有结构化预览与相对路径；fork 改写结构化路径字段即可，
+        // 模型可见文本在读取时按当前任务命名空间重新渲染
         const manager = new TaskManagerState();
         const source = new TaskState(manager);
         source.task_id = 'hint-source';
@@ -181,57 +180,57 @@ describe('task artifacts cleanup on delete', () => {
         const originalArtifact = path.join(directory, 'artifacts', 'hint-source', 'tool-results', 'result-9.txt');
         fs.mkdirSync(path.dirname(originalArtifact), { recursive: true });
         fs.writeFileSync(originalArtifact, 'original output');
-        const embeddedOld = path.join(directory, 'artifacts', 'hint-source', 'tool-results', 'result-9.txt');
 
         const assistant = new AssistantMessage();
         const part = new ToolCallMessagePart();
         const compressed = new ToolCall(0, 'call-9', 'filemgr-readFile', '{"path":"x.txt"}');
         compressed.status = 'success';
-        compressed.result = `输出预览\n\n完整输出已保存至: ${embeddedOld}\n若需完整内容请通过读文件方式获取。`;
+        compressed.result = '输出预览\n\n完整输出已保存至: <placeholder>';
         compressed.result_storage = {
             result_id: 'result-9',
             storage_version: 1,
             relative_path: path.join('artifacts', 'hint-source', 'tool-results', 'result-9.txt'),
-            replacement_text: compressed.result
+            replacement_preview: '输出预览'
         };
         compressed.microcompact = {
             strategy: 'local_clear',
             cleared_at: '2026-01-01T00:00:00.000Z',
             original_chars: 100,
-            original_lines: 3,
-            replacement_text: `旧结果已被清理\n完整输出可查看: ${embeddedOld}`,
-            artifact_path_hint: embeddedOld
+            original_lines: 3
         };
         part.push(compressed);
         assistant.content.push(part);
         source.chat_context.appendMessage(assistant);
         manager.tasks.push(source);
+        source.tool_result_replacement_state = {
+            seenIds: new Set(['result-9']),
+            replacements: new Map([
+                [
+                    'result-9',
+                    {
+                        result_id: 'result-9',
+                        replacement_preview: '输出预览',
+                        relative_path: path.join('artifacts', 'hint-source', 'tool-results', 'result-9.txt')
+                    }
+                ]
+            ])
+        };
 
         const forked = forkTask(source);
-        // 改写发生在 forkTask 内部（使用 fork 生成的新 task_id），以下断言全部按新 id 命名空间展开
-        const forkedCallForHint = (forked.chat_context.messages[0] as AssistantMessage).content.find(
+        const forkedPart = (forked.chat_context.messages[0] as AssistantMessage).content.find(
             (item) => item.type === 'tool_call'
         ) as ToolCallMessagePart;
-        const hintCall = forkedCallForHint.toolcalls[0];
-        expect(hintCall.result_storage?.replacement_text).toContain(
-            path.join(directory, 'artifacts', forked.task_id, 'tool-results', 'result-9.txt')
+        const hintCall = forkedPart.toolcalls[0];
+        const forkedRelativePath = path.join('artifacts', forked.task_id, 'tool-results', 'result-9.txt');
+        // 结构化路径字段改写到 fork 命名空间（microcompact 复用 result_storage.relative_path，
+        // 不再单独保存产物路径）
+        expect(hintCall.result_storage?.relative_path).toBe(forkedRelativePath);
+        expect(forked.tool_result_replacement_state.replacements.get('result-9')?.relative_path).toBe(
+            forkedRelativePath
         );
-        expect(hintCall.result_storage?.replacement_text).not.toContain(
-            path.join(directory, 'artifacts', 'hint-source', 'tool-results', 'result-9.txt')
-        );
-        expect(hintCall.microcompact?.artifact_path_hint).toBe(
-            path.join(directory, 'artifacts', forked.task_id, 'tool-results', 'result-9.txt')
-        );
-        expect(hintCall.microcompact?.replacement_text).toContain(
-            path.join(directory, 'artifacts', forked.task_id, 'tool-results', 'result-9.txt')
-        );
-        const hintRecord = forked.tool_result_replacement_state.replacements.get('result-9');
-        expect(hintRecord?.replacement_text).toContain(
-            path.join(directory, 'artifacts', forked.task_id, 'tool-results', 'result-9.txt')
-        );
-        // 原文已复制到 fork 目录，提示路径真实可读
-        expect(
-            fs.readFileSync(path.join(directory, 'artifacts', forked.task_id, 'tool-results', 'result-9.txt'), 'utf8')
-        ).toBe('original output');
+        // 结构化预览不含路径，原样保留
+        expect(hintCall.result_storage?.replacement_preview).toBe('输出预览');
+        // 原文已复制到 fork 目录，按新命名空间可直接读到
+        expect(fs.readFileSync(path.join(directory, forkedRelativePath), 'utf8')).toBe('original output');
     });
 });

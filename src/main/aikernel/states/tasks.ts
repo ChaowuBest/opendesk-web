@@ -17,6 +17,7 @@ import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { t, getLocale } from '../../../locale/index.js';
 import { formatLocaleDisplayName } from '../../../common/locale/pack.js';
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
+import { renderToolResultReferenceText } from '../tool-result-content.js';
 import {
     resolveContextWindow,
     resolveMaxOutputTokens,
@@ -1926,10 +1927,14 @@ export class TaskState {
             budget.summaryOutputTokens = limitSummaryOutputToModel(model, budget.summaryOutputTokens);
             const output = options.modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
             const toolResultOverrides = new Map(
-                Array.from(this.getSynchronizedToolResultReplacementState().replacements, ([id, record]) => [
-                    id,
-                    record.replacement_text
-                ])
+                Array.from(this.getSynchronizedToolResultReplacementState().replacements, ([id, record]) => {
+                    // 结构化预览（新格式）按本机数据根渲染；旧自由文本原样兼容
+                    const text =
+                        typeof record.replacement_preview === 'string' && record.replacement_preview.length > 0
+                            ? renderToolResultReferenceText(record.replacement_preview, record.relative_path)
+                            : (record.replacement_text ?? '');
+                    return [id, text] as const;
+                }).filter(([, text]) => text.length > 0)
             );
             for (const [id, replacement] of options.toolResultOverrides ?? []) toolResultOverrides.set(id, replacement);
             this.setAutoCompactState(AutoCompactStates.recordAttempt(this.auto_compact_state));

@@ -568,12 +568,10 @@ describe('task bundle artifacts (v2)', () => {
         expect(foreignImages[1].externalized.relative_path).toBe('artifacts\\other\\tool-results\\x.txt');
     });
 
-    test('normalizeImportedTask rewrites artifact paths embedded in replacement text and hints', () => {
-        // compact 落盘时把「数据根 + 相对路径」绝对形式内嵌进替代文本与 microcompact 提示；
-        // 跨机导入后源机路径必然失效（且泄露源机文件系统布局），必须随 relative_path 同步改写
-        const sourceDataRoot = 'D:\\source-machine\\opendesk-data';
+    test('normalizeImportedTask rewrites structured artifact references and keeps legacy text untouched', () => {
+        // 新格式：存储层只有「结构化预览 + 相对路径」。导入时改写结构化路径字段即可，
+        // 预览不含路径、原样保留；模型可见文本在读取时按当前数据根重新渲染
         const source = task('a') as Record<string, any>;
-        const embeddedOld = `${sourceDataRoot}\\artifacts\\a\\tool-results\\result-1.txt`;
         source.chat_context.messages.push({
             role: 'assistant',
             timestamp: '2026-01-01T00:00:00.000Z',
@@ -588,15 +586,92 @@ describe('task bundle artifacts (v2)', () => {
                             result_storage: {
                                 result_id: 'result-3',
                                 relative_path: 'artifacts\\a\\tool-results\\result-1.txt',
-                                replacement_text: `输出预览\n\n完整输出已保存至: ${embeddedOld}\n若需完整内容请通过读文件方式获取。`
+                                replacement_preview: '输出预览'
                             },
                             microcompact: {
                                 strategy: 'local_clear',
                                 cleared_at: '2026-01-01T00:00:00.000Z',
                                 original_chars: 100,
-                                original_lines: 3,
-                                replacement_text: `旧结果已被清理\n完整输出可查看: ${embeddedOld}`,
-                                artifact_path_hint: embeddedOld
+                                original_lines: 3
+                            }
+                        },
+                        {
+                            id: 'call-legacy',
+                            index: 1,
+                            tool_name: 'web_search',
+                            result_storage: {
+                                result_id: 'result-legacy',
+                                relative_path: 'artifacts\\a\\tool-results\\result-legacy.txt',
+                                replacement_text:
+                                    '完整输出已保存至: D:\\source-machine\\artifacts\\a\\tool-results\\result-legacy.txt'
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        source.tool_result_replacement_state = {
+            replacements: {
+                'result-3': {
+                    result_id: 'result-3',
+                    replacement_preview: '输出预览',
+                    relative_path: 'artifacts\\a\\tool-results\\result-1.txt'
+                }
+            }
+        };
+
+        const imported = normalizeImportedTask(source, new Map([['a', 'new-task-id']]), '/new/work');
+        const calls = imported.chat_context.messages[1].content[0].toolcalls;
+        const native = (...segments: string[]) => path.join('artifacts', 'new-task-id', ...segments);
+        // 结构化路径字段改写；预览不含路径、原样保留
+        expect(calls[0].result_storage.relative_path).toBe(native('tool-results', 'result-1.txt'));
+        expect(calls[0].result_storage.replacement_preview).toBe('输出预览');
+        expect(imported.tool_result_replacement_state.replacements['result-3'].relative_path).toBe(
+            native('tool-results', 'result-1.txt')
+        );
+        expect(imported.tool_result_replacement_state.replacements['result-3'].replacement_preview).toBe('输出预览');
+        // 旧自由文本原样保留（跨机导入后其中源机路径不可用是已接受的降级：不报错、不改写）
+        expect(calls[1].result_storage.replacement_text).toBe(
+            '完整输出已保存至: D:\\source-machine\\artifacts\\a\\tool-results\\result-legacy.txt'
+        );
+        expect(calls[1].result_storage.relative_path).toBe(native('tool-results', 'result-legacy.txt'));
+    });
+
+    test('legacy absolute-path text imports without errors or corruption, only structured paths are rewritten', () => {
+        // 老格式（内嵌源机绝对路径的自由文本）：导入端**不改写也不解析**文本——
+        // 拿不到本机正确路径是可接受的降级，但绝不抛错、不破坏文本。
+        // 覆盖容易踩坑的根路径：空格、`$`、中文、正反斜杠混排，引用重复出现，
+        // 以及文本里完全没有引用的情况
+        const weirdRoot = 'C:\\Program Files\\$OpenDesk$\\任务 资料';
+        const sourceRelative = 'artifacts\\a\\tool-results\\result-9.txt';
+        const embedded = `${weirdRoot}\\${sourceRelative}`;
+        const legacyText = `预览引用一次: ${embedded}\n重复引用: ${embedded}`;
+        const source = task('a') as Record<string, any>;
+        source.chat_context.messages.push({
+            role: 'assistant',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            content: [
+                {
+                    type: 'tool_call',
+                    toolcalls: [
+                        {
+                            id: 'call-legacy-robust',
+                            index: 0,
+                            tool_name: 'filemgr-readFile',
+                            result_storage: {
+                                result_id: 'result-legacy-robust',
+                                relative_path: sourceRelative,
+                                replacement_text: legacyText
+                            }
+                        },
+                        {
+                            id: 'call-legacy-no-ref',
+                            index: 1,
+                            tool_name: 'web_search',
+                            result_storage: {
+                                result_id: 'result-legacy-no-ref',
+                                relative_path: 'artifacts/a/tool-results/no-ref.txt',
+                                replacement_text: '纯文本预览，没有任何产物引用'
                             }
                         }
                     ]
@@ -605,82 +680,22 @@ describe('task bundle artifacts (v2)', () => {
         });
 
         const imported = normalizeImportedTask(source, new Map([['a', 'new-task-id']]), '/new/work');
-        const importedCall = imported.chat_context.messages[1].content[0].toolcalls[0];
-        // 内嵌路径的「分隔符 + 相对路径」锚点被精确替换为新任务命名空间；源机数据根前缀
-        // 无法在导入端重建（未知根），保留为可读但失效的提示路径——模型读文件失败后走
-        // 既有「原文缺失」降级，不会误读源任务的残留文件
-        const rewrittenTail = path.join('artifacts', 'new-task-id', 'tool-results', 'result-1.txt');
-        expect(importedCall.result_storage.replacement_text).toContain(rewrittenTail);
-        expect(importedCall.result_storage.replacement_text).not.toContain('artifacts\\a\\tool-results');
-        expect(importedCall.result_storage.replacement_text).toContain('完整输出已保存至: ');
-        expect(importedCall.microcompact.artifact_path_hint).toContain(rewrittenTail);
-        expect(importedCall.microcompact.artifact_path_hint).not.toContain('artifacts\\a\\tool-results');
-        expect(importedCall.microcompact.replacement_text).toContain(rewrittenTail);
-        // POSIX 绝对形态的内嵌值（Linux/Mac 源机导出，Windows 导入）同样被改写：
-        // 锚点是「分隔符 + 相对路径」，兼容任意源机数据根与分隔符
-        const posixEmbedded = task('a') as Record<string, any>;
-        posixEmbedded.chat_context.messages.push({
-            role: 'assistant',
-            timestamp: '2026-01-01T00:00:00.000Z',
-            content: [
-                {
-                    type: 'tool_call',
-                    toolcalls: [
-                        {
-                            id: 'call-4',
-                            index: 0,
-                            tool_name: 'filemgr-readFile',
-                            result_storage: {
-                                result_id: 'result-4',
-                                relative_path: 'artifacts/a/tool-results/result-1.txt',
-                                replacement_text:
-                                    '完整输出已保存至: /home/alice/.opendesk/artifacts/a/tool-results/result-1.txt'
-                            }
-                        }
-                    ]
-                }
-            ]
-        });
-        const posixImported = normalizeImportedTask(posixEmbedded, new Map([['a', 'new-task-id']]), '/new/work');
-        expect(posixImported.chat_context.messages[1].content[0].toolcalls[0].result_storage.replacement_text).toBe(
-            `完整输出已保存至: /home/alice/.opendesk/${rewrittenTail.split(path.sep).join('/')}`
+        const calls = imported.chat_context.messages[1].content[0].toolcalls;
+        // 旧文本逐字节不变（含重复引用与特殊字符），不抛错
+        expect(calls[0].result_storage.replacement_text).toBe(legacyText);
+        expect(calls[1].result_storage.replacement_text).toBe('纯文本预览，没有任何产物引用');
+        // 结构化路径字段仍然正确改写
+        expect(calls[0].result_storage.relative_path).toBe(
+            path.join('artifacts', 'new-task-id', 'tool-results', 'result-9.txt')
         );
-
-        // 混合形态：relative_path 存正斜杠（跨平台序列化）但内嵌文本是反斜杠（Windows 源机
-        // 写入）。替换锚点不能依赖导入端 path.sep，否则这种混合形态静默漏改——改写结果的
-        // 分隔符形态跟随命中的文本形态（反斜杠保持反斜杠）
-        const mixedEmbedded = task('a') as Record<string, any>;
-        mixedEmbedded.chat_context.messages.push({
-            role: 'assistant',
-            timestamp: '2026-01-01T00:00:00.000Z',
-            content: [
-                {
-                    type: 'tool_call',
-                    toolcalls: [
-                        {
-                            id: 'call-5',
-                            index: 0,
-                            tool_name: 'filemgr-readFile',
-                            result_storage: {
-                                result_id: 'result-5',
-                                relative_path: 'artifacts/a/tool-results/result-7.txt',
-                                replacement_text: '完整输出已保存至: C:\\src\\artifacts\\a\\tool-results\\result-7.txt'
-                            }
-                        }
-                    ]
-                }
-            ]
-        });
-        const mixedImported = normalizeImportedTask(mixedEmbedded, new Map([['a', 'new-task-id']]), '/new/work');
-        const mixedText = mixedImported.chat_context.messages[1].content[0].toolcalls[0].result_storage
-            .replacement_text as string;
-        expect(mixedText).toContain('\\artifacts\\new-task-id\\tool-results\\result-7.txt');
-        expect(mixedText).not.toContain('artifacts\\a\\tool-results');
+        expect(calls[1].result_storage.relative_path).toBe(
+            path.join('artifacts', 'new-task-id', 'tool-results', 'no-ref.txt')
+        );
     });
 
-    test('normalizeImportedTask never rewrites embedded artifact paths inside tool arguments', () => {
-        // 工具参数是用户载荷：args_object 中恰好内嵌产物路径形态的字符串字段
-        // （含 replacement_text / artifact_path_hint 这类命名巧合）不得被 Pass 2 误改写
+    test('normalizeImportedTask never rewrites payload keys named like artifact fields', () => {
+        // 工具参数是用户载荷：args_object 中恰好叫 replacement_text / artifact_path_hint
+        // 的字符串字段不得被导入改写逻辑误伤；协议字段（result_storage.relative_path）正常改写
         const source = task('a') as Record<string, any>;
         source.chat_context.messages.push({
             role: 'assistant',
@@ -719,12 +734,12 @@ describe('task bundle artifacts (v2)', () => {
         );
         expect(importedCall.args_object.artifact_path_hint).toBe('artifacts/a/tool-results/z.txt');
         expect(importedCall.args_string).toContain('artifacts\\\\a\\\\tool-results\\\\x.txt');
-        // 协议字段的改写不受影响
+        // 协议字段：结构化路径改写；旧自由文本原样保留
         expect(importedCall.result_storage.relative_path).toBe(
             path.join('artifacts', 'new-task-id', 'tool-results', 'result-1.txt')
         );
-        expect(importedCall.result_storage.replacement_text).toContain(
-            path.join('artifacts', 'new-task-id', 'tool-results', 'result-1.txt')
+        expect(importedCall.result_storage.replacement_text).toBe(
+            '完整输出已保存至: C:\\src\\artifacts\\a\\tool-results\\result-1.txt'
         );
     });
 

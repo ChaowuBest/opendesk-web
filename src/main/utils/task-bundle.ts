@@ -463,9 +463,9 @@ export async function writeTaskBundle(
 /**
  * 改写指向源任务产物目录的相对路径到新任务命名空间（v2 bundle 导入）：
  * 图片外置 marker（externalized.relative_path）、工具结果原文（result_storage.relative_path）、
- * 替换状态记录（tool_result_replacement_state 内的 relative_path）。
- * 存储值在 Windows 上是 path.join 产生的反斜杠路径，这里按两种分隔符识别前缀后
- * 用本机分隔符重建，一并解决跨平台导入。
+ * 替换状态记录（tool_result_replacement_state
+ * 内的 relative_path）。存储值在 Windows 上是 path.join 产生的反斜杠路径，这里按两种
+ * 分隔符识别前缀后用本机分隔符重建，一并解决跨平台导入。
  * 穿越路径与其他任务的 images 引用（恶意包可借宽松回灌读出本机其他任务的图片）不落地，
  * 直接删除字段走下游降级；指向本机数据根内其他任务的工具结果原文等引用不消费 images
  * 目录，无请求期读盘路径，仍保留。
@@ -478,51 +478,24 @@ function rewriteImportedArtifactRelativePath(value: string, sourceId: string, ta
     return path.join('artifacts', targetId, ...rest);
 }
 
-/**
- * 内嵌产物路径的替换对：compact 落盘时把「数据根 + 相对路径」绝对形式嵌进替代文本与
- * microcompact 提示（任意主机的数据根都无法在导入端重建），因此按「分隔符 + 相对路径」
- * 前缀做精确替换。锚点同时生成正/反斜杠两种形态：内嵌文本的形态由**来源平台**决定
- * （Windows 导出为反斜杠、POSIX 导出为正斜杠），与导入端 path.sep 无关——否则
- * Windows 导出的包在 POSIX 上导入时锚点永远匹配不到，改写静默失效。
- *
- * 与 fork 场景的内嵌路径改写（compaction/tool-results.ts 的 rewriteEmbeddedArtifactPath）
- * 是并列实现：fork 在本机操作、绝对路径可重建，直接整串替换；本函数面向跨机器导入，
- * 只能按锚点替换。场景不同，不要合并。
- */
-function buildEmbeddedArtifactPathRewrites(
-    sourceRelative: string,
-    targetRelative: string
-): { from: string; to: string }[] {
-    const toForward = (value: string): string => value.split(/[\\/]/).join('/');
-    const sourceForward = toForward(sourceRelative);
-    const targetForward = toForward(targetRelative);
-    const sourceBackslash = sourceForward.split('/').join('\\');
-    const targetBackslash = targetForward.split('/').join('\\');
-    return [
-        { from: `/${sourceForward}`, to: `/${targetForward}` },
-        { from: `\\${sourceBackslash}`, to: `\\${targetBackslash}` }
-    ];
-}
-
-/** 内嵌产物路径的文本字段：替代文本与 microcompact 提示 */
-const EMBEDDED_ARTIFACT_TEXT_KEYS = new Set(['replacement_text', 'artifact_path_hint']);
+/** 结构化的产物引用字段：存储层只保存相对路径，模型可见文本由边界渲染生成 */
+const ARTIFACT_REFERENCE_PATH_KEYS = new Set(['relative_path']);
 
 function rewriteImportedArtifactRelativePaths(root: Record<string, unknown>, sourceId: string, targetId: string): void {
-    // Pass 1：收集所有命中本任务前缀的 relative_path 改写对（含相对/绝对内嵌形态）
-    const pathRewrites = new Map<string, string>();
+    // 只改写结构化引用字段（relative_path）。模型可见文本不落盘，
+    // 因此不存在"内嵌路径需要跟着改"的问题；旧格式的 free-text（replacement_text）
+    // 原样保留——跨机导入后其中记录的源机路径仍然失效，属于已接受的降级：不报错、
+    // 不破坏文本，只是模型按旧路径读文件会失败并走既有降级链路
     const visit = (value: Record<string, unknown>, depth: number): void => {
         if (depth > 100) return;
         for (const [key, child] of Object.entries(value)) {
             // 工具参数是用户载荷，不携带产物引用语义，保持原样
             if (key === 'args_object' || key === 'args_string' || key === 'arguments') continue;
-            if (key === 'relative_path' && typeof child === 'string') {
+            if (ARTIFACT_REFERENCE_PATH_KEYS.has(key) && typeof child === 'string') {
                 const rewritten = rewriteImportedArtifactRelativePath(child, sourceId, targetId);
                 if (rewritten !== child) {
                     // 命中本任务前缀：改写到新命名空间（改写结果由构造保证安全）
                     value[key] = rewritten;
-                    for (const pair of buildEmbeddedArtifactPathRewrites(child, rewritten)) {
-                        if (!pathRewrites.has(pair.from)) pathRewrites.set(pair.from, pair.to);
-                    }
                 } else if (isSafeArtifactRelativePath(child, 'images') || !isSafeArtifactRelativePath(child)) {
                     // 穿越/绝对路径/畸形值，或形状安全但指向其他任务 images 的引用，一律丢弃
                     // 该字段——marker 失效后图片回退内联缩略图，result_storage 缺失后替代文本
@@ -560,27 +533,6 @@ function rewriteImportedArtifactRelativePaths(root: Record<string, unknown>, sou
         }
     };
     pruneMarkers(root, 0);
-
-    if (pathRewrites.size === 0) return;
-    // Pass 2：替代文本与 microcompact 提示内嵌的产物路径随 relative_path 同步改写，
-    // 否则导入后模型按提示读源机路径必然失败。工具参数键与 Pass 1 同样跳过：用户载荷
-    // 不携带产物引用语义，即使字段名巧合命中（如自定义参数叫 replacement_text）也不改写
-    const rewriteTexts = (value: Record<string, unknown>, depth: number): void => {
-        if (depth > 100) return;
-        for (const [key, child] of Object.entries(value)) {
-            if (key === 'args_object' || key === 'args_string' || key === 'arguments') continue;
-            if (EMBEDDED_ARTIFACT_TEXT_KEYS.has(key) && typeof child === 'string') {
-                let text = child;
-                for (const [from, to] of pathRewrites) {
-                    text = text.split(from).join(to);
-                }
-                value[key] = text;
-            } else if (child && typeof child === 'object') {
-                rewriteTexts(child as Record<string, unknown>, depth + 1);
-            }
-        }
-    };
-    rewriteTexts(root, 0);
 }
 
 export function normalizeImportedTask(source: TaskJson, ids: Map<string, string>, workspace: string): TaskJson {

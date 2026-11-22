@@ -9,6 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import path from 'path';
+
+import { resolveOpendeskDirectoryReadOnly } from './setting.js';
+
 /**
  * 任务产物相对路径（`artifacts/<taskId>/<子目录>/<文件>`，相对 OpenDesk 数据根目录）
  * 的安全形状校验。
@@ -57,4 +61,25 @@ export function isSafeArtifactRelativePath(value: unknown, subdir?: ArtifactRela
     return segments
         .slice(2)
         .every((segment) => ARTIFACT_NAME_SEGMENT.test(segment) && !isForbiddenWindowsFileName(segment));
+}
+
+/**
+ * 「产物引用」的展示路径：相对数据根 + 本机分隔符的绝对路径。
+ *
+ * 存储层只存相对引用（机器无关）；模型/用户需要可直接读取的绝对路径，因此展示与
+ * 请求构建时经本函数展开。数据目录不可用（或路径形状不安全）时退回相对路径——
+ * 展示层宁可给出相对引用，也不抛错。
+ */
+export function resolveArtifactDisplayPath(relativePath: string | undefined): string | undefined {
+    if (typeof relativePath !== 'string' || relativePath.length === 0) {
+        return undefined;
+    }
+    if (!isSafeArtifactRelativePath(relativePath)) {
+        return relativePath;
+    }
+    const dataRoot = resolveOpendeskDirectoryReadOnly();
+    if (dataRoot === undefined) {
+        return relativePath;
+    }
+    return path.join(dataRoot, ...relativePath.split(/[\\/]/));
 }

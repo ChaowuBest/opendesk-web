@@ -557,6 +557,10 @@ export class ToolCall implements BaseChatToolCall {
             normalized.persisted_at = metadata.persisted_at;
         }
 
+        if (typeof metadata.replacement_preview === 'string' && metadata.replacement_preview.length > 0) {
+            normalized.replacement_preview = metadata.replacement_preview;
+        }
+
         if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
             normalized.replacement_text = metadata.replacement_text;
         }
@@ -602,10 +606,6 @@ export class ToolCall implements BaseChatToolCall {
 
         if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
             normalized.replacement_text = metadata.replacement_text;
-        }
-
-        if (typeof metadata.artifact_path_hint === 'string' && metadata.artifact_path_hint.trim().length > 0) {
-            normalized.artifact_path_hint = metadata.artifact_path_hint;
         }
 
         return normalized;

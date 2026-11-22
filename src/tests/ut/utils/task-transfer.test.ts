@@ -401,7 +401,7 @@ describe('task transfer persistence', () => {
             result_id: 'result-1',
             storage_version: 1,
             relative_path: path.join('artifacts', 'parent', 'tool-results', 'result-1.txt'),
-            replacement_text: 'output preview\n完整输出已保存至: /source/artifacts/parent/tool-results/result-1.txt'
+            replacement_preview: 'output preview'
         };
         compressed.result_object = {
             type: 'image',
@@ -459,11 +459,11 @@ describe('task transfer persistence', () => {
         expect(importedCall.result_object.images[0].externalized.relative_path).toBe(
             path.join('artifacts', newId, 'images', 'img-hash.png')
         );
-        // 导出时已剥离的 result 保持剥离，模型可见内容为替代文本（内嵌的
-        // /source/artifacts/parent/... 路径已随 relative_path 改写到新命名空间）
+        // 导出时已剥离的 result 保持剥离；模型可见内容由结构化预览 + 新命名空间的
+        // 相对路径在读取时渲染（跨机器导入后指向本机数据根下的正确文件）
         expect(importedCall.result).toBeUndefined();
-        expect(resolveVisibleToolResultContent(importedCall)).toBe(
-            `output preview\n完整输出已保存至: /source/artifacts/${newId}/tool-results/result-1.txt`
-        );
+        const visible = resolveVisibleToolResultContent(importedCall)!;
+        expect(visible).toContain('output preview');
+        expect(visible).toContain(path.join(directory, 'artifacts', newId, 'tool-results', 'result-1.txt'));
     });
 });

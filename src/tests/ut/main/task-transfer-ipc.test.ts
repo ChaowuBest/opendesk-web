@@ -23,7 +23,9 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
     Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) },
     // task-bundle 的 restoreTaskBundleArtifacts 读取数据根目录；IPC 测试不触发还原，
     // 这里给出无副作用的占位即可
-    getOpendeskDirectory: () => os.tmpdir()
+    getOpendeskDirectory: () => os.tmpdir(),
+    // artifact-relative-path 的展示路径解析在模块初始化时引用该导出
+    resolveOpendeskDirectoryReadOnly: () => os.tmpdir()
 }));
 jest.unstable_mockModule('../../../locale/index.js', () => ({
     t: (key: string) => key,

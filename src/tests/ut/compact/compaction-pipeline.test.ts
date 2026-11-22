@@ -879,9 +879,10 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(result.toolResultOverrides.size).toBe(2);
         expect(oldBudgetedResultId).toBeDefined();
         expect(oldMicrocompactOnlyResultId).toBeDefined();
-        expect(result.toolResultOverrides.get(oldBudgetedResultId!)).toBe(
-            toolCalls.oldBudgeted.result_storage?.replacement_text
-        );
+        // 预算流：存储层是结构化预览，override 是按当前数据根渲染的文本
+        const budgetedStorage = toolCalls.oldBudgeted.result_storage;
+        expect(budgetedStorage?.replacement_preview).toBeTruthy();
+        expect(result.toolResultOverrides.get(oldBudgetedResultId!)).toContain(budgetedStorage!.replacement_preview!);
         expect(result.toolResultOverrides.get(oldMicrocompactOnlyResultId!)).toContain(
             '[旧工具结果已被 microcompact 清理'
         );

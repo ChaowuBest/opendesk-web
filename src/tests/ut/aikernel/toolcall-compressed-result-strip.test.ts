@@ -46,18 +46,22 @@ afterAll(() => {
 
 function buildCompressedCall(options: {
     result: string;
+    /** 旧格式：自由文本替代文本 */
     replacement?: string;
+    /** 新格式：结构化预览（与 relativePath 配对，模型可见文本由边界渲染） */
+    preview?: string;
     relativePath?: string;
     artifactContent?: string;
 }): ToolCall {
     const call = new ToolCall(0, 'call-1', 'web_search', '{}');
     call.status = 'success';
     call.result = options.result;
-    if (options.replacement !== undefined) {
+    if (options.replacement !== undefined || options.preview !== undefined) {
         call.setResultStorage({
             result_id: 'result-1',
             ...(options.relativePath !== undefined ? { relative_path: options.relativePath } : {}),
-            replacement_text: options.replacement
+            ...(options.preview !== undefined ? { replacement_preview: options.preview } : {}),
+            ...(options.replacement !== undefined ? { replacement_text: options.replacement } : {})
         });
     }
     if (options.artifactContent !== undefined) {
@@ -258,6 +262,35 @@ describe('compressed tool result original stripping', () => {
         expect(plain.result).toBe(original);
     });
 
+    test('structured preview renders an absolute locator at the boundary (legacy text passes through)', () => {
+        // 新格式：存储层只有「预览正文 + 相对产物路径」，模型可见文本由 resolver 按本机
+        // 数据根渲染，路径可直接读取且跨机器永不过期
+        const relativePath = path.join('artifacts', 't6', 'tool-results', 'r6.txt');
+        const call = buildCompressedCall({ result: 'RAW', preview: '输出预览', relativePath });
+        expect(resolveVisibleToolResultContent(call)).toBe(
+            `输出预览\n\n完整输出已保存至: ${path.join(dataDir!, relativePath)}\n若需完整内容请通过读文件方式获取。`
+        );
+
+        // 旧格式（自由文本内嵌绝对路径）原样透传：接受"源机路径不可用"的降级，不做解析
+        const legacyAbsolute = `完整输出已保存至: ${path.join(dataDir!, relativePath)}`;
+        const legacyCall = buildCompressedCall({ result: 'RAW', replacement: legacyAbsolute, relativePath });
+        expect(resolveVisibleToolResultContent(legacyCall)).toBe(legacyAbsolute);
+    });
+
+    test('a backfilled (rendered) replacement copy is still stripped on serialization', async () => {
+        // 渲染回填得到的是按本机数据根渲染的文本：与 resolver 输出等价，序列化时按纯冗余副本剥离
+        const relativePath = path.join('artifacts', 't7', 'tool-results', 'r7.txt');
+        const call = buildCompressedCall({ result: 'RAW', preview: '输出预览', relativePath });
+        // 模拟剥离后的重载画像：result 缺失时渲染才会触发回填
+        delete (call as { result?: string }).result;
+        const renderer = { renderToolCall: async () => undefined };
+        (call as unknown as { setTool: (tool: unknown) => void }).setTool(renderer);
+        await call.render();
+        expect(call.result).toContain(path.join(dataDir!, relativePath));
+        const json = call.toJSON() as Record<string, unknown>;
+        expect(json.result).toBeUndefined();
+    });
+
     test('lazy render backfill also covers custom error cards (renderToolCallOnError)', async () => {
         // MCP 类工具 renderToolCallOnError = true：错误正文由自定义渲染器读
         // toolcall.result 输出，压缩不区分成功/失败，剥离后的错误体同样要回填
@@ -293,5 +326,35 @@ describe('compressed tool result original stripping', () => {
         expect(rendered).toContain('error-card');
         expect(rendered).toContain(replacementText.slice(0, 16));
         expect(strippedError.result).toBe(replacementText);
+    });
+
+    test('microcompact local_clear renders at the boundary and its inline copy is stripped', async () => {
+        // microcompact 只保存结构化清理状态，产物路径复用 result_storage.relative_path；
+        // 模型可见文本按当前数据根渲染，写入时 result 被替换成渲染文本，序列化时按纯冗余副本剥离
+        const { renderMicrocompactReplacementText } =
+            await import('../../../main/aikernel/compaction/microcompact-render.js');
+        const hint = path.join('artifacts', 't9', 'tool-results', 'r9.txt');
+        const call = new ToolCall(0, 'call-mc', 'readFile', '{"file_path":"/tmp/a.txt"}');
+        call.status = 'success';
+        call.setResultStorage({ result_id: 'r9', relative_path: hint });
+        call.microcompact = {
+            strategy: 'local_clear',
+            cleared_at: '2026-01-01T00:00:00.000Z',
+            original_chars: 500,
+            original_lines: 5
+        };
+        const renderedText = renderMicrocompactReplacementText(call, hint);
+        call.result = renderedText;
+
+        // 边界渲染：绝对路径 + 工具/文件信息；与写入时的文本逐字节一致
+        expect(renderedText).toContain(path.join(dataDir!, hint));
+        expect(resolveVisibleToolResultContent(call)).toBe(renderedText);
+        // 内联副本被剥离（结构化状态可独立还原）
+        const json = call.toJSON() as Record<string, unknown>;
+        expect(json.result).toBeUndefined();
+
+        // 重载后无 result 也能渲染出同一文本
+        const restored = ToolCall.assign(JSON.parse(JSON.stringify(json)));
+        expect(resolveVisibleToolResultContent(restored)).toBe(renderedText);
     });
 });

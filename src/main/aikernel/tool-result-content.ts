@@ -12,29 +12,55 @@
 import fs from 'fs';
 import path from 'path';
 
+import { isSafeArtifactRelativePath, resolveArtifactDisplayPath } from '../utils/artifact-relative-path.js';
 import { resolveOpendeskDirectoryReadOnly } from '../utils/setting.js';
-import { isSafeArtifactRelativePath } from '../utils/artifact-relative-path.js';
+import { renderMicrocompactReplacementText } from './compaction/microcompact-render.js';
 import type { ToolCall } from './messages.js';
 
 export const DEFAULT_TOOL_RESULT_SUMMARY_PREVIEW_CHARS = 300;
 
+/** 模型可见的替代文本渲染：预览正文 + 产物定位行（路径按本机数据根展开）。 */
+export function renderToolResultReferenceText(previewText: string, artifactRelativePath?: string): string {
+    const displayPath = resolveArtifactDisplayPath(artifactRelativePath);
+    if (!displayPath) return previewText;
+    return `${previewText}\n\n完整输出已保存至: ${displayPath}\n若需完整内容请通过读文件方式获取。`;
+}
+
 /**
- * Request-local overrides take precedence; restored tasks can use persisted replacements directly.
+ * Request-local overrides take precedence; restored tasks use structured replacement views.
  *
- * 优先级：请求级 overrides（compaction pipeline 按 result_id 注入）> result_storage
- * 持久化的 replacement_text。注意 microcompact.replacement_text 与
- * result_storage.replacement_text 允许并存（见 compaction/microcompact.ts 的写入处），
- * 重载后无 overrides 时以本函数读取的 result_storage 字段为准。
+ * 优先级：请求级 overrides（compaction pipeline 注入，已是渲染好的文本）>
+ * result_storage.replacement_preview（新格式，结构化）> 旧格式 replacement_text
+ * （原样返回，只读兼容）> microcompact 结构化状态（工具参数 + result_storage.relative_path 渲染）。
+ *
+ * 存储层不含绝对路径：新格式的模型可见文本由本函数在边界按当前数据根生成，
+ * 跨机器导入/迁移后产物引用仍然有效。
  */
 export function resolveToolResultReplacement(
-    toolCall: Pick<ToolCall, 'result_storage'>,
+    toolCall: Pick<ToolCall, 'result_storage' | 'microcompact' | 'tool_name' | 'args_object' | 'args_string'>,
     toolResultOverrides?: ReadonlyMap<string, string>
 ): string | undefined {
     const storage = toolCall.result_storage;
     const override = storage?.result_id ? toolResultOverrides?.get(storage.result_id) : undefined;
-    if (typeof override === 'string' && override.length > 0) return override;
-    const persisted = storage?.replacement_text;
-    return typeof persisted === 'string' && persisted.length > 0 ? persisted : undefined;
+    if (typeof override === 'string' && override.length > 0) {
+        return override;
+    }
+    if (typeof storage?.replacement_preview === 'string' && storage.replacement_preview.length > 0) {
+        return renderToolResultReferenceText(storage.replacement_preview, storage.relative_path);
+    }
+    if (typeof storage?.replacement_text === 'string' && storage.replacement_text.length > 0) {
+        return storage.replacement_text;
+    }
+    if (toolCall.microcompact !== undefined) {
+        // 旧格式 microcompact 的自由文本原样透传（只读兼容，其中已内嵌当时的路径）；
+        // 新格式按结构化状态 + result_storage.relative_path 渲染
+        const legacyMicrocompactText = toolCall.microcompact.replacement_text;
+        if (typeof legacyMicrocompactText === 'string' && legacyMicrocompactText.length > 0) {
+            return legacyMicrocompactText;
+        }
+        return renderMicrocompactReplacementText(toolCall, storage?.relative_path);
+    }
+    return undefined;
 }
 
 /** Shared model-visible text for requests, summary input and token estimates. */
@@ -81,42 +107,69 @@ export function buildToolResultSummaryPreview(
     const preview = body.length > maxChars ? `${body.slice(0, maxChars)}...` : body;
     if (reference) return `${preview}\n${reference[0]}`;
 
-    const artifactPath = toolCall.microcompact?.artifact_path_hint ?? toolCall.result_storage?.relative_path;
-    // Artifact is part of the model summary protocol, not a user-interface label.
-    if (artifactPath && !preview.includes(artifactPath)) return `${preview}\n[Artifact: ${artifactPath}]`;
+    const artifactReference = resolveArtifactDisplayPath(toolCall.result_storage?.relative_path);
+    if (artifactReference && !preview.includes(artifactReference)) {
+        return `${preview}\n[Artifact: ${artifactReference}]`;
+    }
     return preview;
 }
 
 /**
  * 判定已压缩工具结果的原始 result 是否可以从序列化输出中安全剥离（issue #341）。
  *
- * 压缩流程（compact 主流程 / tool-result budget）都会先把原始结果落盘到
- * result_storage.relative_path 指向的 artifacts 文件；task JSON 里再保留一份原始
- * 副本会让大历史的落盘体积与全量序列化峰值成倍放大。按可恢复性分级剥离：
- * - result 与替代文本内容相同（compact 主流程落盘前已在内存里原地替换为同一文本，
- *   通常还是同一引用）→ 纯冗余副本，直接剥离；
+ * 压缩视图（结构化预览 / microcompact 状态 / 旧 free-text）都能独立还原模型可见内容，
+ * task JSON 里再保留一份副本会让大历史的落盘体积与序列化峰值成倍放大。按可恢复性分级：
+ * - result 与渲染后的替代文本完全相同（写入时即以内联渲染文本替换，或渲染回填的副本）
+ *   → 纯冗余副本，直接剥离；
  * - result 是被保留的原始文本（budget 流）→ 仅当 artifacts 原文文件真实存在时剥离；
- * - 原文文件缺失（旧 JSON 拷贝到没有 artifacts 的机器 / best-effort 落盘失败）→
- *   保持内联，绝不丢数据（向后兼容硬保证）。
+ * - 没有可用的替代视图 / 原文文件缺失 → 保持内联，绝不丢数据（向后兼容硬保证）。
  *
  * 供 ToolCall.toJSON 调用；对未压缩条目恒返回 false，序列化行为不变。
  * 注意：本函数必须保持只读语义（目录不存在时不创建）——toJSON 是纯读操作，
  * 不能因为序列化而改变文件系统状态。
  */
-export function canStripCompressedToolResultOriginal(toolCall: Pick<ToolCall, 'result' | 'result_storage'>): boolean {
+export function canStripCompressedToolResultOriginal(
+    toolCall: Pick<ToolCall, 'result' | 'result_storage' | 'microcompact' | 'tool_name' | 'args_object' | 'args_string'>
+): boolean {
     const result = toolCall.result;
-    const storage = toolCall.result_storage;
-    const replacement = storage?.replacement_text;
     if (typeof result !== 'string' || result.length === 0) {
         return false;
     }
-    if (typeof replacement !== 'string' || replacement.length === 0) {
-        return false;
-    }
-    if (result === replacement) {
-        // result 就是替代文本的副本：替代文本本身随 result_storage 持久化，
-        // 模型可见内容（resolveVisibleToolResultContent 优先取替代文本）不受影响
+    const storage = toolCall.result_storage;
+    const microcompact = toolCall.microcompact;
+
+    const legacyText = storage?.replacement_text;
+    if (typeof legacyText === 'string' && legacyText.length > 0 && result === legacyText) {
         return true;
+    }
+    const preview = storage?.replacement_preview;
+    if (
+        typeof preview === 'string' &&
+        preview.length > 0 &&
+        result === renderToolResultReferenceText(preview, storage?.relative_path)
+    ) {
+        return true;
+    }
+    if (microcompact !== undefined) {
+        const legacyMicrocompactText = microcompact.replacement_text;
+        if (
+            typeof legacyMicrocompactText === 'string' &&
+            legacyMicrocompactText.length > 0 &&
+            result === legacyMicrocompactText
+        ) {
+            return true;
+        }
+        if (result === renderMicrocompactReplacementText(toolCall, storage?.relative_path)) {
+            return true;
+        }
+    }
+
+    const hasReplacementView =
+        (typeof legacyText === 'string' && legacyText.length > 0) ||
+        (typeof preview === 'string' && preview.length > 0) ||
+        microcompact !== undefined;
+    if (!hasReplacementView) {
+        return false;
     }
     const relativePath = storage?.relative_path;
     if (typeof relativePath !== 'string' || relativePath.length === 0) {
