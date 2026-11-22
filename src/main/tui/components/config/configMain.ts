@@ -138,7 +138,7 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         icon: '🌎',
         titleKey: 'config.language.title',
         hintKey: 'config.language.title.hint',
-        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI.tui, onBack)
+        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI, onBack)
     },
     {
         value: 'shortcuts',

@@ -166,6 +166,14 @@ export function setRuntimeLocale(locale: string | null): void {
 }
 
 /**
+ * 读取当前运行时语言覆盖（如 `--language` 启动参数写入的值）。
+ * 有覆盖时 `getLocale()` 会忽略设置值，需要清掉覆盖才能让新设置生效。
+ */
+export function getRuntimeLocale(): string | null {
+    return runtimeLocaleOverride;
+}
+
+/**
  * 全局翻译函数：在「语言包增量 -> 内置词典」统一查找链上解析 key。
  * @param key - 翻译键名，格式为 '模块.键名'
  * @param params - 可选的插值参数对象，如 { id: 'xxx' } 会替换字符串中的 ${id}

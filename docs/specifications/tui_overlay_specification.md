@@ -99,7 +99,7 @@ this.box.addChild(this.list);
 
 - 通用提示、确认、进度控件应使用 `getOverlayColors()` 获取背景、前景和边框色。
 - 列表选择控件应优先使用 `defaultSelectListTheme`。
-- 不要为每个 prompt 发明完全独立的配色，除非该组件已有明确的产品语义，例如 dashboard 控制中心。
+- 不要为每个 prompt 发明完全独立的配色，除非该组件已有明确的产品语义。
 
 ### 5.5 高度
 
@@ -107,7 +107,7 @@ prompt 高度由内容自然决定，但应保持可扫描：
 
 - 普通 Info/Confirm 不应超过必要行数。
 - 列表类 prompt 应限制可见列表行数，过长内容应滚动或分页。
-- Dashboard 等高信息密度面板可以更高，但仍应保持在输入区 prompt 宿主中，不使用旧式 overlay。
+- 高信息密度面板可以更高，但仍应保持在输入区 prompt 宿主中，不使用旧式 overlay。
 
 ## 6. 交互规范
 
@@ -259,7 +259,6 @@ private close(): void {
 | `src/main/tui/components/taskswitcher.ts`           | 带内部搜索框和嵌套确认的输入区 prompt                                                 |
 | `src/main/tui/components/bookmarklist.ts`           | 简单列表类 prompt                                                                     |
 | `src/main/tui/components/notification.ts`           | 通知中心 prompt；toast 是旧式 overlay 的允许例外                                      |
-| `src/main/tui/components/dashboard.ts`              | 高信息密度输入区 prompt                                                               |
 | `src/main/tui/components/upgrade.ts`                | 异步选择/状态类 prompt                                                                |
 | `src/main/applications/channelmgr/plugins-tui.ts`   | 应用插件列表 prompt                                                                   |
 | `src/main/tui/components/config/shortcutsConfig.ts` | config 模式局部错误 Info prompt                                                       |

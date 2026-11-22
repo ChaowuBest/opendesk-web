@@ -786,10 +786,6 @@ export const enUs: Record<string, string> = {
     // Commands - Notification
     'notification.description': 'Open notification center, view all notifications',
 
-    // Commands - Dashboard
-    'dashboard.description': 'Open fullscreen dashboard, /dashboard bar toggles status bar',
-    'dashboard.bar.description': 'Show/hide status bar',
-
     // Commands - Usage
     'usage.description': 'View model usage statistics',
     'usage.title': 'Model Usage Statistics',
@@ -970,9 +966,8 @@ export const enUs: Record<string, string> = {
     'channel.disable.success': 'Plugin disabled: ${id}\n\nChannel reloaded automatically.',
 
     // Input StatusBar
-    'input.statusbar.switchmode': 'switch mode',
-    'input.statusbar.switchDisplay': 'switch display',
     'input.statusbar.help': 'help',
+    'input.statusbar.shell.mode': 'Shell command mode',
 
     // Help Command
     'help.name': 'help',
@@ -1387,6 +1382,15 @@ export const enUs: Record<string, string> = {
     'display.command.description': 'Set TUI output display for the current task',
     'display.command.title': 'Output Display',
     'display.command.usage': 'Usage: /display minimal|verbose',
+    'language.description': 'Switch the interface language',
+    'language.usage': 'Usage: /language auto|<locale> (e.g. /language zh-CN)',
+    'language.switched': 'Language switched to',
+    'language.not.found': 'Unknown language: ',
+    'language.available': 'Available languages',
+    'language.current': 'current',
+    'language.save.failed': 'Language setting was not saved',
+    'language.save.failed.hint':
+        'Writing the settings file failed; the interface and the setting keep the previous language.',
     'display.minimal.running.reading': 'Reading `${path}`…',
     'display.minimal.running.tool': 'Running ${tool}',
     'display.minimal.running.thinking': 'Thinking…',

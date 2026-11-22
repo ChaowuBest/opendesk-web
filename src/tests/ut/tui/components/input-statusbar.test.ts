@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { TUI, visibleWidth, type Terminal } from '@earendil-works/pi-tui';
 import { AgentInputArea, TaskStatusBar } from '../../../../main/tui/components/input';
 import { setRuntimeLocale } from '../../../../locale/index';
+import { Setting } from '../../../../main/utils/setting';
 
 const initialChalkLevel = chalk.level;
 
@@ -40,6 +41,7 @@ class TestTerminal implements Terminal {
 
 describe('TaskStatusBar', () => {
     beforeEach(() => {
+        Setting.updateInstanceData({});
         setRuntimeLocale('en-US');
         chalk.level = 3;
     });
@@ -58,24 +60,26 @@ describe('TaskStatusBar', () => {
         expect(line).not.toContain('previous message');
     });
 
-    test('does not show the output display shortcut in the task status bar', () => {
+    test('does not show switch hints when no mode or output level is set', () => {
         const statusBar = new TaskStatusBar();
 
-        expect(stripAnsi(statusBar.render(120).join('\n'))).not.toContain('Ctrl+O');
+        const line = stripAnsi(statusBar.render(120).join('\n'));
+
+        expect(line).not.toContain('Ctrl+O');
+        expect(line).not.toContain('Ctrl+K');
     });
 
     test.each([
         ['minimal', 'Minimal display'],
         ['verbose', 'Detailed']
-    ] as const)('shows the current %s output level without a label or shortcut', (level, expected) => {
+    ] as const)('shows the current %s output level with its switch hint', (level, expected) => {
         const statusBar = new TaskStatusBar();
         statusBar.update({ outputDisplayLevel: level });
 
         const line = stripAnsi(statusBar.render(120).join('\n'));
 
-        expect(line).toContain(expected);
+        expect(line).toContain(`${expected}   [Ctrl+O]`);
         expect(line).not.toContain('Display:');
-        expect(line).not.toContain('Ctrl+O');
     });
 
     test('localizes the output level shown in the task status bar', () => {
@@ -88,6 +92,19 @@ describe('TaskStatusBar', () => {
         statusBar.update({ outputDisplayLevel: 'verbose' });
 
         expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细显示');
+    });
+
+    test('localizes the shell command mode label and follows a locale switch', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ shellMode: true });
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('Shell command mode');
+
+        // 语言切换后由 TUI 调用 invalidate()，状态栏标签按新语言重绘
+        setRuntimeLocale('zh-CN');
+        statusBar.invalidate();
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('Shell 命令模式');
     });
 
     test('keeps the status bar background across the full width when the terminal is narrow', () => {
@@ -132,6 +149,79 @@ describe('TaskStatusBar', () => {
             expect(lines[0]).not.toContain('\x1b[0m');
             expect(visibleWidth(lines[0])).toBe(width);
         }
+    });
+
+    test('shows the mode switch shortcut right after the mode name', () => {
+        Setting.updateInstanceData({ cli_config: { shortcuts: { switch_mode: 'ctrl+u' } } });
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ modeDisplay: '⚡ Efficiency', outputDisplayLevel: 'minimal' });
+
+        // 120 宽时留白 3 个空格；提示紧贴分隔线（只有一个空格），输出显示的快捷键跟在显示级别后面
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain(
+            '⚡ Efficiency   [Ctrl+U] │ Minimal display   [Ctrl+O]'
+        );
+    });
+
+    test('narrows the hint gap as the terminal narrows', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ modeDisplay: '⚡ Efficiency' });
+
+        expect(stripAnsi(statusBar.render(200).join('\n'))).toContain('⚡ Efficiency    [Ctrl+K]');
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('⚡ Efficiency   [Ctrl+K]');
+        expect(stripAnsi(statusBar.render(96).join('\n'))).toContain('⚡ Efficiency  [Ctrl+K]');
+        expect(stripAnsi(statusBar.render(80).join('\n'))).toContain('⚡ Efficiency [Ctrl+K]');
+    });
+
+    test('re-reads the shortcut configuration after being invalidated', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ modeDisplay: '⚡ Efficiency' });
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('[Ctrl+K]');
+
+        // 宽度与 data 都不变，只有快捷键配置变了：设置提交后由 TUI 调用 invalidate() 触发重绘
+        Setting.updateInstanceData({ cli_config: { shortcuts: { switch_mode: 'ctrl+u' } } });
+        statusBar.invalidate();
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('[Ctrl+U]');
+    });
+
+    test('hides the hint when its shortcut is configured as an empty string', () => {
+        Setting.updateInstanceData({ cli_config: { shortcuts: { switch_mode: '' } } });
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ modeDisplay: '⚡ Efficiency' });
+
+        const line = stripAnsi(statusBar.render(120).join('\n'));
+
+        expect(line).toContain('⚡ Efficiency');
+        expect(line).not.toContain('[]');
+        expect(line).not.toContain('[Ctrl+K]');
+    });
+
+    test('drops the switch hints when the row is too narrow to fit them', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({
+            modeDisplay: '⚡ Efficiency',
+            outputDisplayLevel: 'minimal',
+            modelName: 'deepseek-v4-pro',
+            workspace: '/storage/Users/currentUser/very-long-workspace-name',
+            taskName: 'Ollama hinter 端侧推理'
+        });
+
+        const line = stripAnsi(statusBar.render(60).join('\n'));
+
+        expect(line).not.toContain('[Ctrl+K]');
+        expect(line).not.toContain('[Ctrl+O]');
+    });
+
+    test('keeps the first hint and drops the second when only one fits', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ modeDisplay: '⚡ Efficiency', outputDisplayLevel: 'minimal' });
+
+        // 50 宽只够放下模式提示：两个提示都应该完整展示，而不是截断成半个括号
+        const line = stripAnsi(statusBar.render(50).join('\n'));
+
+        expect(line).toContain('⚡ Efficiency [Ctrl+K]');
+        expect(line).not.toContain('[Ctrl+O]');
     });
 
     test('does not add vertical padding around the regular editor', () => {

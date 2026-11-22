@@ -762,10 +762,6 @@ export const zhCn: Record<string, string> = {
     // Commands - Notification
     'notification.description': '打开通知中心，查看所有通知',
 
-    // Commands - Dashboard
-    'dashboard.description': '打开全屏仪表盘，/dashboard bar 可切换底栏状态条',
-    'dashboard.bar.description': '显示/隐藏底栏状态条',
-
     // Commands - Usage
     'usage.description': '查看模型用量统计',
     'usage.title': '模型用量统计',
@@ -943,9 +939,8 @@ export const zhCn: Record<string, string> = {
     'channel.disable.success': '插件已禁用: ${id}\n\n消息渠道已自动重新加载。',
 
     // Input StatusBar
-    'input.statusbar.switchmode': '切换模式',
-    'input.statusbar.switchDisplay': '切换显示',
     'input.statusbar.help': '帮助',
+    'input.statusbar.shell.mode': 'Shell 命令模式',
 
     // Help Command
     'help.name': 'help',
@@ -1349,6 +1344,14 @@ export const zhCn: Record<string, string> = {
     'display.command.description': '设置当前任务的 TUI 输出显示',
     'display.command.title': '输出显示',
     'display.command.usage': '用法: /display minimal|verbose',
+    'language.description': '切换界面语言',
+    'language.usage': '用法: /language auto|<语言>（如 /language zh-CN）',
+    'language.switched': '已切换语言',
+    'language.not.found': '未知语言: ',
+    'language.available': '可用语言',
+    'language.current': '当前',
+    'language.save.failed': '语言设置未保存',
+    'language.save.failed.hint': '写入设置文件失败，界面与设置仍保持原来的语言。',
     'display.minimal.running.reading': '正在读取 `${path}`…',
     'display.minimal.running.tool': '正在执行 ${tool}',
     'display.minimal.running.thinking': '正在思考…',

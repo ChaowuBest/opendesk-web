@@ -1455,11 +1455,17 @@ function getTaskTrashDirectory(taskId: string, ensureExists: boolean = true): st
 export type ShortcutsConfig = z.infer<typeof ShortcutsSchema>;
 
 /**
+ * 全部走 schema 默认值的快捷键配置，供 getShortcuts 在未配置时复用，避免渲染热路径反复 parse。
+ * 兜底时返回的是共享引用，冻结以免被就地改写污染整个进程的默认键位。
+ */
+const DEFAULT_SHORTCUTS_CONFIG: ShortcutsConfig = Object.freeze(ShortcutsSchema.parse({}));
+
+/**
  * 获取当前已配置的快捷键（带默认值回退）
  */
 function getShortcuts(): ShortcutsConfig {
     const data = Setting.getInstance().getData();
-    return (data as any).cli_config?.shortcuts ?? ShortcutsSchema.parse({});
+    return (data as any).cli_config?.shortcuts ?? DEFAULT_SHORTCUTS_CONFIG;
 }
 
 function isDeveloperModeEnabled(): boolean {
