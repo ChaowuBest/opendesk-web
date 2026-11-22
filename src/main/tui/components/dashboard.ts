@@ -22,6 +22,25 @@ import { t } from '../../../locale/index.js';
 
 const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
 
+/** 底栏 cell 之间的分隔符（渲染时套用 ghost 配色） */
+const DASHBOARD_SEPARATOR = ' • ';
+
+/** 免责声明在窄终端下允许截断到的最小可见宽度，再窄就整块不显示 */
+const MIN_DISCLAIMER_VISIBLE_WIDTH = 16;
+
+/** 按可见宽度（CJK 记 2 列）截断字符串，不破坏 ANSI 无关的原始文案 */
+function truncateToVisibleWidth(text: string, maxWidth: number): string {
+    let truncated = '';
+    let used = 0;
+    for (const char of text) {
+        const charWidth = visibleWidth(char);
+        if (used + charWidth > maxWidth) break;
+        truncated += char;
+        used += charWidth;
+    }
+    return truncated;
+}
+
 export function shouldShowDashboardStatusBlock(bundleName: string): boolean {
     // 被插件禁用的应用（disableApplication）不再贡献状态块：图标已隐藏、工具集与事件已停用。
     // 仅隐藏入口（hideApplication）的应用仍在后台运行，状态照常显示。
@@ -80,8 +99,14 @@ const C = {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export class DashboardBar implements Component {
-    /** 每个元素是一段已含 ANSI 着色的单行字符串 */
-    private cells: string[] = [];
+    /** 时钟左侧的 cell（venv / conda prompt），宽度不足时最先被隐藏 */
+    private leadingCells: string[] = [];
+    /** 时钟 cell（始终显示，放在免责声明左侧） */
+    private clockCell = '';
+    /** 帮助快捷键提示（放在免责声明右侧） */
+    private helpCell = '';
+    /** 帮助提示右侧的 cell（通知角标、应用状态块），宽度不足时从右到左依次隐藏 */
+    private trailingCells: string[] = [];
     private refreshTimer?: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>;
     private invalidated = true;
     private cachedOutput?: string[];
@@ -139,13 +164,31 @@ export class DashboardBar implements Component {
         return `${SlashCommandRegistry.formatKeyLabel(getShortcuts().show_help)} ${t('input.statusbar.help')}`;
     }
 
+    /**
+     * 免责声明位于时钟与帮助提示之间，文案与桌面端复用同一个本地化键 `common.aiDisclaimer`。
+     * 英文文案较长，终端较窄时按可见宽度截断自身，避免整块被 ResponsiveBar 从右向左隐藏掉。
+     */
+    private buildDisclaimerCell(innerWidth: number, sepWidth: number): string | null {
+        const text = t('common.aiDisclaimer');
+        const clockWidth = visibleWidth(this.clockCell);
+        if (visibleWidth(text) + clockWidth + sepWidth <= innerWidth) {
+            return C.dim(text);
+        }
+        // 连时钟 + 帮助提示都保留时剩下的空间不足，优先压缩免责声明自身
+        const budget = innerWidth - clockWidth - visibleWidth(this.helpCell) - sepWidth * 2;
+        if (budget < MIN_DISCLAIMER_VISIBLE_WIDTH) {
+            return null;
+        }
+        return C.dim(`${truncateToVisibleWidth(text, budget - 1)}…`);
+    }
+
     private async refresh(): Promise<void> {
-        const cells: string[] = [];
+        const leadingCells: string[] = [];
 
         const settingData = Setting.getInstance().getData();
         const pythonEnvPrompt = shouldShowPythonEnvironmentPrompt(settingData) ? getPythonEnvironmentPrompt() : null;
         if (pythonEnvPrompt) {
-            cells.push(C.glow(pythonEnvPrompt));
+            leadingCells.push(C.glow(pythonEnvPrompt));
         }
 
         // 时钟（始终显示，放在 venv prompt 后面，最后被隐藏）
@@ -154,15 +197,18 @@ export class DashboardBar implements Component {
         const mm = String(now.getMinutes()).padStart(2, '0');
         const weekdayKey = `datetime.weekday.${['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()]}`;
         const weekdayName = t(weekdayKey);
-        cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
+        this.leadingCells = leadingCells;
+        this.clockCell = `🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`;
         // 快捷键提示（键位从 TUI 快捷键配置中读取）
-        cells.push(this.buildHelpHintCell());
+        this.helpCell = this.buildHelpHintCell();
+
+        const trailingCells: string[] = [];
 
         // 通知角标
         const badge = getNotificationBadge();
         if (badge) {
-            cells.push(badge);
+            trailingCells.push(badge);
         }
 
         // 从所有应用拉取状态
@@ -172,11 +218,11 @@ export class DashboardBar implements Component {
         const results = await Promise.allSettled(apps.map((app) => app.getTUIStatusBlock()));
         for (const result of results) {
             if (result.status === 'fulfilled' && result.value) {
-                cells.push(result.value);
+                trailingCells.push(result.value);
             }
         }
 
-        this.cells = cells;
+        this.trailingCells = trailingCells;
         this.initialFetchDone = true;
         this.invalidated = true;
         this.requestRender();
@@ -184,6 +230,11 @@ export class DashboardBar implements Component {
 
     invalidate(): void {
         this.invalidated = true;
+        // cell 内容中含有本地化文案（免责声明、帮助提示），语言切换与通知变化都会走到这里，
+        // 因此顺带重新拉取 cell，避免文案要等到下一次定时刷新才更新。
+        if (this.initialFetchDone) {
+            void this.refresh();
+        }
     }
 
     render(width: number): string[] {
@@ -200,17 +251,21 @@ export class DashboardBar implements Component {
             return this.cachedOutput;
         }
 
-        const responsiveCells: ResponsiveCell[] = this.cells.map((text) => ({ text }));
+        const sep = C.ghost(DASHBOARD_SEPARATOR);
+        const sepWidth = visibleWidth(sep);
+        const disclaimerCell = this.buildDisclaimerCell(width - 2, sepWidth);
 
-        if (responsiveCells.length === 0) {
-            this.cachedOutput = [];
-            this.invalidated = false;
-            return [];
-        }
+        const responsiveCells: ResponsiveCell[] = [
+            ...this.leadingCells,
+            this.clockCell,
+            ...(disclaimerCell ? [disclaimerCell] : []),
+            this.helpCell,
+            ...this.trailingCells
+        ].map((text) => ({ text }));
 
-        const sep = C.ghost(' • ');
         const line = renderResponsiveCells(responsiveCells, width, {
             separator: sep,
+            separatorWidth: sepWidth,
             horizontalPadding: 1
         });
 
