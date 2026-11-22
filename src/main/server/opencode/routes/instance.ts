@@ -14,6 +14,15 @@ import path from 'path';
 import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { SkillRegistry } from '../../../aikernel/skill.js';
+import { Setting } from '../../../utils/setting.js';
+import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
+import {
+    getOpenCodeProject,
+    getOpenCodeVcsInfo,
+    permissionRulesetFromConfig,
+    skillsToOpenCodeCommands,
+    toOpenCodeAgent
+} from '../instance-info.js';
 import { getOpenCodeSessionTime } from '../session-info.js';
 import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '../workspace.js';
 
@@ -21,7 +30,7 @@ import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '..
  * 实例级别路由。
  * 对应 opencode 的 GET /path, GET /command, GET /agent, POST /instance/dispose 等。
  */
-export function InstanceRoutes() {
+export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
     const app = new Hono();
 
     // GET /path - 获取路径信息
@@ -36,30 +45,19 @@ export function InstanceRoutes() {
         });
     });
 
-    // GET /command - 列出所有命令
-    app.get('/command', (c) => {
-        const commands = AgentRegistry.getAgents().flatMap((agent) => {
-            return agent.supportedModes().map((mode) => ({
-                id: `${agent.agentId}:${mode.id}`,
-                name: mode.id,
-                description: mode.description
-            }));
-        });
-        return c.json(commands);
+    // GET /command - 列出所有命令（用户可调用的 Skill）
+    app.get('/command', async (c) => {
+        const skills = await SkillRegistry.getInstance().getUserInvocableSkills();
+        return c.json(skillsToOpenCodeCommands(skills));
     });
 
     // GET /agent - 列出所有 Agent
     app.get('/agent', (c) => {
-        const agents = AgentRegistry.getAgents().map((agent) => ({
-            name: agent.agentId,
-            type: agent.agentType,
-            dispatchable: agent.dispatchable,
-            modes: agent.supportedModes().map((m) => ({
-                id: m.id,
-                description: m.description
-            }))
-        }));
-        return c.json(agents);
+        // 只有启用并生效的配置权限才会真正作用于任务，否则不对外宣称规则
+        const permission = permissionRuntime?.getSnapshot().policy
+            ? permissionRulesetFromConfig(Setting.getInstance().getData().permission)
+            : [];
+        return c.json(AgentRegistry.getAgents().map((agent) => toOpenCodeAgent(agent, permission)));
     });
 
     // GET /skill - 列出所有 Skills
@@ -81,26 +79,13 @@ export function InstanceRoutes() {
     });
 
     // GET /project/current - 当前项目信息（opencode TUI bootstrap 需要）
-    app.get('/project/current', (c) => {
-        const directory = getRequestWorkspace(c);
-        const name = path.basename(directory) || 'unknown';
-        return c.json({
-            id: `proj_${name}`,
-            name,
-            path: directory,
-            directory
-        });
+    app.get('/project/current', async (c) => {
+        return c.json(await getOpenCodeProject(getRequestWorkspace(c)));
     });
 
-    // GET /vcs - VCS（版本控制）信息 stub
-    app.get('/vcs', (c) => {
-        const directory = getRequestWorkspace(c);
-        return c.json({
-            sha: '',
-            branch: '',
-            dirty: false,
-            root: directory
-        });
+    // GET /vcs - 工作空间所在 git 仓库的当前分支与默认分支
+    app.get('/vcs', async (c) => {
+        return c.json(await getOpenCodeVcsInfo(getRequestWorkspace(c)));
     });
 
     // GET /lsp - LSP 状态 stub

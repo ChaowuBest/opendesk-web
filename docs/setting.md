@@ -198,6 +198,7 @@ Langfuse Observation 只发送到 Langfuse，不会互相冲突。完整的观�
 - `PATCH /global/config` 和 `PATCH /config` 可整体替换 `permission` 并立即影响已有任务及子任务。
 - PATCH `{ "permission": null }` 会移除配置权限并立即回退到 Mode；不包含 `permission` 的 PATCH 不刷新权限。
 - 空 PATCH 或 `{ "config": {} }` 会从磁盘重新读取 `setting.json`，并热重载其中的权限规则。
+- 配置权限生效时，`GET /agent` 中每个 Agent 的 `permission` 为该配置按 OpenCode 规则展开后的列表；未生效时为空列表。
 
 示例配置结构：
 

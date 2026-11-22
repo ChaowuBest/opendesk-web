@@ -12,7 +12,13 @@
 import { Hono } from 'hono';
 import { serve as honoServe } from '@hono/node-server';
 import { GlobalRoutes } from './routes/global.js';
-import { SessionRoutes, getServerDefaultModel, setServerDefaultModel, disposeTaskNameSyncSubscriber, registerTaskNameSyncSubscriber } from './routes/session.js';
+import {
+    SessionRoutes,
+    getServerDefaultModel,
+    setServerDefaultModel,
+    disposeTaskNameSyncSubscriber,
+    registerTaskNameSyncSubscriber
+} from './routes/session.js';
 import { ConfigRoutes } from './routes/config.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { EventRoutes } from './routes/event.js';
@@ -63,7 +69,7 @@ function create(opts: {
 
     app.route('/global', GlobalRoutes(opts.permissionRuntime));
     app.route('/', EventRoutes());
-    app.route('/', InstanceRoutes());
+    app.route('/', InstanceRoutes(opts.permissionRuntime));
     app.route('/', McpRoutes());
     app.route('/', PermissionRoutes());
     app.route('/', QuestionRoutes());

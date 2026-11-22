@@ -11,6 +11,7 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import type { UserMessage } from '@opencode-ai/sdk/v2/types';
 import crypto from 'crypto';
 import path from 'path';
 import { BlockList, isIP } from 'node:net';
@@ -145,13 +146,11 @@ function getModelIDFromModelRef(modelRef: unknown): string | undefined {
 interface OpenCodeModelInfo {
     providerID: string;
     modelID: string;
-    id: string;
 }
 
 const EMPTY_OPEN_CODE_MODEL_INFO: OpenCodeModelInfo = {
     providerID: '',
-    modelID: '',
-    id: ''
+    modelID: ''
 };
 
 const internalModelAddresses = new BlockList();
@@ -217,8 +216,7 @@ function getOpenCodeModelInfo(task: any, requestModelRef?: unknown): OpenCodeMod
         getModelIDFromModelRef(requestModelRef) ??
         resolvedAlias ??
         '';
-    const id = providerID && modelID ? `${providerID}/${modelID}` : modelID;
-    return { providerID, modelID, id };
+    return { providerID, modelID };
 }
 
 function buildOpenCodeTelemetryMetadata(
@@ -808,10 +806,8 @@ function makeAssistantMessageInfo(
 function makeUserMessageInfo(
     msgId: string,
     sessionID: string,
-    workspace = getTaskWorkspace(undefined),
     opts: { created?: number; modelInfo?: OpenCodeModelInfo } = {}
-): Record<string, unknown> {
-    const dir = workspace;
+): UserMessage {
     const modelInfo = opts.modelInfo ?? EMPTY_OPEN_CODE_MODEL_INFO;
     return {
         id: msgId,
@@ -821,9 +817,8 @@ function makeUserMessageInfo(
             created: opts.created ?? Date.now()
         },
         agent: 'explore',
-        model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID, id: modelInfo.id },
-        path: { cwd: dir, root: dir }
-    };
+        model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
+    } satisfies UserMessage;
 }
 
 /**
@@ -981,8 +976,7 @@ function messageToApiFormat(
                 created: msg.timestamp || Date.now()
             },
             agent: 'explore',
-            model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID, id: modelInfo.id },
-            path: { cwd: dir, root: dir }
+            model: { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
         },
         parts
     };
@@ -1008,7 +1002,7 @@ function compactBoundaryToApiMessages(
     const created = compactBoundaryTimestamp(boundary);
     const userMessageID = getStableMessageId(undefined, `${sessionID}:compaction:${boundaryID}:user`);
     const assistantMessageID = getStableMessageId(undefined, `${sessionID}:compaction:${boundaryID}:assistant`);
-    const userInfo = makeUserMessageInfo(userMessageID, sessionID, workspace, { created, modelInfo });
+    const userInfo = makeUserMessageInfo(userMessageID, sessionID, { created, modelInfo });
     const compactionPart = {
         id: getStablePartId(userMessageID, 'compaction'),
         sessionID,
@@ -1575,7 +1569,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp, modelInfo })
+                info: makeUserMessageInfo(userMsgId, sessionID, { created: chunk.timestamp, modelInfo })
             }
         });
 
@@ -1593,7 +1587,7 @@ export function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp, modelInfo })
+                info: makeUserMessageInfo(userMsgId, sessionID, { created: chunk.timestamp, modelInfo })
             }
         });
 
@@ -1874,8 +1868,7 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
             if (result.compacted && result.boundary && isCompactBoundaryMessage(result.boundary)) {
                 publishCompactionMessages(result.boundary, task.chat_context.messages, sessionID, workspace, {
                     providerID,
-                    modelID,
-                    id: modelID
+                    modelID
                 });
             }
             EventBus.publish({
