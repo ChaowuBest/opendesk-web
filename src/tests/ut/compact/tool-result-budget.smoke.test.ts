@@ -83,7 +83,12 @@ describe('compact smoke: tool result budget', () => {
             persistArtifacts: false
         });
         expect(projection.stats.groupCount).toBe(3);
-        expect(projection.overrideRecords.map((record) => record.resultId)).toEqual(['first', 'fourth', 'second', 'third']);
+        expect(projection.overrideRecords.map((record) => record.resultId)).toEqual([
+            'first',
+            'fourth',
+            'second',
+            'third'
+        ]);
     });
 
     test('readFile 仍默认排除在 Step 4 tool result budget 之外，并兼容带 toolset 前缀的工具名', () => {
@@ -150,10 +155,18 @@ describe('compact smoke: tool result budget', () => {
         const resultId = toolCall.result_storage?.result_id;
         expect(resultId).toBeDefined();
         expect(toolCall.result).toBe(largeResult);
-        expect(toolCall.result_storage?.replacement_text).toContain('完整输出已保存至');
-        expect(projection.overrides.get(resultId!)).toBe(toolCall.result_storage?.replacement_text);
-        expect(projection.replacementState.replacements.get(resultId!)?.replacement_text).toBe(
-            toolCall.result_storage?.replacement_text
+        // 存储层是结构化预览（不含路径）；模型可见文本由 override 提供（含本机绝对路径）
+        expect(toolCall.result_storage?.replacement_preview).toBeTruthy();
+        expect(toolCall.result_storage?.replacement_preview).not.toContain('完整输出已保存至');
+        const overrideText = projection.overrides.get(resultId!);
+        expect(overrideText).toContain('完整输出已保存至');
+        expect(overrideText).toContain(toolCall.result_storage?.replacement_preview);
+        // replacement_state 记录同样存结构化预览（新格式）
+        expect(projection.replacementState.replacements.get(resultId!)?.replacement_preview).toBe(
+            toolCall.result_storage?.replacement_preview
+        );
+        expect(projection.replacementState.replacements.get(resultId!)?.relative_path).toBe(
+            toolCall.result_storage?.relative_path
         );
         expect(projection.stats.newlySelectedCount).toBe(1);
         expect(projection.stats.persistedCount).toBe(1);
@@ -169,7 +182,8 @@ describe('compact smoke: tool result budget', () => {
             projection.replacementState,
             { groupBudgetChars: 1_000 }
         );
-        expect(rerun.overrides.get(resultId!)).toBe(toolCall.result_storage?.replacement_text);
+        // 重放时按结构化记录重新渲染（与首次 override 文本逐字节一致）
+        expect(rerun.overrides.get(resultId!)).toBe(projection.overrides.get(resultId!));
         expect(rerun.stats.reappliedCount).toBe(1);
     });
 });

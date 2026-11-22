@@ -20,12 +20,22 @@ import {
 import { buildActiveContextView } from '../compaction/context-view.js';
 import type { ActiveContextView, AssistantRoundRef } from '../compaction/types.js';
 import { resolveToolResultReplacement, resolveVisibleToolResultContent } from '../tool-result-content.js';
+import type { ToolResultImage } from '../task/image-externalization.js';
 
 export interface AdapterMessageBuildOptions {
     activeContext?: ActiveContextView;
     toolResultOverrides?: Map<string, string>;
     assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
     requestTailText?: string;
+    /** 发起请求的任务 id：仅供外置图片回灌（withHydratedToolImages）做严格的
+     * artifacts/<taskId>/images/ 目录校验，不参与消息投影与序列化。 */
+    taskId?: string;
+    /**
+     * 已外置工具结果图片的按需回灌（toolCallId → 完整图片）。
+     * 由请求构建入口在 buildMessages 前通过 hydrateExternalizedToolImages 生成，
+     * 仅存活于单次请求构建期间；适配器优先使用，缺失时回退到内联缩略图。
+     */
+    hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>;
 }
 
 export interface AssistantReplayInstruction {
@@ -38,6 +48,7 @@ export interface AdapterContextProjection {
     messages: ChatMessage[];
     toolResultOverrides?: Map<string, string>;
     assistantReplayByMessageId: Map<string, AssistantReplayInstruction>;
+    hydratedToolImages?: ReadonlyMap<string, ToolResultImage[]>;
 }
 
 export interface AdapterToolDefinition {
@@ -127,7 +138,8 @@ export function buildContextProjection(
         systemPrompt: chatContext.system_prompt,
         messages,
         toolResultOverrides: options.toolResultOverrides,
-        assistantReplayByMessageId
+        assistantReplayByMessageId,
+        hydratedToolImages: options.hydratedToolImages
     };
 }
 

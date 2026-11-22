@@ -1005,6 +1005,53 @@ describe('opencode session routes', () => {
         expect(messages[0].parts[0].input).toBeUndefined();
     });
 
+    test('GET /session/:id/message exposes the replacement text for reloaded compressed tool results', async () => {
+        // 重载画像（issue #341）：已压缩工具结果序列化时 result 被剥离，opencode API
+        // 必须经 resolver 显示替代文本，而不是输出 undefined
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-tool-compressed';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(0, 'call_read_compressed', 'filemgr-readFile', '{"file_path":"README.md"}');
+        toolCall.status = 'success';
+        delete toolCall.result;
+        const replacementText =
+            'preview of file content\n完整输出已保存至: D:\\data\\artifacts\\t1\\tool-results\\x.txt';
+        toolCall.result_storage = {
+            result_id: 'result-compressed-1',
+            storage_version: 1,
+            relative_path: 'artifacts\\t1\\tool-results\\result-compressed-1.txt',
+            replacement_text: replacementText
+        };
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                callID: 'call_read_compressed',
+                state: expect.objectContaining({
+                    status: 'completed',
+                    output: replacementText
+                })
+            })
+        );
+    });
+
     test('GET /session/:id/message maps OpenDesk subtasks to opencode task parts', async () => {
         mockSessionDependencies();
         mockSetting();

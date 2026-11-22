@@ -19,7 +19,7 @@ import { describeCompactPlanVariant, logCompactInfo } from './compaction/compact
 import { compactFullContext, type FullCompactRunOptions } from './compaction/full-compact.js';
 import {
     buildToolResultReplacementText,
-    getToolResultArtifactPath,
+    getToolResultArtifactRelativePath,
     isToolResultCompressionExcluded,
     persistToolResultForToolCall,
     truncateToolResultForPreview
@@ -166,10 +166,11 @@ function afterToolCallLargeResultToArtifact({ task, toolCall }: AfterToolCallExe
     const previousResultStorage = toolCall.result_storage ? { ...toolCall.result_storage } : undefined;
     try {
         const resultId = toolCall.ensureResultStorage().result_id;
-        const fullPath = getToolResultArtifactPath(task.task_id, resultId, true);
-        const replacementText = buildToolResultReplacementText(preview.previewText, fullPath);
-        const persisted = persistToolResultForToolCall(task.task_id, toolCall, result, replacementText);
-        toolCall.result = persisted.metadata.replacement_text ?? replacementText;
+        // 存储层保存结构化预览（不含路径）；request/展示用的文本在这里按当前数据根渲染
+        const artifactRelativePath = getToolResultArtifactRelativePath(task.task_id, resultId);
+        const replacementText = buildToolResultReplacementText(preview.previewText, artifactRelativePath);
+        const persisted = persistToolResultForToolCall(task.task_id, toolCall, result, preview.previewText);
+        toolCall.result = replacementText;
 
         const sizeKB = (result.length / 1024).toFixed(1);
         const lineCount = result.split('\n').length;

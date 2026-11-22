@@ -80,6 +80,13 @@ export interface ToolResultStorageMetadata {
     original_chars?: number;
     original_lines?: number;
     persisted_at?: string;
+    /**
+     * 结构化替代视图的预览正文（原始结果前 N 个字符的纯文本，不含路径与引导语）。
+     * 模型可见文本由 renderToolResultReferenceText 在边界生成（预览 + 产物定位行），
+     * 存储层不再内嵌绝对路径。
+     */
+    replacement_preview?: string;
+    /** 旧格式（本改动之前）的自由文本替代文本：只读兼容，不再写入。 */
     replacement_text?: string;
 }
 
@@ -89,8 +96,13 @@ export interface ToolCallMicrocompactMetadata {
     cleared_at: string;
     original_chars?: number;
     original_lines?: number;
+    /**
+     * 旧格式（本改动之前）的自由文本替代文本：只读兼容，不再写入。
+     * 旧版本的 artifact_path_hint（单独存的路径）同样已废弃——旧文本里本就带着路径，
+     * 展示时原样透传；新格式的模型可见文本由 renderMicrocompactReplacementText
+     * 按 result_storage.relative_path 在边界生成。
+     */
     replacement_text?: string;
-    artifact_path_hint?: string;
 }
 
 export interface BaseChatToolCall {

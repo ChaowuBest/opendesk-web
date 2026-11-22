@@ -17,6 +17,7 @@ import { estimateTextTokens } from '../../../utils/token-estimation.js';
 import { t, getLocale } from '../../../locale/index.js';
 import { formatLocaleDisplayName } from '../../../common/locale/pack.js';
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
+import { renderToolResultReferenceText } from '../tool-result-content.js';
 import {
     resolveContextWindow,
     resolveMaxOutputTokens,
@@ -108,6 +109,7 @@ import {
     type SimplifiedTaskSnapshot
 } from '../task/serializer.js';
 import { getTaskChangesFromTask, type TaskChangesResult } from '../task/changes.js';
+import { migrateInlineToolResultImages } from '../task/image-externalization.js';
 import {
     buildToolsetsForTask,
     ensureToolsResolvedForTask,
@@ -266,6 +268,62 @@ function generateShortTaskId(): string {
 }
 
 /**
+ * 按任务 id 删除其全部落盘文件：tasks/<id>.json、artifacts/<id>/ 整棵树
+ * （外置原图、工具结果原文、session-memory 等）与旧版 tasks/artifacts/<id>_* 目录。
+ *
+ * 供 TaskState.cleanup() 与 TaskManagerState.cleanupOldTaskFiles（散落任务 json 的
+ * 产物兜底清理）共用。尽力而为语义：各段独立 try/catch，失败只记日志不抛错——
+ * 删除链路（含子任务递归）不能被单任务的单段清理失败打断。
+ * taskId 必须先过安全形状校验再拼路径：散落文件名可能畸形（如 `...json`），
+ * 直接拼 `artifacts/<basename>` 有误删 `artifacts/..` 之类路径的风险。
+ */
+export function removeTaskFilesById(taskId: string): void {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) {
+        logger.warn(`removeTaskFilesById: refusing malformed task id: ${JSON.stringify(taskId)}`);
+        return;
+    }
+    const taskDirectory = getTaskDirectory();
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, false);
+
+    // 1. Delete task JSON configuration
+    const taskJsonPath = path.join(taskDirectory, `${taskId}.json`);
+    if (fs.existsSync(taskJsonPath)) {
+        try {
+            fs.unlinkSync(taskJsonPath);
+        } catch (err) {
+            logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
+        }
+    }
+
+    // 2. Delete task-scoped artifacts under artifacts/<taskId>/
+    if (fs.existsSync(taskArtifactDirectory)) {
+        try {
+            fs.rmSync(taskArtifactDirectory, { recursive: true, force: true });
+        } catch (err) {
+            logger.error(
+                `Failed to cleanup task artifact directory ${taskArtifactDirectory}: ${(err as Error).message}`
+            );
+        }
+    }
+
+    // 3. Compatibility cleanup for older task-scoped artifacts under tasks/artifacts/
+    const legacyArtifactsDir = path.join(taskDirectory, 'artifacts');
+    if (fs.existsSync(legacyArtifactsDir)) {
+        try {
+            const entries = fs.readdirSync(legacyArtifactsDir);
+            for (const entry of entries) {
+                if (!entry.startsWith(`${taskId}_`)) {
+                    continue;
+                }
+                fs.rmSync(path.join(legacyArtifactsDir, entry), { recursive: true, force: true });
+            }
+        } catch (err) {
+            logger.error(`Failed to cleanup legacy artifacts for task ${taskId}: ${(err as Error).message}`);
+        }
+    }
+}
+
+/**
  * live 渲染一致性签名。
  *
  * live tick 只会改动 toolcall 上的三样东西：状态、结果文本长度、待送达增量。
@@ -323,6 +381,10 @@ export class TaskState {
     private _loading: boolean = false;
     /** 任务数据文件已损坏（缺失或无法解析）。ensureLoaded() 降级时标记为 true。 */
     _corrupted: boolean = false;
+    /** 旧任务内联图片外置迁移的单飞 Promise（见 pendingImageMigration）。 */
+    private _imageMigrationPromise?: Promise<number>;
+    /** 本实例已完成过一次迁移检查（提交接缝负责后续新图片，无需重复全量遍历）。 */
+    private _imageMigrationDone: boolean = false;
 
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -985,6 +1047,44 @@ export class TaskState {
     }
 
     /**
+     * 旧任务内联图片的外置迁移（issue #341 阶段一）：load 路径是同步的，
+     * 迁移以 fire-and-forget 方式在任务打开（getTaskLoadResult）时触发；同一任务
+     * 单飞，返回可等待的迁移 Promise（迁移完成后脏任务会在下一次落盘时瘦身）。
+     */
+    pendingImageMigration(): Promise<number> {
+        // 提交接缝（processToolCall）负责新产生的图片，本实例完成过检查后无需重复全量遍历
+        if (this._imageMigrationDone) {
+            return Promise.resolve(0);
+        }
+        if (!this._imageMigrationPromise) {
+            const migration = migrateInlineToolResultImages(this)
+                .catch((error) => {
+                    logger.warn(`inline image migration failed for task ${this.task_id}: ${error}`);
+                    return 0;
+                })
+                .then((migrated) => {
+                    this._imageMigrationDone = true;
+                    return migrated;
+                });
+            this._imageMigrationPromise = migration;
+            // 完成后解除占用：unload 的迁移守卫只在迁移进行中生效
+            void migration.then(
+                () => {
+                    if (this._imageMigrationPromise === migration) {
+                        this._imageMigrationPromise = undefined;
+                    }
+                },
+                () => {
+                    if (this._imageMigrationPromise === migration) {
+                        this._imageMigrationPromise = undefined;
+                    }
+                }
+            );
+        }
+        return this._imageMigrationPromise;
+    }
+
+    /**
      * 卸载任务：ensureLoaded() 的逆操作。
      *
      * 将重量级字段写回磁盘后清空，使任务回到轻量壳状态（_fullyLoaded=false），
@@ -1021,6 +1121,9 @@ export class TaskState {
         if (this._turnRunning) return false;
         if (this._sessionMemoryUpdatePromise) return false;
         if (this.compactProgress) return false;
+        // 图片外置迁移进行中：迁移完成后会 persistLater，先卸载会让写回落在
+        // lazy shell 上（被落盘过滤丢弃），等迁移结束再卸载。
+        if (this._imageMigrationPromise) return false;
 
         // 1) 先落盘：此刻 _fullyLoaded 仍为 true，脏数据才会被写入。
         if (this._dirty) {
@@ -1829,10 +1932,14 @@ export class TaskState {
             budget.summaryOutputTokens = limitSummaryOutputToModel(model, budget.summaryOutputTokens);
             const output = options.modelRequestOptions?.maxCompletionTokens ?? (await resolveMaxOutputTokens(model));
             const toolResultOverrides = new Map(
-                Array.from(this.getSynchronizedToolResultReplacementState().replacements, ([id, record]) => [
-                    id,
-                    record.replacement_text
-                ])
+                Array.from(this.getSynchronizedToolResultReplacementState().replacements, ([id, record]) => {
+                    // 结构化预览（新格式）按本机数据根渲染；旧自由文本原样兼容
+                    const text =
+                        typeof record.replacement_preview === 'string' && record.replacement_preview.length > 0
+                            ? renderToolResultReferenceText(record.replacement_preview, record.relative_path)
+                            : (record.replacement_text ?? '');
+                    return [id, text] as const;
+                }).filter(([, text]) => text.length > 0)
             );
             for (const [id, replacement] of options.toolResultOverrides ?? []) toolResultOverrides.set(id, replacement);
             this.setAutoCompactState(AutoCompactStates.recordAttempt(this.auto_compact_state));
@@ -2223,46 +2330,14 @@ export class TaskState {
      */
     cleanup() {
         this.cancelPendingTaskReview();
-        this.extensions.notifyLifecycle({ type: 'dispose' });
-        const taskDirectory = getTaskDirectory();
-        const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
-
-        // 1. Delete task JSON configuration
-        const taskJsonPath = path.join(taskDirectory, `${this.task_id}.json`);
-        if (fs.existsSync(taskJsonPath)) {
-            try {
-                fs.unlinkSync(taskJsonPath);
-            } catch (err) {
-                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
-            }
+        // 扩展 dispose 异常不得阻断文件清理：cleanup 是删除链路（含子任务递归）的
+        // 收尾步骤，任何扩展挂掉都应与其余 fs 操作一致地"尽力而为"并继续
+        try {
+            this.extensions.notifyLifecycle({ type: 'dispose' });
+        } catch (err) {
+            logger.error(`Task ${this.task_id} extension dispose failed during cleanup: ${(err as Error).message}`);
         }
-
-        // 2. Delete task-scoped artifacts under artifacts/<taskId>/
-        if (fs.existsSync(taskArtifactDirectory)) {
-            try {
-                fs.rmSync(taskArtifactDirectory, { recursive: true, force: true });
-            } catch (err) {
-                logger.error(
-                    `Failed to cleanup task artifact directory ${taskArtifactDirectory}: ${(err as Error).message}`
-                );
-            }
-        }
-
-        // 3. Compatibility cleanup for older task-scoped artifacts under tasks/artifacts/
-        const legacyArtifactsDir = path.join(taskDirectory, 'artifacts');
-        if (fs.existsSync(legacyArtifactsDir)) {
-            try {
-                const entries = fs.readdirSync(legacyArtifactsDir);
-                for (const entry of entries) {
-                    if (!entry.startsWith(`${this.task_id}_`)) {
-                        continue;
-                    }
-                    fs.rmSync(path.join(legacyArtifactsDir, entry), { recursive: true, force: true });
-                }
-            } catch (err) {
-                logger.error(`Failed to cleanup legacy artifacts for task ${this.task_id}: ${(err as Error).message}`);
-            }
-        }
+        removeTaskFilesById(this.task_id);
     }
     /**
      * Stop the task execution
@@ -2797,12 +2872,20 @@ export class TaskState {
     }
 
     /**
-     * 流式快照限流判断：同一 (message_id, part_index) 的全量文本快照按最小间隔发送，
-     * 文本增量超过阈值时立即放行。仅作用于增长中的 text/reasoning part。
+     * 流式快照限流判断：同一 (message_id, part_index) 的全量快照按最小间隔发送，
+     * 文本增量超过阈值时立即放行。作用于增长中的 text/reasoning part，以及参数
+     * 仍在流式输出（全部 toolcall 均为 pending）的 tool_call part；执行阶段的
+     * 状态迁移/结果快照不经过本限流器，始终即时发送。
      */
     private shouldSendStreamingFeedback(messageId: string, partIndex: number, part: AssistantMessagePart): boolean {
         const textLength =
-            part.type === 'text' ? part.text.length : part.type === 'reasoning' ? part.content.length : 0;
+            part.type === 'text'
+                ? part.text.length
+                : part.type === 'reasoning'
+                  ? part.content.length
+                  : part.type === 'tool_call' && Array.isArray(part.toolcalls)
+                    ? part.toolcalls.reduce((sum, toolcall) => sum + (toolcall.args_string?.length ?? 0), 0)
+                    : 0;
         return this.streaming_feedback_throttle.shouldSend(`${messageId}:${partIndex}`, textLength);
     }
 
@@ -2868,8 +2951,20 @@ export class TaskState {
                     this.task_status === 'running' &&
                     updated_part_index === content.length - 1 &&
                     (last_part.type === 'text' || last_part.type === 'reasoning');
+                // tool_call 流式快照同样限频：模型正在输出工具参数时（所有 toolcall 仍为
+                // pending），每个 LLM chunk 都会推送一次全量 part 快照，写大文件时 args
+                // 高频增长会把渲染端拖入「每帧全量重建」的节奏。仅限 pending 阶段：
+                // 执行阶段的状态迁移/结果快照保持即时审计语义；且 pending 帧不可能携带
+                // live 增量（tick 只发生在执行阶段），提前返回不会漏清增量。
+                const toolCallArgStreaming =
+                    this.task_status === 'running' &&
+                    updated_part_index === content.length - 1 &&
+                    last_part.type === 'tool_call' &&
+                    Array.isArray(last_part.toolcalls) &&
+                    last_part.toolcalls.length > 0 &&
+                    last_part.toolcalls.every((toolcall) => toolcall.status === 'pending');
                 if (
-                    streaming &&
+                    (streaming || toolCallArgStreaming) &&
                     !this.shouldSendStreamingFeedback(last_message.message_id, updated_part_index, last_part)
                 ) {
                     // 流式快照限频：跳过本次发送。快照始终携带全量累积文本，
@@ -3313,6 +3408,17 @@ export class TaskState {
                 await this.renderInWorkspace(() => tool_call.freezeRenderResult());
             }
             recordEvidenceCardToolCall(this, tool_call);
+            // 工具结果图片外置（issue #341）：只外置已被压缩接管（result_storage /
+            // microcompact / legacy compress_id）的条目——压缩后模型可见内容不再依赖
+            // result 本体，外置才是纯收益；未压缩条目的图片活跃窗口内每轮请求都要
+            // 发给模型，保持内联可避免请求构建期的回灌读盘。本接缝通常已由全局
+            // afterToolCallLargeResultToArtifact 压缩超长文本结果，未压缩的多为截图类
+            // 小文本大图调用；函数内部按条目幂等且吞错，不影响工具结果本身。
+            try {
+                await migrateInlineToolResultImages(this);
+            } catch (externalizeError) {
+                logger.warn(`image externalization skipped for task ${this.task_id}: ${externalizeError}`);
+            }
         }
     }
     /**

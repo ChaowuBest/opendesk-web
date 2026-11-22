@@ -2642,11 +2642,13 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 运行中终端命令 live 输出快路径的判定：part 为 tool_call、前后同为 tool_call、
+     * tool_call part 按卡片增量快路径的判定：part 为 tool_call、前后同为 tool_call、
      * toolcall id 一一对应，且每个 toolcall 的状态相对上一帧未发生变化。
+     * 状态未变即视为同一批卡片的续帧：既包括运行中终端命令的 live 输出 tick，
+     * 也包括参数仍在流式输出（全部 pending）或执行中卡片详情随快照增长的帧。
      * 静态纯函数，便于单测覆盖。
      */
-    static canPatchRunningTerminalToolCall(progress, previousPart, isRunning) {
+    static canPatchToolCallCards(progress, previousPart, isRunning) {
         if (
             progress?.last_part?.type !== 'tool_call' ||
             previousPart?.type !== 'tool_call' ||
@@ -2680,76 +2682,99 @@ class TaskView extends HTMLElement {
     static LIVE_OUTPUT_MAX_TEXT_NODES = 64;
 
     /**
-     * 运行中终端命令的 live 输出快路径。优先走增量分支：主进程 tick 携带
-     * outputDelta（已剥离 ANSI 的纯文本）时，直接向已挂载卡片的
-     * .terminal-tool-output 追加文本，跳过整份 part HTML 的解析与节点替换
-     * （超长输出下每 200ms 一次的双重 HTML 解析曾是渲染进程的重要 CPU 来源）。
-     * 任一前提不满足（卡片缺失、非终端工具、无增量字段、状态迁移）时回退
-     * 全量路径：按 toolcall id 在新旧结构间配对，仅替换各卡片的输出区域
-     * （.terminal-tool-scroll）并滚动到底部。
+     * 运行中/参数流式阶段 tool_call part 的按卡片增量快路径。按 toolcall 逐个处理：
+     *
+     * 1. 运行中终端卡片携带 outputDelta（200ms live tick）：向 .terminal-tool-output
+     *    追加纯文本，跳过任何 HTML 解析与节点替换（超长输出下每 200ms 一次的双重
+     *    HTML 解析曾是渲染进程的重要 CPU 来源）。
+     * 2. 运行中终端卡片无增量：按 toolcall id 配对，仅替换输出区域
+     *    （.terminal-tool-scroll），保持 summary 与卡片其余节点。
+     * 3. pending/running 的非终端卡片（writeFile 等，args 流式期间卡片详情每帧
+     *    变化）：按 toolcall id 整卡替换。写文件只影响当前这一个工具调用，同消息
+     *    其余卡片（含用户正在滚动的终端卡片）保持原节点，滚动位置不丢。
+     *
+     * 任一需要刷新的卡片无法定位（DOM 缺失、rendered 缺失、id 缺失），或 pending
+     * 终端卡片需要开合态归一时返回 false，由上层全量渲染兜底。
      */
-    static patchRunningTerminalToolOutput(message_content, toolcalls, partRenderedHtml) {
-        if (Array.isArray(toolcalls) && toolcalls.length > 0) {
-            let incremental = true;
-            const deltas = [];
-            for (const tc of toolcalls) {
-                if (typeof tc?.id !== 'string' || tc.id === '') {
-                    incremental = false;
-                    break;
-                }
+    static patchToolCallCards(message_content, toolcalls, partRenderedHtml) {
+        if (!Array.isArray(toolcalls) || toolcalls.length === 0) return false;
+
+        let template = null;
+        if (typeof partRenderedHtml === 'string' && partRenderedHtml !== '') {
+            template = document.createElement('template');
+            template.innerHTML = partRenderedHtml;
+        }
+
+        // 先整体校验、后统一应用：任何一项定位失败都不能让 DOM 停在半更新的状态
+        const textAppends = [];
+        const scrollReplacements = [];
+        const cardReplacements = [];
+        for (const tc of toolcalls) {
+            if (typeof tc?.id !== 'string' || tc.id === '') return false;
+            const escapedId = tc.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+            const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+            const freshCard = template?.content.querySelector(`[data-toolcall-id="${escapedId}"]`) ?? null;
+
+            if (tc.status === 'running' && typeof tc.outputDelta === 'string' && tc.outputDelta !== '') {
                 // 已结束 / 本次没有增量 / 非终端卡片的 toolcall 不参与增量：
                 // 它们不是本次要更新的目标，不应因此把整条消息退回全量重建。
-                if (tc.status !== 'running' || typeof tc.outputDelta !== 'string' || tc.outputDelta === '') continue;
-                const escapedId = tc.id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
-                const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
                 const pre = liveCard?.querySelector('.terminal-tool-output');
-                if (!liveCard || !pre) {
-                    incremental = false;
-                    break;
-                }
-                deltas.push({ pre, delta: tc.outputDelta, reset: tc.outputReset === true });
+                if (!liveCard || !pre) return false;
+                textAppends.push({ pre, delta: tc.outputDelta, reset: tc.outputReset === true });
+                continue;
             }
-            if (incremental && deltas.length > 0) {
-                for (const { pre, delta, reset } of deltas) {
-                    if (reset) {
-                        pre.textContent = delta;
-                    } else if (pre.childNodes.length >= TaskView.LIVE_OUTPUT_MAX_TEXT_NODES) {
-                        // 合并已有节点，避免长期运行累积出上万个文本节点
-                        pre.textContent = pre.textContent + delta;
-                    } else {
-                        pre.appendChild(document.createTextNode(delta));
-                    }
-                    const scroll = pre.closest('.terminal-tool-scroll');
-                    if (scroll) {
-                        scroll.scrollTop = scroll.scrollHeight;
-                    }
-                }
-                return true;
-            }
-        }
-        if (typeof partRenderedHtml !== 'string' || partRenderedHtml === '') return false;
-        if (!Array.isArray(toolcalls) || toolcalls.length === 0) return false;
-        const runningIds = [];
-        for (const tc of toolcalls) {
-            if (typeof tc?.id !== 'string' || tc.id === '' || tc.status !== 'running') return false;
-            runningIds.push(tc.id);
-        }
-        const template = document.createElement('template');
-        template.innerHTML = partRenderedHtml;
-        const patches = [];
-        for (const id of runningIds) {
-            const escapedId = id.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
-            const liveCard = message_content.querySelector(`[data-toolcall-id="${escapedId}"]`);
-            const freshCard = template.content.querySelector(`[data-toolcall-id="${escapedId}"]`);
+            // 状态未变的终态卡片无需刷新；pending/running 卡片可能随 args 流式变化
+            if (tc.status !== 'pending' && tc.status !== 'running') continue;
             if (!liveCard || !freshCard) return false;
             const freshScroll = freshCard.querySelector('.terminal-tool-scroll');
-            const liveScroll = liveCard.querySelector('.terminal-tool-scroll');
-            if (!freshScroll || !liveScroll) return false;
-            patches.push({ freshScroll, liveScroll });
+            if (freshScroll) {
+                // 终端卡片：pending 态的开合归一与摘要更新依赖全量渲染管线，不在此替换；
+                // running 态仅替换输出区域，保持 summary 与卡片其余节点
+                if (tc.status !== 'running') return false;
+                const liveScroll = liveCard.querySelector('.terminal-tool-scroll');
+                if (!liveScroll) return false;
+                scrollReplacements.push({ freshScroll, liveScroll });
+                continue;
+            }
+            if (liveCard.querySelector('.terminal-tool-scroll')) return false;
+            // 非终端卡片：整卡替换；内容未变化时保留原节点，避免无谓重建
+            if (liveCard.outerHTML !== freshCard.outerHTML) {
+                cardReplacements.push({ liveCard, freshCard });
+            }
         }
-        for (const { freshScroll, liveScroll } of patches) {
+
+        for (const { pre, delta, reset } of textAppends) {
+            if (reset) {
+                pre.textContent = delta;
+            } else if (pre.childNodes.length >= TaskView.LIVE_OUTPUT_MAX_TEXT_NODES) {
+                // 合并已有节点，避免长期运行累积出上万个文本节点
+                pre.textContent = pre.textContent + delta;
+            } else {
+                pre.appendChild(document.createTextNode(delta));
+            }
+            const scroll = pre.closest('.terminal-tool-scroll');
+            if (scroll) {
+                scroll.scrollTop = scroll.scrollHeight;
+            }
+        }
+        for (const { freshScroll, liveScroll } of scrollReplacements) {
             liveScroll.innerHTML = freshScroll.innerHTML;
             liveScroll.scrollTop = liveScroll.scrollHeight;
+        }
+        for (const { liveCard, freshCard } of cardReplacements) {
+            // <details> 卡片保留用户开合态：工具渲染默认输出 open，直接替换会把
+            // 用户手动收起的卡片弹回展开
+            if (liveCard.tagName === 'DETAILS' && freshCard.tagName === 'DETAILS') {
+                if (liveCard.hasAttribute('open')) {
+                    freshCard.setAttribute('open', '');
+                } else {
+                    freshCard.removeAttribute('open');
+                }
+            }
+            liveCard.replaceWith(freshCard);
+            // 与全量渲染保持一致：新卡片补跑代码块/预览增强（两者均幂等）
+            enhanceCodeBlocks(freshCard);
+            enhanceToolPreviewCards(freshCard);
         }
         return true;
     }
@@ -2805,9 +2830,11 @@ class TaskView extends HTMLElement {
         // 渲染，思考块才能从 reasoning-active 切换为 completed 并定格计时。
         const canPatchStreamingPart =
             treatAsStreaming && previousPart?.streaming === true && previousPart.type === progress.last_part.type;
-        // 运行中终端命令的 live 输出（每 200ms 一次）：同一批 toolcall 且状态均为 running 时，
-        // 只需替换对应卡片内的输出区域，避免每 200ms 对整条消息做全量 morph + 增强。
-        const canPatchStreamingToolCall = TaskView.canPatchRunningTerminalToolCall(progress, previousPart, isRunning);
+        // 运行中/参数流式阶段的 tool_call 快照：同一批 toolcall 且状态均未变化时，
+        // 只需按 toolcall 粒度更新对应卡片（终端卡追加输出、非终端卡整卡替换），
+        // 避免对整条消息做全量 morph + 增强——全量渲染会重置同消息内所有终端卡片
+        // 的滚动条，且在写大文件时每个流式快照都会触发一次。
+        const canPatchStreamingToolCall = TaskView.canPatchToolCallCards(progress, previousPart, isRunning);
         parts[partIndex] = treatAsStreaming ? { ...progress.last_part, streaming: true } : progress.last_part;
         this._rememberAssistantOutput(progress.message_id, parts, {
             isRunning
@@ -2821,7 +2848,7 @@ class TaskView extends HTMLElement {
         // 打破（否则每快照退化为全量重建，超长单回合下会引发全文档样式重算与布局）。
         message_content.querySelectorAll('.stream-cursor').forEach((el) => el.remove());
         if (canPatchStreamingToolCall) {
-            patchedStreamingPart = TaskView.patchRunningTerminalToolOutput(
+            patchedStreamingPart = TaskView.patchToolCallCards(
                 message_content,
                 progress.last_part.toolcalls,
                 progress.last_part.rendered

@@ -246,6 +246,9 @@
     padding: 0;
     text-align: left;
     white-space: pre-wrap;
+    /* pre-wrap 只在空格等默认断行点折行，/data/... 长路径会被当成一个不可拆分的词
+       溢出容器（issue #346），需要允许在任意字符处断行 */
+    overflow-wrap: anywhere;
     cursor: pointer;
 }
 
@@ -539,6 +542,7 @@
     font-size: var(--fs-sm);
     line-height: 1.65;
     color: #3a3a3f;
+    overflow-wrap: anywhere;
 }
 
 .goal-evaluation-evidence {
@@ -570,6 +574,7 @@
     color: #4a4a4f;
     display: flex;
     gap: 6px;
+    overflow-wrap: anywhere;
 }
 
 .goal-evaluation-evidence li::before {
@@ -791,7 +796,8 @@
 
 .goal-timeline-objective-text {
     color: #8e8e93;
-    word-break: break-word;
+    /* flex 子项的 min-content 收缩只认 anywhere（break-word 不参与），长路径才能折行 */
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
 }
 

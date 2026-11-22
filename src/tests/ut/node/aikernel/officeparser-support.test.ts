@@ -56,7 +56,9 @@ test('agent attachment support covers officeparser plus legacy doc and xls adapt
         'pdf',
         'ofd',
         'rtf',
-        'txt'
+        'txt',
+        'log',
+        'json'
     ]);
     for (const extension of officeParserSupportedExtensions) {
         assert.ok(support.supportedExtensions.includes(extension), `.${extension} should remain supported`);
@@ -97,6 +99,9 @@ test('agent attachment support covers officeparser plus legacy doc and xls adapt
         assert.equal(isAttachmentFilePathSupported('/tmp/report.DOC'), true);
         assert.equal(isAttachmentFilePathSupported('/tmp/report.DOCX'), true);
         assert.equal(isAttachmentFilePathSupported('/tmp/sheet.XLS'), true);
+        // 用户反馈附件（opendesk-system.log / opendesk-task.json）必须可作为任务附件 pill 附上
+        assert.equal(isAttachmentFilePathSupported('/tmp/logs/opendesk-system.log'), true);
+        assert.equal(isAttachmentFilePathSupported('/tmp/logs/opendesk-task.json'), true);
         assert.deepEqual(findUnsupportedAttachmentFiles(['/tmp/deck.ppt']), [
             { filePath: '/tmp/deck.ppt', extension: 'ppt' }
         ]);

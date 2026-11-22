@@ -389,3 +389,47 @@ test('ACP JSON compatibility sanitizes raw protocol payloads', () => {
     assert.deepEqual(toJsonCompatible({ nested: ['ok'] }), { nested: ['ok'] });
     assert.equal(toJsonCompatible(undefined), undefined);
 });
+
+test('ACP tool_call_update surfaces the replacement text for compressed tool results', async () => {
+    // 重载画像（issue #341）：已压缩工具结果的 result 可能被序列化剥离，输出经
+    // resolver 取 result_storage.replacement_text，与模型可见内容保持一致
+    const connection = new FakeConnection();
+    const translator = new AcpUpdateTranslator();
+    const messageId = '55555555-5555-4555-8555-555555555555';
+    const replacement = 'output preview\n完整输出已保存至: /data/artifacts/t1/tool-results/r1.txt';
+
+    await translator.publish(connection as any, 'session-1', {
+        type: 'assistant',
+        task_id: 'task-1',
+        task_status: 'running',
+        message_id: messageId,
+        last_part_index: 0,
+        last_part: {
+            type: 'tool_call',
+            toolcalls: [
+                {
+                    id: 'call-compressed',
+                    index: 0,
+                    tool_name: 'filemgr-readFile',
+                    args_string: '{"path":"/tmp/a.txt"}',
+                    status: 'success',
+                    result_storage: {
+                        result_id: 'result-1',
+                        replacement_text: replacement
+                    }
+                }
+            ]
+        }
+    } as any);
+
+    const updates = connection.updates.map((entry) => (entry as any).update);
+    const toolUpdate = updates.find((update) => update.sessionUpdate === 'tool_call_update');
+    assert.equal(toolUpdate._meta.opendesk.toolCallId, 'call-compressed');
+    assert.deepEqual(toolUpdate.content, [
+        {
+            type: 'content',
+            content: { type: 'text', text: replacement }
+        }
+    ]);
+    assert.equal(toolUpdate.rawOutput, replacement);
+});

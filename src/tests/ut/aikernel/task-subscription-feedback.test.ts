@@ -1,5 +1,13 @@
 import { jest } from '@jest/globals';
-import { AssistantMessage, ChatContext, TextMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
+import {
+    AssistantMessage,
+    ChatContext,
+    TextMessagePart,
+    ToolCall,
+    ToolCallMessagePart,
+    UserMessage
+} from '../../../main/aikernel/messages.js';
+import { StreamFeedbackThrottle } from '../../../main/aikernel/task/stream-feedback-throttle.js';
 import {
     BaseTaskUpdateSubscriber,
     TaskManagerState,
@@ -402,5 +410,141 @@ describe('task subscription feedback', () => {
 
         // Settled subscriber should not receive any new chunks
         expect(receivedChunks).toHaveLength(chunksBefore);
+    });
+});
+
+describe('tool_call 流式快照限频', () => {
+    beforeEach(() => {
+        setPlatform(new TestPlatform());
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    /** pending 参数流式阶段的任务：最后一条 assistant 消息只含一个 tool_call part */
+    function createToolCallTask(): { task: TaskState; call: ToolCall; part: ToolCallMessagePart } {
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+        const assistant = new AssistantMessage();
+        const part = new ToolCallMessagePart();
+        const call = new ToolCall(0, 'call-stream', 'writeFile', '{"path":"a.txt","content":"abc"}');
+        part.toolcalls.push(call);
+        assistant.content.push(part);
+        task.chat_context.appendMessage(assistant);
+        return { task, call, part };
+    }
+
+    /** 用可注入时钟的限流器替换任务内置实例，保证断言确定性 */
+    function installThrottle(task: TaskState, now: () => number): void {
+        (task as any).streaming_feedback_throttle = new StreamFeedbackThrottle(120, 64 * 1024, now);
+    }
+
+    test('pending 参数流式阶段按最小间隔限频，间隔届满放行并携带最新 args', async () => {
+        const { task, call } = createToolCallTask();
+        let now = 1_000_000;
+        installThrottle(task, () => now);
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(1);
+
+        // 最小间隔内的下一帧：拦截（args 已增长但不放行）
+        call.args_string += 'more';
+        now += 10;
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(1);
+
+        // 间隔届满：放行，且快照携带全量最新 args（中间被拦截的帧自然补齐）
+        call.args_string += ' and even more';
+        now += 121;
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(2);
+        const chunk = chunks[1];
+        if (chunk.type !== 'assistant') return;
+        expect(chunk.last_part.type).toBe('tool_call');
+        expect((chunk.last_part as ToolCallMessagePart).toolcalls[0].args_string).toBe(call.args_string);
+    });
+
+    test('args 增量超过阈值时立即放行（长参数写入保持进度可见）', async () => {
+        const { task, call } = createToolCallTask();
+        let now = 1_000_000;
+        installThrottle(task, () => now);
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(1);
+
+        call.args_string += 'x'.repeat(64 * 1024);
+        now += 10;
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(2);
+    });
+
+    test('执行阶段（状态离开 pending）的快照不节流，状态迁移即时可达', async () => {
+        const { task, call } = createToolCallTask();
+        let now = 1_000_000;
+        installThrottle(task, () => now);
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(1);
+
+        call.status = 'running';
+        now += 10;
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(2);
+        const chunk = chunks[1];
+        if (chunk.type !== 'assistant') return;
+        expect((chunk.last_part as ToolCallMessagePart).toolcalls[0].status).toBe('running');
+    });
+
+    test('部分工具仍在执行（非全 pending）的混合帧不节流', async () => {
+        const { task, call } = createToolCallTask();
+        // 第二个 toolcall 模拟并行执行中的终端命令
+        const running = new ToolCall(1, 'call-live', 'terminal-executePwsh', '{}');
+        running.status = 'running';
+        (task.chat_context.lastMessage()!.content[0] as ToolCallMessagePart).toolcalls.push(running);
+
+        let now = 1_000_000;
+        installThrottle(task, () => now);
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(1);
+
+        // writeFile 仍 pending、args 增长：因存在 running 的 toolcall，本帧是执行阶段帧，即时发送
+        call.args_string += 'more';
+        now += 10;
+        await task.sendSubscriptionFeedback();
+        expect(chunks).toHaveLength(2);
+    });
+
+    test('非最后一个 part 的 tool_call 快照不节流', async () => {
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+        const assistant = new AssistantMessage();
+        const part = new ToolCallMessagePart();
+        part.toolcalls.push(new ToolCall(0, 'call-stream', 'writeFile', '{"path":"a.txt"}'));
+        assistant.content.push(part);
+        assistant.content.push(new TextMessagePart('final text'));
+        task.chat_context.appendMessage(assistant);
+
+        let now = 1_000_000;
+        installThrottle(task, () => now);
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        // part 0 不是最后一个 part（后面还有 text part）：不经过限流器
+        await task.sendSubscriptionFeedback(0);
+        now += 10;
+        await task.sendSubscriptionFeedback(0);
+        expect(chunks).toHaveLength(2);
     });
 });

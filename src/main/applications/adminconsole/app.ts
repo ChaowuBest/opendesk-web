@@ -11,6 +11,7 @@
 
 import path from 'node:path';
 import fsPromises from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { BaseApplication } from '../base.js';
 import { BaseToolset } from '../../aikernel/tool';
@@ -27,6 +28,7 @@ import {
     type AdminFeedbackList
 } from '../../utils/admin-stats.js';
 import { AdminTokenStore } from '../../utils/admin-token.js';
+import { selectExpiredStageDirs, stageFeedbackAttachments, type StageDirEntry } from './task-compose.js';
 import { t } from './locale/index.js';
 import {
     DownloadAttachmentTool,
@@ -116,8 +118,10 @@ export class AdminConsoleApplication extends BaseApplication {
     private currentServer(): string {
         const store = this.getTokenStore();
         const last = store.lastSessionServer() ?? store.lastPersistedServer() ?? resolveAdminStatsServerUrl();
-        // 规范化为带协议的完整地址，便于直接拼接 API 路径
-        return /^https?:\/\//.test(last) ? last.replace(/\/+$/, '') : `https://${last}`;
+        // 规范化为带协议的完整地址，便于直接拼接 API 路径。
+        // 协议判断必须大小写不敏感：令牌存储保留用户原始输入（HTTP:// 也算已带协议），
+        // 漏判会把 https://HTTP://host 拼进请求地址
+        return /^https?:\/\//i.test(last) ? last.replace(/\/+$/, '') : `https://${last}`;
     }
 
     getServerUrl(): AdminResult<string> {
@@ -144,7 +148,8 @@ export class AdminConsoleApplication extends BaseApplication {
     async verifyToken(serverUrl: string, token: string): Promise<AdminResult> {
         try {
             let server = typeof serverUrl === 'string' && serverUrl ? serverUrl.trim() : this.currentServer();
-            if (!/^https?:\/\//.test(server)) server = `https://${server}`;
+            // 同 currentServer：大写协议已自带 scheme，不能再补前缀
+            if (!/^https?:\/\//i.test(server)) server = `https://${server}`;
             server = server.replace(/\/+$/, '');
             const trimmed = String(token ?? '').trim();
             if (!trimmed) return { status: 'error', code: 'invalid', message: 'empty token' };
@@ -258,6 +263,65 @@ export class AdminConsoleApplication extends BaseApplication {
         return { status: 'ok', data: item };
     }
 
+    /**
+     * 「一键开发/一键修复」：拉取反馈详情并把附件暂存到本地数据目录，
+     * 返回 item（正文/联系方式）与 attachmentPaths（本地绝对路径，渲染层作为新任务附件 pill 附上）。
+     * 每次点击使用新暂存目录（历史任务的附件只存路径引用，旧目录必须保持可用），
+     * 并按 mtime 回收超过保留期的旧目录。
+     */
+    async prepareTaskCompose(type: 'feature' | 'bug', id: number): Promise<AdminResult> {
+        if (type !== 'feature' && type !== 'bug') {
+            return { status: 'error', message: 'invalid feedback type' };
+        }
+        const feedbackId = Number(id);
+        if (!Number.isInteger(feedbackId) || feedbackId <= 0) {
+            return { status: 'error', message: 'invalid feedback id' };
+        }
+        try {
+            const detail = await this.getFeedbackDetail(type, feedbackId);
+            if (detail.status !== 'ok') return detail;
+            const baseDir = path.join(this.getDataDirectory(), 'task-compose', `${type}-${feedbackId}`);
+            await this.pruneComposeStageDirs(baseDir);
+            const data = await stageFeedbackAttachments({
+                item: detail.data as AdminFeedbackDetail['item'],
+                downloadAttachment: (attachmentId, destPath) => this.downloadAttachmentToFile(attachmentId, destPath),
+                resolveStageDir: () => path.join(baseDir, `${Date.now()}-${randomUUID().slice(0, 8)}`),
+                ensureDir: async (dir) => {
+                    await fsPromises.mkdir(dir, { recursive: true });
+                }
+            });
+            return { status: 'ok', data };
+        } catch (error: any) {
+            logger.error('preparing task compose failed', error);
+            return { status: 'error', message: error?.message ?? String(error) };
+        }
+    }
+
+    /** 回收该反馈下超过保留期的暂存目录；失败只记日志，不影响本次 compose */
+    private async pruneComposeStageDirs(baseDir: string): Promise<void> {
+        try {
+            const entries = await fsPromises.readdir(baseDir, { withFileTypes: true });
+            const stageDirs: StageDirEntry[] = [];
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                const fullPath = path.join(baseDir, entry.name);
+                const stat = await fsPromises.stat(fullPath).catch(() => null);
+                if (stat?.isDirectory()) {
+                    stageDirs.push({ name: entry.name, mtimeMs: stat.mtimeMs });
+                }
+            }
+            for (const name of selectExpiredStageDirs(stageDirs, Date.now())) {
+                await fsPromises.rm(path.join(baseDir, name), { recursive: true, force: true }).catch((error: any) => {
+                    logger.warn('pruning compose stage dir failed', error);
+                });
+            }
+        } catch (error: any) {
+            if (error?.code !== 'ENOENT') {
+                logger.warn('reading compose stage dir failed', error);
+            }
+        }
+    }
+
     /** /admin 技能捆绑的工具集，agent 加载技能后才暴露给模型 */
     private buildAgentToolset(): BaseToolset {
         const toolset = new BaseToolset('adminconsole');
@@ -333,8 +397,11 @@ export class AdminConsoleApplication extends BaseApplication {
     }
 
     /**
-     * agent 工具的下载通道：直接落盘到调用方给定的绝对路径（写权限由工具权限审批把关），
-     * 与面向 renderer 面板的 downloadAttachment（交互式保存对话框）区分开。
+     * 非交互下载通道：直接落盘到调用方给定的绝对路径，与面向 renderer 面板的
+     * downloadAttachment（交互式保存对话框）区分开。
+     * 调用方只有两类可信来源：agent 工具（destPath 经工具权限审批）与
+     * prepareTaskCompose（destPath 由 main 自己拼装，不接受 renderer 传入）。
+     * 不要把它直接暴露给 renderer 传任意路径。
      */
     async downloadAttachmentToFile(attachmentId: number, destPath: string): Promise<AdminResult> {
         try {

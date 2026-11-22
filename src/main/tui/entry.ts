@@ -68,6 +68,7 @@ import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
 import { exportTaskToHtml } from '../utils/export';
+import { writeJsonChunksToFile } from '../utils/json-stream-write.js';
 import { expandTilde } from '../../utils/path';
 import { QuickPassHelper } from '../utils/quickpass';
 import { UserMessage, AssistantMessage, type ChatMessage } from '../aikernel/messages';
@@ -285,9 +286,9 @@ export class OpenDeskTUI {
                     try {
                         const dir = path.dirname(jsonPath);
                         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                        fs.writeFileSync(jsonPath, JSON.stringify(task.toJSON(), null, 4), {
-                            encoding: 'utf8'
-                        });
+                        // 流式导出（issue #341）：不在内存里物化整个 JSON 输出串，输出与
+                        // JSON.stringify(v, null, 4) 逐字节一致
+                        await writeJsonChunksToFile(jsonPath, task.toJSON(), 4);
                         logger.info(`Task exported to JSON: ${jsonPath}`);
                     } catch (err) {
                         logger.error(`Failed to export JSON: ${err}`);

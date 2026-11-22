@@ -2504,6 +2504,26 @@ export const enUs: Record<string, string> = {
     'renderer.admin.feedbackEmpty': 'No feedback yet',
     'renderer.admin.openAttachment': 'Download attachment',
     'renderer.admin.attachmentSaved': 'Attachment saved to ${path}',
+    'renderer.admin.oneClickDevelop': 'Develop',
+    'renderer.admin.oneClickFix': 'Fix',
+    'renderer.admin.oneClickPreparing': 'Preparing…',
+    'renderer.admin.composeButtonTitle': 'Prefill a new task with this feedback',
+    'renderer.admin.composeReady': 'Prefilled into the new task input — press send to start',
+    'renderer.admin.composeReadyWithFailed':
+        'Prefilled into the new task input — ${count} attachment(s) failed to download and were skipped',
+    'renderer.admin.composeFailed': 'Could not prefill the new task input — please retry',
+    'renderer.admin.composeBusy': 'The previous prefill is still running — please retry shortly',
+    'renderer.admin.composeNeedsMainWindow': 'Open the admin panel inside the main window to prefill a new task',
+    'renderer.admin.composeBugPrompt': 'Please fix the following bug from user feedback (#${id}):\n\n${content}',
+    'renderer.admin.composeFeaturePrompt':
+        'Please implement the following feature request from user feedback (#${id}):\n\n${content}',
+
+    // Renderer - New task prefill (admin panel one-click develop / fix)
+    'renderer.taskCompose.source': 'New task',
+    'renderer.taskCompose.failedTitle': 'Could not prefill the new task',
+    'renderer.taskCompose.failed':
+        'Could not prefill the new task input. Return to the admin panel and retry, or start a task manually.',
+    'renderer.taskCompose.busy': 'The previous prefill is still running — please retry shortly.',
 
     // Renderer - Personal Center
     'renderer.personal.title': 'Profile',

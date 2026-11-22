@@ -29,6 +29,7 @@ import { notifySettingSaveFailed, notifySettingSideEffectFailures } from '../uti
 import { clearTaskDraft, loadTaskDraft, saveTaskDraft } from '../utils/task-draft-storage.ts';
 import { getModelIconTile, getEffortIconSVG } from '../utils/model-picker-icons.js';
 import { initFeatureState, isApplicationDisabledByFeature, isFeatureDisabled, onFeaturesChanged } from '../features.js';
+import { normalizeImageDataUrlToPng } from './image-normalize.js';
 
 /** 草稿持久化的防抖间隔：输入停顿后落盘，避免每次按键同步写 localStorage */
 const TASK_DRAFT_SAVE_DEBOUNCE_MS = 500;
@@ -49,7 +50,9 @@ const fallbackSupportedFileExtensions = [
     'pdf',
     'ofd',
     'rtf',
-    'txt'
+    'txt',
+    'log',
+    'json'
 ];
 const bridgeProxy = new NativeBridgeProxy();
 
@@ -991,10 +994,21 @@ class AgentInput extends HTMLElement {
     }
 
     addImage(dataUrl, name = '图片') {
-        this.attachedImages.push({ dataUrl, name });
+        // 同步入列保持既有契约（草稿恢复/发送按钮状态都是同步消费）；MIME 归一化异步
+        // 完成后原地替换条目内容：非 png/jpeg 的图片统一转 PNG，保证主进程的图片外置
+        // （jimp 不解码 webp/avif 等）与 artifacts 原图落盘对任意来源可用
+        const entry = { dataUrl, name };
+        this.attachedImages.push(entry);
         this._renderImagePreviews();
         this.updateSendButtonState();
         this._scheduleDraftSave();
+        void normalizeImageDataUrlToPng(dataUrl).then((normalized) => {
+            if (normalized !== dataUrl && this.attachedImages.includes(entry)) {
+                entry.dataUrl = normalized;
+                this._renderImagePreviews();
+                this._scheduleDraftSave();
+            }
+        });
     }
 
     removeImage(index) {
