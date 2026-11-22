@@ -304,6 +304,9 @@ describe('opencode config routes', () => {
         expect(providerData.all.map((provider: any) => provider.id)).toEqual(['openai']);
         expect(providerData.connected).toEqual(['openai']);
         expect(providerData.default).toEqual({});
+
+        const authResponse = await ProviderRoutes().request('/auth');
+        await expect(authResponse.json()).resolves.toEqual({ openai: [{ type: 'api', label: 'API key' }] });
     });
 
     test('PATCH /global/config with empty sdk config reloads providers, mcp config and skills from disk', async () => {

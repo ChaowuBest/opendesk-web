@@ -367,8 +367,7 @@ describe('opencode session routes', () => {
         );
         expect(compactionUser.properties.info.model).toEqual({
             providerID: 'openai',
-            modelID: 'gpt-4o',
-            id: 'gpt-4o'
+            modelID: 'gpt-4o'
         });
         expect(compactionPart.properties.part).toEqual(
             expect.objectContaining({
@@ -814,6 +813,15 @@ describe('opencode session routes', () => {
         expect(messages[3].info.parentID).toBe(messages[2].info.id);
         expect(messages[0].parts[0].messageID).toBe(messages[0].info.id);
         expect(messages[1].parts[0].messageID).toBe(messages[1].info.id);
+        // opencode UserMessage 不含 path，model 只有 providerID / modelID
+        expect(messages[0].info).toEqual({
+            id: messages[0].info.id,
+            sessionID: 'ses_model',
+            role: 'user',
+            time: { created: 1000 },
+            agent: 'explore',
+            model: { providerID: expect.any(String), modelID: expect.any(String) }
+        });
     });
 
     test('GET /session/:id/message hides internal user messages from the listing', async () => {

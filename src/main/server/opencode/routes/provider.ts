@@ -10,8 +10,10 @@
  */
 
 import { Hono } from 'hono';
+import type { ProviderAuthMethod } from '@opencode-ai/sdk/v2/types';
 import { Setting } from '../../../utils/setting.js';
 import { isOpenCodeProviderAllowed, toOpenCodeProvider } from '../config-compat.js';
+import { openCodeProviderAuthMethods } from '../instance-info.js';
 
 /**
  * Provider 路由。
@@ -54,17 +56,12 @@ export function ProviderRoutes() {
     app.get('/auth', (c) => {
         const setting = Setting.getInstance();
         const data = setting.getData();
-        const result: Record<string, unknown[]> = {};
+        const result: Record<string, ProviderAuthMethod[]> = {};
         for (const p of data.providers || []) {
             if (!isOpenCodeProviderAllowed(data, p.name)) {
                 continue;
             }
-            result[p.name] = [
-                {
-                    type: 'api_key',
-                    description: 'API Key authentication'
-                }
-            ];
+            result[p.name] = openCodeProviderAuthMethods();
         }
         return c.json(result);
     });
