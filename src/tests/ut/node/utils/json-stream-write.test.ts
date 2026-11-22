@@ -6,8 +6,10 @@ import { after, before, test } from 'node:test';
 
 import {
     atomicWriteJsonFile,
+    atomicWriteJsonFileSync,
     jsonChunks,
     jsonChunksBuffered,
+    writeJsonChunksToFile,
     JSON_BIG_STRING_CHARS
 } from '../../../../main/utils/json-stream-write.js';
 
@@ -118,4 +120,76 @@ test('atomicWriteJsonFile matches JSON.stringify output and overwrites existing 
 test('atomicWriteJsonFile rejects unserializable roots like JSON.stringify does', async () => {
     await assert.rejects(() => atomicWriteJsonFile(path.join(dataDir!, 'bad.json'), undefined, 4), TypeError);
     assert.throws(() => [...jsonChunks(123n, 4)], TypeError);
+});
+
+test('atomicWriteJsonFileSync matches JSON.stringify output, overwrites, and leaves no temp files', () => {
+    const value = { task_id: 'stream-sync', nested: { list: [1, { s: '的'.repeat(100000) }] } };
+    const target = path.join(dataDir!, 'sync-dir', 'task.json');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, 'stale content');
+
+    atomicWriteJsonFileSync(target, value, 4);
+
+    assert.equal(fs.readFileSync(target, 'utf8'), JSON.stringify(value, null, 4));
+    const leftovers = fs.readdirSync(path.dirname(target)).filter((name) => name.endsWith('.tmp'));
+    assert.deepEqual(leftovers, [], 'no temp files may be left behind');
+});
+
+test('atomicWriteJsonFileSync cleans up the temp file when serialization fails', () => {
+    const target = path.join(dataDir!, 'sync-fail.json');
+    assert.throws(() => atomicWriteJsonFileSync(target, undefined, 4), TypeError);
+    assert.ok(!fs.existsSync(target), 'target must not be created');
+    const leftovers = fs.readdirSync(dataDir!).filter((name) => name.endsWith('.tmp'));
+    assert.deepEqual(leftovers, [], 'failed writes must clean up their temp file');
+});
+
+test('writeJsonChunksToFile streams into an exclusive target and rejects duplicates', async () => {
+    const value = { task_id: 'stream-staging', items: ['x'.repeat(50000), 'y'.repeat(50000)] };
+    // 与导入暂存流一致：staging 目录由调用方（mkdtemp）预先创建
+    fs.mkdirSync(path.join(dataDir!, 'staging'), { recursive: true });
+    const target = path.join(dataDir!, 'staging', 'task.json');
+
+    await writeJsonChunksToFile(target, value, 4, { flag: 'wx', mode: 0o600 });
+    assert.equal(fs.readFileSync(target, 'utf8'), JSON.stringify(value, null, 4));
+
+    // 导入暂存路径依赖 wx 语义：目标已存在时必须拒绝（不覆盖）
+    await assert.rejects(
+        () => writeJsonChunksToFile(target, { other: 1 }, 4, { flag: 'wx', mode: 0o600 }),
+        (error: NodeJS.ErrnoException) => error.code === 'EEXIST'
+    );
+});
+
+test('writeJsonChunksToFile cleans up a half-written target when a later batch fails', async () => {
+    // 直写路径没有 tmp+rename 的原子性：写一半失败（写盘错误或序列化中途抛错）
+    // 必须清理半截目标文件，不能把损坏 JSON 留在目标位置
+    const target = path.join(dataDir!, 'half-written.json');
+    const value = {
+        // 两个 128KB 字符串：聚合后各占一个写批次，第一批正常落盘、第二批抛错
+        first: 'a'.repeat(128 * 1024),
+        second: 'b'.repeat(128 * 1024)
+    };
+    let batchCount = 0;
+    let originalOpen: typeof fs.promises.open | undefined;
+    try {
+        originalOpen = fs.promises.open;
+        // 在第二个批次写入时注入 ENOSPC 类失败
+        const handle = originalOpen;
+        (fs.promises as any).open = async (...args: Parameters<typeof fs.promises.open>) => {
+            const fd = await handle(...args);
+            const originalWrite = fd.writeFile.bind(fd);
+            (fd as any).writeFile = async (...writeArgs: any[]) => {
+                if (++batchCount === 2) {
+                    throw Object.assign(new Error('simulated ENOSPC'), { code: 'ENOSPC' });
+                }
+                return originalWrite(...writeArgs);
+            };
+            return fd;
+        };
+        await assert.rejects(() => writeJsonChunksToFile(target, value, 4), /simulated ENOSPC/);
+    } finally {
+        if (originalOpen) {
+            (fs.promises as any).open = originalOpen;
+        }
+    }
+    assert.ok(!fs.existsSync(target), 'the half-written target must be cleaned up');
 });

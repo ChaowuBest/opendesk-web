@@ -27,7 +27,11 @@ import { neutralizeMarkdownHtml } from '../../common/markdown/markdown-html-safe
 import { createSafeMarkdownParser } from '../../common/markdown/safe-render.js';
 import type { SupportedLocale } from '../../common/locale.js';
 import { getLocale, t } from '../../locale/index.js';
-import { resolveToolResultReplacement, resolveVisibleToolResultContent } from './tool-result-content.js';
+import {
+    canStripCompressedToolResultOriginal,
+    resolveToolResultReplacement,
+    resolveVisibleToolResultContent
+} from './tool-result-content.js';
 import type { ToolResultImage } from './task/image-externalization.js';
 import type {
     BaseAssistantMessage,
@@ -447,6 +451,13 @@ export class ToolCall implements BaseChatToolCall {
             outputReset: _outputReset,
             ...rest
         } = this as ToolCall & { tool?: BaseTool<any> };
+        // 已压缩工具结果的原始 result 剥离（issue #341）：替代文本随 result_storage
+        // 持久化，原始文本仅在其可从 artifacts 恢复（或本就是替代文本的内存副本）时
+        // 才从序列化输出中省略；未压缩条目不受影响，加载端对缺失 result 天然兼容
+        // （所有模型可见路径经 resolveToolResultReplacement 优先取替代文本）。
+        if (canStripCompressedToolResultOriginal(this)) {
+            delete rest.result;
+        }
         return rest;
     }
 
@@ -722,6 +733,7 @@ export class ToolCall implements BaseChatToolCall {
 
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
         if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
+            this.ensureToolResultForRender();
             const rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return this.stampToolCallId(rendered);
@@ -748,10 +760,34 @@ export class ToolCall implements BaseChatToolCall {
         </div>`);
     }
 
+    /**
+     * 自定义渲染前的 result 懒回填（issue #341）。
+     *
+     * 自定义渲染器（renderToolCall / renderToolCallCli）直接消费 this.result 本体
+     * （如 parseToolResult 的 JSON.parse、MCP 工具错误卡片的 error 正文），已压缩
+     * 条目序列化剥离 result 后会拿到 undefined。这里仅在"真正触发自定义渲染"时把
+     * 替代文本回填进内存——未展开的工具调用与 GUI 尾部加载未触及的历史消息都不会
+     * 走到本方法，不产生回填内存。错误态（renderToolCallOnError === true 的自定义
+     * 错误卡片）同样回填：压缩不区分成功/失败，剥离后的错误体经 resolver 显示替代
+     * 文本（与统一错误卡片 renderError 的行为一致）。替代文本体积有界（预算压缩产物），
+     * 回填不放大内存；原始全文仍只存在于 artifacts。
+     */
+    ensureToolResultForRender(): void {
+        if (this.result !== undefined || this.status === 'running') {
+            return;
+        }
+        const replacement = resolveToolResultReplacement(this);
+        if (typeof replacement === 'string' && replacement.length > 0) {
+            this.result = replacement;
+        }
+    }
+
     /** 统一的工具错误内联展开渲染，所有工具报错都走这个入口 */
     private renderError(): string {
         const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        const errText = escapeHtml(this.result || '');
+        // 已压缩错误结果重载后 result 可能被剥离（issue #341）：错误体经 resolver
+        // 显示替代文本；未压缩条目 resolver 返回 undefined，保持原有 result 文案
+        const errText = escapeHtml(resolveToolResultReplacement(this) ?? this.result ?? '');
         const displayName = this.getResolvedToolDisplayName();
         return `<div class="od-inline-toolcall-container">
             <div class="flex flex-col min-w-0">

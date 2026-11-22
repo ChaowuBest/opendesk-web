@@ -20,7 +20,10 @@ jest.unstable_mockModule('electron', () => ({
     ipcMain: { handle: (name: string, handler: any) => handlers.set(name, handler) }
 }));
 jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
-    Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) }
+    Setting: { getInstance: () => ({ getEffectiveWorkspace: currentWorkspace }) },
+    // task-bundle 的 restoreTaskBundleArtifacts 读取数据根目录；IPC 测试不触发还原，
+    // 这里给出无副作用的占位即可
+    getOpendeskDirectory: () => os.tmpdir()
 }));
 jest.unstable_mockModule('../../../locale/index.js', () => ({
     t: (key: string) => key,
@@ -79,7 +82,14 @@ describe('task transfer workspace IPC', () => {
 
     test('uses the chosen directory for the batch and consumes the preview once', async () => {
         expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('ok');
-        expect(importTasks).toHaveBeenCalledWith(expect.any(Array), ['source'], manager, directory);
+        expect(importTasks).toHaveBeenCalledWith(
+            expect.any(Array),
+            ['source'],
+            manager,
+            directory,
+            // v2 bundle 的随包 artifacts 还原闭包由 snapshot 携带
+            { restoreArtifacts: expect.any(Function) }
+        );
         expect((await invoke('importTaskBundle', token, ['source'], directory)).status).toBe('error');
         expect(importTasks).toHaveBeenCalledTimes(1);
     });

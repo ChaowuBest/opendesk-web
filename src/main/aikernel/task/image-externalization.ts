@@ -12,11 +12,15 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import sharp from 'sharp';
 
 import { logger } from '../../utils/logger.js';
 import { getOpendeskDirectory } from '../../utils/setting.js';
+import { isSafeArtifactRelativePath } from '../../utils/artifact-relative-path.js';
+import { readImageDimensions } from '../../utils/image-dimensions.js';
+import { jimpLoader } from '../../loader/jimp.js';
 import type { AssistantMessage, ChatContext } from '../messages.js';
+import { ToolCall } from '../messages.js';
+import { isToolCallResultCompressed } from '../tool-result-content.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import type { AdapterMessageBuildOptions } from '../adapters/context.js';
 import type { TaskState } from '../states/tasks.js';
@@ -28,12 +32,21 @@ import type { TaskState } from '../states/tasks.js';
  * 图片随 chat_context 常驻内存并随每次保存全量序列化，是 V8 OOM 崩溃的重要放大器。
  *
  * 设计约束：
- * - image_url 原地替换为 sharp 生成的 240px 缩略图 data URL——任何既有渲染/回放
- *   消费方不需要大图即可正常显示（显示安全性）；
+ * - 只外置已被压缩接管（result_storage / microcompact / legacy compress_id）条目的
+ *   图片：压缩后模型可见内容不再依赖 result 本体，外置才是纯收益。未压缩条目保持
+ *   内联——活跃窗口内的图片本就要随每次请求发给模型，外置会让请求构建期的回灌
+ *   读盘成为常态；条目被压缩接管后由请求准备收尾（migrateInlineToolResultImages）
+ *   与提交接缝补外置；
+ * - image_url 原地替换为 240px 缩略图 data URL（纯 JS 的 jimp 生成，见 createThumbnail，
+ *   不引入原生依赖；JPEG 源编码 JPEG、其余编码 PNG，前缀 MIME 与字节一致）——任何
+ *   既有渲染/回放消费方不需要大图即可正常显示（显示安全性）；
  * - 完整图片写入 artifacts/<taskId>/images/（内容哈希命名，幂等 + 去重），只在
  *   显式消费（点击查看 / 模型请求回灌）时从磁盘按需读取；
- * - 任一步骤失败（sharp 解码失败、写盘失败等）都保持条目内联不动，不影响工具
- *   结果本身；已经外置的条目通过 externalized 标记保证幂等。
+ * - 解码前按文件头做像素上限判断（jimp 无 sharp 的 limitInputPixels 兜底），
+ *   超限保持内联，避免压缩炸弹把本模块要消灭的 OOM 换个形态带回来；
+ * - 任一步骤失败（解码失败、写盘失败等）都保持条目内联不动，不影响工具
+ *   结果本身；已经外置的条目通过 externalized 标记保证幂等，外置失败的条目
+ *   记入进程内 WeakSet 不再重试（条目生命周期内不会变得可外置）。
  */
 
 export const EXTERNALIZED_IMAGE_VERSION = 1;
@@ -46,6 +59,12 @@ const THUMBNAIL_MAX_DIMENSION = 240;
 
 /** 缩略图大于原图该比例时放弃外置（小图外置收益过低）。 */
 const EXTERNALIZE_MAX_INLINE_RATIO = 0.8;
+
+/** 解码前的像素上限（对齐 filemgr 的 MAX_IMAGE_PIXELS）：超限图片保持内联。 */
+const THUMBNAIL_MAX_PIXELS = 100_000_000;
+
+/** 外置失败/收益不足的图片条目：条目生命周期内不再重试（WeakSet 不阻止回收）。 */
+const externalizationSkipped = new WeakSet<object>();
 
 const DATA_URL_PATTERN = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/;
 
@@ -72,6 +91,8 @@ export interface ExternalizedImagePayload {
     byteLength: number;
 }
 
+// jimp 可解码 png/jpeg/bmp/gif/tiff（webp/avif 解码失败走「保持内联」降级，含读取
+// 回灌兼容旧版生成的 webp artifacts，映射表保留）。未知格式（svg+xml 等）同样保持内联。
 const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
     'image/png': 'png',
     'image/jpeg': 'jpg',
@@ -134,14 +155,33 @@ export async function externalizeToolResultImages(taskId: string, resultObject: 
     return externalizedCount;
 }
 
+/**
+ * 只外置已压缩工具调用（result 已被 compact 主流程 / budget / microcompact / legacy
+ * compress_id 接管）的大图，未压缩条目一律内联：活跃窗口内的图片本就要随每次请求
+ * 发给模型，外置会让请求构建期的回灌读盘成为常态；压缩后模型可见内容不再依赖
+ * result 本体，外置才是纯收益。
+ */
+async function externalizeCompressedToolCallImages(taskId: string, toolCall: ToolCall): Promise<number> {
+    if (!isToolCallResultCompressed(toolCall)) {
+        return 0;
+    }
+    return externalizeToolResultImages(taskId, toolCall.result_object);
+}
+
 async function externalizeImageEntry(
     taskId: string,
     mediaType: string,
     base64Payload: string,
     image: Record<string, unknown>
 ): Promise<boolean> {
+    // 外置失败的条目不再重试：解码失败/收益不足的图片在条目的生命周期内不会变得可外置，
+    // 重复尝试只会在每轮请求准备路径上白付 jimp 解码成本（WeakSet 随条目对象回收）
+    if (externalizationSkipped.has(image)) {
+        return false;
+    }
     const original = Buffer.from(base64Payload, 'base64');
     if (original.length < EXTERNALIZE_IMAGE_MIN_BYTES) {
+        externalizationSkipped.add(image);
         return false;
     }
 
@@ -149,12 +189,14 @@ async function externalizeImageEntry(
     // 回灌会产生损坏的 data URL，保持内联更安全。
     const extension = IMAGE_EXTENSION_BY_MIME_TYPE[mediaType];
     if (!extension) {
+        externalizationSkipped.add(image);
         return false;
     }
 
     const thumbnail = await createThumbnail(original, mediaType);
-    if (!thumbnail || thumbnail.length >= original.length * EXTERNALIZE_MAX_INLINE_RATIO) {
+    if (!thumbnail || thumbnail.bytes.length >= original.length * EXTERNALIZE_MAX_INLINE_RATIO) {
         // 解码失败或缩略图收益过低：保持内联，显示不受影响
+        externalizationSkipped.add(image);
         return false;
     }
     // 内容哈希命名：同一张图片重复/并发外置收敛到同一文件，天然幂等 + 去重
@@ -172,39 +214,54 @@ async function externalizeImageEntry(
         }
     }
 
-    image.image_url = `data:image/png;base64,${thumbnail.toString('base64')}`;
-    // 约定：外置后 image_url 始终是 PNG 缩略图 data URL（自带 MIME，任何消费方无需
-    // 外部信息即可解码）；条目的 media_type/source 保持原值描述"原图"，原图的
-    // media type 记录在 externalized.original_media_type 中，两者不要混用。
+    image.image_url = `data:${thumbnail.mimeType};base64,${thumbnail.bytes.toString('base64')}`;
+    // 约定：外置后 image_url 是缩略图 data URL，前缀 MIME 与缩略图字节编码一致
+    // （jpeg 源编码 JPEG、其余编码 PNG）；条目的 media_type/source 保持原值描述"原图"，
+    // 原图的 media type 记录在 externalized.original_media_type 中，两者不要混用。
     image.externalized = {
         version: EXTERNALIZED_IMAGE_VERSION,
         relative_path: relativePath,
         original_bytes: original.length,
         original_media_type: mediaType,
-        thumbnail_bytes: thumbnail.length
+        thumbnail_bytes: thumbnail.bytes.length
     };
     return true;
 }
 
-async function createThumbnail(original: Buffer, mediaType: string): Promise<Buffer | undefined> {
+async function createThumbnail(
+    original: Buffer,
+    mediaType: string
+): Promise<{ bytes: Buffer; mimeType: string } | undefined> {
     try {
-        const image = sharp(original, { failOn: 'none' });
-        const metadata = await image.metadata();
-        const width = metadata.width ?? 0;
-        const height = metadata.height ?? 0;
+        // 解码前先按文件头做像素上限判断：压缩炸弹类图片字节很小但声明尺寸巨大，
+        // 一旦进入 jimp 解码就会按 width*height*4 分配位图（sharp 默认有
+        // limitInputPixels 兜底，纯 JS 的 jimp 没有），正是本模块要避免的 OOM 形态。
+        // 文件头无法识别（如损坏数据）时交给下面的 jimp 解码失败路径处理
+        const dimensions = readImageDimensions(original, mediaType);
+        if (dimensions !== undefined && dimensions.width * dimensions.height > THUMBNAIL_MAX_PIXELS) {
+            return undefined;
+        }
+        // 纯 JS 解码（jimp，与 filemgr/processImageWithJimp 同一套惰性加载）；
+        // jimp 不支持 webp/avif，这两类源图在此处解码失败后由调用方保持内联
+        const Jimp = await jimpLoader.ensure();
+        const image = await Jimp.read(original);
+        const width = image.width;
+        const height = image.height;
         if (width <= 0 || height <= 0) {
             return undefined;
         }
         const scale = Math.min(THUMBNAIL_MAX_DIMENSION / width, THUMBNAIL_MAX_DIMENSION / height, 1);
-        const resized = image.resize({
-            width: Math.max(1, Math.round(width * scale)),
-            height: Math.max(1, Math.round(height * scale)),
-            fit: 'fill'
+        image.resize({
+            w: Math.max(1, Math.round(width * scale)),
+            h: Math.max(1, Math.round(height * scale))
         });
-        // JPEG 缩略图用 JPEG（体积最小）；其余（含截图文本）用 PNG 保持锐利
-        return mediaType === 'image/jpeg'
-            ? await resized.jpeg({ quality: 85 }).toBuffer()
-            : await resized.png({ compressionLevel: 9 }).toBuffer();
+        // 缩略图编码跟随源图：JPEG 源用 JPEG（240px 照片缩略图只有 PNG 的零头体积，
+        // 否则收益比判定会把一批中等 JPEG 直接挡在门外）；其余用 PNG 保持锐利。
+        // 编码结果与 image_url 前缀 MIME 必须一致，见 externalizeImageEntry。
+        if (mediaType === 'image/jpeg') {
+            return { bytes: await image.getBuffer('image/jpeg', { quality: 85 }), mimeType: 'image/jpeg' };
+        }
+        return { bytes: await image.getBuffer('image/png'), mimeType: 'image/png' };
     } catch (error) {
         logger.warn(`thumbnail generation failed: ${error}`);
         return undefined;
@@ -261,10 +318,17 @@ function collectHydratableImageItems(toolCall: {
  * 列表包含该 toolcall 的全部图片（外置的从磁盘读回、内联/远程的原样透传），
  * 仅存活于单次请求构建期间，不会常驻内存。
  * 磁盘文件缺失时降级为内联缩略图，不阻塞请求。
+ *
+ * 安全（路径穿越防护）：relative_path 随任务 JSON 持久化，可被恶意导入包构造成
+ * 指向数据根之外的穿越/绝对路径；回灌读取会把文件内容 base64 进 data URL 发给
+ * 模型服务（本机文件外泄通道）。因此每个条目读取前必须通过目录校验：
+ * - 请求携带 taskId（正常任务请求构建链路必然携带）→ 必须落在当前任务的
+ *   artifacts/<taskId>/images/ 内；
+ * - 无 taskId（理论兜底）→ 至少通过 artifacts/<taskId>/images/ 的形状校验。
  */
 export async function hydrateExternalizedToolImages(
     chatContext: ChatContext,
-    options?: { activeContext?: ActiveContextView }
+    options?: { activeContext?: ActiveContextView; taskId?: string }
 ): Promise<Map<string, ToolResultImage[]>> {
     const pending: { toolCallId: string; items: HydratableImageItem[] }[] = [];
     const messages = options?.activeContext?.messages ?? chatContext.messages;
@@ -296,10 +360,11 @@ export async function hydrateExternalizedToolImages(
             let dataUrl = item.image.image_url;
             if (item.marker) {
                 try {
-                    dataUrl = (await readExternalizedImageByRelativePath(item.marker.relative_path)).dataUrl;
+                    dataUrl = (await readExternalizedImageForHydration(item.marker.relative_path, options?.taskId))
+                        .dataUrl;
                 } catch (error) {
                     logger.warn(`failed to load externalized image ${item.marker.relative_path}: ${error}`);
-                    // 磁盘文件丢失：dataUrl 保持条目内的内联缩略图（显示安全兜底）
+                    // 磁盘文件丢失或路径越界：dataUrl 保持条目内的内联缩略图（显示安全兜底）
                 }
             }
             loaded.push({ ...item.image, image_url: dataUrl });
@@ -334,17 +399,53 @@ export async function readExternalizedImageFile(
     taskId: string,
     relativePath: string
 ): Promise<ExternalizedImagePayload> {
-    const dataRoot = getOpendeskDirectory();
+    assertExternalizedImagePathWithinTask(getOpendeskDirectory(), taskId, relativePath);
+    return readExternalizedImageByRelativePath(relativePath);
+}
+
+/**
+ * 校验 relative_path 解析后必须落在当前任务的 artifacts/<taskId>/images/ 目录内
+ * （同步、无副作用，IPC 显示与模型回灌两条读取路径共用）。
+ */
+function assertExternalizedImagePathWithinTask(dataRoot: string, taskId: string, relativePath: string): void {
+    // 围栏基准不能被被校验方决定：taskId 随 IPC 载荷传入，含 `..` 会把 expectedPrefix
+    // 抬升到数据根之外（先过与产物路径一致的 id 形状校验）
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) {
+        throw new Error(`externalized image request has malformed task id: ${JSON.stringify(taskId)}`);
+    }
     const resolved = path.resolve(dataRoot, relativePath);
     const expectedPrefix = path.resolve(dataRoot, getTaskExternalizedImageRelativeDirectory(taskId)) + path.sep;
     if (!resolved.startsWith(expectedPrefix)) {
         throw new Error(`externalized image path is outside the task image directory: ${relativePath}`);
     }
+}
+
+/**
+ * 模型回灌读取入口：与 IPC 显示路径同一套穿越防护。
+ * - 请求携带 taskId → 严格限制在当前任务的 images 目录；
+ * - 无 taskId（兜底）→ 至少要求 artifacts/<taskId>/images/ 形状合法，
+ *   拒绝任何穿越段与绝对路径。
+ */
+async function readExternalizedImageForHydration(
+    relativePath: string,
+    taskId?: string
+): Promise<ExternalizedImagePayload> {
+    if (taskId !== undefined) {
+        assertExternalizedImagePathWithinTask(getOpendeskDirectory(), taskId, relativePath);
+    } else if (!isSafeArtifactRelativePath(relativePath, 'images')) {
+        throw new Error(`externalized image path failed the artifact path shape check: ${relativePath}`);
+    }
     return readExternalizedImageByRelativePath(relativePath);
 }
 
 async function readExternalizedImageByRelativePath(relativePath: string): Promise<ExternalizedImagePayload> {
-    const fullPath = path.join(getOpendeskDirectory(), relativePath);
+    // 最后一道保险：无论上游校验如何，读取目标必须在数据根的 artifacts/ 内
+    const dataRoot = getOpendeskDirectory();
+    const fullPath = path.resolve(dataRoot, relativePath);
+    const artifactsRoot = path.resolve(dataRoot, 'artifacts') + path.sep;
+    if (!fullPath.startsWith(artifactsRoot)) {
+        throw new Error(`externalized image path is outside the artifacts directory: ${relativePath}`);
+    }
     const input = await fs.promises.readFile(fullPath);
     // 文件名由外置流程以 media type 对应的扩展名生成，回灌时直接取扩展名
     const extension = path.extname(relativePath).slice(1).toLowerCase();
@@ -357,9 +458,13 @@ async function readExternalizedImageByRelativePath(relativePath: string): Promis
 }
 
 /**
- * 旧任务文件迁移：把 chat_context 中仍内联的大图片外置（幂等）。
- * load 路径是同步的（JSON.parse 全量文件），因此迁移以 fire-and-forget 方式
- * 在 applyTaskJson 末尾触发，完成后标记脏任务等待下一次落盘瘦身。
+ * 已压缩工具调用中仍内联的大图补外置（幂等，issue #341）。
+ *
+ * 未压缩条目不外置——活跃窗口内的图片本就要随每次请求发给模型，外置只会让请求
+ * 构建期产生回灌读盘；条目被压缩接管后模型可见内容不再依赖 result 本体，此时外置
+ * 才是纯收益。两个触发时机共用本函数：
+ * - 旧任务文件 load 后的迁移（applyTaskJson 末尾 fire-and-forget）；
+ * - 请求准备（budget/microcompact/compact）刚压缩接管条目后的补外置（completion.ts）。
  */
 export async function migrateInlineToolResultImages(task: TaskState): Promise<number> {
     if (!task.task_id) {
@@ -377,15 +482,20 @@ export async function migrateInlineToolResultImages(task: TaskState): Promise<nu
             }
             for (const toolCall of part.toolcalls) {
                 try {
-                    migrated += await externalizeToolResultImages(task.task_id, toolCall.result_object);
+                    migrated += await externalizeCompressedToolCallImages(task.task_id, toolCall);
                 } catch (error) {
-                    logger.warn(`image migration failed for task ${task.task_id} toolcall ${toolCall.id}: ${error}`);
+                    logger.warn(
+                        `compressed tool result image externalization failed for task ${task.task_id} ` +
+                            `toolcall ${toolCall.id}: ${error}`
+                    );
                 }
             }
         }
     }
     if (migrated > 0) {
         logger.info(`externalized ${migrated} inline tool result image(s) for task ${task.task_id}`);
+        // 防泄漏：任务已不在 manager（正在被移除）时不再标记脏任务，避免重载后
+        // 指向已删除任务的落盘写入
         if (task.task_manager_state.tasks.includes(task)) {
             task.persistLater();
         }

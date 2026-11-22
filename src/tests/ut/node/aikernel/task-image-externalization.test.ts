@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
 import sharp from 'sharp';
@@ -22,11 +23,14 @@ import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../.
 /**
  * Issue #341 修复（阶段一）的工具结果图片外置：
  * - result_object.images 中的大 data URL 外置到 artifacts/<taskId>/images/，
- *   原位替换为 sharp 生成的 240px 缩略图 + externalized 标记；
+ *   原位替换为缩略图 + externalized 标记；
  * - 模型请求构建前按需从磁盘回灌完整图片（活跃窗口内），内存只保留请求期瞬态；
  * - 旧任务文件在 load 后异步迁移（幂等），迁移后落盘体积显著下降。
  * 显示安全性：image_url 始终是合法 data URL（缩略图），任何既有渲染/回放消费方
  * 不需要大图即可正常显示；完整图片只在显式读取（点击查看/模型请求）时从磁盘加载。
+ *
+ * 缩略图由 jimp（纯 JS，真实执行不 mock）生成：png/jpeg/bmp/gif/tiff 可解码；
+ * webp/avif/svg+xml 等解码失败走「保持内联」降级。
  */
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -70,6 +74,36 @@ interface FixtureImageEntry {
 
 function buildImageResultObject(images: FixtureImageEntry[]): object {
     return { type: 'image', images };
+}
+
+/** 拼一个合法的 PNG chunk（length + type + data + CRC32） */
+function pngChunk(type: string, data: Buffer): Buffer {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length, 0);
+    const typeBytes = Buffer.from(type, 'ascii');
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(Buffer.concat([typeBytes, data])) >>> 0, 0);
+    return Buffer.concat([length, typeBytes, data, crc]);
+}
+
+/**
+ * 构造声明尺寸巨大、磁盘字节很小的 PNG（压缩炸弹画像）：IHDR 声明 width/height，
+ * 内容由辅助 tEXt 块撑过外置阈值（16KB），IDAT 只有几个字节。解码器若按其声明
+ * 尺寸分配位图会直接 OOM，必须由文件头像素上限挡在解码之前。
+ */
+function buildDeclaredDimensionPng(width: number, height: number, fillerBytes = 20 * 1024): Buffer {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 2; // color type: RGB
+    return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        pngChunk('IHDR', ihdr),
+        pngChunk('tEXt', Buffer.alloc(fillerBytes, 0x61)),
+        pngChunk('IDAT', zlib.deflateSync(Buffer.from([0, 0, 0, 0]))),
+        pngChunk('IEND', Buffer.alloc(0))
+    ]);
 }
 
 async function buildToolCallWithImages(images: FixtureImageEntry[]): Promise<{ call: ToolCall; taskId: string }> {
@@ -136,6 +170,79 @@ test('corrupted image data keeps the entry inline instead of throwing', async ()
     const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
     assert.equal(entry.externalized, undefined, 'corrupted image must stay inline');
     assert.equal(entry.image_url, corrupted);
+});
+
+test('webp sources keep the entry inline (jimp cannot decode webp thumbnails)', async () => {
+    // 缩略图由纯 JS 的 jimp 生成（不含 webp 解码器）：webp 源图走「解码失败 →
+    // 保持内联」降级，无 externalized marker、image_url 原样保留
+    const webpPayload = Buffer.from('RIFF....WEBPVP8 not really decodable here'.repeat(512));
+    const webpDataUrl = `data:image/webp;base64,${webpPayload.toString('base64')}`;
+    assert.ok(webpDataUrl.length > EXTERNALIZE_IMAGE_MIN_BYTES, 'fixture must exceed the externalize threshold');
+    const { call, taskId } = await buildToolCallWithImages([{ image_url: webpDataUrl, media_type: 'image/webp' }]);
+    const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
+    assert.equal(entry.externalized, undefined, 'webp source must stay inline');
+    assert.equal(entry.image_url, webpDataUrl);
+    assert.equal(
+        fs.existsSync(path.join(getTaskArtifactDirectory(taskId, false), 'images'))
+            ? fs.readdirSync(path.join(getTaskArtifactDirectory(taskId, false), 'images')).length
+            : 0,
+        0,
+        'no artifact file may be written for a webp source'
+    );
+});
+
+test('thumbnail data URL prefix always matches the encoded bytes (jpeg source keeps a jpeg thumbnail)', async () => {
+    // 缩略图编码跟随源图：jpeg 源编码 JPEG（240px 照片缩略图只有 PNG 的零头体积，
+    // 否则收益比判定会把一批中等 JPEG 挡在门外）；data URL 前缀必须与字节一致，
+    // 依赖 MIME 标签而非内容嗅探的消费方才能正确解码
+    const original = await sharp(crypto.randomBytes(1600 * 1200 * 3), {
+        raw: { width: 1600, height: 1200, channels: 3 }
+    })
+        .jpeg({ quality: 95 })
+        .toBuffer();
+    assert.ok(original.length > EXTERNALIZE_IMAGE_MIN_BYTES, 'jpeg fixture must exceed the externalize threshold');
+    const { call, taskId } = await buildToolCallWithImages([
+        { image_url: `data:image/jpeg;base64,${original.toString('base64')}`, media_type: 'image/jpeg' }
+    ]);
+    const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
+    assert.ok(entry.externalized, 'large jpeg source must be externalized');
+    assert.match(entry.image_url, /^data:image\/jpeg;base64,/);
+    const jpegSignature = Buffer.from([0xff, 0xd8, 0xff]);
+    const thumbnailBytes = Buffer.from(String(entry.image_url).split(',')[1], 'base64');
+    assert.deepEqual(
+        thumbnailBytes.subarray(0, jpegSignature.length),
+        jpegSignature,
+        'thumbnail payload must be JPEG bytes'
+    );
+    assert.equal(
+        fs.readFileSync(
+            path.join(
+                getTaskArtifactDirectory(taskId, false),
+                'images',
+                path.basename(entry.externalized.relative_path)
+            )
+        ).length,
+        entry.externalized.original_bytes
+    );
+});
+
+test('a pixel bomb (tiny bytes, huge declared dimensions) stays inline instead of OOMing the decoder', async () => {
+    // jimp 没有 sharp 的 limitInputPixels 兜底：声明 30000x30000 的 PNG 字节极小，
+    // 但解码会按 width*height*4 分配 ~3.6GB 位图。文件头像素上限必须把它挡在解码之前
+    const png = buildDeclaredDimensionPng(30000, 30000);
+    assert.ok(png.length < EXTERNALIZE_IMAGE_MIN_BYTES * 4, 'fixture must stay small on disk');
+    const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+    const { call, taskId } = await buildToolCallWithImages([{ image_url: dataUrl, media_type: 'image/png' }]);
+    const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
+    assert.equal(entry.externalized, undefined, 'pixel bomb must stay inline');
+    assert.equal(entry.image_url, dataUrl);
+    assert.equal(
+        fs.existsSync(path.join(getTaskArtifactDirectory(taskId, false), 'images'))
+            ? fs.readdirSync(path.join(getTaskArtifactDirectory(taskId, false), 'images')).length
+            : 0,
+        0,
+        'no artifact file may be written for a pixel bomb'
+    );
 });
 
 test('externalization is idempotent: already externalized entries are never rewritten', async () => {
@@ -266,13 +373,22 @@ test('legacy task files shrink after load-time migration and stay loadable', asy
     task.task_status = 'failed';
     const call = new ToolCall(0, 'call-legacy-0', 'readImage', '{}');
     call.status = 'success';
+    // 旧任务真实画像：文本结果已被压缩接管（result_storage 在册），图片仍内联
+    call.result_storage = { result_id: 'result-legacy-0', storage_version: 1 };
     call.result_object = buildImageResultObject([
         { image_url: withImageDataUrl(imageA), media_type: 'image/png', source: 'a' },
         { image_url: withImageDataUrl(imageB), media_type: 'image/png', source: 'b' }
     ]);
+    // 同任务里的未压缩条目：迁移必须保持其图片内联（活跃窗口内每轮请求都要发送，
+    // 外置只会引入请求构建期的回灌读盘）
+    const freshCall = new ToolCall(1, 'call-legacy-1', 'readImage', '{}');
+    freshCall.status = 'success';
+    freshCall.result_object = buildImageResultObject([
+        { image_url: withImageDataUrl(imageA), media_type: 'image/png', source: 'fresh' }
+    ]);
     const assistant = new AssistantMessage();
     const part = new ToolCallMessagePart();
-    part.toolcalls.push(call);
+    part.toolcalls.push(call, freshCall);
     assistant.content.push(part);
     task.chat_context = new ChatContext();
     task.chat_context.appendMessage(assistant);
@@ -290,25 +406,29 @@ test('legacy task files shrink after load-time migration and stay loadable', asy
 
     reloaded.saveSync();
     const migratedBytes = fs.statSync(taskFile).size;
-    // 迁移后图片仅剩缩略图内联：体积必须显著低于旧文件
+    // 迁移后已压缩条目的图片仅剩缩略图内联：体积必须显著低于旧文件
     assert.ok(
-        migratedBytes < legacyBytes * 0.5,
-        `migrated file ${migratedBytes}B should be far below legacy ${legacyBytes}B`
+        migratedBytes < legacyBytes * 0.75,
+        `migrated file ${migratedBytes}B should be well below legacy ${legacyBytes}B`
     );
 
     // 迁移结果必须可重新加载且图片条目带完整标记
     const secondLoad = TaskManagerState.load()!;
     const secondTask = secondLoad.getTask('img-migration-legacy')!;
-    const migratedCall = (secondTask.chat_context.messages[0] as AssistantMessage).content.find(
+    const migratedCalls = (secondTask.chat_context.messages[0] as AssistantMessage).content.find(
         (part) => part.type === 'tool_call'
-    )!.toolcalls[0];
-    const images = (migratedCall.result_object as { images: FixtureImageEntry[] }).images;
+    )!.toolcalls;
+    const images = (migratedCalls[0].result_object as { images: FixtureImageEntry[] }).images;
     assert.equal(images.length, 2);
     for (const entry of images) {
         assert.ok(entry.externalized, 'migrated entries must be externalized');
         assert.match(entry.image_url, /^data:image\/png;base64,/);
         assert.ok(fs.existsSync(path.join(dataDir!, entry.externalized?.relative_path as string)));
     }
+    // 未压缩条目的图片保持内联
+    const freshImages = (migratedCalls[1].result_object as { images: FixtureImageEntry[] }).images;
+    assert.equal(freshImages[0].externalized, undefined, 'uncompressed entries must stay inline');
+    assert.equal(freshImages[0].image_url, withImageDataUrl(imageA));
 });
 
 test('readExternalizedImageFile rejects paths outside the task image directory', async () => {
@@ -330,6 +450,15 @@ test('readExternalizedImageFile rejects paths outside the task image directory',
     await assert.rejects(
         () => readExternalizedImageFile(taskId, path.join('artifacts', 'other-task', 'images', stored)),
         /outside/
+    );
+});
+
+test('readExternalizedImageFile rejects malformed task ids before building the directory fence', async () => {
+    // 围栏基准不能被被校验方决定：IPC 只保证 taskId 是非空字符串，含 `..` 的 taskId
+    // 会把 expectedPrefix 抬到数据根之外；形状校验必须先于路径解析
+    await assert.rejects(
+        () => readExternalizedImageFile('../evil', path.join('artifacts', 'x', 'images', 'a.png')),
+        /malformed task id/
     );
 });
 
@@ -451,6 +580,8 @@ test('exportTaskJsonToFile keeps thumbnails and markers without mutating the liv
     task.task_status = 'failed';
     const call = new ToolCall(0, 'call-export-0', 'readImage', '{}');
     call.status = 'success';
+    // 迁移只外置已压缩条目：fixture 按「已压缩 + 内联大图」真实画像构造
+    call.result_storage = { result_id: 'result-export-0', storage_version: 1 };
     call.result_object = buildImageResultObject([
         { image_url: withImageDataUrl(original), media_type: 'image/png', source: 'fixture' }
     ]);
@@ -526,6 +657,7 @@ test('unload defers while image migration is in flight and proceeds afterwards',
     task.task_status = 'failed';
     const call = new ToolCall(0, 'call-unload-0', 'readImage', '{}');
     call.status = 'success';
+    call.result_storage = { result_id: 'result-unload-0', storage_version: 1 };
     call.result_object = buildImageResultObject([{ image_url: withImageDataUrl(original), media_type: 'image/png' }]);
     const assistant = new AssistantMessage();
     const part = new ToolCallMessagePart();
@@ -552,6 +684,86 @@ test('unknown image formats such as svg+xml stay inline', async () => {
     assert.match(entry.image_url, /^data:image\/svg\+xml;base64,/);
 });
 
+test('request-prep externalization only touches compressed toolcalls and stays idempotent', async () => {
+    const original = await createNoisyPng(600, 400);
+    const manager = new TaskManagerState();
+    const task = new TaskState(manager);
+    task.task_id = 'img-prep-ext';
+    task.task_status = 'failed';
+
+    // 已压缩条目：请求准备接管 result 后内联大图应被补外置
+    const compressed = new ToolCall(0, 'call-prep-0', 'browser-screenshot', '{"seq":1}');
+    compressed.status = 'success';
+    compressed.result_storage = { result_id: 'result-prep-0', storage_version: 1 };
+    compressed.result_object = buildImageResultObject([
+        { image_url: withImageDataUrl(original), media_type: 'image/png' }
+    ]);
+    // 未压缩条目：活跃窗口内每轮请求都要发送完整图片，必须保持内联
+    const fresh = new ToolCall(1, 'call-prep-1', 'browser-screenshot', '{"seq":2}');
+    fresh.status = 'success';
+    fresh.result_object = buildImageResultObject([{ image_url: withImageDataUrl(original), media_type: 'image/png' }]);
+    const assistant = new AssistantMessage();
+    const part = new ToolCallMessagePart();
+    part.toolcalls.push(compressed, fresh);
+    assistant.content.push(part);
+    task.chat_context = new ChatContext();
+    task.chat_context.appendMessage(assistant);
+    manager.tasks.push(task);
+
+    const { migrateInlineToolResultImages } = await import('../../../../main/aikernel/task/image-externalization.js');
+    const externalized = await migrateInlineToolResultImages(task);
+    assert.equal(externalized, 1, 'only the compressed toolcall gains an externalized image');
+
+    const calls = (task.chat_context.messages[0] as AssistantMessage).content.find(
+        (item) => item.type === 'tool_call'
+    )!.toolcalls;
+    const compressedEntry = (calls[0].result_object as { images: FixtureImageEntry[] }).images[0];
+    const freshEntry = (calls[1].result_object as { images: FixtureImageEntry[] }).images[0];
+    assert.ok(compressedEntry.externalized, 'compressed toolcall must be externalized');
+    assert.ok(fs.existsSync(path.join(dataDir!, compressedEntry.externalized?.relative_path as string)));
+    assert.equal(freshEntry.externalized, undefined, 'uncompressed toolcall must stay inline');
+    assert.equal(freshEntry.image_url, withImageDataUrl(original));
+
+    // 幂等：重复执行不再产生新外置
+    assert.equal(await migrateInlineToolResultImages(task), 0);
+
+    // 已外置的压缩条目回灌可读回完整原图
+    const hydrated = await hydrateExternalizedToolImages(task.chat_context);
+    assert.equal(hydrated.get(compressed.id)![0].image_url, withImageDataUrl(original));
+});
+
+test('microcompact-cleared toolcalls qualify as compressed for externalization', async () => {
+    const original = await createNoisyPng(600, 400);
+    const manager = new TaskManagerState();
+    const task = new TaskState(manager);
+    task.task_id = `img-ext-${Math.random().toString(36).slice(2, 8)}`;
+    task.task_status = 'failed';
+    // microcompact 本地清除：result 已被替代文本接管，无 result_storage，同样视为已压缩
+    const call = new ToolCall(0, `call-${task.task_id}`, 'readImage', '{}');
+    call.status = 'success';
+    call.result_object = buildImageResultObject([{ image_url: withImageDataUrl(original), media_type: 'image/png' }]);
+    call.microcompact = {
+        strategy: 'local_clear',
+        cleared_at: new Date().toISOString(),
+        original_chars: original.length,
+        original_lines: 3,
+        replacement_text: '[旧结果已被清理]'
+    };
+    const assistant = new AssistantMessage();
+    const part = new ToolCallMessagePart();
+    part.toolcalls.push(call);
+    assistant.content.push(part);
+    task.chat_context = new ChatContext();
+    task.chat_context.appendMessage(assistant);
+    manager.tasks.push(task);
+
+    const { migrateInlineToolResultImages } = await import('../../../../main/aikernel/task/image-externalization.js');
+    assert.equal(await migrateInlineToolResultImages(task), 1);
+    const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
+    assert.ok(entry.externalized, 'microcompact-only toolcall must be externalized');
+    assert.ok(fs.existsSync(path.join(dataDir!, entry.externalized?.relative_path as string)));
+});
+
 test('forked tasks own their externalized images: markers are rewired and files copied', async () => {
     const original = await createNoisyPng(600, 400);
     const tiny = await sharp({
@@ -567,6 +779,7 @@ test('forked tasks own their externalized images: markers are rewired and files 
     // 正常外置图 + 一个指向"不存在源文件"的 marker（模拟跨机器导入的悬空引用）
     const call = new ToolCall(0, 'call-fork-0', 'readImage', '{}');
     call.status = 'success';
+    call.result_storage = { result_id: 'result-fork-0', storage_version: 1 };
     call.result_object = buildImageResultObject([
         { image_url: withImageDataUrl(original), media_type: 'image/png', source: 'fixture' }
     ]);
@@ -631,4 +844,108 @@ test('forked tasks own their externalized images: markers are rewired and files 
     // 模型回灌：fork 上下文中外置图仍可从磁盘读回完整原图
     const hydrated = await hydrateExternalizedToolImages(forked.chat_context);
     assert.equal(hydrated.get(forkedCalls[0].id)![0].image_url, withImageDataUrl(original));
+});
+
+function buildHydrationContextWithMarker(markerPath: string): {
+    context: ChatContext;
+    call: ToolCall;
+    thumbnail: string;
+} {
+    const thumbnail =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const call = new ToolCall(0, `call-evil-${Math.random().toString(36).slice(2, 8)}`, 'readImage', '{}');
+    call.status = 'success';
+    call.result_object = buildImageResultObject([
+        {
+            image_url: thumbnail,
+            media_type: 'image/png',
+            externalized: {
+                version: 1,
+                relative_path: markerPath,
+                original_bytes: 1024,
+                original_media_type: 'image/png',
+                thumbnail_bytes: 96
+            }
+        }
+    ]);
+    const context = new ChatContext();
+    const assistant = new AssistantMessage();
+    const part = new ToolCallMessagePart();
+    part.toolcalls.push(call);
+    assistant.content.push(part);
+    context.appendMessage(assistant);
+    return { context, call, thumbnail };
+}
+
+test('hydration never reads paths escaping the artifacts directory (traversal / absolute)', async () => {
+    // 数据目录之外放置一个真实文件：若穿越被读出，dataUrl 会变成该文件内容
+    const outsideFile = path.join(path.dirname(dataDir!), `outside-secret-${process.pid}.png`);
+    fs.writeFileSync(outsideFile, 'SECRET-OUTSIDE-CONTENT');
+    try {
+        for (const markerPath of [
+            path.join('..', path.basename(dataDir!), '..', path.basename(outsideFile)),
+            '../outside-secret.png',
+            outsideFile,
+            path.join('artifacts', 't1', 'images', '..', '..', '..', 'outside-secret.png')
+        ]) {
+            const { context, call, thumbnail } = buildHydrationContextWithMarker(markerPath);
+            const hydrated = await hydrateExternalizedToolImages(context);
+            const images = hydrated.get(call.id)!;
+            assert.equal(
+                images[0].image_url,
+                thumbnail,
+                `marker ${markerPath} must not escape the artifacts directory`
+            );
+            // 带 taskId 的严格校验同样拒绝
+            const strict = await hydrateExternalizedToolImages(context, { taskId: 't1' });
+            assert.equal(strict.get(call.id)![0].image_url, thumbnail, `strict mode must reject ${markerPath}`);
+        }
+    } finally {
+        fs.rmSync(outsideFile, { force: true });
+    }
+});
+
+test('hydration with taskId restricts reads to the current task image directory', async () => {
+    const original = await createNoisyPng(600, 400);
+    // 两个任务各自外置一张真实图片
+    const buildMarkerFor = async (taskId: string) => {
+        const call = new ToolCall(0, `call-${taskId}`, 'readImage', '{}');
+        call.status = 'success';
+        call.result_object = buildImageResultObject([
+            { image_url: withImageDataUrl(original), media_type: 'image/png', source: 'fixture' }
+        ]);
+        await externalizeToolResultImages(taskId, call.result_object);
+        const entry = (call.result_object as { images: FixtureImageEntry[] }).images[0];
+        // 回灌输入的 image_url 收敛为内联缩略图（模拟已落盘瘦身的重载画像）
+        const thumbnail = entry.image_url;
+        const relativePath = entry.externalized?.relative_path as string;
+        entry.image_url = thumbnail;
+        return { call, thumbnail, relativePath };
+    };
+
+    const ownerTaskId = `img-owner-${Math.random().toString(36).slice(2, 8)}`;
+    const otherTaskId = `img-other-${Math.random().toString(36).slice(2, 8)}`;
+    const own = await buildMarkerFor(ownerTaskId);
+    const other = await buildMarkerFor(otherTaskId);
+
+    const context = new ChatContext();
+    const assistant = new AssistantMessage();
+    const part = new ToolCallMessagePart();
+    part.toolcalls.push(own.call, other.call);
+    assistant.content.push(part);
+    context.appendMessage(assistant);
+
+    // 带当前任务 id：本任务图片读回全图，另一任务的合法路径被拒绝并回退缩略图
+    const strict = await hydrateExternalizedToolImages(context, { taskId: ownerTaskId });
+    assert.equal(strict.get(own.call.id)![0].image_url, withImageDataUrl(original));
+    assert.equal(
+        strict.get(other.call.id)![0].image_url,
+        other.thumbnail,
+        'another task image must not be readable under a foreign taskId'
+    );
+
+    // 不带 taskId：形状校验兜底（合法 images 布局可读——UUID 不可猜 + 导入清洗防植入）
+    const loose = await hydrateExternalizedToolImages(context);
+    assert.equal(loose.get(own.call.id)![0].image_url, withImageDataUrl(original));
+    assert.equal(loose.get(other.call.id)![0].image_url, withImageDataUrl(original));
 });

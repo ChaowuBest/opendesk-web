@@ -263,6 +263,158 @@ export function persistToolResultArtifactForToolCall(
     };
 }
 
+export interface ToolResultArtifactsRewireResult {
+    /** 改写的 relative_path 总数（chat_context + replacement_state） */
+    rewritten: number;
+    /** 原文文件已在 fork 目录或复制成功 */
+    present: number;
+    /** 源文件缺失（悬空引用，容忍降级到替代文本） */
+    missing: number;
+}
+
+/** 内嵌产物路径改写：替代文本与 microcompact 提示里的绝对路径随 relative_path 一同改写 */
+function rewriteEmbeddedArtifactPath(text: string, sourceFullPath: string, forkFullPath: string): string {
+    return text.split(sourceFullPath).join(forkFullPath);
+}
+
+// 注意：内嵌产物路径改写有两个并列实现，场景不同不要强行合并——
+// - fork（本函数）：本机操作，源/目标绝对路径都可重建，直接整串替换；
+// - v2 bundle 导入（task-bundle.ts 的 buildEmbeddedArtifactPathRewrites）：跨机器，
+//   源机数据根未知，只能按「分隔符 + 相对路径」锚点做前缀替换。
+function rewriteEmbeddedArtifactPathOptional(
+    text: string | undefined,
+    sourceFullPath: string,
+    forkFullPath: string
+): string | undefined {
+    return typeof text === 'string' ? rewriteEmbeddedArtifactPath(text, sourceFullPath, forkFullPath) : text;
+}
+
+/**
+ * fork 的工具结果产物 copy-on-fork（与外置图片的 rewireExternalizedImagesForTask 同策略）。
+ *
+ * fork 后 chat_context 各 toolcall 的 result_storage.relative_path 与
+ * tool_result_replacement_state 记录仍指向源任务 artifacts；源任务删除会连带清掉
+ * 原文文件，fork 的可恢复原文随之丢失。这里把指向源任务 tool-results 目录的相对路径
+ * 改写到 fork 命名空间，并把原文文件复制到 fork 自己的 artifacts 目录，使 fork 在
+ * 源任务删除后自洽可读。尽力而为：源文件缺失计入 missing，不阻断 fork。
+ */
+export function rewireToolResultArtifactsForTask(
+    chatContext: ChatContext,
+    replacementState: ToolResultReplacementState,
+    sourceTaskId: string,
+    forkTaskId: string
+): ToolResultArtifactsRewireResult {
+    let rewritten = 0;
+    let present = 0;
+    let missing = 0;
+
+    interface RewiredPath {
+        relativePath: string;
+        sourceFullPath: string;
+        forkFullPath: string;
+    }
+
+    const rewireOne = (relativePath: string): RewiredPath | undefined => {
+        const segments = relativePath.split(/[\\/]/);
+        // 只处理指向源任务 tool-results 目录的相对路径，其余布局原样保留
+        if (
+            segments.length < 4 ||
+            segments[0] !== 'artifacts' ||
+            segments[1] !== sourceTaskId ||
+            segments[2] !== TOOL_RESULT_STORAGE_DIRECTORY_NAME ||
+            segments.slice(3).some((segment) => !segment || segment === '.' || segment === '..')
+        ) {
+            return undefined;
+        }
+        rewritten++;
+        const restSegments = segments.slice(3);
+        const sourceFullPath = path.join(getTaskToolResultDirectory(sourceTaskId, false), ...restSegments);
+        const forkFullPath = path.join(getTaskToolResultDirectory(forkTaskId, true), ...restSegments);
+        try {
+            if (fs.existsSync(forkFullPath)) {
+                present++;
+            } else if (fs.existsSync(sourceFullPath)) {
+                fs.copyFileSync(sourceFullPath, forkFullPath, fs.constants.COPYFILE_EXCL);
+                present++;
+            } else {
+                missing++;
+            }
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+                present++;
+            } else {
+                missing++;
+            }
+        }
+        return {
+            relativePath: path.join('artifacts', forkTaskId, TOOL_RESULT_STORAGE_DIRECTORY_NAME, ...restSegments),
+            sourceFullPath,
+            forkFullPath
+        };
+    };
+
+    for (const message of chatContext.messages) {
+        if (!(message instanceof AssistantMessage)) {
+            continue;
+        }
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') {
+                continue;
+            }
+            for (const toolCall of part.toolcalls) {
+                const storage = toolCall.result_storage;
+                const relativePath = storage?.relative_path;
+                if (storage === undefined || typeof relativePath !== 'string' || relativePath.length === 0) {
+                    continue;
+                }
+                const next = rewireOne(relativePath);
+                if (next !== undefined) {
+                    storage.relative_path = next.relativePath;
+                    // 替代文本与 microcompact 提示内嵌同一原文文件的绝对路径，同步改写；
+                    // 否则源任务删除后模型按提示读文件必然失败
+                    storage.replacement_text = rewriteEmbeddedArtifactPathOptional(
+                        storage.replacement_text,
+                        next.sourceFullPath,
+                        next.forkFullPath
+                    );
+                    const microcompact = toolCall.microcompact;
+                    if (microcompact !== undefined) {
+                        microcompact.replacement_text = rewriteEmbeddedArtifactPathOptional(
+                            microcompact.replacement_text,
+                            next.sourceFullPath,
+                            next.forkFullPath
+                        );
+                        microcompact.artifact_path_hint = rewriteEmbeddedArtifactPathOptional(
+                            microcompact.artifact_path_hint,
+                            next.sourceFullPath,
+                            next.forkFullPath
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // clone() 对记录是浅拷贝（{...record}），就地改写安全
+    for (const record of replacementState.replacements.values()) {
+        const relativePath = record.relative_path;
+        if (typeof relativePath !== 'string' || relativePath.length === 0) {
+            continue;
+        }
+        const next = rewireOne(relativePath);
+        if (next !== undefined) {
+            record.relative_path = next.relativePath;
+            if (typeof record.replacement_text === 'string') {
+                record.replacement_text = rewriteEmbeddedArtifactPath(
+                    record.replacement_text,
+                    next.sourceFullPath,
+                    next.forkFullPath
+                );
+            }
+        }
+    }
+    return { rewritten, present, missing };
+}
+
 function normalizeReplacementRecord(record: unknown): ToolResultReplacementRecord | undefined {
     if (record === undefined || record === null || typeof record !== 'object') {
         return undefined;

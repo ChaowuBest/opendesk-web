@@ -24,6 +24,7 @@ import { ensureMcpWorkspace } from '../mcp.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
 import { Setting } from '../../../utils/setting.js';
+import { resolveToolResultReplacement } from '../../../aikernel/tool-result-content.js';
 import iconv from 'iconv-lite';
 import {
     isCompactBoundaryMessage,
@@ -851,7 +852,11 @@ function partToMessagePart(
         const argsString = tc.args_string ?? tc.arguments ?? '';
         const { input, raw } = parseToolInput(argsString);
         const status = tc.status || p.status;
-        const outputValue = tc.result ?? p.result ?? tc.result_object ?? p.result_object;
+        // 已压缩工具结果重载后 result 被剥离（issue #341）：有替代文本时经 resolver
+        // 接管输出，与模型可见内容保持一致；未压缩条目 resolver 返回 undefined，
+        // 回退链路与原行为逐字节一致
+        const replacement = resolveToolResultReplacement(tc);
+        const outputValue = replacement ?? tc.result ?? p.result ?? tc.result_object ?? p.result_object;
         const resultObject = tc.result_object ?? p.result_object;
         const decodedOutput = typeof outputValue === 'string' ? tryParseJson(outputValue) : outputValue;
         const completionAccepted =

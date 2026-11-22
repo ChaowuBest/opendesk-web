@@ -13,6 +13,7 @@ import type * as acp from '@agentclientprotocol/sdk';
 import type { AgentSideConnection } from '@agentclientprotocol/sdk';
 import type { TaskUpdateAssistantChunk, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import type { ToolCall } from '../../aikernel/messages.js';
+import { resolveToolResultReplacement } from '../../aikernel/tool-result-content.js';
 import { t } from '../../../locale/index.js';
 
 type AcpToolStatus = acp.ToolCallStatus;
@@ -113,6 +114,12 @@ export function getToolLocations(toolCall: ToolCall): acp.ToolCallLocation[] | u
 }
 
 function getToolOutputText(toolCall: ToolCall): string | undefined {
+    // 已压缩工具结果（issue #341）：替代文本优先于（可能已被序列化剥离的）原始 result，
+    // 与模型可见内容保持一致；未压缩条目 resolver 返回 undefined，行为不变
+    const replacement = resolveToolResultReplacement(toolCall);
+    if (typeof replacement === 'string' && replacement.length > 0) {
+        return replacement;
+    }
     if (typeof toolCall.result === 'string' && toolCall.result.length > 0) {
         return toolCall.result;
     }

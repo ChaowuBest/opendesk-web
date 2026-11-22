@@ -27,6 +27,9 @@ export interface AdapterMessageBuildOptions {
     toolResultOverrides?: Map<string, string>;
     assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
     requestTailText?: string;
+    /** 发起请求的任务 id：仅供外置图片回灌（withHydratedToolImages）做严格的
+     * artifacts/<taskId>/images/ 目录校验，不参与消息投影与序列化。 */
+    taskId?: string;
     /**
      * 已外置工具结果图片的按需回灌（toolCallId → 完整图片）。
      * 由请求构建入口在 buildMessages 前通过 hydrateExternalizedToolImages 生成，

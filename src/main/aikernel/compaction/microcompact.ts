@@ -842,6 +842,11 @@ export function applyLocalMicrocompactToChatContext(
 
         const artifactPathHint = buildMicrocompactArtifactPathHint(taskId, candidate.toolCall);
         candidate.toolCall.result = replacementText;
+        // replacement_text 双字段并存是刻意设计：result_storage.replacement_text 由
+        // 此前的 compact 主流程 / tool-result budget 写入，microcompact.replacement_text
+        // 由这里写入。请求构建时 overrides（microcompact 的 request_override）优先级最高；
+        // 重载后无 overrides 时模型可见内容回退到 result_storage.replacement_text，
+        // 两个字段各自持久化保证本地清除语义独立可恢复，互不覆盖。
         candidate.toolCall.setMicrocompact({
             strategy: 'local_clear',
             cleared_at: new Date().toISOString(),

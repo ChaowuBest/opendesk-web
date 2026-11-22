@@ -31,9 +31,10 @@ import { AgentRegistry } from '../agents/registry.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import type { Participant } from '../types/index.js';
 import type { ReasoningEffort } from '../types/reasoning.js';
-import { TaskState } from '../states/tasks.js';
+import { TaskState, removeTaskFilesById } from '../states/tasks.js';
 import { TaskTransferError, type TaskTransferStage } from '../../utils/task-transfer-error.js';
 import { atomicWriteFile, atomicWriteFileSync } from '../../utils/temp.js';
+import { atomicWriteJsonFile, atomicWriteJsonFileSync, writeJsonChunksToFile } from '../../utils/json-stream-write.js';
 import { deserializeTaskFromIndex, indexEntryHasMetadata, normalizeTaskIndexEntry } from './serializer.js';
 import { BrowserManager } from '../../../common/embedBrowserUse/main.js';
 
@@ -463,7 +464,9 @@ export class TaskManagerState {
         const results = await Promise.allSettled(
             dirtyTasks.map((task) => {
                 const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-                return atomicWriteFile(taskFile, JSON.stringify(task.toJSON(), null, 4));
+                // 流式序列化落盘（issue #341）：输出与 JSON.stringify(v, null, 4) 逐字节
+                // 一致，但不再在内存里物化整个输出串，保存峰值只剩有界写批次
+                return atomicWriteJsonFile(taskFile, task.toJSON(), 4);
             })
         );
         for (let i = 0; i < results.length; i++) {
@@ -540,7 +543,9 @@ export class TaskManagerState {
         for (const task of dirtyTasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
             try {
-                atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
+                // 流式序列化落盘（issue #341）：saveSync 常见于退出/重建等大历史场景，
+                // 同步全量 stringify 是崩溃主因之一，输出与原实现逐字节一致
+                atomicWriteJsonFileSync(taskFile, task.toJSON(), 4);
                 task._dirty = false;
             } catch (err) {
                 // 写入失败保持 _dirty = true 以便后续重试
@@ -614,7 +619,9 @@ export class TaskManagerState {
             if (file.endsWith('.json') && file !== 'task_list.json') {
                 const taskIdFromFile = path.basename(file, '.json');
                 if (!existingTaskIds.has(taskIdFromFile)) {
-                    fs.unlinkSync(path.join(taskDirectory, file));
+                    // 散落 json 已无索引引用，删除 json 后必须连同产物（artifacts/<id>/
+                    // 与 legacy 目录）一起清掉，否则留下不可恢复也不可引用的孤儿目录
+                    removeTaskFilesById(taskIdFromFile);
                 }
             }
         });
@@ -733,11 +740,11 @@ export class TaskManagerState {
                 const basename = `${task.task_id}.json`;
                 filePath = path.join(directory, basename);
                 const temporary = path.join(staging, basename);
-                stage = 'serializeTask';
-                const content = JSON.stringify(task.toJSON(), null, 4);
                 const indexEntry = task.toSimplifiedJSON();
                 stage = 'writeTask';
-                await fs.promises.writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+                // 流式序列化写暂存（issue #341）：wx 互斥语义由直写路径保留，
+                // 序列化与写盘融合后失败统一归入 writeTask 阶段
+                await writeJsonChunksToFile(temporary, task.toJSON(), 4, { flag: 'wx', mode: 0o600 });
                 tasks.push(deserializeTaskFromIndex(indexEntry, filePath, this));
             }
             await this.publishImportedTasks(tasks, directory, staging);

@@ -225,6 +225,58 @@ export async function atomicWriteJsonFile(filePath: string, value: unknown, inde
 }
 
 /**
+ * 流式直写 JSON 文件（不经临时文件 / rename）：导入暂存等路径需要 wx 互斥语义，
+ * 原子写出的 tmp+rename 会绕过它。输出与 atomicWriteJsonFile 一致，峰值内存只有
+ * 一个写批次。写一半失败（序列化抛错 / 写盘失败）时清理半截目标文件再抛出——
+ * 直写路径没有 tmp+rename 的原子性，残留半截文件不能留在目标位置。
+ */
+export async function writeJsonChunksToFile(
+    filePath: string,
+    value: unknown,
+    indent: number = 4,
+    options: { flag?: string; mode?: number } = {}
+): Promise<void> {
+    const handle = await fs.promises.open(filePath, options.flag ?? 'w', options.mode);
+    try {
+        for (const batch of jsonChunksBuffered(value, indent)) {
+            await handle.writeFile(batch, { encoding: 'utf8' });
+        }
+    } catch (err) {
+        await handle.close().catch(() => {});
+        await fs.promises.unlink(filePath).catch(() => {});
+        throw err;
+    }
+    await handle.close();
+}
+
+/**
+ * atomicWriteJsonFile 的同步版本：saveSync 等同步落盘路径用它消除 JSON.stringify
+ * 输出串的内存峰值（issue #341）。语义与 atomicWriteFileSync 一致——流式写入
+ * 临时文件后 rename 覆盖目标，无重试，失败清理临时文件。
+ */
+export function atomicWriteJsonFileSync(filePath: string, value: unknown, indent: number = 4): void {
+    const tmpPath = buildAtomicWriteTmpPath(filePath);
+    try {
+        const fd = fs.openSync(tmpPath, 'w');
+        try {
+            for (const batch of jsonChunksBuffered(value, indent)) {
+                fs.writeFileSync(fd, batch, { encoding: 'utf8' });
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+        try {
+            fs.unlinkSync(tmpPath);
+        } catch {
+            /* 清理失败无需处理：临时文件只会成为残留垃圾，不会被误认为任务文件 */
+        }
+        throw err;
+    }
+}
+
+/**
  * 与 JSON.stringify 相同的前置处理：对象先调用 toJSON（Date → ISO 字符串等），
  * 结果可能仍是对象，继续解析直到出现纯值。JSON.stringify 会向 toJSON 传入键名，
  * 现有对象图中的实现（Date 等）均不依赖该参数，这里省略。

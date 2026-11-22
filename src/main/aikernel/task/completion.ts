@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -45,6 +45,7 @@ import {
     removeToolCallsFrom,
     resolveStreamingToolCallsForTask
 } from '../task/tool-resolver.js';
+import { migrateInlineToolResultImages } from '../task/image-externalization.js';
 import type { TaskState } from '../states/tasks.js';
 import type { TaskStatus } from './types.js';
 import {
@@ -340,6 +341,15 @@ export async function processTaskCompletion(
             task.clearFileReadStateAfterContextCompaction(
                 preparation.sessionMemoryCompacted ? 'session_memory_compact' : 'full_compact'
             );
+        }
+
+        // 请求准备（budget/microcompact/compact）可能刚把条目压缩接管：被压缩条目的
+        // 内联大图此时补外置落盘（幂等，函数内部在外置成功后自行标记脏任务落盘）。
+        // 未压缩条目保持内联，活跃窗口内的图片随请求直接发送，不产生请求构建期的回灌读盘。
+        try {
+            await migrateInlineToolResultImages(task);
+        } catch (externalizeError) {
+            logger.warn(`compressed image externalization skipped for task ${task.task_id}: ${externalizeError}`);
         }
 
         if (preparation.sessionMemoryCompactResult) {
@@ -638,6 +648,8 @@ export async function processTaskCompletion(
                         startIndex: 0,
                         messages: requestChatContext.messages
                     },
+                    // 外置图片回灌按当前任务的 images 目录做严格校验（防穿越读取）
+                    taskId: task.task_id,
                     ...(requestTailText ? { requestTailText } : {})
                 };
                 await AgentExecutionInstrumentationRegistry.aroundModelRequest(

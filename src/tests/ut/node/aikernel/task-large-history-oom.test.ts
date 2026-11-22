@@ -17,28 +17,35 @@ import { TaskManagerState, TaskState } from '../../../../main/aikernel/states/ta
 import { getTaskDirectory, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 
 /**
- * Issue #341 复现：恢复超大任务历史（issue 中约 384MB、888 次工具调用、363 个图片条目）
- * 后，任务对象把全部消息内容（含 base64 图片、已压缩工具结果的原始 result）常驻内存，
- * 且落盘走 JSON.stringify(task.toJSON(), null, 4) 全量序列化，内存峰值远超文件体积。
+ * Issue #341 回归：超大任务历史（issue 中约 384MB、888 次工具调用、363 个图片条目）
+ * 的恢复与保存管线不得再放大内存。
+ *
+ * 修复内容（阶段二）：
+ * - 落盘走流式序列化（json-stream-write），不再物化整个 JSON 输出串——保存峰值
+ *   从「常驻图 + ~2.4× 文件体积的输出串」降为「常驻图 + 有界写批次」；
+ * - 已压缩工具结果的原始 result 按可恢复性从序列化输出中剥离（见
+ *   toolcall-compressed-result-strip.test.ts）。
  *
  * 本测试用真实类构建与 issue 同构的 fixture（888 次工具调用、363 个图片条目、
- * 212 条已压缩但仍保留原始 result 的工具结果），按等比缩小到 ~130MB，在子进程中
- * 用受限 old-space 实测三条路径（阈值按 fixture 实际体积推导，余量见各断言）：
+ * 212 条已压缩但仍保留原始 result 的工具结果，无 artifacts 原文文件——即旧文件
+ * 被拷贝到没有 artifacts 的机器的最坏画像），按等比缩小到 ~130MB，在子进程中
+ * 用受限 old-space 实测（阈值按 fixture 实际体积推导，余量见各断言）：
  *
- * - 恢复路径净驻留 ≈ 0.9× 文件体积（实测 93~96MB / 104.8MB）→ 上界断言 1.15×；
- * - 恢复 + 一次 saveSync 在 2.7× 堆下完成，保存阶段 heap 净增 ≈ 2.4× 文件体积
- *   （实测 254MB / 104.8MB）→ 下界断言 1.5×，钉死全量序列化的放大系数；
- * - 恢复 + 保存管线在 1.25× 堆下必然 V8 OOM（崩溃堆必须高于 tsx 子进程自身的模块
- *   编译地板 ~128MB，同时低于实测需求下界 1.335×，因此 fixture 不能小于 ~100MB；
- *   并用 modules=1 里程碑确保 OOM 发生在任务管线而非模块加载阶段），
- *   崩溃签名与 issue 一致（"...heap out of memory"，实机为 SIGABRT / node::OOMErrorHandler）。
+ * - 恢复路径净驻留（收敛采样）≈ 1.0× 文件体积 → 上界断言 1.15×；
+ *   （加载路径未改动，该基线与修复前一致）
+ * - 保存阶段存活净增（子进程开启 --expose-gc，采样前强制全量 GC）必须显著低于
+ *   修复前的 ~2.4× 文件体积（全量 stringify 的输出串是存活内存）：流式写出后
+ *   保存只增加 toJSON 结构图（字符串共享引用）与有界写批次，存活净增退化为
+ *   个位数 MB → 上界断言 max(16MB, 0.1×)；
+ * - 恢复 + 保存整条管线必须在 1.55× 堆下完成（实测修复前保存管线在同堆下
+ *   因全量 stringify 的输出串叠加必然 V8 OOM：常驻 ~0.9× + 输出串 ~1× 的峰值
+ *   早已超出；修复后有界批次不再受堆约束）。探针必须高于恢复路径自身的最小
+ *   可完成堆（实测 ~1.35~1.41×，JSON.parse 的输入串与解析图瞬时共存所致），
+ *   因此 fixture 不能小于 ~100MB。
  *
- * 注意：实测两条路径的最小可完成堆几乎重合（~1.35~1.41× 文件体积），且 V8 GC 调度
- * 带随机性（临界点复跑会漂移），因此不做「同堆下恢复存活、保存必崩」的 razor-thin
- * 对照；保存路径的放大系数由第二条断言单独钉死。
- *
- * 修复后本文件的翻转方式：放大系数断言改为显著低于 1.5× 的上界断言，并可在远小于
- * 1.20× 的堆限制下要求整条管线完成。
+ * 注意：fixture 构建时已压缩条目的原始 result 因 artifacts 缺失而按契约保持内联，
+ * 图片为不可解码的伪 base64（jimp 解码失败，外置为 no-op），确保子进程始终回放「未瘦身
+ * 的旧文件」最坏画像，钉死流式写出与剥离对保存峰值的真实效果。
  */
 
 const TARGET_TOOL_CALLS = 888;
@@ -54,8 +61,12 @@ let fixtureDir: string | undefined;
 let fixtureFileBytes = 0;
 
 // 子进程回放脚本：与实机一致的恢复（TaskManagerState.load + getTask -> ensureLoaded）
-// 与保存（persistLater + saveSync -> JSON.stringify(task.toJSON(), null, 4)）路径。
-// heap 上限通过 NODE_OPTIONS 传入（tsx 会把脚本转发到子进程，命令行 flag 不生效）。
+// 与保存（persistLater + saveSync）路径。heap 上限通过 NODE_OPTIONS 传入（tsx 会把
+// 脚本转发到子进程，命令行 flag 不生效）；--expose-gc + 收敛式采样让各里程碑读数
+// 反映存活内存而非 GC 时机漂浮垃圾。注意各里程碑的口径：
+// - restore_growth_mb：恢复前后的存活净增（增量）；
+// - save_growth_mb：保存操作前后的存活净增（增量，紧邻采样，不受恢复基线影响）；
+// - save_ms：saveSync 耗时（诊断用）。
 const CHILD_REPLAY_SOURCE = `
 import { TaskManagerState } from './src/main/aikernel/states/tasks.ts';
 import { setCustomOpendeskDirectory } from './src/main/utils/setting.ts';
@@ -64,22 +75,38 @@ import { setCustomOpendeskDirectory } from './src/main/utils/setting.ts';
 console.error('MILESTONE modules=1');
 setCustomOpendeskDirectory(process.env.REPLAY_FIXTURE_DIR);
 
-function heapMB() {
+// 单次 gc() 在增量标记下可能只推进当前标记周期，恢复大图后需要多轮才收敛；
+// 连续两轮 heap 下降小于 1MB 视为已收敛，此后 heapUsed 才反映真实存活内存
+function liveHeapMB() {
+    const gc = globalThis.gc;
+    if (typeof gc === 'function') {
+        let previous = -1;
+        for (let round = 0; round < 8; round++) {
+            gc();
+            const current = process.memoryUsage().heapUsed;
+            if (previous >= 0 && previous - current < 1048576) {
+                break;
+            }
+            previous = current;
+        }
+    }
     return Math.round(process.memoryUsage().heapUsed / 1048576);
 }
-const before = heapMB();
+const before = liveHeapMB();
 const manager = TaskManagerState.load();
 if (!manager) throw new Error('no task manager state');
 const task = manager.getTask('issue341-large');
 if (!task) throw new Error('task missing after restore');
-console.error('MILESTONE restore_growth_mb=' + (heapMB() - before));
+console.error('MILESTONE restore_growth_mb=' + (liveHeapMB() - before));
 
 if (process.env.REPLAY_PHASE === 'save') {
+    const preSave = liveHeapMB();
     task.task_name = (task.task_name ?? '') + ' r';
     task.persistLater();
     const t0 = Date.now();
     manager.saveSync();
-    console.error('MILESTONE save_heap_mb=' + heapMB() + ' save_ms=' + (Date.now() - t0));
+    const postSave = liveHeapMB();
+    console.error('MILESTONE save_growth_mb=' + (postSave - preSave) + ' save_ms=' + (Date.now() - t0));
 }
 console.error('MILESTONE done=1');
 `;
@@ -104,7 +131,7 @@ function runReplayChild(phase: 'restore' | 'save', heapMB: number): ChildRunResu
             timeout: CHILD_SCRIPT_TIMEOUT_MS,
             env: {
                 ...process.env,
-                NODE_OPTIONS: `--max-old-space-size=${heapMB}`,
+                NODE_OPTIONS: `--max-old-space-size=${heapMB} --expose-gc`,
                 REPLAY_FIXTURE_DIR: fixtureDir!,
                 REPLAY_PHASE: phase
             }
@@ -127,17 +154,18 @@ function fixtureMB(): number {
     return fixtureFileBytes / 1048576;
 }
 
-/** 大堆探针：远高于两条路径的最小可完成堆（实测 ≈1.41×），保证必然完成 */
+/** 大堆探针：远高于两条路径的最小可完成堆，保证必然完成 */
 function surviveHeapMB(): number {
     return Math.max(300, Math.round(fixtureMB() * 2.7));
 }
 
 /**
- * 崩溃探针：必须高于 tsx 子进程模块编译地板（~128MB，低于它会复现不出任务管线的 OOM），
- * 同时低于恢复/保存需求实测下界 1.335×。fixture ≥ ~105MB 时两者才能同时满足。
+ * 约束堆探针：必须高于恢复路径自身的最小可完成堆（实测 ~1.35~1.41×，加载路径
+ * 未改动），同时远低于修复前保存管线必然 OOM 的水平（常驻 ~0.9× + 全量输出串
+ * ~1× 的瞬时峰值 ≥ ~1.9×）。fixture ≥ ~105MB 时模块编译地板（~128MB）不构成约束。
  */
-function oomHeapMB(): number {
-    return Math.max(132, Math.round(fixtureMB() * 1.25));
+function constrainedHeapMB(): number {
+    return Math.max(170, Math.round(fixtureMB() * 1.55));
 }
 
 function buildLargeHistoryFixture(): void {
@@ -250,7 +278,8 @@ test(
             `restore milestones missing\nstdout=${child.stdout}\nstderr=${child.stderr}`
         );
         const retainedMB = child.milestones.restore_growth_mb ?? 0;
-        // 实测 ≈ 0.9× 文件体积；上界 1.15× 钉死「全量加载常驻全部消息内容」的基线成本
+        // 收敛采样实测 ≈ 1.0× 文件体积（解析图字符串为文件内容的新副本 + tsx 模块残量）；
+        // 上界 1.15× 钉死「全量加载常驻全部消息内容」的基线成本
         assert.ok(
             retainedMB <= fixtureMB() * 1.15,
             `restore retained ${retainedMB}MB should be <= 1.15x file size ${fixtureMB().toFixed(1)}MB`
@@ -259,7 +288,7 @@ test(
 );
 
 test(
-    'restore + one saveSync amplifies heap far beyond the file size (root cause of #341)',
+    'restore + one saveSync no longer amplifies heap beyond a bounded write batch',
     { timeout: TEST_TIMEOUT_MS },
     () => {
         const child = runReplayChild('save', surviveHeapMB());
@@ -269,36 +298,40 @@ test(
             `restore+save must complete under ${surviveHeapMB()}MB old space\n${child.stderr}`
         );
         assert.ok(child.milestones.done === 1, `save milestones missing\nstdout=${child.stdout}`);
-        const saveGrowthMB = (child.milestones.save_heap_mb ?? 0) - (child.milestones.restore_growth_mb ?? 0);
-        // 保存阶段 heap 净增 ≈ 2.4× 文件体积（JSON.stringify(task.toJSON(), null, 4) 的
-        // 输出串叠加在常驻图之上）；下界 1.5× 钉死放大系数。
-        // 修复（剥离已压缩原始结果 / 分段序列化 / 图片外置）后应改为显著低于 1.5× 的上界断言。
+        // 子进程在保存操作前后各做一次收敛采样，save_growth_mb 即保存阶段的存活净增：
+        // 流式写出后只剩 toJSON 结构图（字符串共享引用）+ 有界写批次；修复前全量
+        // stringify 的输出串让该值为 ~2.4× 文件体积（约 254MB / 104.8MB 量级）。
+        const saveGrowthMB = child.milestones.save_growth_mb ?? 0;
+        const growthCeilingMB = Math.max(16, Math.round(fixtureMB() * 0.1));
         assert.ok(
-            saveGrowthMB >= fixtureMB() * 1.5,
-            `save phase heap growth ${saveGrowthMB}MB should be >= 1.5x file size ${fixtureMB().toFixed(1)}MB`
+            saveGrowthMB <= growthCeilingMB,
+            `save phase live heap growth ${saveGrowthMB}MB should be <= ${growthCeilingMB}MB ` +
+                `(file size ${fixtureMB().toFixed(1)}MB)\n${child.stderr}`
         );
     }
 );
 
-test('restore + save hits the issue #341 V8 OOM crash under a constrained heap', { timeout: TEST_TIMEOUT_MS }, () => {
-    const child = runReplayChild('save', oomHeapMB());
-    const aborted = child.status === 134 || child.signal === 'SIGABRT';
-    assert.ok(
-        aborted,
-        `restore+save must crash with SIGABRT-class exit under ${oomHeapMB()}MB old space, ` +
-            `got status=${child.status} signal=${child.signal}\n${child.stderr}`
-    );
-    assert.match(
-        child.stderr,
-        /heap out of memory/,
-        'crash signature must be the V8 OOM reported in issue #341 (Reached heap limit / ' +
-            'Ineffective mark-compacts near heap limit)'
-    );
-    // OOM 必须发生在任务管线（模块加载完成之后），而不是 tsx 自身的编译阶段
-    assert.equal(
-        child.milestones.modules,
-        1,
-        `crash must happen after module loading, not during tsx compilation
-${child.stderr}`
-    );
-});
+test(
+    'restore + save completes the whole pipeline under a heap that starved the full stringify',
+    {
+        timeout: TEST_TIMEOUT_MS
+    },
+    () => {
+        const child = runReplayChild('save', constrainedHeapMB());
+        assert.equal(
+            child.status,
+            0,
+            `restore+save must complete under ${constrainedHeapMB()}MB old space, ` +
+                `got status=${child.status} signal=${child.signal}\n${child.stderr}`
+        );
+        assert.ok(!/heap out of memory/i.test(child.stderr), 'the fixed pipeline must not OOM');
+        assert.ok(child.milestones.done === 1, `save milestones missing\nstdout=${child.stdout}`);
+        // 约束堆下保存阶段的存活净增同样必须有界（修复前同堆下全量 stringify 直接 OOM）
+        const saveGrowthMB = child.milestones.save_growth_mb ?? 0;
+        const growthCeilingMB = Math.max(16, Math.round(fixtureMB() * 0.1));
+        assert.ok(
+            saveGrowthMB <= growthCeilingMB,
+            `constrained save live heap growth ${saveGrowthMB}MB should be <= ${growthCeilingMB}MB\n${child.stderr}`
+        );
+    }
+);

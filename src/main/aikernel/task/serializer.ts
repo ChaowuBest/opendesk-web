@@ -11,7 +11,11 @@
 
 import fs from 'fs';
 import { ChatContext, UserMessage, AssistantMessage } from '../messages.js';
-import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
+import {
+    ToolResultReplacementStates,
+    rewireToolResultArtifactsForTask,
+    type ToolResultReplacementState
+} from '../compaction/tool-results.js';
 import { AutoCompactStates } from '../compaction/auto-compact.js';
 import { MicrocompactStates } from '../compaction/microcompact-state.js';
 import { SessionMemoryStates } from '../compaction/session-memory-compact.js';
@@ -424,6 +428,26 @@ export function forkTask(task: TaskState, upToMessageId?: string): TaskState {
         );
     }
     forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
+    // 工具结果原文与图片同策略 copy-on-fork：result_storage 与 replacement_state 的
+    // relative_path 改写到 fork 命名空间并复制原文文件，否则源任务删除会连带清掉
+    // fork 仍引用的原文（降级到替代文本但原文丢失）
+    //
+    // 时序说明：此刻 forkedTask 尚未注册进 manager，复制原文是同步文件操作。若复制
+    // 之后流程中断，会留下"有产物目录、无任务 JSON"的孤儿——这正是
+    // TaskManagerState.cleanupOldTaskFiles（散落 json 兜底清理）回收的对象，闭环成立；
+    // 调整注册时序时需同步确认该兜底仍覆盖此窗口。
+    const toolResultRewire = rewireToolResultArtifactsForTask(
+        forkedTask.chat_context,
+        forkedTask.tool_result_replacement_state,
+        task.task_id,
+        forkedTask.task_id
+    );
+    if (toolResultRewire.rewritten > 0) {
+        logger.info(
+            `fork of task ${task.task_id}: rewired ${toolResultRewire.rewritten} tool-result artifact path(s) to task ` +
+                `${forkedTask.task_id} (present ${toolResultRewire.present}, missing ${toolResultRewire.missing})`
+        );
+    }
     forkedTask.auto_compact_state = AutoCompactStates.clone(task.auto_compact_state);
     forkedTask.microcompact_state = MicrocompactStates.create();
     // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。

@@ -1280,6 +1280,19 @@ function getOpendeskDirectory(): string {
 }
 
 /**
+ * 只读解析应用数据目录：与 getOpendeskDirectory 一致但不创建目录，目录不存在时
+ * 返回 undefined。供序列化等「本应纯读」的判定路径使用，避免 toJSON 触发建目录副作用。
+ */
+function resolveOpendeskDirectoryReadOnly(): string | undefined {
+    if (!isMainThread) {
+        return (workerData as { paths: { opendeskDirectory: string } }).paths.opendeskDirectory;
+    }
+
+    const userDataPath = resolveWritableUserDataRoot();
+    return fs.existsSync(userDataPath) ? userDataPath : undefined;
+}
+
+/**
  * 获取应用日志目录
  */
 const _ensuredDirCache = new Set<string>();
@@ -1504,6 +1517,7 @@ function setDebugLogEnabled(enabled: boolean): void {
 
 export {
     getOpendeskDirectory,
+    resolveOpendeskDirectoryReadOnly,
     getDefaultOpendeskDirectory,
     setCustomOpendeskDirectory,
     isOpendeskDebugMode,

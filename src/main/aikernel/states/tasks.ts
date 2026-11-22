@@ -108,7 +108,7 @@ import {
     type SimplifiedTaskSnapshot
 } from '../task/serializer.js';
 import { getTaskChangesFromTask, type TaskChangesResult } from '../task/changes.js';
-import { externalizeToolResultImages, migrateInlineToolResultImages } from '../task/image-externalization.js';
+import { migrateInlineToolResultImages } from '../task/image-externalization.js';
 import {
     buildToolsetsForTask,
     ensureToolsResolvedForTask,
@@ -264,6 +264,62 @@ function generateShortTaskId(): string {
     const timestamp = Date.now().toString(36).slice(-8);
     const random = Math.random().toString(36).slice(2, 6);
     return `task_${timestamp}_${random}`;
+}
+
+/**
+ * 按任务 id 删除其全部落盘文件：tasks/<id>.json、artifacts/<id>/ 整棵树
+ * （外置原图、工具结果原文、session-memory 等）与旧版 tasks/artifacts/<id>_* 目录。
+ *
+ * 供 TaskState.cleanup() 与 TaskManagerState.cleanupOldTaskFiles（散落任务 json 的
+ * 产物兜底清理）共用。尽力而为语义：各段独立 try/catch，失败只记日志不抛错——
+ * 删除链路（含子任务递归）不能被单任务的单段清理失败打断。
+ * taskId 必须先过安全形状校验再拼路径：散落文件名可能畸形（如 `...json`），
+ * 直接拼 `artifacts/<basename>` 有误删 `artifacts/..` 之类路径的风险。
+ */
+export function removeTaskFilesById(taskId: string): void {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(taskId)) {
+        logger.warn(`removeTaskFilesById: refusing malformed task id: ${JSON.stringify(taskId)}`);
+        return;
+    }
+    const taskDirectory = getTaskDirectory();
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, false);
+
+    // 1. Delete task JSON configuration
+    const taskJsonPath = path.join(taskDirectory, `${taskId}.json`);
+    if (fs.existsSync(taskJsonPath)) {
+        try {
+            fs.unlinkSync(taskJsonPath);
+        } catch (err) {
+            logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
+        }
+    }
+
+    // 2. Delete task-scoped artifacts under artifacts/<taskId>/
+    if (fs.existsSync(taskArtifactDirectory)) {
+        try {
+            fs.rmSync(taskArtifactDirectory, { recursive: true, force: true });
+        } catch (err) {
+            logger.error(
+                `Failed to cleanup task artifact directory ${taskArtifactDirectory}: ${(err as Error).message}`
+            );
+        }
+    }
+
+    // 3. Compatibility cleanup for older task-scoped artifacts under tasks/artifacts/
+    const legacyArtifactsDir = path.join(taskDirectory, 'artifacts');
+    if (fs.existsSync(legacyArtifactsDir)) {
+        try {
+            const entries = fs.readdirSync(legacyArtifactsDir);
+            for (const entry of entries) {
+                if (!entry.startsWith(`${taskId}_`)) {
+                    continue;
+                }
+                fs.rmSync(path.join(legacyArtifactsDir, entry), { recursive: true, force: true });
+            }
+        } catch (err) {
+            logger.error(`Failed to cleanup legacy artifacts for task ${taskId}: ${(err as Error).message}`);
+        }
+    }
 }
 
 /**
@@ -2264,46 +2320,14 @@ export class TaskState {
      */
     cleanup() {
         this.cancelPendingTaskReview();
-        this.extensions.notifyLifecycle({ type: 'dispose' });
-        const taskDirectory = getTaskDirectory();
-        const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
-
-        // 1. Delete task JSON configuration
-        const taskJsonPath = path.join(taskDirectory, `${this.task_id}.json`);
-        if (fs.existsSync(taskJsonPath)) {
-            try {
-                fs.unlinkSync(taskJsonPath);
-            } catch (err) {
-                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
-            }
+        // 扩展 dispose 异常不得阻断文件清理：cleanup 是删除链路（含子任务递归）的
+        // 收尾步骤，任何扩展挂掉都应与其余 fs 操作一致地"尽力而为"并继续
+        try {
+            this.extensions.notifyLifecycle({ type: 'dispose' });
+        } catch (err) {
+            logger.error(`Task ${this.task_id} extension dispose failed during cleanup: ${(err as Error).message}`);
         }
-
-        // 2. Delete task-scoped artifacts under artifacts/<taskId>/
-        if (fs.existsSync(taskArtifactDirectory)) {
-            try {
-                fs.rmSync(taskArtifactDirectory, { recursive: true, force: true });
-            } catch (err) {
-                logger.error(
-                    `Failed to cleanup task artifact directory ${taskArtifactDirectory}: ${(err as Error).message}`
-                );
-            }
-        }
-
-        // 3. Compatibility cleanup for older task-scoped artifacts under tasks/artifacts/
-        const legacyArtifactsDir = path.join(taskDirectory, 'artifacts');
-        if (fs.existsSync(legacyArtifactsDir)) {
-            try {
-                const entries = fs.readdirSync(legacyArtifactsDir);
-                for (const entry of entries) {
-                    if (!entry.startsWith(`${this.task_id}_`)) {
-                        continue;
-                    }
-                    fs.rmSync(path.join(legacyArtifactsDir, entry), { recursive: true, force: true });
-                }
-            } catch (err) {
-                logger.error(`Failed to cleanup legacy artifacts for task ${this.task_id}: ${(err as Error).message}`);
-            }
-        }
+        removeTaskFilesById(this.task_id);
     }
     /**
      * Stop the task execution
@@ -3374,11 +3398,14 @@ export class TaskState {
                 await this.renderInWorkspace(() => tool_call.freezeRenderResult());
             }
             recordEvidenceCardToolCall(this, tool_call);
-            // 工具结果图片外置（issue #341）：原地替换大图为缩略图 + artifacts 引用。
-            // 放在 finally 末尾以同时覆盖正常提交与 afterToolCall hook 对 result_object
-            // 的二次赋值；函数内部按条目幂等且吞错，不影响工具结果本身。
+            // 工具结果图片外置（issue #341）：只外置已被压缩接管（result_storage /
+            // microcompact / legacy compress_id）的条目——压缩后模型可见内容不再依赖
+            // result 本体，外置才是纯收益；未压缩条目的图片活跃窗口内每轮请求都要
+            // 发给模型，保持内联可避免请求构建期的回灌读盘。本接缝通常已由全局
+            // afterToolCallLargeResultToArtifact 压缩超长文本结果，未压缩的多为截图类
+            // 小文本大图调用；函数内部按条目幂等且吞错，不影响工具结果本身。
             try {
-                await externalizeToolResultImages(this.task_id, tool_call.result_object);
+                await migrateInlineToolResultImages(this);
             } catch (externalizeError) {
                 logger.warn(`image externalization skipped for task ${this.task_id}: ${externalizeError}`);
             }
