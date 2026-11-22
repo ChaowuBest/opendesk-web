@@ -239,6 +239,20 @@ export function collectToolCalls(message: AssistantMessage): ToolCall[] {
     return result;
 }
 
+export function hasRequestToolCall(message: AssistantMessage, previous: ReadonlySet<ToolCall>): boolean {
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (let i = content.length - 1; i >= 0; i--) {
+        const part = content[i];
+        if (part?.type !== 'tool_call') continue;
+        const calls = part.toolcalls;
+        if (!Array.isArray(calls)) continue;
+        for (let j = calls.length - 1; j >= 0; j--) {
+            if (!previous.has(calls[j])) return true;
+        }
+    }
+    return false;
+}
+
 /**
  * 对已完成（args 不再增长）的 ToolCall 做最终的 args 解析。
  *
