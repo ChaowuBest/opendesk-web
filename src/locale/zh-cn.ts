@@ -940,6 +940,7 @@ export const zhCn: Record<string, string> = {
 
     // Input StatusBar
     'input.statusbar.help': '帮助',
+    'input.statusbar.shell.mode': 'Shell 命令模式',
 
     // Help Command
     'help.name': 'help',
@@ -1343,6 +1344,14 @@ export const zhCn: Record<string, string> = {
     'display.command.description': '设置当前任务的 TUI 输出显示',
     'display.command.title': '输出显示',
     'display.command.usage': '用法: /display minimal|verbose',
+    'language.description': '切换界面语言',
+    'language.usage': '用法: /language auto|<语言>（如 /language zh-CN）',
+    'language.switched': '已切换语言',
+    'language.not.found': '未知语言: ',
+    'language.available': '可用语言',
+    'language.current': '当前',
+    'language.save.failed': '语言设置未保存',
+    'language.save.failed.hint': '写入设置文件失败，界面与设置仍保持原来的语言。',
     'display.minimal.running.reading': '正在读取 `${path}`…',
     'display.minimal.running.tool': '正在执行 ${tool}',
     'display.minimal.running.thinking': '正在思考…',

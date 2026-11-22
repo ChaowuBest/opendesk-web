@@ -37,7 +37,12 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { getFeatureManager } from '../../common/features/manager.js';
 import { KeyboardShortcutManager } from './shortcuts';
-import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
+import {
+    SlashCommandRegistry,
+    registerAllCommands,
+    refreshBuiltinCommands,
+    type SlashCommandHandler
+} from './commands/index.js';
 import {
     Setting,
     getShortcuts,
@@ -50,7 +55,7 @@ import { getGoalElapsedMs } from '../../common/goal/format.js';
 import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
-import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
+import { AgentDecl, getModeDisplayName, type ModeDecl } from '../aikernel/agents/common.js';
 import { AgentRegistry } from '../aikernel/agents/registry.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
@@ -127,6 +132,16 @@ export class OpenDeskTUI {
     public commandRegistry: SlashCommandRegistry;
     private retryCommandRegistered = false;
     private pluginCommandNames = new Set<string>();
+    /** 由应用注册的 CLI 命令名，语言切换后据此重新收集命令描述 */
+    private applicationCommandNames = new Set<string>();
+    /** 应用命令注册时对应的「被禁用应用」快照，用于过滤无意义的禁用状态回调 */
+    private disabledApplicationsSnapshot = new Set<string>();
+    /** Skill 刷新订阅只建立一次，避免语言切换反复重注册时叠加监听器 */
+    private skillsRefreshSubscribed = false;
+    /** 应用启用状态变化的退订句柄（exit() 时退订） */
+    private unsubscribeApplicationFeatures?: () => void;
+    /** Skill 刷新订阅的退订句柄（exit() 时退订） */
+    private unsubscribeSkillRefresh?: () => void;
 
     public activeTaskId?: string;
     private taskOutputDisplayLevels = new Map<string, OutputDisplayLevel>();
@@ -478,6 +493,7 @@ export class OpenDeskTUI {
 
     private setupCommands() {
         registerAllCommands(this);
+        this.subscribeApplicationFeatures();
 
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
@@ -882,35 +898,119 @@ export class OpenDeskTUI {
     /**
      * 从应用中收集 CLI 斜杠命令并注册。
      *
-     * 被插件禁用的应用（disableApplication）不再注册命令；命令注册是启动时的快照，
-     * 因此运行期禁用后还在注册表里的命令会在 execute 前再校验一次并直接拦下。
+     * 被插件禁用的应用（disableApplication）不注册命令；运行期禁用/恢复由
+     * setupCommands 里的 onApplicationsChanged 订阅即时同步（见 resyncApplicationCommands）。
      * 仅隐藏入口（hideApplication）的应用命令照常注册与执行。
      */
     private registerApplicationCommands() {
+        this.registerApplicationCommandHandlers();
+        // 刷新自动补全，确保新注册的命令能被提示
+        this.inputArea.refreshAutocomplete();
+        this.subscribeSkillRefresh();
+    }
+
+    /**
+     * 只向注册表写入应用命令，不重复订阅事件。
+     * 语言切换后会再跑一次，因此这里不能有「只允许执行一次」的副作用。
+     */
+    private registerApplicationCommandHandlers() {
         for (const appInfo of ApplicationRegistry.getApplicationList()) {
             const bundleName = (appInfo as { bundleName: string }).bundleName;
             const app = ApplicationRegistry.getApplication(bundleName);
             if (!app) continue;
             if (getFeatureManager().isApplicationDisabled(bundleName)) continue;
-            for (const cmd of app.getCliSlashCommands(this)) {
-                // 设置命令来源为应用名称
-                cmd.source = app.getName();
-                const run = cmd.execute.bind(cmd);
-                cmd.execute = (args: string) => {
-                    if (getFeatureManager().isApplicationDisabled(bundleName)) {
-                        this.showTextPage(app.getName(), t('feature.application.disabled', { bundleName }));
-                        return;
+            // getCliSlashCommands 及其返回的命令对象都来自应用（含后装应用），属于外部边界：
+            // 单个应用抛错（含 frozen 命令对象之类）既不能拖垮其它应用的命令注册，
+            // 也不能让语言切换的全量重注册整体失败
+            try {
+                for (const cmd of app.getCliSlashCommands(this)) {
+                    // 不修改应用提供的对象（可能被冻结或复用），只复制注册表需要的字段
+                    const wrapped: SlashCommandHandler = {
+                        name: cmd.name,
+                        description: cmd.description,
+                        shortcut: cmd.shortcut,
+                        source: app.getName(),
+                        getArgumentCompletions: cmd.getArgumentCompletions?.bind(cmd),
+                        execute: (args: string) => {
+                            // 命令在禁用时已被摘除，这里是兜底：同步前就已在输入队列里的执行请求仍要拦下
+                            if (getFeatureManager().isApplicationDisabled(bundleName)) {
+                                this.showTextPage(app.getName(), t('feature.application.disabled', { bundleName }));
+                                return;
+                            }
+                            return cmd.execute(args);
+                        }
+                    };
+                    if (this.commandRegistry.register(wrapped)) {
+                        this.applicationCommandNames.add(wrapped.name);
                     }
-                    return run(args);
-                };
-                this.commandRegistry.register(cmd);
+                }
+            } catch (err) {
+                logger.error(`failed to register CLI slash commands from ${bundleName}: ${err}`);
             }
         }
-        // 刷新自动补全，确保新注册的命令能被提示
-        this.inputArea.refreshAutocomplete();
+        // 记录本次注册所依据的禁用状态，供 onApplicationsChanged 判断是否真的需要重建
+        this.disabledApplicationsSnapshot = this.collectDisabledApplications();
+    }
 
-        // 订阅 Skill 刷新事件，让 /skillName 自动补全的名称和描述跟着更新
-        SkillMgrApplication.onSkillsRefreshed(() => {
+    /**
+     * 语言切换后按新语言重新收集应用命令。
+     * 应用命令描述在 getCliSlashCommands() 时求值，不重收集会停留在切换前的语言。
+     */
+    private refreshApplicationCommands() {
+        if (this.applicationCommandNames.size === 0) return;
+        this.resyncApplicationCommands();
+    }
+
+    /**
+     * 按当前应用启用状态重建应用命令：被禁用的应用其命令立即移除，重新启用的应用立即恢复。
+     * 同时承担语言切换后的描述重求值（命令描述在 getCliSlashCommands() 时求值）。
+     */
+    private resyncApplicationCommands() {
+        const orderBefore = this.commandRegistry.getAll().map((cmd) => cmd.name);
+        const previous = [...this.applicationCommandNames];
+        this.applicationCommandNames.clear();
+        for (const name of previous) this.commandRegistry.unregister(name);
+        this.registerApplicationCommandHandlers();
+        // 重注册会追加到末尾，恢复原有展示顺序
+        this.commandRegistry.reorder(orderBefore);
+        // 命令集合变了，自动补全需要同步
+        this.inputArea.refreshAutocomplete();
+    }
+
+    /** 当前被插件禁用的应用集合（命令注册据此增删，仅隐藏入口的应用不在此列） */
+    private collectDisabledApplications(): Set<string> {
+        const disabled = new Set<string>();
+        for (const appInfo of ApplicationRegistry.getApplicationList()) {
+            const bundleName = (appInfo as { bundleName: string }).bundleName;
+            if (getFeatureManager().isApplicationDisabled(bundleName)) disabled.add(bundleName);
+        }
+        return disabled;
+    }
+
+    /**
+     * 订阅应用启用状态变化：禁用/恢复应用后立即同步注册表里的命令。
+     * 只靠 execute 前的兜底校验会让 /help 与自动补全继续暴露不可用命令。
+     *
+     * 事件在禁用、隐藏、取消隐藏时都会发出，而「仅隐藏入口」不影响命令可用性；
+     * 因此只在禁用集合真的变化时才重建，避免无谓地把应用命令 handler 全部换新。
+     */
+    private subscribeApplicationFeatures() {
+        if (this.unsubscribeApplicationFeatures) return;
+        this.unsubscribeApplicationFeatures = getFeatureManager().onApplicationsChanged(() => {
+            const disabled = this.collectDisabledApplications();
+            const unchanged =
+                disabled.size === this.disabledApplicationsSnapshot.size &&
+                [...disabled].every((bundleName) => this.disabledApplicationsSnapshot.has(bundleName));
+            if (unchanged) return;
+            this.resyncApplicationCommands();
+        });
+    }
+
+    /** 订阅 Skill 刷新事件，让 /skillName 自动补全的名称和描述跟着更新 */
+    private subscribeSkillRefresh() {
+        if (this.skillsRefreshSubscribed) return;
+        this.skillsRefreshSubscribed = true;
+        this.unsubscribeSkillRefresh = SkillMgrApplication.onSkillsRefreshed(() => {
             this.inputArea.refreshAutocomplete();
             void this.refreshActiveTaskSystemPrompt();
         });
@@ -1428,6 +1528,10 @@ export class OpenDeskTUI {
 
         try {
             this.unsubscribeStatusBarSettingRefresh();
+            this.unsubscribeApplicationFeatures?.();
+            this.unsubscribeApplicationFeatures = undefined;
+            this.unsubscribeSkillRefresh?.();
+            this.unsubscribeSkillRefresh = undefined;
             this.dashboardBar.stop();
             this.toastManager.stop();
             this.inputArea.statusBar.stopTimer();
@@ -1669,15 +1773,10 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 显示模型未配置的提示信息，隐藏 taskview 和 todoList
+     * 模型未配置提示的多行文案（按当前语言解析，语言切换后可重建）
      */
-    private showModelNotConfiguredNotice() {
-        if (this.modelNotConfiguredNotice) {
-            return; // 已经显示
-        }
-
-        // 创建提示组件，使用 Text 组件显示多行文本
-        const noticeText = [
+    private buildModelNotConfiguredNoticeText(): string {
+        return [
             chalk.bold.yellow('⚠️  ' + t('model.not.configured')),
             '',
             chalk.dim(t('model.not.configured.hint')),
@@ -1692,8 +1791,18 @@ export class OpenDeskTUI {
             '',
             chalk.dim(t('model.configure.after'))
         ].join('\n');
+    }
 
-        this.modelNotConfiguredNotice = new Text(noticeText);
+    /**
+     * 显示模型未配置的提示信息，隐藏 taskview 和 todoList
+     */
+    private showModelNotConfiguredNotice() {
+        if (this.modelNotConfiguredNotice) {
+            return; // 已经显示
+        }
+
+        // 创建提示组件，使用 Text 组件显示多行文本
+        this.modelNotConfiguredNotice = new Text(this.buildModelNotConfiguredNoticeText());
 
         // 标记需要处理回车键
         this.modelNotConfiguredMode = true;
@@ -2014,7 +2123,8 @@ export class OpenDeskTUI {
      */
     private syncModeDisplay(): void {
         this.inputArea.statusBar.update({
-            modeDisplay: `${this._activeMode.icon} ${this._activeMode.name}`,
+            // 按翻译键重新解析：模式名在启动时已本地化，语言切换后必须重算
+            modeDisplay: `${this._activeMode.icon} ${getModeDisplayName(this._activeMode)}`,
             modeColor: this._activeMode.color
         });
     }
@@ -2324,6 +2434,57 @@ export class OpenDeskTUI {
             await this.refreshActiveTaskSystemPrompt();
         } catch {
             logger.error(`failed to change workspace to ${newWorkspace}`);
+        }
+    }
+
+    /**
+     * 语言切换后刷新界面文案：内置/应用命令描述、Banner、状态栏与已缓存的渲染结果都按新语言重算。
+     *
+     * 不覆盖的部分（边界）：
+     * - 插件命令的描述来自插件清单，不属于界面语言；
+     * - 输入区外部提示（externalHint）由宿主生成，宿主重新设置时才会更新；
+     * - 消息正文是对话数据（本就不本地化），历史事件文案（压缩/重试等提示）在生成时已求值，不回溯。
+     *   工具调用状态等渲染期取 t() 的标签会随下面的 invalidate 一起更新。
+     */
+    public refreshLocalizedTexts(): void {
+        refreshBuiltinCommands(this);
+        // 应用命令与 retry 是按需/延迟注册的，光重注册内置表覆盖不到
+        this.refreshApplicationCommands();
+        this.refreshRetryCommandDescription();
+        this.inputArea.refreshAutocomplete();
+        this.inputArea.refreshHint();
+        this.inputArea.invalidate();
+        this.inputArea.statusBar.invalidate();
+        this.todoList.invalidate();
+        this.dashboardBar.invalidate();
+        this.logPanel.invalidate();
+        this.taskView.invalidate();
+        this.syncModeDisplay();
+        this.rebuildModelNotConfiguredNotice();
+        this.rebuildBanner();
+        // 显式请求重绘：不能只依赖 rebuildBanner（Banner 不在首位时它不会触发渲染）
+        this.tui.requestRender();
+    }
+
+    /** retry 命令按需注册，不在内置注册器表里，语言切换后需要重新求值描述 */
+    private refreshRetryCommandDescription(): void {
+        if (!this.retryCommandRegistered) return;
+        const orderBefore = this.commandRegistry.getAll().map((cmd) => cmd.name);
+        this.commandRegistry.unregister('retry');
+        this.retryCommandRegistered = false;
+        // 仍处于重试等待时按新语言重新注册；否则保持未注册状态
+        this.syncRetryCommandAvailability();
+        // 重新注册会追加到末尾，恢复它原来在 /help 里的位置
+        this.commandRegistry.reorder(orderBefore);
+    }
+
+    /** 语言切换后按新语言重建「模型未配置」提示（该组件内容在创建时求值，不会自动跟随） */
+    private rebuildModelNotConfiguredNotice(): void {
+        if (!this.modelNotConfiguredNotice) return;
+        const index = this.container.children.indexOf(this.modelNotConfiguredNotice);
+        this.modelNotConfiguredNotice = new Text(this.buildModelNotConfiguredNoticeText());
+        if (index >= 0) {
+            this.container.children[index] = this.modelNotConfiguredNotice;
         }
     }
 

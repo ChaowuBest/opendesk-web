@@ -39,8 +39,9 @@ function runIncremental(files: string[]): void {
         results.push(...checkVersionConsistency(rootDir));
     }
 
+    // 中英文命令文档都要能触发命令检查，否则改了 cliguide_en.md 不会校验命令是否对得上
     const touchesCommandDocs = files.some(
-        (f) => f.includes('cliguide.md') || f.includes('commands/index.ts') || f.includes('commands\\index.ts')
+        (f) => f.includes('cliguide') || f.includes('commands/index.ts') || f.includes('commands\\index.ts')
     );
     if (touchesCommandDocs) {
         results.push(...checkSlashCommandDocs(rootDir));

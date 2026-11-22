@@ -967,6 +967,7 @@ export const enUs: Record<string, string> = {
 
     // Input StatusBar
     'input.statusbar.help': 'help',
+    'input.statusbar.shell.mode': 'Shell command mode',
 
     // Help Command
     'help.name': 'help',
@@ -1381,6 +1382,15 @@ export const enUs: Record<string, string> = {
     'display.command.description': 'Set TUI output display for the current task',
     'display.command.title': 'Output Display',
     'display.command.usage': 'Usage: /display minimal|verbose',
+    'language.description': 'Switch the interface language',
+    'language.usage': 'Usage: /language auto|<locale> (e.g. /language zh-CN)',
+    'language.switched': 'Language switched to',
+    'language.not.found': 'Unknown language: ',
+    'language.available': 'Available languages',
+    'language.current': 'current',
+    'language.save.failed': 'Language setting was not saved',
+    'language.save.failed.hint':
+        'Writing the settings file failed; the interface and the setting keep the previous language.',
     'display.minimal.running.reading': 'Reading `${path}`…',
     'display.minimal.running.tool': 'Running ${tool}',
     'display.minimal.running.thinking': 'Thinking…',

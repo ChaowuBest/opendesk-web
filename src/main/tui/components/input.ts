@@ -277,7 +277,7 @@ export class TaskStatusBar implements Component {
         }
 
         if (shellMode) {
-            leftCells.push({ text: chalk.cyan('📟 Shell 命令模式') });
+            leftCells.push({ text: chalk.cyan(`📟 ${t('input.statusbar.shell.mode')}`) });
         } else {
             if (this.timerStarted) {
                 const icon = TaskStatusBar.SPINNER[this.spinnerFrame];
@@ -1159,7 +1159,8 @@ export class AgentInputArea implements Component {
         this.refreshHint();
     }
 
-    private refreshHint() {
+    /** 按当前语言重刷提示文案（语言切换后由 TUI 调用） */
+    refreshHint() {
         if (this.externalHint) {
             this.hintText.setText(this.externalHint);
             return;

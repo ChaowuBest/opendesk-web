@@ -338,28 +338,61 @@ export function checkNpmScriptRefs(docPath: string, content: string, rootDir: st
     return results;
 }
 
+/** 去掉源码里的块注释与行注释，避免注释中提到的注册器名被当成已注册 */
+function stripCodeComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
+/**
+ * 取出 BUILTIN_COMMAND_REGISTRARS 数组字面量的内容。
+ * 不用正则是因为该声明带箭头函数的类型注解（`Array<(tui: ...) => void>`），
+ * `[^=]*` 这类写法会在注解里的 `=` 上断掉。按方括号配对取值更稳。
+ */
+function extractRegistrarArray(source: string): string | undefined {
+    const anchor = source.indexOf('BUILTIN_COMMAND_REGISTRARS');
+    if (anchor < 0) return undefined;
+    const start = source.indexOf('[', anchor);
+    if (start < 0) return undefined;
+    let depth = 0;
+    for (let i = start; i < source.length; i++) {
+        const char = source[i];
+        if (char === '[') depth++;
+        else if (char === ']') {
+            depth--;
+            if (depth === 0) return source.slice(start + 1, i);
+        }
+    }
+    return undefined;
+}
+
+/**
+ * 需要与内置命令保持一致的 CLI 文档。中英文档都要查：
+ * 只查中文时英文文档会悄悄漂移（列出已删除的命令、缺少新命令），而英文用户照着做会失败。
+ */
+const CLI_GUIDE_FILES = ['docs/cliguide.md', 'docs/cliguide_en.md'];
+
 export function checkSlashCommandDocs(rootDir: string): CheckResult[] {
     const results: CheckResult[] = [];
-
-    const cliGuidePath = path.join(rootDir, 'docs', 'cliguide.md');
-    if (!fs.existsSync(cliGuidePath)) return results;
 
     const commandsIndexPath = path.join(rootDir, 'src', 'main', 'tui', 'commands', 'index.ts');
     if (!fs.existsSync(commandsIndexPath)) return results;
 
-    const guideContent = fs.readFileSync(cliGuidePath, 'utf-8');
     const indexContent = fs.readFileSync(commandsIndexPath, 'utf-8');
 
-    const docCmdRegex = /\|\s*`\/(\w+)`/g;
-    const documentedCmds = new Set<string>();
-    let match;
-    while ((match = docCmdRegex.exec(guideContent)) !== null) {
-        documentedCmds.add(match[1]);
-    }
-
-    const codeCmdRegex = /register(\w+)Command\(tui\)/g;
+    // 只有两种写法算「真的注册了」：
+    // 1. 作为表驱动数组 BUILTIN_COMMAND_REGISTRARS 的元素（见 commands/index.ts）
+    // 2. 直接调用 registerXxxCommand(tui)（旧结构，保留兼容）
+    // 不能在整个文件里泛匹配 registerXxxCommand —— 那样 import 行也算数，
+    // 而「加了 import 却忘记加入注册器数组」正是表驱动设计下最容易犯、也最该被检查出来的错。
+    const registrarArray = extractRegistrarArray(indexContent);
+    const registrarSource = registrarArray === undefined ? indexContent : stripCodeComments(registrarArray);
+    // registerAllCommands 是聚合函数而不是命令，需排除
+    const codeCmdRegex =
+        registrarArray === undefined
+            ? /register(?!All)([A-Z]\w*?)Commands?\(tui\)/g
+            : /register(?!All)([A-Z]\w*?)Commands?\b/g;
     const registeredCmds = new Set<string>();
-    while ((match = codeCmdRegex.exec(indexContent)) !== null) {
+    for (const match of registrarSource.matchAll(codeCmdRegex)) {
         const name = match[1]
             .replace(/([A-Z])/g, '-$1')
             .toLowerCase()
@@ -368,47 +401,55 @@ export function checkSlashCommandDocs(rootDir: string): CheckResult[] {
         registeredCmds.add(name);
     }
 
-    for (const cmd of registeredCmds) {
-        const normalizedCmd = cmd.replace(/-/g, '');
-        const found = [...documentedCmds].some((d) => d.toLowerCase() === normalizedCmd || d.toLowerCase() === cmd);
-        if (!found) {
-            results.push({
-                type: 'warning',
-                file: 'docs/cliguide.md',
-                message: `斜杠命令 /${cmd} 已注册但未在文档中列出`,
-                detail: `建议: 在 cliguide.md 的命令列表表格中添加 /${cmd} 的说明`
-            });
-        }
-    }
+    for (const relGuide of CLI_GUIDE_FILES) {
+        const guidePath = path.join(rootDir, relGuide);
+        if (!fs.existsSync(guidePath)) continue;
 
-    for (const cmd of documentedCmds) {
-        const found = [...registeredCmds].some(
-            (r) => r.replace(/-/g, '') === cmd.toLowerCase() || r === cmd.toLowerCase()
-        );
-        if (!found) {
-            results.push({
-                type: 'warning',
-                file: 'docs/cliguide.md',
-                message: `文档中列出的 /${cmd} 命令在代码中未找到注册`,
-                detail: `建议: 确认命令是否已被移除，若是则从文档中删除`
-            });
+        const guideContent = fs.readFileSync(guidePath, 'utf-8');
+        const documentedCmds = new Set<string>();
+        for (const match of guideContent.matchAll(/\|\s*`\/(\w+)`/g)) {
+            documentedCmds.add(match[1]);
         }
-    }
 
-    if (documentedCmds.size > 0 && registeredCmds.size > 0) {
-        const docCount = documentedCmds.size;
-        const codeCount = registeredCmds.size;
-        if (docCount < codeCount) {
+        const guideName = path.basename(relGuide);
+
+        for (const cmd of registeredCmds) {
+            const normalizedCmd = cmd.replace(/-/g, '');
+            const found = [...documentedCmds].some((d) => d.toLowerCase() === normalizedCmd || d.toLowerCase() === cmd);
+            if (!found) {
+                results.push({
+                    type: 'warning',
+                    file: relGuide,
+                    message: `斜杠命令 /${cmd} 已注册但未在文档中列出`,
+                    detail: `建议: 在 ${guideName} 的命令列表表格中添加 /${cmd} 的说明`
+                });
+            }
+        }
+
+        for (const cmd of documentedCmds) {
+            const found = [...registeredCmds].some(
+                (r) => r.replace(/-/g, '') === cmd.toLowerCase() || r === cmd.toLowerCase()
+            );
+            if (!found) {
+                results.push({
+                    type: 'warning',
+                    file: relGuide,
+                    message: `文档中列出的 /${cmd} 命令在代码中未找到注册`,
+                    detail: `建议: 确认命令是否已被移除，若是则从 ${guideName} 中删除`
+                });
+            }
+        }
+
+        if (documentedCmds.size > 0 && registeredCmds.size > 0) {
+            const docCount = documentedCmds.size;
+            const codeCount = registeredCmds.size;
             results.push({
                 type: 'info',
-                file: 'docs/cliguide.md',
-                message: `斜杠命令: 文档 ${docCount} 个 / 代码 ${codeCount} 个 (文档待补充)`
-            });
-        } else {
-            results.push({
-                type: 'info',
-                file: 'docs/cliguide.md',
-                message: `斜杠命令: 文档 ${docCount} 个 / 代码 ${codeCount} 个`
+                file: relGuide,
+                message:
+                    docCount < codeCount
+                        ? `斜杠命令: 文档 ${docCount} 个 / 代码 ${codeCount} 个 (文档待补充)`
+                        : `斜杠命令: 文档 ${docCount} 个 / 代码 ${codeCount} 个`
             });
         }
     }

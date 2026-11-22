@@ -94,6 +94,19 @@ describe('TaskStatusBar', () => {
         expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('详细显示');
     });
 
+    test('localizes the shell command mode label and follows a locale switch', () => {
+        const statusBar = new TaskStatusBar();
+        statusBar.update({ shellMode: true });
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('Shell command mode');
+
+        // 语言切换后由 TUI 调用 invalidate()，状态栏标签按新语言重绘
+        setRuntimeLocale('zh-CN');
+        statusBar.invalidate();
+
+        expect(stripAnsi(statusBar.render(120).join('\n'))).toContain('Shell 命令模式');
+    });
+
     test('keeps the status bar background across the full width when the terminal is narrow', () => {
         const statusBar = new TaskStatusBar();
         statusBar.update({

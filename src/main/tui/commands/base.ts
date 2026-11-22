@@ -66,6 +66,22 @@ export class SlashCommandRegistry {
         this.commands.delete(name);
     }
 
+    /**
+     * 按给定顺序重排注册表，用于「注销后重新注册」后恢复原有展示顺序（/help、自动补全按插入序展示）。
+     * names 中不存在或已注销的名字会被跳过，未列入 names 的命令保持原相对顺序追加在后面。
+     */
+    reorder(names: readonly string[]): void {
+        const ordered = new Map<string, SlashCommandHandler>();
+        for (const name of names) {
+            const command = this.commands.get(name);
+            if (command) ordered.set(name, command);
+        }
+        for (const [name, command] of this.commands) {
+            if (!ordered.has(name)) ordered.set(name, command);
+        }
+        this.commands = ordered;
+    }
+
     get(name: string): SlashCommandHandler | undefined {
         return this.commands.get(name);
     }

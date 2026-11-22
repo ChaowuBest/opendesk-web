@@ -117,7 +117,12 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/export`       | 导出当前会话为 HTML 文件                      | `/export [文件名]`                                       |
 | `/import`       | 导入会话数据                                  | `/import [文件名]`                                       |
 | `/config`       | 打开系统设置                                  | `/config`                                                |
+| `/language`     | 切换界面语言（即时生效）                      | `/language [auto\|语言代码]`                             |
+| `/account`      | 查看外部账号登录状态                          | `/account`                                               |
+| `/login`        | 交互式登录外部账号（不修改登录模式）          | `/login`                                                 |
+| `/logout`       | 登出外部账号                                  | `/logout`                                                |
 | `/log`          | 显示日志面板                                  | `/log [off\|last\|all]`                                  |
+| `/display`      | 设置当前任务的 TUI 输出显示                   | `/display minimal\|verbose`                              |
 | `/debug`        | 调试命令                                      | `/debug log [on\|off]` 或 `/debug taskid`                |
 | `/quickpass`    | 导出快捷口令                                  | `/quickpass config base\|all`                            |
 | `/stop`         | 停止当前正在执行的任务                        | `/stop`                                                  |
@@ -137,6 +142,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/model`        | 查看或切换当前模型                            | `/model [别名]`                                          |
 | `/goal`         | 管理当前任务的 goal                           | `/goal help`、`/goal <objective>`、`/goal pause`         |
 | `/usage`        | 查看模型用量统计                              | `/usage`                                                 |
+| `/feedback`     | 上报反馈（新功能需求或 Bug）                  | `/feedback`                                              |
 
 ### 命令详细说明
 
@@ -193,6 +199,21 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 **导出口令：** 使用 `/quickpass config base` 导出不含应用配置的基础设置，或使用 `/quickpass config all` 导出包含应用配置的全部设置。口令会通过弹窗显示，方便复制。
 
 **导入口令：** 在 TUI 聊天输入框中粘贴完整的口令字符串并按回车提交，系统会自动检测、校验并导入。如果口令仅包含基础设置，会保留当前的应用配置。
+
+#### `/language` - 切换界面语言
+
+不带参数执行 `/language` 会打开语言选择器；直接带参数则切换后立即重刷界面文案（命令描述、Banner、状态栏等），并写入设置。
+
+```bash
+/language              # 打开语言选择器
+/language zh-CN        # 切换到简体中文
+/language en           # 切换到 English（按主语言匹配到 en-US）
+/language auto         # 跟随系统语言
+```
+
+语言代码大小写与分隔符不敏感（`zh-cn`、`zh_CN` 均可）；只写主语言（如 `en`）会就近匹配该语言的可用区域变体，带区域的代码（如 `zh-Hant`）不会做降级匹配。可用语言来自内置语言与已启用的语言包。
+
+以 `--language` 启动时该参数只是本次运行的覆盖；执行 `/language [语言]` 会清掉这个覆盖，并把命令行里指定的语言写入设置。`/config` → 语言 保存后同样立即生效。
 
 #### `/mode` - 运行模式
 

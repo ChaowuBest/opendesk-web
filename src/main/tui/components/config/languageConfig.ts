@@ -9,11 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, type TUI } from '@earendil-works/pi-tui';
+import { type Component } from '@earendil-works/pi-tui';
+import type { OpenDeskTUI } from '../../entry.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
-import chalk from 'chalk';
-import { t, setLocale, getLocale } from '../../../../locale/index.js';
+import { InfoOverlay } from '../notice.js';
+import { t, getRuntimeLocale } from '../../../../locale/index.js';
+import { applyLanguageSetting } from '../../localeSwitch.js';
 import { getLocalePackStore } from '../../../../locale/packs.js';
 import { formatLocaleDisplayName, isBuiltinLocaleTag, orderLocaleOptions } from '../../../../common/locale/pack.js';
 
@@ -21,12 +23,12 @@ import { formatLocaleDisplayName, isBuiltinLocaleTag, orderLocaleOptions } from 
  * Language setting page.
  */
 export class LanguageConfigPage implements Component {
-    private tui: TUI;
+    private openDeskTUI: OpenDeskTUI;
     private onBack: () => void;
     private form?: ConfigForm;
 
-    constructor(tui: TUI, onBack: () => void) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI, onBack: () => void) {
+        this.openDeskTUI = openDeskTUI;
         this.onBack = onBack;
         this.showForm();
     }
@@ -65,7 +67,7 @@ export class LanguageConfigPage implements Component {
         ];
 
         this.form = new ConfigForm(
-            this.tui,
+            this.openDeskTUI.tui,
             t('config.language.title'),
             fields,
             actions,
@@ -76,7 +78,7 @@ export class LanguageConfigPage implements Component {
             () => this.close()
         );
         this.form.activate();
-        this.tui.requestRender();
+        this.openDeskTUI.tui.requestRender();
     }
 
     private close() {
@@ -87,8 +89,23 @@ export class LanguageConfigPage implements Component {
 
     private save(values: Record<string, any>) {
         const newLocale = values.locale ?? 'auto';
-        setLocale(newLocale);
+        const previousLocale = Setting.getInstance().getData().locale;
+        // 设置值没变也可能需要应用：以 --language 启动时运行时覆盖会盖住设置，
+        // 此时用户选的正是当前设置值，不处理的话界面不会跟着变
+        const needsApply = newLocale !== previousLocale || getRuntimeLocale() !== null;
+        // 与 /language 共用同一实现：写设置 -> 清运行时覆盖 -> 重刷界面文案
+        const result = needsApply ? applyLanguageSetting(this.openDeskTUI, newLocale) : 'ok';
         this.close();
+        if (result === 'save-failed') {
+            // 保存失败时界面仍停在原语言，必须说清楚，而不是静默关闭
+            const info = new InfoOverlay(this.openDeskTUI, {
+                title: t('language.save.failed'),
+                message: t('language.save.failed.hint'),
+                closeLabel: t('common.close'),
+                allowDuringConfig: true
+            });
+            info.show();
+        }
     }
 
     invalidate() {}
