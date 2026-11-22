@@ -12,6 +12,7 @@
 import { ChatContext, ToolCall, ToolCallMessagePart } from '../messages.js';
 import { buildVisibleAssistantRounds } from './assistant-rounds.js';
 import { isMicrocompactableToolName, matchesToolName } from './compactable-tools.js';
+import { renderMicrocompactReplacementText } from './microcompact-render.js';
 import { buildActiveContextView } from './context-view.js';
 import type { MicrocompactState } from './microcompact-state.js';
 import type {
@@ -24,7 +25,7 @@ import type {
 import {
     countToolResultLines,
     ensureToolResultStorageId,
-    getToolResultArtifactPath,
+    getToolResultArtifactRelativePath,
     persistToolResultArtifactForToolCall,
     shouldPersistToolResult
 } from './tool-results.js';
@@ -571,101 +572,16 @@ export function createMicrocompactDecision(
     };
 }
 
-function buildMicrocompactArtifactPathHint(taskId: string, toolCall: ToolCall): string | undefined {
-    const resultId = toolCall.result_storage?.result_id;
-    if (!resultId || !toolCall.result_storage?.relative_path) {
-        return undefined;
-    }
-
-    return getToolResultArtifactPath(taskId, resultId, false);
-}
-
-function parseToolCallArgsObject(toolCall: ToolCall): Record<string, unknown> | undefined {
-    if (
-        toolCall.args_object &&
-        typeof toolCall.args_object === 'object' &&
-        !Array.isArray(toolCall.args_object) &&
-        Object.keys(toolCall.args_object).length > 0
-    ) {
-        return toolCall.args_object as Record<string, unknown>;
-    }
-
-    if (typeof toolCall.args_string !== 'string' || toolCall.args_string.trim().length === 0) {
-        return undefined;
-    }
-
-    try {
-        const parsed = JSON.parse(toolCall.args_string);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
-        }
-    } catch {
-        /* best-effort only */
-    }
-
-    return undefined;
-}
-
-function normalizeOptionalPositiveInteger(value: unknown): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-        return undefined;
-    }
-
-    const normalized = Math.floor(value);
-    return normalized > 0 ? normalized : undefined;
-}
-
-function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-        return undefined;
-    }
-
-    const normalized = Math.floor(value);
-    return normalized >= 0 ? normalized : undefined;
-}
-
-function formatReadFileRange(offset?: number, limit?: number): string | undefined {
-    if (offset !== undefined && limit !== undefined) {
-        return `第 ${offset}~${offset + limit - 1} 行`;
-    }
-
-    if (offset !== undefined) {
-        return `从第 ${offset} 行开始`;
-    }
-
-    if (limit !== undefined) {
-        return `前 ${limit} 行`;
-    }
-
-    return undefined;
-}
-
-function buildMicrocompactReadFileHint(toolCall: ToolCall): { filePath?: string; range?: string } | undefined {
-    if (!matchesToolName(toolCall.tool_name, 'readFile')) {
-        return undefined;
-    }
-
-    const argsObject = parseToolCallArgsObject(toolCall);
-    const filePath =
-        typeof argsObject?.file_path === 'string' && argsObject.file_path.trim().length > 0
-            ? argsObject.file_path.trim()
-            : undefined;
-    const offsetRaw = normalizeOptionalNonNegativeInteger(argsObject?.offset);
-    const offset = offsetRaw !== undefined ? Math.max(1, offsetRaw) : undefined;
-    const limit = normalizeOptionalPositiveInteger(argsObject?.limit);
-    const range = formatReadFileRange(offset, limit);
-
-    if (!filePath && !range) {
-        return undefined;
-    }
-
-    return { filePath, range };
-}
-
+/**
+ * microcompact 的产物引用：直接复用 result_storage.relative_path（与 compact 主流程
+ * 同一套结构化字段，不再单独存 artifact_path_hint）。落盘时由
+ * persistToolResultArtifactForToolCall 写入 relative_path；投影/估算阶段用
+ * getToolResultArtifactRelativePath 计算「预计路径」，只用于渲染文本长度，不落盘。
+ */
 function getProjectedMicrocompactArtifactPathHint(taskId: string, toolCall: ToolCall): string | undefined {
-    const existingHint = buildMicrocompactArtifactPathHint(taskId, toolCall);
-    if (existingHint) {
-        return existingHint;
+    const existingPath = toolCall.result_storage?.relative_path;
+    if (typeof existingPath === 'string' && existingPath.length > 0) {
+        return existingPath;
     }
 
     if (typeof toolCall.result !== 'string' || !shouldPersistToolResult(toolCall.result)) {
@@ -677,56 +593,37 @@ function getProjectedMicrocompactArtifactPathHint(taskId: string, toolCall: Tool
         return undefined;
     }
 
-    return getToolResultArtifactPath(taskId, resultId, false);
+    return getToolResultArtifactRelativePath(taskId, resultId);
 }
 
 function ensureMicrocompactArtifactPathHint(taskId: string, toolCall: ToolCall): string | undefined {
-    const existingHint = buildMicrocompactArtifactPathHint(taskId, toolCall);
-    if (existingHint) {
-        return existingHint;
+    const existingPath = toolCall.result_storage?.relative_path;
+    if (typeof existingPath === 'string' && existingPath.length > 0) {
+        return existingPath;
     }
 
     if (typeof toolCall.result !== 'string' || !shouldPersistToolResult(toolCall.result)) {
         return undefined;
     }
 
-    return persistToolResultArtifactForToolCall(taskId, toolCall, toolCall.result).fullPath;
+    const persisted = persistToolResultArtifactForToolCall(taskId, toolCall, toolCall.result);
+    return persisted.metadata.relative_path;
 }
 
+/**
+ * 构造 microcompact 替代文本（请求期 override / local_clear 的 result 展示用）。
+ * 文本按当前数据根渲染；持久化状态只保存结构化字段（见 renderMicrocompactReplacementText）。
+ */
 export function buildMicrocompactReplacementText(
     toolCall: ToolCall,
     taskId: string,
     options: { persistArtifact?: boolean } = {}
 ): string {
-    const lines = ['[旧工具结果已被 microcompact 清理，以减少上下文体积。]', `工具: ${toolCall.tool_name}`];
-    const readFileHint = buildMicrocompactReadFileHint(toolCall);
-    if (readFileHint?.filePath) {
-        lines.push(`文件: ${readFileHint.filePath}`);
-    }
-    if (readFileHint?.range) {
-        lines.push(`读取范围: ${readFileHint.range}`);
-    }
     const artifactPathHint =
         options.persistArtifact === false
             ? getProjectedMicrocompactArtifactPathHint(taskId, toolCall)
             : ensureMicrocompactArtifactPathHint(taskId, toolCall);
-
-    if (artifactPathHint) {
-        lines.push(`完整输出可查看: ${artifactPathHint}`);
-        lines.push(
-            matchesToolName(toolCall.tool_name, 'readFile')
-                ? '如需完整内容，请重新调用 readFile，或直接读取该 artifact 文件。'
-                : '如需完整内容，请读取该文件或重新执行该工具。'
-        );
-    } else {
-        lines.push(
-            matchesToolName(toolCall.tool_name, 'readFile')
-                ? '如需完整内容，请重新调用 readFile 读取原文件。'
-                : '如需完整内容，请重新执行该工具，或重新读取相关文件/网页。'
-        );
-    }
-
-    return lines.join('\n');
+    return renderMicrocompactReplacementText(toolCall, artifactPathHint);
 }
 
 export function buildRequestTimeMicrocompactOverrides(
@@ -840,15 +737,18 @@ export function applyLocalMicrocompactToChatContext(
             continue;
         }
 
-        const artifactPathHint = buildMicrocompactArtifactPathHint(taskId, candidate.toolCall);
         candidate.toolCall.result = replacementText;
+        // 双字段并存是刻意设计：result_storage.replacement_preview 由 compact 主流程 /
+        // tool-result budget 写入（含 relative_path）；microcompact 只记录清理统计。
+        // 产物路径直接复用 result_storage.relative_path（上面的 buildMicrocompactReplacementText
+        // 已确保落盘并写入该字段），不再单独存 artifact_path_hint。
+        // 请求构建时 overrides（microcompact 的 request_override）优先级最高；
+        // 重载后无 overrides 时模型可见内容回退到 result_storage.preview / 本状态渲染。
         candidate.toolCall.setMicrocompact({
             strategy: 'local_clear',
             cleared_at: new Date().toISOString(),
             original_chars: candidate.sizeChars,
-            original_lines: candidate.sizeLines,
-            replacement_text: replacementText,
-            artifact_path_hint: artifactPathHint
+            original_lines: candidate.sizeLines
         });
         candidate.toolCall.rendered = undefined;
         candidate.toolCallPart.rendered = undefined;

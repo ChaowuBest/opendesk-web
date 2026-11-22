@@ -22,6 +22,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
             }
         },
         getOpendeskDirectory: () => tmp,
+        resolveOpendeskDirectoryReadOnly: () => tmp,
         getLogDirectory: () => path.join(tmp, 'logs'),
         getTaskToolResultDirectory: () => path.join(tmp, 'tool-results'),
         getTrashRootDirectory: () => path.join(tmp, 'trash'),

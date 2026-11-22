@@ -49,19 +49,25 @@ describe('renderer feature state', () => {
         return (await import('../../../renderer/features.js')) as unknown as FeaturesModule;
     }
 
-    it('首次 getState 失败后按退避重试并最终就绪', async () => {
+    it('首次 getState 失败后按退避重试，就绪 promise 等到重试结束', async () => {
         getState
             .mockRejectedValueOnce(new Error("No handler registered for 'features:getState'"))
             .mockResolvedValueOnce({ disabledFeatures: ['memory'], disabledApplications: [] });
 
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
         const features = await loadModule();
-        await features.whenFeatureStateReady();
-        // 首次失败：状态保持默认，不阻塞组件渲染
-        expect(features.isFeatureDisabled('memory')).toBe(false);
+
+        let ready = false;
+        const readyPromise = features.whenFeatureStateReady().then(() => {
+            ready = true;
+        });
+        // 仍在重试窗口内：就绪 promise 不能提前 resolve，
+        // 否则依赖首帧显隐的组件（设置页遥测块）会按默认状态渲染
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(ready).toBe(false);
 
         // 重试成功后状态生效
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        await readyPromise;
         expect(getState).toHaveBeenCalledTimes(2);
         expect(features.isFeatureDisabled('memory')).toBe(true);
         expect(features.isFeatureDisabled('filesystem')).toBe(false);

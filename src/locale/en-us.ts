@@ -786,10 +786,6 @@ export const enUs: Record<string, string> = {
     // Commands - Notification
     'notification.description': 'Open notification center, view all notifications',
 
-    // Commands - Dashboard
-    'dashboard.description': 'Open fullscreen dashboard, /dashboard bar toggles status bar',
-    'dashboard.bar.description': 'Show/hide status bar',
-
     // Commands - Usage
     'usage.description': 'View model usage statistics',
     'usage.title': 'Model Usage Statistics',
@@ -970,9 +966,8 @@ export const enUs: Record<string, string> = {
     'channel.disable.success': 'Plugin disabled: ${id}\n\nChannel reloaded automatically.',
 
     // Input StatusBar
-    'input.statusbar.switchmode': 'switch mode',
-    'input.statusbar.switchDisplay': 'switch display',
     'input.statusbar.help': 'help',
+    'input.statusbar.shell.mode': 'Shell command mode',
 
     // Help Command
     'help.name': 'help',
@@ -1387,6 +1382,15 @@ export const enUs: Record<string, string> = {
     'display.command.description': 'Set TUI output display for the current task',
     'display.command.title': 'Output Display',
     'display.command.usage': 'Usage: /display minimal|verbose',
+    'language.description': 'Switch the interface language',
+    'language.usage': 'Usage: /language auto|<locale> (e.g. /language zh-CN)',
+    'language.switched': 'Language switched to',
+    'language.not.found': 'Unknown language: ',
+    'language.available': 'Available languages',
+    'language.current': 'current',
+    'language.save.failed': 'Language setting was not saved',
+    'language.save.failed.hint':
+        'Writing the settings file failed; the interface and the setting keep the previous language.',
     'display.minimal.running.reading': 'Reading `${path}`…',
     'display.minimal.running.tool': 'Running ${tool}',
     'display.minimal.running.thinking': 'Thinking…',
@@ -2178,7 +2182,7 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.status.readonly': 'Query Mode',
     'renderer.filemgr.status.disabled': 'Disabled',
     'renderer.filemgr.status.error': 'Error',
-    // Plugin feature gating (ctx.features.disable / ctx.features.disableApplication)
+    // Plugin feature gating (ctx.features.disableFeature / ctx.features.disableApplication)
     'feature.memory.disabled': 'Memory is disabled',
     'feature.application.disabled': 'Application ${bundleName} has been disabled by a plugin',
     'renderer.filemgr.mode.full': 'Full Index',
@@ -2500,6 +2504,26 @@ export const enUs: Record<string, string> = {
     'renderer.admin.feedbackEmpty': 'No feedback yet',
     'renderer.admin.openAttachment': 'Download attachment',
     'renderer.admin.attachmentSaved': 'Attachment saved to ${path}',
+    'renderer.admin.oneClickDevelop': 'Develop',
+    'renderer.admin.oneClickFix': 'Fix',
+    'renderer.admin.oneClickPreparing': 'Preparing…',
+    'renderer.admin.composeButtonTitle': 'Prefill a new task with this feedback',
+    'renderer.admin.composeReady': 'Prefilled into the new task input — press send to start',
+    'renderer.admin.composeReadyWithFailed':
+        'Prefilled into the new task input — ${count} attachment(s) failed to download and were skipped',
+    'renderer.admin.composeFailed': 'Could not prefill the new task input — please retry',
+    'renderer.admin.composeBusy': 'The previous prefill is still running — please retry shortly',
+    'renderer.admin.composeNeedsMainWindow': 'Open the admin panel inside the main window to prefill a new task',
+    'renderer.admin.composeBugPrompt': 'Please fix the following bug from user feedback (#${id}):\n\n${content}',
+    'renderer.admin.composeFeaturePrompt':
+        'Please implement the following feature request from user feedback (#${id}):\n\n${content}',
+
+    // Renderer - New task prefill (admin panel one-click develop / fix)
+    'renderer.taskCompose.source': 'New task',
+    'renderer.taskCompose.failedTitle': 'Could not prefill the new task',
+    'renderer.taskCompose.failed':
+        'Could not prefill the new task input. Return to the admin panel and retry, or start a task manually.',
+    'renderer.taskCompose.busy': 'The previous prefill is still running — please retry shortly.',
 
     // Renderer - Personal Center
     'renderer.personal.title': 'Profile',

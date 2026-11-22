@@ -406,7 +406,9 @@ export class AgentOfficeApplication extends BaseApplication {
                         .map(async (entry) => {
                             const agentDirectory = path.join(agentsDirectory, entry.name);
                             try {
-                                return await CustomAgent.loadFromPath(agentDirectory);
+                                return await CustomAgent.loadFromPath(agentDirectory, {
+                                    applicationBundleName: this.bundleName
+                                });
                             } catch (error) {
                                 logger.warn(
                                     `AgentOffice: failed to load custom agent from ${agentDirectory}: ${error}`
@@ -458,7 +460,7 @@ export class AgentOfficeApplication extends BaseApplication {
             let registered = 0;
             try {
                 for (const agent of agents) {
-                    await AgentRegistry.replaceApplicationAgent('agentoffice', agent);
+                    await AgentRegistry.replaceApplicationAgent(this.bundleName, agent);
                     registered++;
                 }
             } finally {
@@ -535,6 +537,7 @@ export class AgentOfficeApplication extends BaseApplication {
 
     private createStaffAgent(staffId: string, staff: Pick<StaffListItem, 'name' | 'title'>): Promise<CustomAgent> {
         return CustomAgent.loadFromPath(path.join(this.staffDirectory(staffId), 'agent'), {
+            applicationBundleName: this.bundleName,
             purpose: 'staff',
             agentName: `staff:${staffId}`,
             whenToUse: `${staff.name} — ${staff.title}`,

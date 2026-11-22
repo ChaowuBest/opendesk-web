@@ -1280,6 +1280,19 @@ function getOpendeskDirectory(): string {
 }
 
 /**
+ * 只读解析应用数据目录：与 getOpendeskDirectory 一致但不创建目录，目录不存在时
+ * 返回 undefined。供序列化等「本应纯读」的判定路径使用，避免 toJSON 触发建目录副作用。
+ */
+function resolveOpendeskDirectoryReadOnly(): string | undefined {
+    if (!isMainThread) {
+        return (workerData as { paths: { opendeskDirectory: string } }).paths.opendeskDirectory;
+    }
+
+    const userDataPath = resolveWritableUserDataRoot();
+    return fs.existsSync(userDataPath) ? userDataPath : undefined;
+}
+
+/**
  * 获取应用日志目录
  */
 const _ensuredDirCache = new Set<string>();
@@ -1455,11 +1468,17 @@ function getTaskTrashDirectory(taskId: string, ensureExists: boolean = true): st
 export type ShortcutsConfig = z.infer<typeof ShortcutsSchema>;
 
 /**
+ * 全部走 schema 默认值的快捷键配置，供 getShortcuts 在未配置时复用，避免渲染热路径反复 parse。
+ * 兜底时返回的是共享引用，冻结以免被就地改写污染整个进程的默认键位。
+ */
+const DEFAULT_SHORTCUTS_CONFIG: ShortcutsConfig = Object.freeze(ShortcutsSchema.parse({}));
+
+/**
  * 获取当前已配置的快捷键（带默认值回退）
  */
 function getShortcuts(): ShortcutsConfig {
     const data = Setting.getInstance().getData();
-    return (data as any).cli_config?.shortcuts ?? ShortcutsSchema.parse({});
+    return (data as any).cli_config?.shortcuts ?? DEFAULT_SHORTCUTS_CONFIG;
 }
 
 function isDeveloperModeEnabled(): boolean {
@@ -1504,6 +1523,7 @@ function setDebugLogEnabled(enabled: boolean): void {
 
 export {
     getOpendeskDirectory,
+    resolveOpendeskDirectoryReadOnly,
     getDefaultOpendeskDirectory,
     setCustomOpendeskDirectory,
     isOpendeskDebugMode,

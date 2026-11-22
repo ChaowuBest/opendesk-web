@@ -115,17 +115,21 @@ Type `/` in the input box to see available commands.
 | `/export`       | Export current session to HTML                 | `/export [filename]`                                     |
 | `/import`       | Import session data                            | `/import [filename]`                                     |
 | `/config`       | Open settings                                  | `/config`                                                |
+| `/language`     | Switch the interface language (live)           | `/language [auto\|locale]`                               |
+| `/account`      | Show external account sign-in status           | `/account`                                               |
+| `/login`        | Interactive sign-in to an external account     | `/login`                                                 |
+| `/logout`       | Sign out of the external account               | `/logout`                                                |
 | `/log`          | Log panel                                      | `/log [off\|last\|all]`                                  |
+| `/display`      | Set TUI output display for the current task    | `/display minimal\|verbose`                              |
 | `/debug`        | Debug helpers                                  | `/debug log [on\|off]` or `/debug taskid`                |
 | `/quickpass`    | Export quickpass                               | `/quickpass config base\|all`                            |
-| `/dashboard`    | Open dashboard                                 | `/dashboard`                                             |
 | `/stop`         | Stop the running task                          | `/stop`                                                  |
 | `/upgrade`      | Check for updates                              | `/upgrade`                                               |
 | `/rename`       | Rename current task                            | `/rename [new name]`                                     |
 | `/fork`         | Duplicate current task                         | `/fork`                                                  |
 | `/recover`      | Rebuild task list from files                   | `/recover tasks`                                         |
 | `/compact`      | Compress current task context                  | `/compact`                                               |
-| `/memory`       | Long-term memory                               | `/memory`                                                |
+| `/context`      | Show current context diagnostics               | `/context`, `/context --data`                            |
 | `/bookmark`     | Bookmarks                                      | `/bookmark`                                              |
 | `/notification` | Notifications                                  | `/notification`                                          |
 | `/undo`         | Pick a user message to rewind into input       | `/undo`                                                  |
@@ -133,7 +137,10 @@ Type `/` in the input box to see available commands.
 | `/btw`          | Quick side question (no full context/tools)    | `/btw [text]`                                            |
 | `/mode`         | View or switch agent mode (also **Shift+Tab**) | `/mode plan`                                             |
 | `/reason`       | Reasoning depth and thinking display           | `/reason`, `/reason effort high`, `/reason display full` |
-| `/manual`       | Open the user manual                           | `/manual`                                                |
+| `/model`        | View or switch the current model               | `/model [alias]`                                         |
+| `/goal`         | Manage the current task goal                   | `/goal help`, `/goal <objective>`, `/goal pause`         |
+| `/usage`        | Model usage statistics                         | `/usage`                                                 |
+| `/feedback`     | Report feedback (feature request or bug)       | `/feedback`                                              |
 
 ### Details
 
@@ -190,6 +197,21 @@ A quickpass is a special string like `[[Opendesk 快捷口令 -- <base64>]]`. Sh
 **Export:** `/quickpass config base` or `/quickpass config all`; the string is shown in a dialog for easy copy.
 
 **Import:** Paste the full string into the chat input and press **Enter**. If the payload is “base” only, existing app configuration is kept.
+
+#### `/language` — Interface language
+
+`/language` without arguments opens the language picker. With an argument it switches immediately and re-renders localized texts (command descriptions, banner, status bar), then persists the setting.
+
+```bash
+/language              # open the picker
+/language zh-CN        # switch to Simplified Chinese
+/language en           # switch to English (matched to en-US by primary language)
+/language auto         # follow the system language
+```
+
+Locale matching is case- and separator-insensitive (`zh-cn`, `zh_CN`). A bare primary language (`en`) is matched to an available regional variant, while a tag with a region/script (`zh-Hant`) is never silently downgraded. Available languages come from the built-in locales plus installed locale packs.
+
+When OpenDesk was started with `--language`, that flag is only a run-time override; running `/language [locale]` clears it and writes the locale you passed on the command line into the settings. Saving in **`/config` → Language** applies immediately as well.
 
 #### `/mode` — Agent mode
 

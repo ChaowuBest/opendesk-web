@@ -779,11 +779,11 @@ export interface AppearanceCapability {
 }
 
 /**
- * 特性能力：插件禁用 OpenDesk 自身的内置特性或整个应用。
+ * 特性能力：插件禁用 OpenDesk 自身的内置特性、停用或隐藏应用入口。
  *
- * 禁用状态动态生效、跟随插件生命周期：插件每次启动在 setup() 中重新调用即可保持
- * 禁用；返回的 PluginRegistration 释放（或插件停用/卸载/宿主重载）后自动恢复。
- * 禁用不落盘。同一目标被多个插件同时禁用时，全部释放后才视为恢复；同一插件多次
+ * 状态动态生效、跟随插件生命周期：插件每次启动在 setup() 中重新调用即可保持
+ * 生效；返回的 PluginRegistration 释放（或插件停用/卸载/宿主重载）后自动恢复。
+ * 状态不落盘。同一目标被多个插件同时操作时，全部释放后才视为恢复；同一插件多次
  * 调用时按持有次数计数，需要把每次返回的 registration 都释放。
  */
 export interface FeaturesCapability {
@@ -792,16 +792,26 @@ export interface FeaturesCapability {
      *
      * @param featureId 特性 id，必须是宿主特性列表中的已知 id（当前支持
      *   `memory`：长期记忆与用户画像；`filesystem`：AI 文件系统的索引与语义搜索，
-     *   纯文件读写、grep 与 @ 添加文件不受影响）。未知 id 会抛错。
+     *   纯文件读写、grep 与 @ 添加文件不受影响；`telemetry`：全部远程遥测与设备心跳，
+     *   用户主动提交的反馈与本地用量统计不受影响）。未知 id 会抛错。
      */
-    disable(featureId: string): PluginRegistration;
+    disableFeature(featureId: string): PluginRegistration;
     /**
      * 禁用一个 OpenDesk 应用（按 bundleName）：应用图标从菜单隐藏、延迟资源不再加载、
-     * 工具集与事件不再提供给任务和插件。
+     * 工具集、事件、Skill、Agent 与 TUI 斜杠命令都不再提供给任务和插件，worker 调用停止。
      *
      * @param bundleName 已注册的应用 bundleName（系统应用或用户应用）。未知 bundleName 会抛错。
      */
     disableApplication(bundleName: string): PluginRegistration;
+    /**
+     * 隐藏一个 OpenDesk 应用的入口（按 bundleName）：应用图标不再显示，但应用本身
+     * 照常在后台运行。这只是「收起入口」，不是禁用——应用贡献的 Skill、Agent、MCP、
+     * 工具集、事件与 worker 调用全部保留，已打开的应用窗口也不会关闭。
+     * 需要连这些能力一起停用时请用 disableApplication。
+     *
+     * @param bundleName 已注册的应用 bundleName（系统应用或用户应用）。未知 bundleName 会抛错。
+     */
+    hideApplication(bundleName: string): PluginRegistration;
 }
 
 export interface PluginContext {

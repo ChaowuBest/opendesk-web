@@ -12,7 +12,7 @@
 /**
  * OpenDesk 内置特性注册表。
  *
- * 特性（Feature）是 OpenDesk 自身的可禁用能力单元，插件通过 `ctx.features.disable(featureId)`
+ * 特性（Feature）是 OpenDesk 自身的可禁用能力单元，插件通过 `ctx.features.disableFeature(featureId)`
  * 禁用。列表集中维护在此处：id 是协议字段，displayName/description 是展示文案
  * （`string | Record<locale, string>`，Record 键为 BCP 47 语言标签）。
  * 文案不走 locale 文件 key，由 `resolveFeatureLocalizedText` 在展示边界按语言解析。
@@ -31,6 +31,7 @@ export interface FeatureDefinition {
  * 当前支持禁用的 OpenDesk 内置特性：
  * - memory：长期记忆与用户画像（记忆图标、任务回顾钩子、记忆工具与提示词段落）
  * - filesystem：AI 文件系统（索引/语义搜索相关；纯文件读写、grep 与 @ 添加文件不受影响）
+ * - telemetry：全部远程遥测（OTLP / Langfuse 上报与设备心跳）；用户主动提交的反馈不受影响
  */
 export const OPENDESK_FEATURES: readonly FeatureDefinition[] = [
     {
@@ -48,6 +49,15 @@ export const OPENDESK_FEATURES: readonly FeatureDefinition[] = [
             'zh-CN': 'AI 文件系统的索引与语义搜索；普通文件读写、grep 与 @ 添加文件不受影响。',
             'en-US':
                 'Indexing and semantic search of the AI file system; plain file read/write, grep and @-file attach keep working.'
+        }
+    },
+    {
+        id: 'telemetry',
+        displayName: { 'zh-CN': '远程遥测', 'en-US': 'Remote Telemetry' },
+        description: {
+            'zh-CN': '向远程服务上报的遥测数据与设备心跳；用户主动提交的反馈不受影响，本地用量统计照常记录。',
+            'en-US':
+                'Telemetry exported to remote services and the device heartbeat; user-submitted feedback keeps working and local usage stats are still recorded.'
         }
     }
 ];

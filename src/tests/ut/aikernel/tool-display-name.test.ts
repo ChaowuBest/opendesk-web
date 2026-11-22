@@ -32,7 +32,9 @@ describe('tool display names', () => {
         const call = new ToolCall(0, 'call-2', 'custom-tool', '{}');
         call.setTool(tool);
 
-        expect(await call.render()).toBe('<div>Custom title</div>');
+        // 自定义渲染结果仍是卡片主体，原样保留；外层仅由 ToolCall.render 包一层
+        // data-toolcall-id 标识（渲染端按 toolcall 粒度做增量卡片替换时依赖此定位）
+        expect(await call.render()).toBe('<div data-toolcall-id="call-2"><div>Custom title</div></div>');
     });
 
     test('falls back to the protocol name when the tool has no display name', () => {

@@ -16,6 +16,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
         }
     },
     getOpendeskDirectory: () => path.join(settingBase, 'config'),
+    resolveOpendeskDirectoryReadOnly: () => path.join(settingBase, 'config'),
     getLogDirectory: () => path.join(settingBase, 'log')
 }));
 

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -40,11 +40,13 @@ import { buildRequestChatContext } from '../adapters/context.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import {
     collectToolCalls,
+    hasRequestToolCall,
     chunkIntroducesNewToolCall,
     finalizeToolCallArgs,
     removeToolCallsFrom,
     resolveStreamingToolCallsForTask
 } from '../task/tool-resolver.js';
+import { migrateInlineToolResultImages } from '../task/image-externalization.js';
 import type { TaskState } from '../states/tasks.js';
 import type { TaskStatus } from './types.js';
 import {
@@ -342,6 +344,15 @@ export async function processTaskCompletion(
             );
         }
 
+        // 请求准备（budget/microcompact/compact）可能刚把条目压缩接管：被压缩条目的
+        // 内联大图此时补外置落盘（幂等，函数内部在外置成功后自行标记脏任务落盘）。
+        // 未压缩条目保持内联，活跃窗口内的图片随请求直接发送，不产生请求构建期的回灌读盘。
+        try {
+            await migrateInlineToolResultImages(task);
+        } catch (externalizeError) {
+            logger.warn(`compressed image externalization skipped for task ${task.task_id}: ${externalizeError}`);
+        }
+
         if (preparation.sessionMemoryCompactResult) {
             const compactVariant = preparation.sessionMemoryCompactResult.plan
                 ? describeCompactPlanVariant(preparation.sessionMemoryCompactResult.plan)
@@ -567,8 +578,8 @@ export async function processTaskCompletion(
     const toolCallsBeforeCompletion = new Set(collectToolCalls(assistant_message));
     const getCurrentRequestToolCalls = (): ToolCall[] =>
         collectToolCalls(assistant_message).filter((toolCall) => !toolCallsBeforeCompletion.has(toolCall));
-    // 追踪本次 LLM 请求已 merge 的工具调用数量，用于检测新工具调用到达
-    let prevMergedToolCallCount = 0;
+    // 记录上次合并后是否已有本次请求的工具调用，用于检测新工具调用到达
+    let hadRequestToolCall = false;
     let abortedByToolcallHook = false;
     // 解析本次 turn 的有效推理档位（在 turn 起点固定一次，同一 turn 内所有轮次保持一致）：
     // 1. 调用方（modelRequestOptions）显式指定档位 → 优先级最高；
@@ -638,6 +649,8 @@ export async function processTaskCompletion(
                         startIndex: 0,
                         messages: requestChatContext.messages
                     },
+                    // 外置图片回灌按当前任务的 images 目录做严格校验（防穿越读取）
+                    taskId: task.task_id,
                     ...(requestTailText ? { requestTailText } : {})
                 };
                 await AgentExecutionInstrumentationRegistry.aroundModelRequest(
@@ -696,7 +709,7 @@ export async function processTaskCompletion(
                                 chunk_resp.content,
                                 assistant_message
                             );
-                            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                            if (chunkHasNewToolCall && hadRequestToolCall) {
                                 const existingCalls = collectToolCalls(assistant_message);
                                 const lastExisting = existingCalls[existingCalls.length - 1];
                                 if (lastExisting) {
@@ -756,7 +769,7 @@ export async function processTaskCompletion(
 
                             resolveStreamingToolCallsForTask(task, assistant_message);
 
-                            prevMergedToolCallCount = getCurrentRequestToolCalls().length;
+                            hadRequestToolCall = hasRequestToolCall(assistant_message, toolCallsBeforeCompletion);
 
                             // When content length increases, a new part was created - the previous part is now complete
                             if (assistant_message.content.length > prevPartCount) {
@@ -838,7 +851,7 @@ export async function processTaskCompletion(
                                 preparedContextTokens + estimateTextTokens(requestTailText) < learnedWindow * 0.8
                             ) {
                                 lastSentTextPartIndex = -1;
-                                prevMergedToolCallCount = 0;
+                                hadRequestToolCall = false;
                                 continue;
                             }
                         }
@@ -866,7 +879,7 @@ export async function processTaskCompletion(
                             requestType: 'streamComplete'
                         });
                         lastSentTextPartIndex = -1;
-                        prevMergedToolCallCount = 0;
+                        hadRequestToolCall = false;
                         await task.sendAssistantMessageReplace(assistant_message);
                         continue;
                     } catch (recoveryError) {
@@ -932,7 +945,7 @@ export async function processTaskCompletion(
                             break;
                         }
                     }
-                    prevMergedToolCallCount = getCurrentRequestToolCalls().length;
+                    hadRequestToolCall = hasRequestToolCall(assistant_message, toolCallsBeforeCompletion);
                     await task.sendAssistantMessageReplace(assistant_message);
                     if (!isCurrentTurn()) return false;
                 }

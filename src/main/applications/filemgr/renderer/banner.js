@@ -30,7 +30,7 @@ const STATUS_MODEL = {
         labelKey: 'renderer.filemgr.status.readonly',
         rgb: '245, 158, 11'
     },
-    // 插件通过 ctx.features.disable('filesystem') 停用 AI 索引后 worker 进入的状态
+    // 插件通过 ctx.features.disableFeature('filesystem') 停用 AI 索引后 worker 进入的状态
     disabled: {
         labelKey: 'renderer.filemgr.status.disabled',
         rgb: '142, 142, 147'

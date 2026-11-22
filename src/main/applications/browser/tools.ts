@@ -35,6 +35,7 @@ import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
 import { Setting, getTaskArtifactDirectory } from '../../utils/setting.js';
+import { jimpLoader } from '../../loader/jimp.js';
 import { makeActionInvokeExpression, renderBrowserHintsFor, resolveActionHint } from './hints.js';
 import { cleanPathInput, fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
 import { randomUUID } from 'node:crypto';
@@ -1210,6 +1211,9 @@ const BrowserScreenshotArgsSchema = z.object({
     tabId: z.number().int().optional().describe('要截图的标签页 ID（默认当前活动标签页）。指定时会先切换到该标签页')
 });
 
+/** 截图 PNG 落盘前重编码的最小体积：更小的截图已足够小，jimp 解码/编码的 CPU 成本不划算 */
+const SCREENSHOT_RECOMPRESS_MIN_BYTES = 64 * 1024;
+
 export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgsSchema> {
     private browserApp: BrowserApplication;
 
@@ -1268,7 +1272,28 @@ export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgs
             const suffix = randomUUID().slice(0, 4);
             const fileName = `screenshot-${Date.now()}-${suffix}.${ext}`;
             const filePath = path.join(getTaskArtifactDirectory(taskId), fileName);
-            await fs.writeFile(filePath, Buffer.from(match[2], 'base64'));
+
+            // Electron capturePage 默认压缩级别的 PNG 体积很大，而截图会常驻
+            // chat_context（活跃窗口内每轮请求都随消息发送）并随任务 JSON 落盘，
+            // 落盘前用 jimp 重新编码 PNG（pngjs 走自适应过滤 + 默认 deflate 级别），
+            // 显著降低内存与磁盘占用。收益判断：小于阈值的截图已足够小，跳过避免
+            // 白付 jimp 解码/编码的 CPU；重编码未变小（噪声为主的截图）时保留原始
+            // 字节——jimp 的 compressionLevel 选项不生效，不能假设一定更小。
+            // 任何失败都保持原图，截图本身仍然可用。
+            let imageBytes: Buffer<ArrayBufferLike> = Buffer.from(match[2], 'base64');
+            if (match[1] === 'image/png' && imageBytes.length >= SCREENSHOT_RECOMPRESS_MIN_BYTES) {
+                try {
+                    const Jimp = await jimpLoader.ensure();
+                    const image = await Jimp.read(imageBytes);
+                    const recompressed = await image.getBuffer('image/png');
+                    if (recompressed.length < imageBytes.length) {
+                        imageBytes = recompressed;
+                    }
+                } catch (error) {
+                    logger.warn(`screenshot re-encode skipped: ${error}`);
+                }
+            }
+            await fs.writeFile(filePath, imageBytes);
 
             const page = await ctrl.getPageInfo();
             return ok({ path: filePath, tabId: args.tabId, url: page.url, title: page.title });

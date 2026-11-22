@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 /**
- * 插件通过 ctx.features.disable 禁用 memory / filesystem 特性后，
+ * 插件通过 ctx.features.disableFeature 禁用 memory / filesystem 特性后，
  * 侧边栏底部工具栏的记忆与文件系统入口必须隐藏；禁用解除后恢复。
  *
  * 状态统一走 features:changed 推送路径驱动（与生产一致：features.js 只在首次

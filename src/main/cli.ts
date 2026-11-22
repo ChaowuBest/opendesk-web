@@ -45,8 +45,8 @@ import {
 } from './applications/pluginmgr/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { initTelemetry, shutdownTelemetry } from './telemetry/index.js';
-import { startReporter } from './utils/reporter.js';
+import { initTelemetry, shutdownTelemetry, syncTelemetryFeatureGate } from './telemetry/index.js';
+import { startHeartbeatReporter, syncHeartbeatReporter } from './telemetry/heartbeat.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -107,6 +107,29 @@ function collectWorkerDisableOptions() {
         disabledFeatures: manager.getDisabledFeatures(),
         disabledApplications: manager.getDisabledApplications()
     };
+}
+
+/**
+ * 远程遥测特性联动（ctx.features.disableFeature('telemetry')）：
+ * 设备心跳与遥测协议分属两条通道，但都由 telemetry 模块按同一特性状态启停
+ * （心跳的实现收口在 telemetry/heartbeat.ts，两个 CLI 分支不需要各写一份）。
+ */
+function syncTelemetryFeatureState(): void {
+    syncHeartbeatReporter();
+    void syncTelemetryFeatureGate().catch((error: unknown) => {
+        console.warn(`sync telemetry feature gate failed: ${String(error)}`);
+    });
+}
+
+/** 特性门控联动订阅；两个 CLI 入口分支各自调用 applyTelemetryFeatureGate，避免重复订阅 */
+let telemetryFeatureGateSubscribed = false;
+
+/** 插件宿主初始化后接入特性门控：此时插件的 disableFeature 已生效 */
+function applyTelemetryFeatureGate(): void {
+    syncTelemetryFeatureState();
+    if (telemetryFeatureGateSubscribed) return;
+    telemetryFeatureGateSubscribed = true;
+    getFeatureManager().onFeaturesChanged(syncTelemetryFeatureState);
 }
 
 // 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
@@ -410,8 +433,10 @@ async function main(args: CommandLineArgs) {
     const { initTempDir } = await import('./utils/temp.js');
     initTempDir();
 
-    // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）
-    startReporter('cli');
+    // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）。
+    // 放在插件宿主初始化之前：宿主初始化失败也照常上报；插件在 setup() 里禁用 telemetry
+    // 时由 applyTelemetryFeatureGate 订阅的特性变更把调度停掉。
+    startHeartbeatReporter('cli');
 
     (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();
@@ -453,6 +478,7 @@ async function main(args: CommandLineArgs) {
         });
         startTrashPreviewCleanupScheduler();
         await initializePluginHost();
+        applyTelemetryFeatureGate();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();
@@ -478,6 +504,7 @@ async function main(args: CommandLineArgs) {
         GlobalState.initialize();
         initializeRegistry();
         await initializePluginHost();
+        applyTelemetryFeatureGate();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
         initializeHarnesses();

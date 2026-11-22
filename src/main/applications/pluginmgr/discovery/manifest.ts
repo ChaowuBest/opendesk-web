@@ -567,10 +567,14 @@ function findLocalePackFiles(rootDir: string, declaredPath: string): string[] {
 function loadLocalePacks(rootDir: string, declaredPaths: string[]): PluginLocalePackDefinition[] {
     const packs: PluginLocalePackDefinition[] = [];
     const tagsBySource = new Map<string, string>();
+    // 语言包文件路径来自 resolveManifestPath（已 realpath），而 rootDir 可能带符号链接
+    // （如 macOS 的 /var -> /private/var），相对路径必须以 realpath 后的根目录为基准计算。
+    const relativeRoot = fs.realpathSync(rootDir);
+    const toPluginRelative = (file: string) => path.relative(relativeRoot, file).split(path.sep).join('/');
     for (const declaredPath of declaredPaths) {
         for (const file of findLocalePackFiles(rootDir, declaredPath)) {
             if (fs.statSync(file).size > LOCALE_PACK_MAX_BYTES) {
-                const relative = path.relative(rootDir, file).split(path.sep).join('/');
+                const relative = toPluginRelative(file);
                 console.warn(
                     `[pluginmgr] locale pack file exceeds ${LOCALE_PACK_MAX_BYTES} bytes, skipped: ${relative}`
                 );
@@ -585,13 +589,13 @@ function loadLocalePacks(rootDir: string, declaredPaths: string[]): PluginLocale
             }
             const existing = tagsBySource.get(content.tag);
             if (existing) throw new Error(`plugin.manifest_locale_tag_conflict:${content.tag} (${existing})`);
-            tagsBySource.set(content.tag, path.relative(rootDir, file).split(path.sep).join('/'));
+            tagsBySource.set(content.tag, toPluginRelative(file));
             packs.push({
                 tag: content.tag,
                 fallback: content.fallback,
                 priority: content.priority,
                 entries: content.entries,
-                sourceFile: path.relative(rootDir, file).split(path.sep).join('/')
+                sourceFile: toPluginRelative(file)
             });
         }
     }

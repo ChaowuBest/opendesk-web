@@ -1,4 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
+import path from 'path';
 import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai.js';
 import {
     AssistantMessage,
@@ -11,6 +12,7 @@ import { buildFullCompactPlan, buildFullCompactSummaryText } from '../../../main
 import { serializeActiveContextForSessionMemory } from '../../../main/aikernel/compaction/session-memory-compact.js';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view.js';
 import { buildToolResultReplacementText } from '../../../main/aikernel/compaction/tool-results.js';
+import { getOpendeskDirectory } from '../../../main/utils/setting.js';
 
 const artifactPath = `C:\\任务 资料\\${'nested-directory\\'.repeat(24)}完整结果.txt`;
 const previewBody = 'Visible preview '.repeat(20).slice(0, 300) + 'OMITTED_PREVIEW_BODY'.repeat(180);
@@ -118,12 +120,13 @@ describe.each(serializers)('$name tool result previews', ({ serialize }) => {
         expect(input.length).toBeLessThan(artifactPath.length + 600);
     });
 
-    test('metadata provides the complete relative path when replacement text has no footer', () => {
+    test('metadata locator expands the portable reference to the local data root when replacement text has no footer', () => {
         const { context, call } = contextWithResult();
         const relativePath = `artifacts/task/${'long-directory/'.repeat(30)}result.txt`;
         call.ensureResultStorage({ relative_path: relativePath, replacement_text: previewBody });
         const input = serialize(context, {});
-        expect(input).toContain(relativePath);
+        // 存储层是「相对数据根的引用」（跨机器安全）；摘要展示层按本机数据根展开成绝对路径
+        expect(input).toContain(path.join(getOpendeskDirectory(), relativePath));
         expect(input).not.toContain('OMITTED_PREVIEW_BODY');
         expect(input).not.toContain('RAW_TOOL_RESULT');
     });

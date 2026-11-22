@@ -42,7 +42,15 @@ describe('compact smoke: afterToolCall large result storage', () => {
         expect(resultId).toBeDefined();
         expect(toolCall.result).not.toBe(originalResult);
         expect(toolCall.result).toContain('完整输出已保存至');
-        expect(toolCall.result_storage?.replacement_text).toBe(toolCall.result);
+        // 存储层是「结构化预览 + 相对产物路径」；模型可见文本（result）在边界按当前
+        // 数据根渲染，路径仍然是本机绝对路径
+        expect(toolCall.result_storage?.relative_path).toBe(
+            path.join('artifacts', task.task_id, 'tool-results', `${resultId}.txt`)
+        );
+        expect(toolCall.result_storage?.replacement_preview).toBeTruthy();
+        expect(toolCall.result_storage?.replacement_preview).not.toContain(tempRootDir!);
+        expect(toolCall.result).toContain(toolCall.result_storage!.replacement_preview!);
+        expect(toolCall.result).toContain(tempRootDir!);
         expect(toolCall.result_storage?.original_chars).toBe(originalResult.length);
         expect(fs.readFileSync(getToolResultArtifactPath(task.task_id, resultId!, false), 'utf8')).toBe(originalResult);
     });

@@ -12,13 +12,13 @@
 /**
  * 渲染进程的插件特性禁用状态助手。
  *
- * 主进程的插件通过 ctx.features.disable(featureId) / disableApplication(bundleName)
- * 禁用 OpenDesk 内置特性或应用，状态经 features:getState 拉取、features:changed 推送。
- * 组件用 isFeatureDisabled / isApplicationDisabledByFeature 决定图标/按钮显隐，
+ * 主进程的插件通过 ctx.features.disableFeature(featureId) / disableApplication(bundleName) /
+ * hideApplication(bundleName) 操作 OpenDesk 内置特性与应用入口，状态经 features:getState 拉取、
+ * features:changed 推送。组件用 isFeatureDisabled / isApplicationDisabledByFeature 决定图标/按钮显隐，
  * 并可通过 onFeaturesChanged 在状态变化时刷新自身。
  */
 
-const EMPTY_STATE = { disabledFeatures: [], disabledApplications: [], features: [] };
+const EMPTY_STATE = { disabledFeatures: [], disabledApplications: [], hiddenApplications: [], features: [] };
 
 /** 拉取失败的重试退避：主进程 IPC handler 可能比窗口加载稍晚就绪 */
 const RETRY_DELAYS_MS = [50, 200, 500];
@@ -67,7 +67,10 @@ async function fetchState(attempt) {
             console.warn('loading feature state failed', error);
             return;
         }
-        setTimeout(() => void fetchState(attempt + 1), delay);
+        // 重试要串进同一个 promise 链：whenFeatureStateReady 才会等到重试结束，
+        // 依赖首帧显隐的组件（如设置页遥测块）不会在首次失败后按默认状态渲染
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        await fetchState(attempt + 1);
     }
 }
 
@@ -76,6 +79,7 @@ function applyState(snapshot) {
     state = {
         disabledFeatures: Array.isArray(snapshot.disabledFeatures) ? snapshot.disabledFeatures : [],
         disabledApplications: Array.isArray(snapshot.disabledApplications) ? snapshot.disabledApplications : [],
+        hiddenApplications: Array.isArray(snapshot.hiddenApplications) ? snapshot.hiddenApplications : [],
         features: Array.isArray(snapshot.features) ? snapshot.features : []
     };
     notifyChangeListeners();

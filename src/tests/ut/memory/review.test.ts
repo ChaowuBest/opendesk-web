@@ -340,7 +340,7 @@ describe('联合长期记忆回顾', () => {
         await Promise.resolve();
         expect(startReviewTask).toHaveBeenCalledTimes(1);
 
-        // 模拟 ctx.features.disable('memory')：清空待处理请求，已开始的请求正常跑完
+        // 模拟 ctx.features.disableFeature('memory')：清空待处理请求，已开始的请求正常跑完
         queue.cancelAll();
         blockerFinished.resolve();
         await queue.waitUntilIdle();

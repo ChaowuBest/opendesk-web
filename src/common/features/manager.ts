@@ -18,6 +18,9 @@
  *
  * 本模块不依赖 electron（只用了主进程的 logger），主进程消费方（ApplicationRegistry、
  * aikernel、filemgr、IPC 推送）与 worker 线程内被实例化的应用类都会加载它。
+ *
+ * 应用侧有两种独立的门控：禁用（disableApplication）停掉图标、工具集、事件与 worker 调用；
+ * 隐藏（hideApplication）只让入口图标不显示，应用本身照常在后台运行。
  */
 
 import { logger } from '../../main/utils/logger.js';
@@ -25,6 +28,8 @@ import { logger } from '../../main/utils/logger.js';
 export interface FeatureStateSnapshot {
     disabledFeatures: string[];
     disabledApplications: string[];
+    /** 被插件隐藏入口的应用：图标不显示，但应用仍按原样运行 */
+    hiddenApplications: string[];
 }
 
 type FeatureChangeListener = () => void;
@@ -34,6 +39,8 @@ type DisableRecords = Map<string, Map<string, number>>;
 export class FeatureManager {
     private readonly disabledFeatures: DisableRecords = new Map();
     private readonly disabledApplications: DisableRecords = new Map();
+    /** 仅隐藏入口的应用：图标不显示，但应用照常运行（Skill / Agent / 工具集 / 事件全部保留） */
+    private readonly hiddenApplications: DisableRecords = new Map();
     private readonly featureChangeListeners = new Set<FeatureChangeListener>();
     private readonly applicationChangeListeners = new Set<FeatureChangeListener>();
 
@@ -45,6 +52,10 @@ export class FeatureManager {
         return FeatureManager.hasOwner(this.disabledApplications, bundleName);
     }
 
+    isApplicationHidden(bundleName: string): boolean {
+        return FeatureManager.hasOwner(this.hiddenApplications, bundleName);
+    }
+
     getDisabledFeatures(): string[] {
         return Array.from(this.disabledFeatures.keys()).filter((id) => this.isFeatureDisabled(id));
     }
@@ -53,10 +64,15 @@ export class FeatureManager {
         return Array.from(this.disabledApplications.keys()).filter((name) => this.isApplicationDisabled(name));
     }
 
+    getHiddenApplications(): string[] {
+        return Array.from(this.hiddenApplications.keys()).filter((name) => this.isApplicationHidden(name));
+    }
+
     getSnapshot(): FeatureStateSnapshot {
         return {
             disabledFeatures: this.getDisabledFeatures(),
-            disabledApplications: this.getDisabledApplications()
+            disabledApplications: this.getDisabledApplications(),
+            hiddenApplications: this.getHiddenApplications()
         };
     }
 
@@ -71,6 +87,14 @@ export class FeatureManager {
     /** 禁用中的应用清单（含持有禁用的 owner id，宿主侧即插件 id） */
     listDisabledApplications(): Array<{ bundleName: string; pluginIds: string[] }> {
         return Array.from(this.disabledApplications.entries()).map(([bundleName, owners]) => ({
+            bundleName,
+            pluginIds: [...owners.keys()]
+        }));
+    }
+
+    /** 被隐藏入口的应用清单（含 owner id） */
+    listHiddenApplications(): Array<{ bundleName: string; pluginIds: string[] }> {
+        return Array.from(this.hiddenApplications.entries()).map(([bundleName, owners]) => ({
             bundleName,
             pluginIds: [...owners.keys()]
         }));
@@ -93,11 +117,18 @@ export class FeatureManager {
         }
     }
 
+    /** 设置某 owner 对应用的入口隐藏开关；语义同 setFeatureDisabled */
+    setApplicationHidden(bundleName: string, ownerId: string, hidden: boolean): void {
+        if (FeatureManager.setOwner(this.hiddenApplications, bundleName, ownerId, hidden)) {
+            this.notify(this.applicationChangeListeners);
+        }
+    }
+
     /**
      * 追加一次特性禁用持有，返回释放函数（可重复调用，只生效一次）。
      *
      * 与 setFeatureDisabled 的区别：按次数计数，同一 owner 持有多次时必须释放同样次数
-     * 才恢复。插件通过 SDK 每次调用 ctx.features.disable 都会得到一个独立 registration，
+     * 才恢复。插件通过 SDK 每次调用 ctx.features.disableFeature 都会得到一个独立 registration，
      * 用这个接口才不会因为释放其中一个 registration 就整体解锁。
      */
     acquireFeatureDisable(featureId: string, ownerId: string): () => void {
@@ -109,6 +140,15 @@ export class FeatureManager {
     /** 追加一次应用禁用持有，语义同 acquireFeatureDisable */
     acquireApplicationDisable(bundleName: string, ownerId: string): () => void {
         return FeatureManager.acquire(this.disabledApplications, bundleName, ownerId, () =>
+            this.notify(this.applicationChangeListeners)
+        );
+    }
+
+    /** 追加一次应用入口隐藏持有，语义同 acquireFeatureDisable */
+    acquireApplicationHide(bundleName: string, ownerId: string): () => void {
+        // 只记录「入口隐藏」，不写任何禁用通道：Skill、Agent、工具集、事件与 worker 调用都不受影响。
+        // 需要彻底停用应用请走 acquireApplicationDisable。
+        return FeatureManager.acquire(this.hiddenApplications, bundleName, ownerId, () =>
             this.notify(this.applicationChangeListeners)
         );
     }
@@ -127,6 +167,7 @@ export class FeatureManager {
     resetForTests(): void {
         this.disabledFeatures.clear();
         this.disabledApplications.clear();
+        this.hiddenApplications.clear();
         this.featureChangeListeners.clear();
         this.applicationChangeListeners.clear();
     }

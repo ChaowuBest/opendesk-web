@@ -1,9 +1,11 @@
-import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
 
 describe('admin panel rendering', () => {
     let WidgetClass: new () => HTMLElement;
     let adminApi: Record<string, jest.Mock>;
+    /** 冒充主窗口（iframe 的 parent），composeTask 与附件路径的投递目标 */
+    let hostWindow: { postMessage: jest.Mock };
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -87,7 +89,19 @@ describe('admin panel rendering', () => {
                     }
                 ]
             })),
-            downloadAttachment: jest.fn(async () => ({ canceled: false, filePath: '/tmp/log.txt' }))
+            downloadAttachment: jest.fn(async () => ({ canceled: false, filePath: '/tmp/log.txt' })),
+            prepareTaskCompose: jest.fn(async (type: string, id: number) => ({
+                item: {
+                    id,
+                    type,
+                    content: type === 'bug' ? '打开设置页面崩溃' : '希望支持深色模式跟随系统',
+                    contact: null,
+                    time: '2026-10-08T10:00:00.000Z',
+                    attachments: type === 'bug' ? [{ attachment_id: 11, filename: 'opendesk-system.log' }] : []
+                },
+                attachmentPaths: type === 'bug' ? ['/staging/bug-1/opendesk-system.log'] : [],
+                failedFilenames: []
+            }))
         };
         // 应用化后 UI 只经 applicationAPI.callMainWorld 访问 main 侧方法，
         // 这里模拟其 { status, data } / { status, code, message } 返回协议
@@ -107,6 +121,10 @@ describe('admin panel rendering', () => {
         (window as any).settingAPI = {
             loadSettingObject: jest.fn(async () => ({}))
         };
+        // 一键开发/修复经 window.parent.postMessage 投递 composeTask 给主窗口；
+        // 这里用一个独立宿主对象冒充主窗口，既观测载荷又能区分「独立窗口」场景
+        hostWindow = { postMessage: jest.fn() };
+        (window as any).parent = hostWindow;
     });
 
     /**
@@ -117,6 +135,33 @@ describe('admin panel rendering', () => {
         for (let i = 0; i < rounds; i++) {
             if (predicate()) return;
             await Promise.resolve();
+        }
+    }
+
+    /** 卸载 widget 触达 disconnectedCallback（清理 toast 定时器），避免定时器泄漏到下一个用例 */
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** 模拟主窗口对 composeTask 的回执（真实环境由 taskCompose.ts 向 iframe 回发） */
+    function dispatchComposeResult(data: Record<string, unknown>): void {
+        const event: any = new window.Event('message');
+        Object.defineProperty(event, 'data', { value: data, configurable: true });
+        window.dispatchEvent(event);
+    }
+
+    /** 取最近一次 composeTask 投递载荷里的 requestId，回执必须带上它才被认领 */
+    function lastComposeRequestId(): string {
+        const calls = hostWindow.postMessage.mock.calls;
+        return calls[calls.length - 1][0].requestId;
+    }
+
+    /** 按真实时间等待（compose 回执超时路径依赖 setTimeout，微任务轮询等不到） */
+    async function waitForTimer(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (predicate()) return;
+            await new Promise((resolve) => setTimeout(resolve, 5));
         }
     }
 
@@ -153,7 +198,19 @@ describe('admin panel rendering', () => {
             'renderer.admin.feedbackAttachments': 'Attachments',
             'renderer.admin.feedbackEmpty': 'No feedback yet',
             'renderer.admin.openAttachment': 'Download attachment',
-            'renderer.admin.attachmentSaved': 'Attachment saved to ${path}'
+            'renderer.admin.attachmentSaved': 'Attachment saved to ${path}',
+            'renderer.admin.oneClickDevelop': 'Develop',
+            'renderer.admin.oneClickFix': 'Fix',
+            'renderer.admin.oneClickPreparing': 'Preparing…',
+            'renderer.admin.composeButtonTitle': 'Prefill a new task with this feedback',
+            'renderer.admin.composeReady': 'Prefilled into the new task input — press send to start',
+            'renderer.admin.composeReadyWithFailed':
+                'Prefilled into the new task input — ${count} attachment(s) failed to download and were skipped',
+            'renderer.admin.composeFailed': 'Could not prefill the new task input — please retry',
+            'renderer.admin.composeBusy': 'The previous prefill is still running — please retry shortly',
+            'renderer.admin.composeBugPrompt': 'Please fix the following bug from feedback (#${id}):\n\n${content}',
+            'renderer.admin.composeFeaturePrompt':
+                'Please implement the following feature request from feedback (#${id}):\n\n${content}'
         };
     }
 
@@ -300,5 +357,221 @@ describe('admin panel rendering', () => {
         widget.shadowRoot.querySelector('[data-filter="bug"]').dispatchEvent(new window.Event('click'));
         expect(widget.shadowRoot.querySelectorAll('.ap-feedback').length).toBe(1);
         expect(widget.shadowRoot.querySelector('[data-attachment="11"]')).toBeTruthy();
+    });
+
+    test('feedback cards render one-click compose capsules', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const buttons = widget.shadowRoot.querySelectorAll('.ap-compose-btn');
+        expect(buttons.length).toBe(2);
+        expect(buttons[0].getAttribute('data-compose-type')).toBe('bug');
+        expect(buttons[0].getAttribute('data-compose-id')).toBe('1');
+        // initialize 会用真实翻译器覆盖 widget.t，断言与 t() 取词一致以保持语言无关
+        expect(buttons[0].textContent).toBe(widget.t('renderer.admin.oneClickFix'));
+        expect(buttons[1].getAttribute('data-compose-type')).toBe('feature');
+        expect(buttons[1].getAttribute('data-compose-id')).toBe('2');
+        expect(buttons[1].textContent).toBe(widget.t('renderer.admin.oneClickDevelop'));
+    });
+
+    test('clicking the bug capsule prepares compose and posts composeTask to the parent window', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        expect(adminApi.prepareTaskCompose).toHaveBeenCalledWith('bug', 1);
+        const payload = hostWindow.postMessage.mock.calls[0][0];
+        expect(payload.type).toBe('composeTask');
+        expect(payload.prompt).toContain('#1');
+        expect(payload.prompt).toContain('打开设置页面崩溃');
+        expect(payload.filePaths).toEqual(['/staging/bug-1/opendesk-system.log']);
+        // 成功提示必须等主窗口回执，而不是「消息已发出」就宣布成功
+        dispatchComposeResult({ type: 'composeTaskResult', ok: true, requestId: lastComposeRequestId() });
+        await waitFor(() => widget.shadowRoot.querySelector('.ap-toast')?.classList.contains('visible') === true);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.textContent).toBe(widget.t('renderer.admin.composeReady'));
+        await waitFor(() => button.disabled === false);
+    });
+
+    test('clicking the feature capsule posts a feature prompt without attachment paths', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="feature"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        expect(adminApi.prepareTaskCompose).toHaveBeenCalledTimes(1);
+        const payload = hostWindow.postMessage.mock.calls[0][0];
+        expect(payload.type).toBe('composeTask');
+        expect(payload.prompt).toContain('#2');
+        expect(payload.prompt).toContain('希望支持深色模式跟随系统');
+        expect(payload.filePaths).toEqual([]);
+        dispatchComposeResult({ type: 'composeTaskResult', ok: true, requestId: lastComposeRequestId() });
+        await waitFor(() => button.disabled === false);
+    });
+
+    test('capsule shows preparing state while composing and restores afterwards', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        let release: (() => void) | null = null;
+        adminApi.prepareTaskCompose.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = () =>
+                        resolve({
+                            item: {
+                                id: 1,
+                                type: 'bug',
+                                content: '打开设置页面崩溃',
+                                contact: null,
+                                time: '',
+                                attachments: []
+                            },
+                            attachmentPaths: [],
+                            failedFilenames: []
+                        });
+                })
+        );
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        expect(adminApi.prepareTaskCompose).toHaveBeenCalled();
+        expect(button.disabled).toBe(true);
+        expect(button.textContent).toBe(widget.t('renderer.admin.oneClickPreparing'));
+        release!();
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        dispatchComposeResult({ type: 'composeTaskResult', ok: true, requestId: lastComposeRequestId() });
+        await waitFor(() => button.disabled === false);
+        expect(button.textContent).toBe(widget.t('renderer.admin.oneClickFix'));
+        expect(hostWindow.postMessage).toHaveBeenCalled();
+    });
+
+    test('shows the failure toast when the host reports a failed prefill', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        dispatchComposeResult({
+            type: 'composeTaskResult',
+            ok: false,
+            reason: 'input_not_found',
+            requestId: lastComposeRequestId()
+        });
+        await waitFor(() => widget.shadowRoot.querySelector('.ap-toast')?.classList.contains('visible') === true);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.textContent).toBe(widget.t('renderer.admin.composeFailed'));
+        await waitFor(() => button.disabled === false);
+    });
+
+    test('shows the busy toast when the host is still prefilling', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        dispatchComposeResult({
+            type: 'composeTaskResult',
+            ok: false,
+            reason: 'busy',
+            requestId: lastComposeRequestId()
+        });
+        await waitFor(() => widget.shadowRoot.querySelector('.ap-toast')?.classList.contains('visible') === true);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.textContent).toBe(widget.t('renderer.admin.composeBusy'));
+        await waitFor(() => button.disabled === false);
+    });
+
+    test('falls back to the failure toast when the host never answers', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        const widget = createWidget();
+        widget.composeResultTimeoutMs = 20;
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => hostWindow.postMessage.mock.calls.length > 0);
+        await waitForTimer(() => button.disabled === false);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.classList.contains('visible')).toBe(true);
+        expect(toast.textContent).toBe(widget.t('renderer.admin.composeFailed'));
+    });
+
+    test('escapes server-provided type and id in the capsule markup', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        adminApi.getFeedbackList.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 1,
+                    // 服务端 type 只应取 bug/feature，异常值不能带进 HTML 属性
+                    type: 'bug" onmouseover="alert(1)',
+                    content: '恶意类型',
+                    contact: null,
+                    time: '2026-10-08T10:00:00.000Z',
+                    attachments: []
+                }
+            ]
+        });
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn') as HTMLElement;
+        expect(button.hasAttribute('data-compose-type')).toBe(true);
+        expect(button.hasAttribute('onmouseover')).toBe(false);
+        expect(button.getAttribute('data-compose-type')).toBe('bug" onmouseover="alert(1)');
+    });
+
+    test('tells the user to use the main window when hosted in a standalone app window', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        // 独立应用窗口（application_window.html）：parent 指向自身，消息没有主窗口消费
+        (window as any).parent = window;
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => widget.shadowRoot.querySelector('.ap-toast')?.classList.contains('visible') === true);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.textContent).toBe(widget.t('renderer.admin.composeNeedsMainWindow'));
+        // 提前拦下：不下载附件、也不进入 6s 等回执的空转
+        expect(adminApi.prepareTaskCompose).not.toHaveBeenCalled();
+        expect(button.disabled).toBe(false);
+        (window as any).parent = hostWindow;
+    });
+
+    test('capsule shows error toast when compose preparation fails', async () => {
+        adminApi.loadToken.mockResolvedValue({ token: 'stored-token', canPersist: true });
+        adminApi.prepareTaskCompose.mockRejectedValueOnce(new Error('HTTP 500'));
+        const widget = createWidget();
+        document.body.appendChild(widget);
+        widget.activeTab = 'feedback';
+        await waitFor(() => widget.shadowRoot.querySelectorAll('.ap-compose-btn').length > 0);
+        const button = widget.shadowRoot.querySelector('.ap-compose-btn[data-compose-type="bug"]');
+        button.dispatchEvent(new window.Event('click'));
+        await waitFor(() => widget.shadowRoot.querySelector('.ap-toast')?.classList.contains('visible') === true);
+        const toast = widget.shadowRoot.querySelector('.ap-toast');
+        expect(toast.textContent).toContain('HTTP 500');
+        expect(hostWindow.postMessage).not.toHaveBeenCalled();
+        expect(button.disabled).toBe(false);
     });
 });

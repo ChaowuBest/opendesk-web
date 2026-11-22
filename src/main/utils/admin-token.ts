@@ -65,11 +65,11 @@ export class AdminTokenStore {
         }
     }
 
-    /** 读取历史令牌；仅当与服务端地址匹配时返回 */
+    /** 读取历史令牌；仅当与服务端地址匹配时返回（协议不敏感，见 normalizeServer） */
     load(serverUrl: string): string | null {
         const stored = this.read();
         if (!stored) return null;
-        return stored.server === this.normalizeServer(serverUrl) ? stored.token : null;
+        return this.normalizeServer(stored.server) === this.normalizeServer(serverUrl) ? stored.token : null;
     }
 
     /** 最近一次持久化授权对应的服务器（无持久化授权时为 null） */
@@ -87,11 +87,15 @@ export class AdminTokenStore {
 
     loadSession(serverUrl: string): string | null {
         if (!this.session) return null;
-        return this.session.server === this.normalizeServer(serverUrl) ? this.session.token : null;
+        return this.normalizeServer(this.session.server) === this.normalizeServer(serverUrl)
+            ? this.session.token
+            : null;
     }
 
     setSession(serverUrl: string, token: string): void {
-        this.session = { server: this.normalizeServer(serverUrl), token };
+        // 原样保留协议前缀：currentServer() 依赖 lastSessionServer()/lastPersistedServer()
+        // 里的 scheme 决定请求协议，归一化掉协议会让 http:// 本地调试服务器被补成 https://
+        this.session = { server: serverUrl.trim(), token };
     }
 
     clearSession(): void {
@@ -104,9 +108,7 @@ export class AdminTokenStore {
             throw new Error('Invalid admin token');
         }
         if (!this.canPersist()) return;
-        const encrypted = this.encryption.encrypt(
-            JSON.stringify({ server: this.normalizeServer(serverUrl), token: trimmed })
-        );
+        const encrypted = this.encryption.encrypt(JSON.stringify({ server: serverUrl.trim(), token: trimmed }));
         mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
         const temporary = this.file + '.tmp';
         try {
@@ -123,12 +125,16 @@ export class AdminTokenStore {
     }
 
     private normalizeServer(serverUrl: string): string {
-        // 去掉协议差异与尾斜杠，统一按主机+路径比较；解析失败按原文比较
+        // 去掉协议差异与尾斜杠，统一按主机+路径比较；解析失败按原文比较。
+        // 旧版本落盘的记录没有协议前缀（归一化掉了 scheme），此处按 https:// 补齐再解析，
+        // 保证与全量地址可比（字母开头的主机名直传会被 URL 误判成自定义 scheme）
+        const value = serverUrl.trim();
+        const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`;
         try {
-            const parsed = new URL(serverUrl);
+            const parsed = new URL(withScheme);
             return `${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
         } catch {
-            return serverUrl.trim();
+            return value;
         }
     }
 }

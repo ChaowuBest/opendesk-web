@@ -12,6 +12,12 @@
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
+import {
+    isApplicationDisabledByFeature,
+    isFeatureDisabled,
+    onFeaturesChanged,
+    whenFeatureStateReady
+} from '../features.js';
 import { formatLocaleDisplayName, orderLocaleOptions } from '../../common/locale/pack.js';
 import { createTranslatorForSearch } from '../../main/applications/search/locale/renderer.ts';
 import { createModelSelect, MODEL_SELECT_CSS } from '../utils/model-select.js';
@@ -30,7 +36,6 @@ import {
 } from './confirmModal.ts';
 import { applyResolvedTheme } from '../theme/theme-renderer.ts';
 import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
-import { isApplicationDisabledByFeature } from '../features.js';
 import './channelSettings.js';
 import './benchmarkChannelSettings.js';
 import './pluginChannelSettings.js';
@@ -179,6 +184,7 @@ class SettingPanel extends HTMLElement {
         this._securityResizeUnsub = null;
         /** 安全中心内嵌应用页的主题变更监听退订函数 */
         this._securityThemeUnsub = null;
+        this._featuresUnsubscribe = null;
         this._t = createRendererTranslator();
     }
 
@@ -189,6 +195,8 @@ class SettingPanel extends HTMLElement {
         }
         (async () => {
             await this.loadData();
+            // 特性状态就绪后再渲染：避免遥测特性已禁用时首帧仍闪出遥测设置块
+            await whenFeatureStateReady();
             // loadData 期间元素可能已被移除（快速开关设置页），此时放弃渲染与订阅，
             // 否则 onStateChanged 订阅将因 disconnectedCallback 已执行而永不退订
             if (!this.isConnected) return;
@@ -200,6 +208,11 @@ class SettingPanel extends HTMLElement {
             });
             // 语言包安装/卸载、生效语言变化的订阅与刷新（含"自动"模式解析结果纠正）
             this._subscribeLocaleChanges();
+            // 遥测特性门控：插件启用/停用 telemetry 时整块遥测设置入口跟随显隐
+            this._featuresUnsubscribe = onFeaturesChanged(() => {
+                if (!this.isConnected) return;
+                this.refreshTelemetrySection();
+            });
         })();
     }
 
@@ -282,6 +295,8 @@ class SettingPanel extends HTMLElement {
         this._localePacksUnsubscribe = null;
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
+        this._featuresUnsubscribe?.();
+        this._featuresUnsubscribe = null;
         this._scaleFactorChangeUnsub?.();
         this._scaleFactorChangeUnsub = null;
         if (this._modalEscHandler) {
@@ -3352,6 +3367,9 @@ class SettingPanel extends HTMLElement {
     }
 
     renderTelemetrySection() {
+        // 遥测特性被插件禁用（ctx.features.disableFeature('telemetry')）后不再提供设置入口：
+        // 用户无法再主动增删/修改端点，但配置本身留在设置文件里，插件停用后原样恢复
+        if (isFeatureDisabled('telemetry')) return '';
         const endpoints = this.getTelemetryEndpointEntries();
 
         return `
@@ -3701,17 +3719,19 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshTelemetrySection() {
-        const telemetrySection = this.querySelector('#telemetry-section');
-        if (!telemetrySection) return;
-        const next = telemetrySection.nextElementSibling;
-        const parent = telemetrySection.parentElement;
-        if (!parent) return;
-        telemetrySection.remove();
+        // 先移除旧块再按当前门控状态重插：telemetry 特性启用/停用都能双向生效
+        this.querySelector('#telemetry-section')?.remove();
         const html = this.renderTelemetrySection();
-        if (next) {
-            next.insertAdjacentHTML('beforebegin', html);
+        if (!html) return;
+        // 遥测块固定在「开发与调试」之前，恢复显示时按同一位置插回，保持设置页章节顺序
+        const anchor = this.querySelector('#debug-mode-section');
+        if (anchor) {
+            anchor.insertAdjacentHTML('beforebegin', html);
         } else {
-            parent.insertAdjacentHTML('beforeend', html);
+            // 兜底：锚点缺失（如调试区块调整）时退回通用页容器末尾，避免门控恢复后块整体丢失
+            const generalSections = this.querySelector('#general-sections');
+            if (!generalSections) return;
+            generalSections.insertAdjacentHTML('beforeend', html);
         }
         this._bindTelemetryEvents();
     }

@@ -33,6 +33,13 @@ export const CustomAgentMetaSchema = z.object({
 export type CustomAgentMeta = z.output<typeof CustomAgentMetaSchema>;
 
 export interface CustomAgentLoadOptions {
+    /**
+     * 创建该 Agent 的应用 bundleName。
+     *
+     * 同时用作 Agent 作用域与技能归属：应用被插件禁用时，它的 Agent 与 Agent 专属技能
+     * （provider key 形如 staff:xxx）都要随之不可见，因此必须由调用方给出真实应用名。
+     */
+    applicationBundleName: string;
     purpose?: 'subtask' | 'staff';
     agentName?: string;
     whenToUse?: string;
@@ -55,6 +62,9 @@ const CUSTOM_AGENT_DEFAULT_MODE: ModeDecl = {
 
 class CustomAgentSkillProvider implements SkillProvider {
     private skills: Skill[] = [];
+
+    /** 技能归属应用：应用被插件禁用时这组技能随应用一起不可见 */
+    constructor(readonly ownerBundleName: string) {}
 
     setSkills(skills: Skill[]): void {
         this.skills = skills;
@@ -90,7 +100,7 @@ export class CustomAgent extends AgentDecl {
         skills: Skill[],
         options: CustomAgentLoadOptions
     ) {
-        super('agentoffice');
+        super(options.applicationBundleName);
         this.agentName = options.agentName ?? meta.name;
         this.whenToUse = options.whenToUse ?? meta.when_to_use;
         this.agentsMd = agentsMd;
@@ -99,13 +109,15 @@ export class CustomAgent extends AgentDecl {
         this.dispatchable = this.purpose === 'subtask';
         this.additionalSystemPrompt = options.additionalSystemPrompt;
         this.skillBundleName = options.skillBundleName ?? `custom:${configDir}`;
-        this.skillProvider = new CustomAgentSkillProvider();
+        this.skillProvider = new CustomAgentSkillProvider(options.applicationBundleName);
         for (const skill of skills) {
             skill.agentIds = [this.agentId];
         }
         this.skillProvider.setSkills(skills);
 
-        // 注册 SkillProvider，使 agent 专属技能出现在 system prompt 的技能列表中
+        // 注册 SkillProvider，使 agent 专属技能出现在 system prompt 的技能列表中。
+        // provider 自带 ownerBundleName，agentoffice 被插件禁用时这些技能（staff:xxx / custom:xxx）
+        // 会随之不可见，不会漏过应用级门控
         if (skills.length > 0) {
             SkillRegistry.getInstance().registerSkillProvider(this.skillBundleName, this.skillProvider);
             this.skillsRegistered = true;
@@ -127,7 +139,7 @@ export class CustomAgent extends AgentDecl {
      * 文件读取使用异步 fs：AgentOffice 启动时会并行加载多个 agent 目录，
      * 同步 IO 会在 libuv 线程池上重叠执行，避免串行拖慢 AgentRegistry 注册。
      */
-    static async loadFromPath(dir: string, options: CustomAgentLoadOptions = {}): Promise<CustomAgent> {
+    static async loadFromPath(dir: string, options: CustomAgentLoadOptions): Promise<CustomAgent> {
         const resolvedDir = path.resolve(dir);
 
         // 读取 agents.md（必需）

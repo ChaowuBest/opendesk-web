@@ -1762,6 +1762,32 @@ describe('task-view GUI output modes', () => {
         expect(view.querySelector('.od-final-result')?.textContent).toContain('终态正文');
     });
 
+    test('reload replays an assistant replacement before the later snapshot of the same part', () => {
+        const view = createView();
+        view.task_id = 'task-1';
+        view.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = view.querySelector('#taskview-chat-history');
+        view._taskUpdateHandler = (frame: any) => {
+            if (frame.type === 'assistant_replace') view.handleAssistantReplace(frame);
+            else view._renderAssistantProgress(frame, history);
+        };
+        const message_id = 'reload-replacement';
+        const part = (text: string) => ({ type: 'text', text, rendered: '<p>' + text + '</p>' });
+        const snapshot = (text: string) => ({
+            type: 'assistant', task_status: 'running', message_id, last_part_index: 0, last_part: part(text)
+        });
+        view._reloading = true;
+        view._deferTaskUpdateDuringReload(snapshot('old'));
+        view._deferTaskUpdateDuringReload({
+            type: 'assistant_replace', task_status: 'running', message_id, parts: [part('replacement')]
+        });
+        view._deferTaskUpdateDuringReload(snapshot('latest'));
+        view._reloading = false;
+        view._flushDeferredTaskUpdates();
+        expect(view._assistantPartsByMessage.get(message_id)[0].text).toBe('latest');
+        expect(history.textContent).toContain('latest');
+    });
+
     test('replays assistant parts received while history reload is replacing the DOM', () => {
         const view = createView();
         view.task_id = 'task-1';

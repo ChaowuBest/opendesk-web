@@ -310,6 +310,9 @@ export class ToolCallView implements Component {
 
         try {
             if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
+                // 已压缩工具结果序列化剥离 result（issue #341）：仅在真正触发自定义
+                // CLI 渲染时懒回填替代文本，未展开的工具调用不产生回填内存
+                this.toolCall.ensureToolResultForRender();
                 const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
                 if (custom) {
                     this.cachedOutput = custom;

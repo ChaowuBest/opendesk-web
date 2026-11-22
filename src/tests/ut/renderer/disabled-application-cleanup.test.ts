@@ -165,13 +165,16 @@ describe('沉浸式桌面跟随应用禁用刷新', () => {
         expect(subscriptionSource).toContain('closeDisabledApplicationWindows(apps)');
     });
 
-    test('关闭逻辑按主进程列表的 showIcon=false 过滤并调用 closeWindow', () => {
+    test('关闭逻辑以 disabledByPlugin 为准：仅隐藏入口（hideApplication）的应用不关窗', () => {
         const closeSource = sourceBetween(
             immersiveDesktopSource,
-            '/** 关掉桌面上已打开、但应用已被插件禁用的浮动窗口',
+            '/**\n     * 关掉桌面上已打开、但应用已被插件停用的浮动窗口',
             'private isAppListHidden()'
         );
-        expect(closeSource).toContain('app?.showIcon === false');
+        // 主进程只给真正被插件禁用的应用打 disabledByPlugin 标记
+        expect(closeSource).toContain('app?.disabledByPlugin === true');
+        // 只有隐藏入口的应用继续在后台运行：不依赖 showIcon 推断，避免误关用户自己隐藏的应用窗口
+        expect(closeSource).not.toContain('hiddenByPlugin');
         expect(closeSource).toContain('disabled.has(desktopWindow.bundleName)');
         expect(closeSource).toContain('this.closeWindow(desktopWindow.id)');
     });

@@ -229,12 +229,21 @@ export class SkillMgrApplication extends BaseApplication {
     /** 技能分析器：依赖分析、测试用例生成、元数据导入导出 */
     private analyzer: SkillAnalyzer;
 
-    static onSkillsRefreshed(listener: () => void): void {
+    /**
+     * 订阅技能热更新事件。
+     * @returns 退订函数；订阅方在生命周期结束时调用，避免已销毁的宿主被回调引用
+     */
+    static onSkillsRefreshed(listener: () => void): () => void {
         SkillMgrApplication.refreshListeners.push(listener);
+        return () => {
+            const index = SkillMgrApplication.refreshListeners.indexOf(listener);
+            if (index >= 0) SkillMgrApplication.refreshListeners.splice(index, 1);
+        };
     }
 
     private static notifyRefreshListeners(): void {
-        for (const listener of SkillMgrApplication.refreshListeners) {
+        // 遍历快照：监听器可能在处理过程中退订自己
+        for (const listener of [...SkillMgrApplication.refreshListeners]) {
             try {
                 listener();
             } catch {

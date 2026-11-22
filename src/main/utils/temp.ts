@@ -80,7 +80,7 @@ export function buildAtomicWriteTmpPath(filePath: string): string {
 const ATOMIC_WRITE_MAX_RETRIES = 5;
 const ATOMIC_WRITE_RETRY_BASE_DELAY_MS = 10;
 
-function isTransientFileLockError(err: unknown): boolean {
+export function isTransientFileLockError(err: unknown): boolean {
     const code = (err as NodeJS.ErrnoException)?.code;
     return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
 }

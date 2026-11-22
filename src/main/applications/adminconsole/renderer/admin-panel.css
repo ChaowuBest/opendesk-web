@@ -642,6 +642,50 @@
     border-color: var(--ap-accent);
 }
 
+/* 一键开发/一键修复：卡片右下角胶囊按钮（复用 .ap-primary 的胶囊语言） */
+.ap-feedback-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.ap-compose-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 999px;
+    background: var(--ap-btn-primary-bg);
+    color: #ffffff;
+    font-size: var(--fs-sm, 12px);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: var(--ap-btn-primary-shadow);
+    max-width: 220px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.ap-compose-btn:hover:not(:disabled) {
+    filter: brightness(0.94);
+}
+
+/* 省略号必须落在行内块级文本容器上，inline-flex 容器自身不生效 */
+.ap-compose-btn-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.ap-compose-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* ---------- 状态与提示 ---------- */
 
 .ap-status {

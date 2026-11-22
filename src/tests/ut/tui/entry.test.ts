@@ -5,6 +5,32 @@ import { LLM } from '../../../main/aikernel/llm.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
 import { Setting } from '../../../main/utils/setting.js';
 
+describe('OpenDeskTUI 设置变更订阅', () => {
+    test('设置提交后让任务状态栏失效并请求重绘，退订后不再回调', () => {
+        const invalidate = jest.fn();
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            inputArea: { statusBar: { invalidate } },
+            dashboardBar: { invalidate: jest.fn() },
+            tui: { requestRender }
+        }) as any;
+
+        const before = Setting.afterSetDataCallbacks.length;
+        tui.bridgeNotificationManager();
+
+        expect(Setting.afterSetDataCallbacks).toHaveLength(before + 1);
+
+        Setting.afterSetDataCallbacks[before](Setting.getInstance().getData(), Setting.getInstance().getData());
+
+        expect(invalidate).toHaveBeenCalledTimes(1);
+        expect(requestRender).toHaveBeenCalledTimes(1);
+
+        tui.unsubscribeStatusBarSettingRefresh();
+
+        expect(Setting.afterSetDataCallbacks).toHaveLength(before);
+    });
+});
+
 describe('OpenDeskTUI active task view state', () => {
     test('refreshes model info after creating a new task', async () => {
         const previousTask = { task_id: 'task-a', message_queue: [] };

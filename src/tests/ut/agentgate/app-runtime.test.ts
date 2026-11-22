@@ -214,7 +214,11 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => {
             Object.assign(settingData, d);
         }
     }
-    return { Setting, getOpendeskDirectory: () => '/tmp/opendesk-test' };
+    return {
+        Setting,
+        getOpendeskDirectory: () => '/tmp/opendesk-test',
+        resolveOpendeskDirectoryReadOnly: () => '/tmp/opendesk-test'
+    };
 });
 
 // ── 动态导入（在 mock 注册和变量初始化之后） ──────────────────

@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { jest } from '@jest/globals';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
-import { UserMessage } from '../../../main/aikernel/messages.js';
+import { AssistantMessage, ToolCall, ToolCallMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
+import { resolveVisibleToolResultContent } from '../../../main/aikernel/tool-result-content.js';
 import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import { getGoalExtension } from '../../../main/aikernel/goal/task-extension.js';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
@@ -135,11 +136,16 @@ describe('task transfer persistence', () => {
                 return rename(from, to);
             });
         } else {
-            const write = fs.promises.writeFile;
-            jest.spyOn(fs.promises, 'writeFile').mockImplementation(async (...args) => {
-                if (String(args[0]).includes('.import-') && JSON.parse(String(args[1])).task_name === 'child')
+            // 暂存写入已改为流式 open+write（序列化与写盘融合，issue #341），
+            // 通过第二次 '.import-' 暂存打开注入失败（任务按 entries 顺序处理，
+            // parent 在前 child 在后）
+            const openHandle = fs.promises.open;
+            let stagingOpens = 0;
+            jest.spyOn(fs.promises, 'open').mockImplementation(async (...args: Parameters<typeof fs.promises.open>) => {
+                if (String(args[0]).includes('.import-') && String(args[1]) === 'wx' && ++stagingOpens === 2) {
                     throw new Error('simulated task file failure');
-                return write(...args);
+                }
+                return openHandle(...args);
             });
         }
         await expect(
@@ -294,40 +300,39 @@ describe('task transfer persistence', () => {
         expect(TaskManagerState.load()!.tasks).toHaveLength(1);
     });
 
-    test.each(['serializeTask', 'writeTask', 'writeIndex'] as const)(
-        'preserves the original cause and phase for %s failures',
-        async (stage) => {
-            const { destination, entries } = await prepare();
-            const original = Object.assign(new Error('diagnostic failure'), {
-                code: stage === 'serializeTask' ? undefined : 'EACCES',
-                syscall: stage === 'writeIndex' ? 'rename' : 'open'
+    test.each([
+        // 暂存写入与序列化已融合（流式写出，issue #341）：toJSON 抛错统一归入 writeTask 阶段
+        { kind: 'serialize' as const, stage: 'writeTask' as const, code: undefined, syscall: undefined },
+        { kind: 'open' as const, stage: 'writeTask' as const, code: 'EACCES', syscall: 'open' },
+        { kind: 'index' as const, stage: 'writeIndex' as const, code: 'EACCES', syscall: 'rename' }
+    ])('preserves the original cause and phase for $stage failures ($kind)', async ({ kind, stage, code, syscall }) => {
+        const { destination, entries } = await prepare();
+        const original = Object.assign(new Error('diagnostic failure'), { code, syscall });
+        if (kind === 'serialize') {
+            jest.spyOn(TaskState.prototype, 'toJSON').mockImplementation(() => {
+                throw original;
             });
-            if (stage === 'serializeTask') {
-                jest.spyOn(TaskState.prototype, 'toJSON').mockImplementation(() => {
-                    throw original;
-                });
-            } else if (stage === 'writeTask') {
-                const open = fs.openSync;
-                jest.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
-                    if (args[1] === 'wx') throw original;
-                    return open(...args);
-                });
-            } else {
-                const rename = fs.renameSync;
-                jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
-                    if (String(to).endsWith('task_list.json')) throw original;
-                    return rename(from, to);
-                });
-            }
-            await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toMatchObject({
-                message: 'writeFailed',
-                stage,
-                cause: original,
-                filePath: expect.stringContaining(stage === 'writeIndex' ? 'task_list.json' : '.json')
+        } else if (kind === 'open') {
+            const open = fs.openSync;
+            jest.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+                if (args[1] === 'wx') throw original;
+                return open(...args);
             });
-            expect(destination.tasks).toEqual([]);
+        } else {
+            const rename = fs.renameSync;
+            jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+                if (String(to).endsWith('task_list.json')) throw original;
+                return rename(from, to);
+            });
         }
-    );
+        await expect(importTaskEntries(entries, ['parent'], destination, '/new/work')).rejects.toMatchObject({
+            message: 'writeFailed',
+            stage,
+            cause: original,
+            filePath: expect.stringContaining(stage === 'writeIndex' ? 'task_list.json' : '.json')
+        });
+        expect(destination.tasks).toEqual([]);
+    });
 
     test('batch transfer keeps cold task bodies unloaded on both sides', async () => {
         const original = source();
@@ -379,5 +384,86 @@ describe('task transfer persistence', () => {
         });
         expect(loaded.task_status).toBe('stopped');
         expect(getGoalExtension(loaded).state.schedulerLease).toBeUndefined();
+    });
+
+    test('v2 bundle carries artifacts, restores them under the new task id, and rewrites relative paths', async () => {
+        // 源机画像：任务含已压缩工具结果（原文已落 artifacts）+ 外置图片 marker，
+        // 导出后 artifacts 条目随 zip 走，导入端还原到新任务命名空间
+        const original = source();
+        const parent = original.tasks.find((task) => task.task_name === 'parent')!;
+        const assistant = new AssistantMessage();
+        const part = new ToolCallMessagePart();
+        const compressed = new ToolCall(0, 'call-compressed', 'browser-screenshot', '{"seq":1}');
+        compressed.status = 'success';
+        const toolResultText = 'RAW_' + 'original output '.repeat(512);
+        compressed.result = toolResultText;
+        compressed.result_storage = {
+            result_id: 'result-1',
+            storage_version: 1,
+            relative_path: path.join('artifacts', 'parent', 'tool-results', 'result-1.txt'),
+            replacement_preview: 'output preview'
+        };
+        compressed.result_object = {
+            type: 'image',
+            images: [
+                {
+                    image_url: 'data:image/png;base64,thumb',
+                    media_type: 'image/png',
+                    externalized: {
+                        version: 1,
+                        relative_path: path.join('artifacts', 'parent', 'images', 'img-hash.png'),
+                        original_bytes: 1024,
+                        original_media_type: 'image/png',
+                        thumbnail_bytes: 64
+                    }
+                }
+            ]
+        };
+        part.push(compressed);
+        assistant.appendToolCallPart(part);
+        parent.chat_context.appendMessage(assistant);
+        // artifacts 文件落盘（源机）
+        const imageBytes = Buffer.from('fake-png-bytes-0123456789');
+        fs.mkdirSync(path.join(directory, 'artifacts', 'parent', 'tool-results'), { recursive: true });
+        fs.mkdirSync(path.join(directory, 'artifacts', 'parent', 'images'), { recursive: true });
+        fs.writeFileSync(path.join(directory, 'artifacts', 'parent', 'tool-results', 'result-1.txt'), toolResultText);
+        fs.writeFileSync(path.join(directory, 'artifacts', 'parent', 'images', 'img-hash.png'), imageBytes);
+
+        const file = path.join(directory, 'backup.zip');
+        await exportTaskBundle(original, ['parent'], file);
+        const preview = await readTaskImportFile(file);
+        previews.push(preview);
+        const destination = new TaskManagerState();
+        expect(
+            await importTaskEntries(preview.entries, ['parent'], destination, '/new/work', {
+                restoreArtifacts: preview.restoreArtifacts
+            })
+        ).toBe(1);
+
+        // 产物已还原到新任务命名空间且字节一致
+        const newId = destination.tasks[0].task_id;
+        expect(fs.readFileSync(path.join(directory, 'artifacts', newId, 'images', 'img-hash.png'))).toEqual(imageBytes);
+        expect(fs.readFileSync(path.join(directory, 'artifacts', newId, 'tool-results', 'result-1.txt'), 'utf8')).toBe(
+            toolResultText
+        );
+
+        // 任务 JSON 里的产物相对路径已改写为新命名空间（含 Windows 反斜杠存储值）
+        const loaded = TaskManagerState.load()!.getTask(newId)!;
+        const importedPart = loaded.chat_context.messages
+            .flatMap((message) => (message instanceof AssistantMessage ? message.content : []))
+            .find((part) => part.type === 'tool_call') as ToolCallMessagePart;
+        const importedCall = importedPart.toolcalls[0];
+        expect(importedCall.result_storage?.relative_path).toBe(
+            path.join('artifacts', newId, 'tool-results', 'result-1.txt')
+        );
+        expect(importedCall.result_object.images[0].externalized.relative_path).toBe(
+            path.join('artifacts', newId, 'images', 'img-hash.png')
+        );
+        // 导出时已剥离的 result 保持剥离；模型可见内容由结构化预览 + 新命名空间的
+        // 相对路径在读取时渲染（跨机器导入后指向本机数据根下的正确文件）
+        expect(importedCall.result).toBeUndefined();
+        const visible = resolveVisibleToolResultContent(importedCall)!;
+        expect(visible).toContain('output preview');
+        expect(visible).toContain(path.join(directory, 'artifacts', newId, 'tool-results', 'result-1.txt'));
     });
 });

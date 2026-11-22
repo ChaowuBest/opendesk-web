@@ -92,4 +92,49 @@ describe('AdminTokenStore', () => {
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    test('last authorized server keeps its scheme for http local debug servers', () => {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'admin-token-'));
+        try {
+            const store = new AdminTokenStore(path.join(dir, 'admin-token.enc'), createEncryption());
+            store.setSession('http://127.0.0.1:18788', 'session-1');
+            // 回归：历史版本把 server 归一化掉协议，currentServer() 会给无协议记录补 https://，
+            // 导致 http:// 本地调试服务器的后续请求全部打向 https 并报 ERR_SSL_PROTOCOL_ERROR
+            expect(store.lastSessionServer()).toBe('http://127.0.0.1:18788');
+            store.save('http://127.0.0.1:18788', 'token-1');
+            expect(store.lastPersistedServer()).toBe('http://127.0.0.1:18788');
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('token matching stays scheme-insensitive across http/https variants', () => {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'admin-token-'));
+        try {
+            const store = new AdminTokenStore(path.join(dir, 'admin-token.enc'), createEncryption());
+            store.save('http://127.0.0.1:8788', 'token-1');
+            expect(store.load('https://127.0.0.1:8788')).toBe('token-1');
+            expect(store.load('http://127.0.0.1:8788/')).toBe('token-1');
+            expect(store.load('http://127.0.0.1:9999')).toBeNull();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test('legacy scheme-less persisted records still load', () => {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'admin-token-'));
+        try {
+            const file = path.join(dir, 'admin-token.enc');
+            const encryption = createEncryption();
+            const store = new AdminTokenStore(file, encryption);
+            // 旧版本落盘的记录没有协议前缀（normalizeServer 只留 host+path）
+            const legacy = JSON.stringify({ server: '127.0.0.1:8788', token: 'legacy-1' });
+            writeFileSync(file, encryption.encrypt(legacy));
+            expect(store.load('http://127.0.0.1:8788')).toBe('legacy-1');
+            expect(store.load('https://127.0.0.1:8788')).toBe('legacy-1');
+            expect(store.lastPersistedServer()).toBe('127.0.0.1:8788');
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

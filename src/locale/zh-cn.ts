@@ -762,10 +762,6 @@ export const zhCn: Record<string, string> = {
     // Commands - Notification
     'notification.description': '打开通知中心，查看所有通知',
 
-    // Commands - Dashboard
-    'dashboard.description': '打开全屏仪表盘，/dashboard bar 可切换底栏状态条',
-    'dashboard.bar.description': '显示/隐藏底栏状态条',
-
     // Commands - Usage
     'usage.description': '查看模型用量统计',
     'usage.title': '模型用量统计',
@@ -943,9 +939,8 @@ export const zhCn: Record<string, string> = {
     'channel.disable.success': '插件已禁用: ${id}\n\n消息渠道已自动重新加载。',
 
     // Input StatusBar
-    'input.statusbar.switchmode': '切换模式',
-    'input.statusbar.switchDisplay': '切换显示',
     'input.statusbar.help': '帮助',
+    'input.statusbar.shell.mode': 'Shell 命令模式',
 
     // Help Command
     'help.name': 'help',
@@ -1349,6 +1344,14 @@ export const zhCn: Record<string, string> = {
     'display.command.description': '设置当前任务的 TUI 输出显示',
     'display.command.title': '输出显示',
     'display.command.usage': '用法: /display minimal|verbose',
+    'language.description': '切换界面语言',
+    'language.usage': '用法: /language auto|<语言>（如 /language zh-CN）',
+    'language.switched': '已切换语言',
+    'language.not.found': '未知语言: ',
+    'language.available': '可用语言',
+    'language.current': '当前',
+    'language.save.failed': '语言设置未保存',
+    'language.save.failed.hint': '写入设置文件失败，界面与设置仍保持原来的语言。',
     'display.minimal.running.reading': '正在读取 `${path}`…',
     'display.minimal.running.tool': '正在执行 ${tool}',
     'display.minimal.running.thinking': '正在思考…',
@@ -2100,7 +2103,7 @@ export const zhCn: Record<string, string> = {
     'renderer.filemgr.status.readonly': '查询模式',
     'renderer.filemgr.status.disabled': '已停用',
     'renderer.filemgr.status.error': '异常',
-    // 插件特性门控（ctx.features.disable / ctx.features.disableApplication）
+    // 插件特性门控（ctx.features.disableFeature / ctx.features.disableApplication）
     'feature.memory.disabled': '记忆功能已停用',
     'feature.application.disabled': '应用 ${bundleName} 已被插件停用',
     'renderer.filemgr.mode.full': '完整索引',
@@ -2408,6 +2411,23 @@ export const zhCn: Record<string, string> = {
     'renderer.admin.feedbackEmpty': '暂无反馈',
     'renderer.admin.openAttachment': '下载附件',
     'renderer.admin.attachmentSaved': '附件已保存到 ${path}',
+    'renderer.admin.oneClickDevelop': '一键开发',
+    'renderer.admin.oneClickFix': '一键修复',
+    'renderer.admin.oneClickPreparing': '准备中…',
+    'renderer.admin.composeButtonTitle': '把这条反馈填入新任务',
+    'renderer.admin.composeReady': '已填入新任务输入框，按发送即可开始',
+    'renderer.admin.composeReadyWithFailed': '已填入新任务输入框，按发送即可开始（${count} 个附件下载失败，已跳过）',
+    'renderer.admin.composeFailed': '未能填入新任务输入框，请重试',
+    'renderer.admin.composeBusy': '上一次预填尚未完成，请稍后再试',
+    'renderer.admin.composeNeedsMainWindow': '请在主窗口的管理后台中打开此功能，独立窗口无法填入新任务',
+    'renderer.admin.composeBugPrompt': '请修复以下用户反馈的问题（反馈 #${id}）：\n\n${content}',
+    'renderer.admin.composeFeaturePrompt': '请开发以下用户需求（反馈 #${id}）：\n\n${content}',
+
+    // Renderer - 新任务预填（管理后台一键开发/一键修复）
+    'renderer.taskCompose.source': '新任务',
+    'renderer.taskCompose.failedTitle': '未能填入新任务',
+    'renderer.taskCompose.failed': '没能把反馈填入新任务输入框，请回到管理后台重试，或手动新建任务。',
+    'renderer.taskCompose.busy': '上一次预填还没结束，请稍后重试。',
 
     // Renderer - Personal Center
     'renderer.personal.title': '个人中心',

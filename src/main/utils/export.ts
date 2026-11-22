@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../aikernel/states/tasks';
-import { atomicWriteFile } from './temp.js';
+import { atomicWriteJsonFile } from './json-stream-write.js';
 import type {
     UserMessage,
     AssistantMessage,
@@ -162,6 +162,14 @@ export async function exportTaskToHtml(task: TaskState, filePath: string): Promi
  * 序列化走内存态而非直接复制磁盘文件：任务可能存在尚未落盘的脏数据
  * （persistLater 有 2s 节流），内存序列化保证导出内容始终完整且与
  * _writeAll 落盘格式（4 空格缩进）一致。
+ *
+ * 内存防护（issue #341）：
+ * - 外置图片不做导出回填——回填需要深拷贝任务图 + 全量读盘 + 物化整个输出串，
+ *   对大任务会瞬间放大数倍内存直接 OOM。导出仅保留缩略图 + externalized 标记：
+ *   显示安全性由缩略图保证（旧版本/跨机器导入仍可正常显示），完整原图只存在于
+ *   源机器的 artifacts/<taskId>/images/；
+ * - 序列化走 atomicWriteJsonFile 流式写出，峰值内存只有写批次，不再物化整个
+ *   JSON 输出串。
  */
 export async function exportTaskJsonToFile(task: TaskState, filePath: string): Promise<void> {
     if (!filePath || typeof filePath !== 'string') {
@@ -172,7 +180,7 @@ export async function exportTaskJsonToFile(task: TaskState, filePath: string): P
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    await atomicWriteFile(filePath, JSON.stringify(task.toJSON(), null, 4));
+    await atomicWriteJsonFile(filePath, task.toJSON(), 4);
 }
 
 export async function generateTaskHtml(task: TaskState): Promise<string> {

@@ -31,6 +31,7 @@ import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { getTaskArtifactDirectory } from '../utils/setting.js';
 import { exportTaskToHtml } from '../utils/export.js';
+import { writeJsonChunksToFile } from '../utils/json-stream-write.js';
 import { expandTilde } from '../../utils/path.js';
 import { ToolCallMessagePartView } from './components/taskview.js';
 import type { CommandLineArgs } from './entry.js';
@@ -323,9 +324,9 @@ export class HeadlessRunner {
             try {
                 const dir = path.dirname(jsonPath);
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                fs.writeFileSync(jsonPath, JSON.stringify(task.toJSON(), null, 4), {
-                    encoding: 'utf8'
-                });
+                // 流式导出（issue #341）：不在内存里物化整个 JSON 输出串，输出与
+                // JSON.stringify(v, null, 4) 逐字节一致
+                await writeJsonChunksToFile(jsonPath, task.toJSON(), 4);
                 logger.info(`Task exported to JSON: ${jsonPath}`);
             } catch (err) {
                 logger.error(`Failed to export JSON: ${err}`);

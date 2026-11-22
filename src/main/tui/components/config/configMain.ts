@@ -28,6 +28,7 @@ import { TelemetryConfigPage } from './telemetryConfig.js';
 import { PluginConfigPage } from './pluginConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
+import { getFeatureManager } from '../../../../common/features/manager.js';
 import { OpenDeskTUI } from '../../entry.js';
 
 interface ConfigSectionDef {
@@ -137,7 +138,7 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         icon: '🌎',
         titleKey: 'config.language.title',
         hintKey: 'config.language.title.hint',
-        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI.tui, onBack)
+        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI, onBack)
     },
     {
         value: 'shortcuts',
@@ -149,13 +150,24 @@ const SECTION_DEFS: ConfigSectionDef[] = [
 ];
 
 /**
+ * 当前可见的配置分区。
+ * telemetry 特性被插件禁用（ctx.features.disableFeature('telemetry')）时隐藏遥测配置入口：
+ * 用户无法再主动修改端点，配置本身保留在设置文件里，插件停用后入口原样恢复。
+ */
+export function getVisibleSectionDefs(): ConfigSectionDef[] {
+    const telemetryDisabled = getFeatureManager().isFeatureDisabled('telemetry');
+    return telemetryDisabled ? SECTION_DEFS.filter((section) => section.value !== 'telemetry') : SECTION_DEFS;
+}
+
+/**
  * 动态构建菜单项列表（每次调用时重新翻译，确保语言切换后菜单更新）
  */
 function buildSectionItems(): Array<{ value: string; label: string }> {
-    const titles = SECTION_DEFS.map((s) => `${s.icon}  ${t(s.titleKey)}`);
+    const sections = getVisibleSectionDefs();
+    const titles = sections.map((s) => `${s.icon}  ${t(s.titleKey)}`);
     const maxTitleWidth = Math.max(...titles.map((title) => visibleWidth(title)));
 
-    return SECTION_DEFS.map((s, i) => {
+    return sections.map((s, i) => {
         const title = titles[i];
         const pad = ' '.repeat(Math.max(2, maxTitleWidth - visibleWidth(title) + 4));
         return {
@@ -194,7 +206,7 @@ export class ConfigMainPage implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = (item) => {
-            const section = SECTION_DEFS.find((s) => s.value === item.value);
+            const section = getVisibleSectionDefs().find((s) => s.value === item.value);
             if (section) this.enterSection(section);
         };
         this.list.onCancel = () => this.onClose();

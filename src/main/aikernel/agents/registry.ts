@@ -36,6 +36,24 @@ export class AgentRegistry {
     private static pluginAgentInstances: AgentDecl[] = [];
 
     /**
+     * 由 applications 层注入的可见性过滤：应用被插件禁用（disableApplication）时，
+     * 该作用域下注册的 Agent 一律不可见（不出现在系统提示、不能被派发或解析）。
+     * hideApplication 不注入过滤——只收起入口，Agent 照常可用。
+     */
+    private static visibilityFilters: Array<(agent: AgentDecl) => boolean> = [];
+
+    static registerVisibilityFilter(filter: (agent: AgentDecl) => boolean): void {
+        this.visibilityFilters.push(filter);
+    }
+
+    private static isVisible(agent: AgentDecl): boolean {
+        // 只过滤应用 Agent：插件 Agent 的生命周期由插件宿主管理，作用域名可能与某个应用
+        // bundleName 同形，不能因为那个应用被禁用就误伤插件贡献的 Agent
+        if (!this.applicationAgentInstances.includes(agent)) return true;
+        return this.visibilityFilters.every((filter) => filter(agent));
+    }
+
+    /**
      * 注册一个 Agent。agentId 不可重复，重复注册将抛出异常。
      */
     static registerAgent(agent: AgentDecl): void {
@@ -46,17 +64,19 @@ export class AgentRegistry {
     }
 
     /**
-     * 返回所有已注册的 Agent 列表。
+     * 返回所有已注册的 Agent 列表（隐藏被插件禁用的应用所提供的 Agent）。
      */
     static getAgents(): AgentDecl[] {
-        return Array.from(this.agents.values());
+        return Array.from(this.agents.values()).filter((agent) => this.isVisible(agent));
     }
 
     /**
-     * 根据完整 agentId 查找 Agent，未找到返回 undefined。
+     * 根据完整 agentId 查找 Agent，未找到（或所属应用被插件禁用）返回 undefined。
      */
     static getAgent(agentId: string): AgentDecl | undefined {
-        return this.agents.get(agentId);
+        const agent = this.agents.get(agentId);
+        if (!agent || !this.isVisible(agent)) return undefined;
+        return agent;
     }
 
     static getBuiltinAgent(agentName: string): AgentDecl | undefined {
@@ -83,6 +103,17 @@ export class AgentRegistry {
     static resolveAgentReference(reference: string): AgentDecl | undefined {
         this.initBuiltinAgents();
         return this.getAgent(reference);
+    }
+
+    /**
+     * 注册表里是否真的存在该 agentId，忽略插件禁用带来的可见性过滤。
+     *
+     * 供「已绑定该 Agent 的任务」与任务迁移这类内部场景使用：应用临时被插件禁用时
+     * Agent 仍注册着，调用方据此保留绑定（而不是当成失效 Agent 永久改写/清空），
+     * 插件停用后能回到原来的 Agent。对外派发与列表仍走 getAgent / getAgents 的过滤版本。
+     */
+    static hasRegisteredAgent(reference: string): boolean {
+        return this.agents.has(reference);
     }
 
     static resolveDispatchableAgent(reference: string): AgentDecl | undefined {
@@ -130,7 +161,9 @@ export class AgentRegistry {
     }
 
     static async removeApplicationAgent(bundleName: string, agentName: string): Promise<void> {
-        const agent = this.getApplicationAgent(bundleName, agentName);
+        // 卸载走注册表本体而不是 getApplicationAgent：可见性过滤不能挡住资源释放，
+        // 否则应用被插件禁用后残留的 Agent 就再也清理不掉了
+        const agent = this.agents.get(`${bundleName}:${agentName}`);
         if (!agent) return;
         await agent.dispose();
         this.agents.delete(agent.agentId);

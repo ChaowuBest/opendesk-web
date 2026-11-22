@@ -40,7 +40,21 @@ function getLogger() {
 export const RAW_TEXT_MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 export const RAW_CONTAINER_MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
-const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'tsx']);
+const PLAIN_TEXT_EXTS = new Set([
+    'txt',
+    'md',
+    'csv',
+    'json',
+    'log',
+    'yaml',
+    'yml',
+    'xml',
+    'html',
+    'css',
+    'js',
+    'ts',
+    'tsx'
+]);
 const RTF_EXTS = new Set(['rtf']);
 const OFFICE_PARSER_EXTS = new Set(['docx', 'odt', 'odp', 'ods']);
 const WORD_EXTRACTOR_EXTS = new Set(['doc']);

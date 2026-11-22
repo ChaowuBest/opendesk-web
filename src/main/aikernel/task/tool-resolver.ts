@@ -45,7 +45,7 @@ export async function buildToolsetsForTask(
 ): Promise<BaseToolset[]> {
     const appToolsets = await task.task_manager_state.toolsetProvider.listAvailableToolsets(task);
     const skillToolset = SkillRegistry.getInstance().getToolset();
-    // 记忆特性被插件禁用（ctx.features.disable('memory')）时不注入记忆工具集
+    // 记忆特性被插件禁用（ctx.features.disableFeature('memory')）时不注入记忆工具集
     const memoryToolset = getFeatureManager().isFeatureDisabled('memory') ? null : createMemoryToolset();
     const planningToolset = task.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
 
@@ -237,6 +237,20 @@ export function collectToolCalls(message: AssistantMessage): ToolCall[] {
         }
     }
     return result;
+}
+
+export function hasRequestToolCall(message: AssistantMessage, previous: ReadonlySet<ToolCall>): boolean {
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (let i = content.length - 1; i >= 0; i--) {
+        const part = content[i];
+        if (part?.type !== 'tool_call') continue;
+        const calls = part.toolcalls;
+        if (!Array.isArray(calls)) continue;
+        for (let j = calls.length - 1; j >= 0; j--) {
+            if (!previous.has(calls[j])) return true;
+        }
+    }
+    return false;
 }
 
 /**

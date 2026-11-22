@@ -12,6 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getTaskToolResultDirectory } from '../../utils/setting.js';
+import { renderToolResultReferenceText } from '../tool-result-content.js';
 import { AssistantMessage, ChatContext, ToolCall, type ToolResultStorageMetadata } from '../messages.js';
 import { TOOL_RESULT_BUDGET_EXCLUDED_TOOL_NAMES, isToolResultBudgetExcludedToolName } from './compactable-tools.js';
 import { buildActiveContextView } from './context-view.js';
@@ -66,8 +67,11 @@ export interface PersistedToolResultForCall {
 
 export interface ToolResultReplacementRecord {
     result_id: string;
-    replacement_text: string;
     relative_path?: string;
+    /** 结构化替代视图的预览正文（新格式）：模型可见文本由边界渲染生成 */
+    replacement_preview?: string;
+    /** 旧格式（本改动之前）的自由文本替代文本：只读兼容，不再写入 */
+    replacement_text?: string;
 }
 
 export interface SerializedToolResultReplacementState {
@@ -206,14 +210,21 @@ export function persistToolResultArtifact(
     };
 }
 
-export function buildToolResultReplacementText(previewText: string, fullPath: string): string {
-    return `${previewText}\n\n完整输出已保存至: ${fullPath}\n若需完整内容请通过读文件方式获取。`;
+/**
+ * 替代文本渲染：预览正文 + 产物定位行（按本机数据根展开产物引用）。
+ *
+ * 替代文本内嵌的是「相对数据根的产物引用」展开后的绝对路径，写入（result/override 展示）
+ * 与读取（resolver）两侧共用本渲染；存储层只保存相对引用，模型可见文本在边界生成，
+ * 跨机器导入/迁移后产物引用仍然有效。
+ */
+export function buildToolResultReplacementText(previewText: string, artifactRelativePath: string): string {
+    return renderToolResultReferenceText(previewText, artifactRelativePath);
 }
 
 export function buildToolResultStorageMetadata(
     toolCall: ToolCall,
     artifact: PersistedToolResultArtifact,
-    replacementText: string,
+    replacementPreview: string,
     persistedAt: string = new Date().toISOString()
 ): ToolResultStorageMetadata {
     return toolCall.ensureResultStorage({
@@ -221,7 +232,7 @@ export function buildToolResultStorageMetadata(
         original_chars: artifact.originalChars,
         original_lines: artifact.originalLines,
         persisted_at: persistedAt,
-        replacement_text: replacementText
+        replacement_preview: replacementPreview
     });
 }
 
@@ -229,12 +240,12 @@ export function persistToolResultForToolCall(
     taskId: string,
     toolCall: ToolCall,
     result: string,
-    replacementText: string,
+    replacementPreview: string,
     persistedAt: string = new Date().toISOString()
 ): PersistedToolResultForCall {
     const resultId = ensureToolResultStorageId(toolCall);
     const artifact = persistToolResultArtifact(taskId, resultId, result);
-    const metadata = buildToolResultStorageMetadata(toolCall, artifact, replacementText, persistedAt);
+    const metadata = buildToolResultStorageMetadata(toolCall, artifact, replacementPreview, persistedAt);
 
     return {
         metadata,
@@ -263,6 +274,119 @@ export function persistToolResultArtifactForToolCall(
     };
 }
 
+export interface ToolResultArtifactsRewireResult {
+    /** 改写的 relative_path 总数（chat_context + replacement_state） */
+    rewritten: number;
+    /** 原文文件已在 fork 目录或复制成功 */
+    present: number;
+    /** 源文件缺失（悬空引用，容忍降级到替代文本） */
+    missing: number;
+}
+
+/**
+ * fork 的产物引用改写 + 工具结果产物 copy-on-fork（与外置图片的 rewireExternalizedImagesForTask 同策略）：
+ * 只改结构化路径字段（result_storage.relative_path、replacement_state 记录的 relative_path），
+ * 结构化替代视图（preview）不含路径、无需改写；旧格式的自由文本原样保留
+ * （同机 fork 时根前缀天然正确；跨机导入后的旧文本属于已接受的降级）。
+ *
+ * fork 后 chat_context 各 toolcall 的 result_storage.relative_path 与
+ * tool_result_replacement_state 记录仍指向源任务 artifacts；源任务删除会连带清掉
+ * 原文文件，fork 的可恢复原文随之丢失。这里把指向源任务 tool-results 目录的相对路径
+ * 改写到 fork 命名空间，并把原文文件复制到 fork 自己的 artifacts 目录，使 fork 在
+ * 源任务删除后自洽可读。尽力而为：源文件缺失计入 missing，不阻断 fork。
+ */
+export function rewireToolResultArtifactsForTask(
+    chatContext: ChatContext,
+    replacementState: ToolResultReplacementState,
+    sourceTaskId: string,
+    forkTaskId: string
+): ToolResultArtifactsRewireResult {
+    let rewritten = 0;
+    let present = 0;
+    let missing = 0;
+
+    interface RewiredPath {
+        relativePath: string;
+        sourceFullPath: string;
+        forkFullPath: string;
+    }
+
+    const rewireOne = (relativePath: string): RewiredPath | undefined => {
+        const segments = relativePath.split(/[\\/]/);
+        // 只处理指向源任务 tool-results 目录的相对路径，其余布局原样保留
+        if (
+            segments.length < 4 ||
+            segments[0] !== 'artifacts' ||
+            segments[1] !== sourceTaskId ||
+            segments[2] !== TOOL_RESULT_STORAGE_DIRECTORY_NAME ||
+            segments.slice(3).some((segment) => !segment || segment === '.' || segment === '..')
+        ) {
+            return undefined;
+        }
+        rewritten++;
+        const restSegments = segments.slice(3);
+        const sourceFullPath = path.join(getTaskToolResultDirectory(sourceTaskId, false), ...restSegments);
+        const forkFullPath = path.join(getTaskToolResultDirectory(forkTaskId, true), ...restSegments);
+        try {
+            if (fs.existsSync(forkFullPath)) {
+                present++;
+            } else if (fs.existsSync(sourceFullPath)) {
+                fs.copyFileSync(sourceFullPath, forkFullPath, fs.constants.COPYFILE_EXCL);
+                present++;
+            } else {
+                missing++;
+            }
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') {
+                present++;
+            } else {
+                missing++;
+            }
+        }
+        return {
+            relativePath: path.join('artifacts', forkTaskId, TOOL_RESULT_STORAGE_DIRECTORY_NAME, ...restSegments),
+            sourceFullPath,
+            forkFullPath
+        };
+    };
+
+    for (const message of chatContext.messages) {
+        if (!(message instanceof AssistantMessage)) {
+            continue;
+        }
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') {
+                continue;
+            }
+            for (const toolCall of part.toolcalls) {
+                const storage = toolCall.result_storage;
+                const relativePath = storage?.relative_path;
+                if (storage === undefined || typeof relativePath !== 'string' || relativePath.length === 0) {
+                    continue;
+                }
+                const next = rewireOne(relativePath);
+                if (next !== undefined) {
+                    storage.relative_path = next.relativePath;
+                    // microcompact 不再单独保存产物路径（复用 result_storage.relative_path）；
+                    // 旧格式的自由文本原样保留，属于已接受的降级
+                }
+            }
+        }
+    }
+    // clone() 对记录是浅拷贝（{...record}），就地改写安全
+    for (const record of replacementState.replacements.values()) {
+        const relativePath = record.relative_path;
+        if (typeof relativePath !== 'string' || relativePath.length === 0) {
+            continue;
+        }
+        const next = rewireOne(relativePath);
+        if (next !== undefined) {
+            record.relative_path = next.relativePath;
+        }
+    }
+    return { rewritten, present, missing };
+}
+
 function normalizeReplacementRecord(record: unknown): ToolResultReplacementRecord | undefined {
     if (record === undefined || record === null || typeof record !== 'object') {
         return undefined;
@@ -270,6 +394,7 @@ function normalizeReplacementRecord(record: unknown): ToolResultReplacementRecor
 
     const candidate = record as {
         result_id?: unknown;
+        replacement_preview?: unknown;
         replacement_text?: unknown;
         relative_path?: unknown;
     };
@@ -278,14 +403,19 @@ function normalizeReplacementRecord(record: unknown): ToolResultReplacementRecor
         return undefined;
     }
 
-    if (typeof candidate.replacement_text !== 'string' || candidate.replacement_text.length === 0) {
+    const normalized: ToolResultReplacementRecord = {
+        result_id: candidate.result_id
+    };
+    // 结构化预览（新格式）与旧自由文本（只读兼容）至少保留一个
+    if (typeof candidate.replacement_preview === 'string' && candidate.replacement_preview.length > 0) {
+        normalized.replacement_preview = candidate.replacement_preview;
+    }
+    if (typeof candidate.replacement_text === 'string' && candidate.replacement_text.length > 0) {
+        normalized.replacement_text = candidate.replacement_text;
+    }
+    if (normalized.replacement_preview === undefined && normalized.replacement_text === undefined) {
         return undefined;
     }
-
-    const normalized: ToolResultReplacementRecord = {
-        result_id: candidate.result_id,
-        replacement_text: candidate.replacement_text
-    };
 
     if (typeof candidate.relative_path === 'string' && candidate.relative_path.trim().length > 0) {
         normalized.relative_path = candidate.relative_path;
@@ -325,10 +455,15 @@ function applyChatContextMetadata(state: ToolResultReplacementState, chatContext
 
                 // Step 3 的稳定 result_id 只用于结果落盘与重放定位，
                 // 不能自动推导为 Step 4 的 "seen" 状态；否则 fresh 候选会被提前冻结。
-                if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
+                const hasPreview =
+                    typeof metadata.replacement_preview === 'string' && metadata.replacement_preview.length > 0;
+                const hasLegacyText =
+                    typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0;
+                if (hasPreview || hasLegacyText) {
                     applyReplacementRecord(state, {
                         result_id: metadata.result_id,
-                        replacement_text: metadata.replacement_text,
+                        ...(hasPreview ? { replacement_preview: metadata.replacement_preview } : {}),
+                        ...(hasLegacyText ? { replacement_text: metadata.replacement_text } : {}),
                         relative_path: metadata.relative_path
                     });
                 }
@@ -468,6 +603,10 @@ interface ToolResultBudgetCandidate {
     sizeChars: number;
     projectedSizeChars: number;
     replacementText?: string;
+    /** 结构化替代预览（新格式），用于生成 replacement_state 记录 */
+    replacementPreview?: string;
+    /** 替代预览对应的产物相对路径 */
+    replacementRelativePath?: string;
     assistantMessageIndex: number;
     chatContextMessageIndex: number;
     assistantMessageId: string;
@@ -524,7 +663,10 @@ interface ToolResultBudgetAnalysisResult {
 
 export interface ToolResultBudgetOverrideRecord {
     resultId: string;
+    /** 请求期 override 文本（已按当前数据根渲染，仅存活于本次请求构建） */
     replacementText: string;
+    /** 结构化预览：写入 replacement_state 的新格式字段 */
+    replacementPreview?: string;
     relativePath?: string;
     source: 'must_reapply' | 'fresh_selected';
     assistantMessageIndex: number;
@@ -634,12 +776,27 @@ function classifyBudgetCandidate(
     toolCallIndex: number
 ): Pick<
     ToolResultBudgetCandidate,
-    'resultId' | 'hasStableResultId' | 'state' | 'replacementText' | 'projectedSizeChars'
+    | 'resultId'
+    | 'hasStableResultId'
+    | 'state'
+    | 'replacementText'
+    | 'replacementPreview'
+    | 'replacementRelativePath'
+    | 'projectedSizeChars'
 > {
     const stableResultId = toolCall.result_storage?.result_id;
+    const record = stableResultId ? replacementState.replacements.get(stableResultId) : undefined;
+    const storage = toolCall.result_storage;
+    // 结构化预览（新格式）优先；旧自由文本按原样作为模型可见文本（只读兼容）
+    const replacementPreview = record?.replacement_preview ?? storage?.replacement_preview;
+    const relativePath = record?.relative_path ?? storage?.relative_path;
+    const legacyText = record?.replacement_text ?? storage?.replacement_text;
     const replacementText =
-        (stableResultId ? replacementState.replacements.get(stableResultId)?.replacement_text : undefined) ??
-        toolCall.result_storage?.replacement_text;
+        typeof replacementPreview === 'string' && replacementPreview.length > 0
+            ? renderToolResultReferenceText(replacementPreview, relativePath)
+            : typeof legacyText === 'string' && legacyText.length > 0
+              ? legacyText
+              : undefined;
     const state: ToolResultBudgetCandidateState =
         typeof replacementText === 'string' && replacementText.length > 0
             ? 'must_reapply'
@@ -654,6 +811,8 @@ function classifyBudgetCandidate(
         hasStableResultId: stableResultId !== undefined,
         state,
         replacementText,
+        replacementPreview,
+        replacementRelativePath: relativePath,
         projectedSizeChars:
             state === 'must_reapply' && typeof replacementText === 'string' ? replacementText.length : sourceSizeChars
     };
@@ -677,12 +836,14 @@ function sortFreshBudgetCandidatesBySize(candidates: ToolResultBudgetCandidate[]
 function createBudgetOverrideRecord(
     candidate: ToolResultBudgetCandidate,
     replacementText: string,
-    source: 'must_reapply' | 'fresh_selected'
+    source: 'must_reapply' | 'fresh_selected',
+    replacementPreview?: string
 ): ToolResultBudgetOverrideRecord {
     return {
         resultId: candidate.resultId,
         replacementText,
-        relativePath: candidate.toolCall.result_storage?.relative_path,
+        replacementPreview,
+        relativePath: candidate.replacementRelativePath ?? candidate.toolCall.result_storage?.relative_path,
         source,
         assistantMessageIndex: candidate.assistantMessageIndex,
         chatContextMessageIndex: candidate.chatContextMessageIndex,
@@ -710,16 +871,17 @@ function persistFreshBudgetReplacementForCandidate(
     }
 
     const resultId = candidate.toolCall.ensureResultStorage().result_id;
-    const fullPath = getToolResultArtifactPath(taskId, resultId, persistArtifacts);
-    const replacementText = buildToolResultReplacementText(preview.previewText, fullPath);
+    const artifactRelativePath = getToolResultArtifactRelativePath(taskId, resultId);
+    const replacementText = buildToolResultReplacementText(preview.previewText, artifactRelativePath);
     if (replacementText.length >= result.length) {
         return undefined;
     }
 
     if (persistArtifacts) {
-        persistToolResultForToolCall(taskId, candidate.toolCall, result, replacementText);
+        // 存储层保存结构化预览；请求期 override 用渲染好的文本
+        persistToolResultForToolCall(taskId, candidate.toolCall, result, preview.previewText);
     }
-    return createBudgetOverrideRecord(candidate, replacementText, 'fresh_selected');
+    return createBudgetOverrideRecord(candidate, replacementText, 'fresh_selected', preview.previewText);
 }
 
 function collectToolResultBudgetCandidates(
@@ -946,7 +1108,14 @@ export function buildToolResultBudgetProjectionForChatContext(
                 continue;
             }
             overrides.set(candidate.resultId, candidate.replacementText);
-            overrideRecords.push(createBudgetOverrideRecord(candidate, candidate.replacementText, 'must_reapply'));
+            overrideRecords.push(
+                createBudgetOverrideRecord(
+                    candidate,
+                    candidate.replacementText,
+                    'must_reapply',
+                    candidate.replacementPreview
+                )
+            );
             reappliedResultIds.push(candidate.resultId);
             reappliedCount++;
         }
@@ -978,7 +1147,9 @@ export function buildToolResultBudgetProjectionForChatContext(
                     projectedCharsAfterSelection - candidate.sizeChars + overrideRecord.replacementText.length;
                 workingState.replacements.set(overrideRecord.resultId, {
                     result_id: overrideRecord.resultId,
-                    replacement_text: overrideRecord.replacementText,
+                    ...(overrideRecord.replacementPreview !== undefined
+                        ? { replacement_preview: overrideRecord.replacementPreview }
+                        : { replacement_text: overrideRecord.replacementText }),
                     relative_path: overrideRecord.relativePath
                 });
                 newlySelectedCount++;

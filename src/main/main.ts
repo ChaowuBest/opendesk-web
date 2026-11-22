@@ -104,6 +104,7 @@ import { registerTaskTransferHandlers } from './utils/task-transfer-ipc.js';
 import { refreshRuntimePreferredSystemLanguages } from './utils/system-language-refresh.js';
 import * as taskTransfer from './aikernel/task/transfer.js';
 import { releaseTaskMemory } from './aikernel/task/memory.js';
+import { readExternalizedImageFile } from './aikernel/task/image-externalization.js';
 import { saveTaskExportHtml } from './utils/export-html-writer.js';
 import { exportLogEntries } from './utils/export-log.js';
 import { createLocalExportDestinationHost } from './utils/export-local-destination.js';
@@ -134,7 +135,7 @@ import { startMemoryCleanupScheduler } from './aikernel/memory/cleanup.js';
 import { getFeatureManager } from '../common/features/manager.js';
 import { OPENDESK_FEATURES, resolveFeatureLocalizedText } from '../common/features/registry.js';
 import { startProxyEnvRefreshScheduler, onNetworkConfigChanged } from './utils/proxy-env.js';
-import { startReporter } from './utils/reporter.js';
+import { startHeartbeatReporter, syncHeartbeatReporter } from './telemetry/heartbeat.js';
 import { submitFeedback } from './utils/feedback.js';
 import type { RankPeriod } from './telemetry/local-telemetry.js';
 import { createTaskUsageViewService } from './telemetry/task-usage-view.js';
@@ -234,6 +235,19 @@ function loadTelemetryModule(): Promise<typeof import('./telemetry/index.js')> {
     return telemetryModulePromise;
 }
 
+let telemetryReadyPromise: Promise<void> | undefined;
+
+/**
+ * 运行期遥测初始化（幂等）：主窗口显示后才初始化，启动阶段不采集遥测。
+ * 关闭遥测时会把 promise 复位，之后再次请求（如窗口重开）仍能重新初始化。
+ */
+function ensureTelemetryReady(): Promise<void> {
+    if (!telemetryReadyPromise) {
+        telemetryReadyPromise = loadTelemetryModule().then((telemetry) => telemetry.initTelemetry());
+    }
+    return telemetryReadyPromise;
+}
+
 /** 当前在 Electron GUI 中选择的 modeId */
 let _currentElectronModeId: string | null = null;
 
@@ -263,11 +277,11 @@ function getFeatureStatePayload() {
 }
 
 /**
- * 记忆特性门控联动（ctx.features.disable('memory')）：
+ * 记忆特性门控联动（ctx.features.disableFeature('memory')）：
  * 禁用时注销任务回顾钩子并停掉记忆清理调度器，恢复时重新注册。
  */
 let stopMemoryCleanupSchedulerFn: (() => void) | null = null;
-/** 记忆特性联动订阅；重复进入 startApplication 时不重复注册 */
+/** 特性门控联动订阅（记忆 + 遥测）；重复进入 startApplication 时不重复注册 */
 let featureStateSubscription: (() => void) | undefined;
 function syncMemoryFeatureState(): void {
     if (getFeatureManager().isFeatureDisabled('memory')) {
@@ -289,7 +303,7 @@ function syncMemoryFeatureState(): void {
 /**
  * 用户级记忆开关（gui_config.memory_enabled）到特性门控的映射。
  *
- * 与插件 `ctx.features.disable('memory')` 是叠加关系：任意一方要求禁用即生效，
+ * 与插件 `ctx.features.disableFeature('memory')` 是叠加关系：任意一方要求禁用即生效，
  * 所以用固定的 owner id 单独持有一份禁用，插件释放自己那份不会误恢复用户关掉的记忆。
  */
 const USER_MEMORY_DISABLE_OWNER = 'user-setting';
@@ -298,6 +312,39 @@ function syncMemoryFeatureFromUserSetting(): void {
     const enabled = Setting.getInstance().getData().gui_config?.memory_enabled !== false;
     // setFeatureDisabled 内部幂等：状态没变化不会触发 notify，重复调用安全
     getFeatureManager().setFeatureDisabled('memory', USER_MEMORY_DISABLE_OWNER, !enabled);
+}
+
+/**
+ * 远程遥测特性联动（ctx.features.disableFeature('telemetry')）：
+ * 设备心跳与遥测协议分属两条通道，但都由 telemetry 模块按同一特性状态启停。
+ * 心跳的启停逻辑收口在 telemetry/heartbeat.ts，这里只需要按特性变化触发同步；
+ * 遥测模块按需延迟加载，运行期初始化前不主动加载重量级依赖。
+ */
+function syncTelemetryFeatureState(): void {
+    // 心跳是轻量的，不依赖遥测协议模块是否已加载：窗口显示前被禁用也要立刻停掉
+    syncHeartbeatReporter();
+    if (!telemetryReadyPromise) return;
+    void telemetryReadyPromise
+        .then(() => loadTelemetryModule())
+        .then((telemetry) => telemetry.syncTelemetryFeatureGate())
+        .catch((error: unknown) => {
+            // 加载/初始化失败后复位，让下次特性变化重新尝试，而不是一直复用被拒的 promise
+            telemetryReadyPromise = undefined;
+            logger.warn(`sync telemetry feature gate failed: ${String(error)}`);
+        });
+}
+
+/**
+ * 特性门控联动订阅：记忆与遥测各自按特性状态启停自身资源。
+ * 重复进入 startApplication 时不重复注册。
+ */
+function subscribeFeatureStateChanges(): () => void {
+    const manager = getFeatureManager();
+    const unsubscribers = [
+        manager.onFeaturesChanged(syncMemoryFeatureState),
+        manager.onFeaturesChanged(syncTelemetryFeatureState)
+    ];
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -1386,7 +1433,7 @@ const registerBrowserAPIHandlers = () => {
 
 const registerMemoryAPIHandlers = () => {
     type MemoryInvokeHandler = Parameters<typeof ipcMain.handle>[1];
-    // 记忆特性被插件禁用（ctx.features.disable('memory')）时记忆相关 IPC 一律不可用：
+    // 记忆特性被插件禁用（ctx.features.disableFeature('memory')）时记忆相关 IPC 一律不可用：
     // 侧栏入口已经隐藏，这里堵住渲染进程的旁路调用，避免继续读写记忆数据。
     const handleMemoryIPC = (channel: string, handler: MemoryInvokeHandler) => {
         ipcMain.handle(channel, async (event, ...args) => {
@@ -2099,6 +2146,18 @@ const registerTaskManagerAPIHandlers = () => {
         } catch (error: any) {
             logger.error('saving export html failed', error);
             return { status: 'error', message: error.message };
+        }
+    });
+    // 读取外置的工具结果原图（issue #341）：恢复任务时内存里只有缩略图，
+    // 点击查看大图等显式消费场景才通过本通道从磁盘按需加载
+    ipcMain.handle('taskManager:readExternalizedImage', async (_event, taskId, relativePath) => {
+        if (typeof taskId !== 'string' || taskId.length === 0 || typeof relativePath !== 'string') {
+            return { status: 'error', message: 'invalid externalized image request' };
+        }
+        try {
+            return { status: 'ok', data: await readExternalizedImageFile(taskId, relativePath) };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
         }
     });
     // 将任务的 .task.json 导出到用户选择的路径
@@ -3415,14 +3474,6 @@ async function startApplication(): Promise<void> {
     initializeRegistry();
     initializeRegistryProtocols();
 
-    let telemetryReadyPromise: Promise<void> | undefined;
-    const ensureTelemetryReady = (): Promise<void> => {
-        if (!telemetryReadyPromise) {
-            telemetryReadyPromise = loadTelemetryModule().then((telemetry) => telemetry.initTelemetry());
-        }
-        return telemetryReadyPromise;
-    };
-
     app.on('before-quit', (event) => {
         if (officeQuitApproved) {
             isAppQuitting = true;
@@ -3622,8 +3673,6 @@ async function startApplication(): Promise<void> {
         // 记忆清理调度器的生命周期统一由 syncMemoryFeatureState 管理（跟随 memory 特性门控启停），
         // 不在此处再启动一个不受门控约束的实例。
         startProxyEnvRefreshScheduler();
-        // 启动时上报设备心跳，之后每 5 小时上报一次（fire-and-forget，不阻塞主流程）
-        startReporter('desktop');
 
         await initializePluginHost();
         GlobalState.getInstance().taskManagerState.toolsetProvider = combineToolsetProviders(
@@ -3636,10 +3685,12 @@ async function startApplication(): Promise<void> {
         // 用户级记忆开关先落到特性门控上，下面的联动再按最终状态注册/注销资源。
         syncMemoryFeatureFromUserSetting();
         // 插件特性门控联动：插件已在 initializePluginHost 中完成 setup（禁用状态就位）。
-        // 记忆回顾钩子按特性状态注册；特性变更时同步注销/恢复。
+        // 记忆回顾钩子与设备心跳按特性状态启停；特性变更时同步注销/恢复。
         // worker 侧（镜像 + 崩溃重启兜底）由 initializeRegistryWorker 的 ensureFeatureWorkerSync 统一处理。
         syncMemoryFeatureState();
-        featureStateSubscription ??= getFeatureManager().onFeaturesChanged(syncMemoryFeatureState);
+        // 设备心跳受 telemetry 特性门控：插件禁用时连一次上报都不发，故放在插件宿主初始化之后
+        startHeartbeatReporter('desktop');
+        featureStateSubscription ??= subscribeFeatureStateChanges();
 
         registerGoalHooks();
 
@@ -4099,6 +4150,8 @@ async function startApplication(): Promise<void> {
         if (telemetryModulePromise) {
             const telemetry = await telemetryModulePromise;
             await telemetry.shutdownTelemetry();
+            // 协议已关闭：复位延迟初始化状态，避免窗口重开等场景静默跳过遥测初始化
+            telemetryReadyPromise = undefined;
         }
     });
 }

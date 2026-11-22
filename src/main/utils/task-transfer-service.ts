@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -141,7 +141,9 @@ export function createTaskTransferService(deps: {
                         prepared.snapshot.entries,
                         selectedIds,
                         deps.getManager(),
-                        workspace
+                        workspace,
+                        // v2 bundle 的随包 artifacts 在任务提交成功后还原（best-effort）
+                        { restoreArtifacts: prepared.snapshot.restoreArtifacts }
                     );
                     await discard();
                     return count;

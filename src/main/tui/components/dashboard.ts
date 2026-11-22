@@ -9,27 +9,42 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { defaultSelectListTheme, getAdaptiveGreen } from '../theme';
-import { OpenDeskTUI } from '../entry';
-import { Card, type CardStatus, type BorderConfig } from './card';
+import { type Component, visibleWidth } from '@earendil-works/pi-tui';
+import { getAdaptiveGreen } from '../theme';
 import { ApplicationRegistry } from '../../applications/registry';
+import { getFeatureManager } from '../../../common/features/manager.js';
 import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
 import { getNotificationBadge } from './notification';
 import chalk from 'chalk';
 import { Setting, type SettingData, getShortcuts } from '../../utils/setting.js';
 import { SlashCommandRegistry } from '../commands/index.js';
-import type { GlobalTodo } from '../../applications/todomgr/common';
-import type { TaskState } from '../../aikernel/states/tasks.js';
-import { describeLegacyRecurrence, describeTodoRecurrence } from '../../applications/todomgr/recurrence-description.js';
-import { t as todoT } from '../../applications/todomgr/locale/index.js';
-import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
-import { formatDateTimeInTimezone, getSystemTimezone } from '../../applications/todomgr/timezone.js';
 import { t } from '../../../locale/index.js';
 
 const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
 
+/** 底栏 cell 之间的分隔符（渲染时套用 ghost 配色） */
+const DASHBOARD_SEPARATOR = ' • ';
+
+/** 免责声明在窄终端下允许截断到的最小可见宽度，再窄就整块不显示 */
+const MIN_DISCLAIMER_VISIBLE_WIDTH = 16;
+
+/** 按可见宽度（CJK 记 2 列）截断字符串，不破坏 ANSI 无关的原始文案 */
+function truncateToVisibleWidth(text: string, maxWidth: number): string {
+    let truncated = '';
+    let used = 0;
+    for (const char of text) {
+        const charWidth = visibleWidth(char);
+        if (used + charWidth > maxWidth) break;
+        truncated += char;
+        used += charWidth;
+    }
+    return truncated;
+}
+
 export function shouldShowDashboardStatusBlock(bundleName: string): boolean {
+    // 被插件禁用的应用（disableApplication）不再贡献状态块：图标已隐藏、工具集与事件已停用。
+    // 仅隐藏入口（hideApplication）的应用仍在后台运行，状态照常显示。
+    if (getFeatureManager().isApplicationDisabled(bundleName)) return false;
     return !HIDDEN_DASHBOARD_STATUS_BUNDLES.has(bundleName);
 }
 
@@ -67,527 +82,15 @@ export function shouldShowPythonEnvironmentPrompt(settingData: Pick<SettingData,
     return settingData.cli_config?.inherit_venv !== false;
 }
 
-// ━━━ 科幻配色 ━━━
+// ━━━ 配色 ━━━
 // glow 使用 getter，每次访问时根据终端配色方案动态选择颜色
 const C = {
-    neon: chalk.hex('#00E5FF'), // 主色 - 霓虹青
-    neonBold: chalk.hex('#00E5FF').bold,
     get glow() {
         return chalk.hex(getAdaptiveGreen());
     }, // 亮绿 - 在线/成功（自适应主题）
-    amber: chalk.hex('#FFAB00'), // 琥珀 - 警告/中优先级
-    red: chalk.hex('#FF1744'), // 红 - 错误/高优先级
-    blue: chalk.hex('#448AFF'), // 蓝 - 低优先级
     ghost: chalk.hex('#4a4a4a'), // 幽灵灰 - 边框/分隔
-    dim: chalk.hex('#666666'), // 暗灰 - 次要信息
-    text: chalk.hex('#c0c0c0'), // 正文
-    bright: chalk.hex('#e0e0e0').bold, // 高亮正文
-    panel: chalk.hex('#1a1a2e'), // 面板底色参考
-    headerBg: chalk.bgHex('#0a1628').hex('#00E5FF').bold
+    dim: chalk.hex('#666666') // 暗灰 - 次要信息
 };
-
-/** 进度条 */
-function progressBar(ratio: number, barWidth: number): string {
-    const filled = Math.round(ratio * barWidth);
-    const empty = barWidth - filled;
-    return C.neon('█'.repeat(filled)) + C.ghost('░'.repeat(empty));
-}
-
-export interface MailAccountInfo {
-    email: string;
-    name: string;
-    active: boolean;
-    newCount: number;
-}
-
-export interface DashboardData {
-    globalTodos: GlobalTodo[];
-    tasks: TaskState[];
-    channelStates?: ChannelRuntimeState[];
-    mailAccounts?: MailAccountInfo[];
-}
-
-// GlobalTodo 已改用 completed_at 表达完成态（无 status 字段），这里派生展示用的状态，
-// 修复仪表盘对已删除的 todo.status 的读取
-function getTodoDisplayStatus(todo: GlobalTodo): 'pending' | 'completed' {
-    return todo.completed_at ? 'completed' : 'pending';
-}
-
-export class DashboardOverlay implements Component {
-    private openDeskTUI: OpenDeskTUI;
-    private list: SelectList;
-    private box: Box;
-    private data: DashboardData;
-
-    constructor(openDeskTUI: OpenDeskTUI, data: DashboardData) {
-        this.openDeskTUI = openDeskTUI;
-        this.data = data;
-
-        const items = [{ value: 'close', label: C.neon('[ ESC / ENTER ] 关闭仪表盘') }];
-        this.list = new SelectList(items, 1, defaultSelectListTheme);
-
-        this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#0a0e14').hex('#c0c0c0')(text));
-    }
-
-    invalidate(): void {
-        this.box.invalidate();
-    }
-
-    render(width: number): string[] {
-        const targetHeight = this.openDeskTUI.tui.terminal.rows;
-        // Box padding 上下各 1 行 + list 1 行 + 空行 1 行 = 4
-        const availableForContent = targetHeight - 4;
-
-        this.box.clear();
-        this.box.addChild(new DashboardRenderer(this.data, availableForContent));
-        this.box.addChild(new Text(''));
-        this.box.addChild(this.list);
-
-        return this.box.render(width);
-    }
-
-    private close(): void {
-        const restored = this.openDeskTUI.closeInputPrompt(this);
-        this.openDeskTUI.focusAfterInputPromptClose(restored);
-    }
-
-    show() {
-        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
-            return;
-        }
-
-        this.openDeskTUI.inputArea.showPromptWidget(this);
-        this.openDeskTUI.hasOpenOverlay = true;
-        this.openDeskTUI.tui.setFocus(this.list);
-
-        this.list.onSelect = () => {
-            this.close();
-        };
-
-        this.list.onCancel = () => {
-            this.close();
-        };
-    }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 仪表盘渲染器 —— 纯渲染，所有视觉逻辑在此
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-class DashboardRenderer implements Component {
-    private data: DashboardData;
-    private targetHeight: number;
-
-    constructor(data: DashboardData, targetHeight: number) {
-        this.data = data;
-        this.targetHeight = targetHeight;
-    }
-
-    invalidate(): void {}
-
-    render(width: number): string[] {
-        const W = width;
-
-        const header = this.renderHeader(W);
-        const statusBar = this.renderStatusBar(W);
-        const mailPanel = this.renderMailPanel(W);
-        const channelsPanel = this.renderChannelsPanel(W);
-        const todosPanel = this.renderTodosPanel(W);
-        const activePanel = this.renderActivePanel(W);
-        const telemetryPanel = this.renderTelemetryPanel(W);
-
-        const fixedLines =
-            header.length +
-            1 +
-            statusBar.length +
-            1 +
-            mailPanel.length +
-            1 +
-            channelsPanel.length +
-            1 +
-            todosPanel.length +
-            1 +
-            activePanel.length +
-            1 +
-            1 +
-            telemetryPanel.length;
-
-        const historyAvailable = Math.max(3, this.targetHeight - fixedLines);
-        const historyPanel = this.renderHistoryPanel(W, historyAvailable);
-
-        const lines: string[] = [];
-        lines.push(...header);
-        lines.push('');
-        lines.push(...statusBar);
-        lines.push('');
-        lines.push(...mailPanel);
-        lines.push('');
-        lines.push(...channelsPanel);
-        lines.push('');
-        lines.push(...todosPanel);
-        lines.push('');
-        lines.push(...activePanel);
-        lines.push('');
-        lines.push(...historyPanel);
-        lines.push('');
-        lines.push(...telemetryPanel);
-
-        return lines;
-    }
-
-    // ──────────────────── 顶部标题 ────────────────────
-
-    private renderHeader(W: number): string[] {
-        const lines: string[] = [];
-        const bar = C.ghost('━'.repeat(W));
-        lines.push(bar);
-
-        // 标题行
-        const logo = C.neonBold('◈');
-        const title = C.neonBold(' OPENDESK');
-        const subtitle = C.dim(' CONTROL CENTER');
-
-        const now = new Date();
-        const timeStr = C.glow('■') + C.dim(` SYS.ONLINE  ${now.toLocaleTimeString()}`);
-
-        const leftPart = `  ${logo}${title}${subtitle}`;
-        const leftVis = visibleWidth(leftPart);
-        const rightVis = visibleWidth(timeStr);
-        const gap = Math.max(2, W - leftVis - rightVis - 2);
-
-        lines.push(leftPart + ' '.repeat(gap) + timeStr);
-        lines.push(bar);
-
-        return lines;
-    }
-
-    // ──────────────────── 系统状态条 ────────────────────
-
-    private renderStatusBar(W: number): string[] {
-        const todos = this.data.globalTodos;
-        const tasks = this.data.tasks;
-
-        const activeTodos = todos.filter((t) => getTodoDisplayStatus(t) !== 'completed').length;
-        const cronTodos = todos.filter((t) => t.trigger?.type === 'cron').length;
-        const eventTodos = todos.filter((t) => t.trigger?.type === 'event').length;
-        const runningTasks = tasks.filter((t) => t.task_status === 'running').length;
-        const totalTasks = tasks.length;
-
-        const channelStates = this.data.channelStates || [];
-        const onlineChannels = channelStates.filter((c) => c.status.online).length;
-        const totalChannels = channelStates.length;
-
-        const mailAccounts = this.data.mailAccounts || [];
-        const totalUnread = mailAccounts.reduce((sum, a) => sum + a.newCount, 0);
-
-        const cells = [
-            (totalUnread > 0 ? C.amber('📬') : C.ghost('📭')) + C.dim(' MAIL ') + C.bright(String(totalUnread)),
-            C.neon('▣') + C.dim(' TODOS ') + C.bright(String(activeTodos)),
-            C.neon('⟳') + C.dim(` ${todoT('recurrence.summary.cron')} `) + C.bright(String(cronTodos)),
-            C.neon('⚡') + C.dim(' EVENT ') + C.bright(String(eventTodos)),
-            (runningTasks > 0 ? C.glow('●') : C.ghost('●')) +
-                C.dim(' TASKS ') +
-                C.bright(`${runningTasks}/${totalTasks}`),
-            (onlineChannels > 0 ? C.glow('◉') : C.ghost('◉')) +
-                C.dim(' MSG ') +
-                C.bright(`${onlineChannels}/${totalChannels}`)
-        ];
-
-        const sep = C.ghost('  •  ');
-        const statusLine = '  ' + cells.join(sep);
-        return [statusLine];
-    }
-
-    // ──────────────────── 邮箱账号面板 ────────────────────
-
-    private renderMailPanel(W: number): string[] {
-        const accounts = this.data.mailAccounts || [];
-        const totalUnread = accounts.reduce((sum, a) => sum + a.newCount, 0);
-
-        const body: string[] = [];
-        if (accounts.length === 0) {
-            body.push(C.dim('  ∅ 暂未配置邮箱账号'));
-        } else {
-            for (const acc of accounts) {
-                const activeIcon = acc.active ? C.glow('●') : C.ghost('○');
-                const nameLabel = C.text(acc.name || acc.email);
-                const emailDim = acc.name ? C.dim(` <${acc.email}>`) : '';
-
-                const leftPart = `  ${activeIcon} ${nameLabel}${emailDim}`;
-                const leftVis = visibleWidth(leftPart);
-
-                let rightPart: string;
-                if (acc.newCount > 0) {
-                    rightPart = C.amber(`${acc.newCount} 封新邮件`);
-                } else {
-                    rightPart = C.dim('无新邮件');
-                }
-                const rightVis = visibleWidth(rightPart);
-                const inner = W - 6;
-                const gap = Math.max(1, inner - leftVis - rightVis);
-                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
-            }
-        }
-
-        const card = new Card({
-            title: '邮箱账号',
-            status: {
-                icon: totalUnread > 0 ? C.amber('📬') : C.neon('📭'),
-                text: C.dim(`${totalUnread} UNREAD / ${accounts.length} ACCOUNTS`)
-            },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-
-    // ──────────────────── 消息插件状态面板 ────────────────────
-
-    private renderChannelsPanel(W: number): string[] {
-        const channels = this.data.channelStates || [];
-        const online = channels.filter((c) => c.status.online).length;
-        const total = channels.length;
-
-        const body: string[] = [];
-        if (channels.length === 0) {
-            body.push(C.dim('  ∅ 暂无已加载的消息插件'));
-        } else {
-            for (const ch of channels) {
-                const icon = ch.status.online ? C.glow('●') : C.red('○');
-                const statusText = ch.status.statusText || (ch.status.online ? 'online' : 'offline');
-                const label = C.text(`${ch.label}`);
-                const idPart = C.dim(` (${ch.channelId}:${ch.accountId})`);
-                const stLabel = ch.status.online ? C.glow(statusText.toUpperCase()) : C.red(statusText.toUpperCase());
-                const errorText = ch.status.error ? C.red(` ${ch.status.error}`) : '';
-
-                const leftPart = `  ${icon} ${label}${idPart}`;
-                const leftVis = visibleWidth(leftPart);
-                const rightPart = `${stLabel}${errorText}`;
-                const rightVis = visibleWidth(rightPart);
-                const inner = W - 6;
-                const gap = Math.max(1, inner - leftVis - rightVis);
-                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
-            }
-        }
-
-        const card = new Card({
-            title: '消息插件连接状态',
-            status: { icon: C.neon('◉'), text: C.dim(`${online}/${total} ONLINE`) },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-
-    // ──────────────────── 全局待办面板 ────────────────────
-
-    private renderTodosPanel(W: number): string[] {
-        const todos = this.data.globalTodos;
-        const active = todos.filter((t) => getTodoDisplayStatus(t) !== 'completed').length;
-        const done = todos.filter((t) => getTodoDisplayStatus(t) === 'completed').length;
-
-        const body: string[] = [];
-        if (todos.length === 0) {
-            body.push(C.dim('  ∅ 暂无全局待办事项'));
-        } else {
-            for (const todo of todos.slice(0, 10)) {
-                body.push(this.renderTodoLine(todo, W - 6));
-            }
-            if (todos.length > 10) {
-                body.push(C.dim(`  ··· 还有 ${todos.length - 10} 项 ···`));
-            }
-        }
-
-        const card = new Card({
-            title: '全局待办事项',
-            status: { icon: C.neon('▣'), text: C.dim(`${active} ACTIVE / ${done} DONE`) },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-
-    private renderTodoLine(todo: GlobalTodo, maxContentW: number): string {
-        const statusIcons: Record<string, string> = {
-            completed: C.glow('✓'),
-            in_progress: C.neon('▶'),
-            pending: C.ghost('▷')
-        };
-        const status = getTodoDisplayStatus(todo);
-        const icon = statusIcons[status] || C.ghost('▷');
-
-        const priorityFn: Record<string, (s: string) => string> = {
-            high: C.red,
-            medium: C.amber,
-            low: C.blue
-        };
-        const pFn = priorityFn[todo.priority] || C.amber;
-        const pTag = pFn(`[${todo.priority.toUpperCase().padEnd(4)}]`);
-
-        let triggerTag = '';
-        if (todo.trigger) {
-            switch (todo.trigger.type) {
-                case 'event':
-                    triggerTag = C.neon('📡 ') + C.dim(`${todo.trigger.bundleName}:${todo.trigger.eventName}`);
-                    break;
-                case 'scheduled': {
-                    const timezone = todo.trigger.timezone ?? getSystemTimezone();
-                    triggerTag =
-                        C.amber('⏱  ') +
-                        C.dim(`${formatDateTimeInTimezone(todo.trigger.triggerAt, timezone)} (${timezone})`);
-                    break;
-                }
-                case 'cron':
-                    triggerTag =
-                        C.glow('⟳  ') +
-                        C.dim(
-                            todo.trigger.recurrence
-                                ? describeTodoRecurrence(todo.trigger.recurrence, todoT, todo.trigger.timezone ?? 'UTC')
-                                : describeLegacyRecurrence(
-                                      todo.trigger.cronExpression,
-                                      todoT,
-                                      todo.trigger.timezone ?? 'UTC'
-                                  )
-                        );
-                    break;
-            }
-        }
-
-        // 优先显示 title，如果没有则显示 content（兼容旧数据）
-        const displayText = todo.title || todo.content;
-        const content = status === 'completed' ? chalk.strikethrough(C.dim(displayText)) : C.text(displayText);
-
-        // 计算布局: icon pTag content ... triggerTag
-        const leftPart = `  ${icon} ${pTag} ${content}`;
-        const leftVis = visibleWidth(leftPart);
-        const triggerVis = visibleWidth(triggerTag);
-
-        if (triggerTag && leftVis + triggerVis + 3 <= maxContentW) {
-            const gap = Math.max(1, maxContentW - leftVis - triggerVis);
-            return leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + triggerTag;
-        }
-
-        return truncateToWidth(leftPart, maxContentW, '…');
-    }
-
-    // ──────────────────── 活跃进程面板 ────────────────────
-
-    private renderActivePanel(W: number): string[] {
-        const running = this.data.tasks.filter((t) => t.task_status === 'running');
-
-        const body: string[] = [];
-        if (running.length === 0) {
-            body.push(C.dim('  ∅ 当前没有活跃进程'));
-        } else {
-            for (const task of running) {
-                const name = task.task_name || '未命名任务';
-                const bar = progressBar(0.6, 8);
-                const label = C.glow(' EXEC');
-                body.push(`  ${C.glow('◆')} ${C.text(name)}  ${bar}${label}`);
-            }
-        }
-
-        const card = new Card({
-            title: '当前运行中任务',
-            status: { icon: C.neon('▶'), text: C.dim(`${running.length} RUNNING`) },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-
-    // ──────────────────── 任务归档面板（弹性高度） ────────────────────
-
-    private renderHistoryPanel(W: number, availableHeight: number): string[] {
-        const allHistory = this.data.tasks.filter((t) => t.task_status !== 'running').reverse();
-
-        // 面板框架占 2 行（top + bottom）
-        const contentSlots = Math.max(1, availableHeight - 2);
-        const displayCount = Math.min(allHistory.length, contentSlots);
-        const history = allHistory.slice(0, displayCount);
-
-        const body: string[] = [];
-        if (allHistory.length === 0) {
-            body.push(C.dim('  ∅ 暂无归档任务'));
-            // 用空行填满剩余
-            for (let i = 1; i < contentSlots; i++) {
-                body.push('');
-            }
-        } else {
-            const statusCfg: Record<string, { icon: string; label: string }> = {
-                stopped: { icon: C.glow('✦'), label: C.glow('DONE') },
-                waiting: { icon: C.dim('○'), label: C.dim('IDLE') },
-                failed: { icon: C.red('✖'), label: C.red('ABORT') }
-            };
-
-            for (const task of history) {
-                const name = task.task_name || '未命名任务';
-                const cfg = statusCfg[task.task_status] || statusCfg.stopped;
-                const leftPart = `  ${cfg.icon} ${C.text(name)}`;
-                const leftVis = visibleWidth(leftPart);
-                const rightPart = cfg.label;
-                const rightVis = visibleWidth(rightPart);
-                const inner = W - 6;
-                const gap = Math.max(1, inner - leftVis - rightVis);
-                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
-            }
-
-            // 任务不够填满时，用空行撑满
-            const remaining = contentSlots - displayCount;
-            for (let i = 0; i < remaining; i++) {
-                body.push('');
-            }
-        }
-
-        const card = new Card({
-            title: '历史任务记录',
-            status: {
-                icon: C.neon('▣'),
-                text: C.dim(`${history.length}/${allHistory.length} ITEMS`)
-            },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-
-    // ──────────────────── 资源遥测面板 ────────────────────
-
-    private renderTelemetryPanel(W: number): string[] {
-        const barW = 20;
-
-        const body: string[] = [];
-        const metrics = [
-            { label: '1H', value: '--.-K', ratio: 0 },
-            { label: '1D', value: '--.-K', ratio: 0 },
-            { label: '1M', value: '--.-K', ratio: 0 }
-        ];
-
-        for (const m of metrics) {
-            const tag = C.neon('⬡') + ' ' + C.dim(m.label.padEnd(3));
-            const bar = progressBar(m.ratio, barW);
-            const val = C.bright(m.value.padStart(10));
-            body.push(`  ${tag} ${bar} ${val} ${C.dim('tokens')}`);
-        }
-
-        body.push(C.dim('  (遥测模块开发中 ─ TELEMETRY MODULE IN DEV)'));
-
-        const card = new Card({
-            title: '资源使用累计',
-            status: { icon: C.neon('◎'), text: C.dim('TOKEN USAGE') },
-            body: body,
-            border: { style: 'single', colorFn: C.ghost }
-        });
-
-        return card.render(W);
-    }
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DashboardBar — compact 模式底栏
@@ -596,13 +99,18 @@ class DashboardRenderer implements Component {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export class DashboardBar implements Component {
-    /** 每个元素是一段已含 ANSI 着色的单行字符串 */
-    private cells: string[] = [];
+    /** 时钟左侧的 cell（venv / conda prompt），宽度不足时最先被隐藏 */
+    private leadingCells: string[] = [];
+    /** 时钟 cell（始终显示，放在免责声明左侧） */
+    private clockCell = '';
+    /** 帮助快捷键提示（放在免责声明右侧） */
+    private helpCell = '';
+    /** 帮助提示右侧的 cell（通知角标、应用状态块），宽度不足时从右到左依次隐藏 */
+    private trailingCells: string[] = [];
     private refreshTimer?: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>;
     private invalidated = true;
     private cachedOutput?: string[];
     private lastWidth?: number;
-    private visible = true;
     private requestRender: () => void;
     private initialFetchDone = false;
     private steadyIntervalMs = 60_000;
@@ -651,57 +159,56 @@ export class DashboardBar implements Component {
         }
     }
 
-    isVisible(): boolean {
-        return this.visible;
+    private buildHelpHintCell(): string {
+        // 模式与输出显示的切换提示已并入 TaskStatusBar 的对应显示项（`模式名 [快捷键]`），这里只保留帮助
+        return `${SlashCommandRegistry.formatKeyLabel(getShortcuts().show_help)} ${t('input.statusbar.help')}`;
     }
 
-    setVisible(v: boolean): void {
-        if (this.visible !== v) {
-            this.visible = v;
-            this.invalidated = true;
-            this.requestRender();
+    /**
+     * 免责声明位于时钟与帮助提示之间，文案与桌面端复用同一个本地化键 `common.aiDisclaimer`。
+     * 英文文案较长，终端较窄时按可见宽度截断自身，避免整块被 ResponsiveBar 从右向左隐藏掉。
+     */
+    private buildDisclaimerCell(innerWidth: number, sepWidth: number): string | null {
+        const text = t('common.aiDisclaimer');
+        const clockWidth = visibleWidth(this.clockCell);
+        if (visibleWidth(text) + clockWidth + sepWidth <= innerWidth) {
+            return C.dim(text);
         }
-    }
-
-    toggleVisible(): void {
-        this.setVisible(!this.visible);
-    }
-
-    private buildShortcutCell(): string {
-        const shortcuts = getShortcuts();
-        const fmtKey = (key: string) => SlashCommandRegistry.formatKeyLabel(key);
-        return `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost(
-            '•'
-        )} ${fmtKey(shortcuts.output_display)} ${t('input.statusbar.switchDisplay')} ${C.ghost('•')} ${fmtKey(
-            shortcuts.show_help
-        )} ${t('input.statusbar.help')}`;
+        // 连时钟 + 帮助提示都保留时剩下的空间不足，优先压缩免责声明自身
+        const budget = innerWidth - clockWidth - visibleWidth(this.helpCell) - sepWidth * 2;
+        if (budget < MIN_DISCLAIMER_VISIBLE_WIDTH) {
+            return null;
+        }
+        return C.dim(`${truncateToVisibleWidth(text, budget - 1)}…`);
     }
 
     private async refresh(): Promise<void> {
-        const cells: string[] = [];
+        const leadingCells: string[] = [];
 
         const settingData = Setting.getInstance().getData();
         const pythonEnvPrompt = shouldShowPythonEnvironmentPrompt(settingData) ? getPythonEnvironmentPrompt() : null;
         if (pythonEnvPrompt) {
-            cells.push(C.glow(pythonEnvPrompt));
+            leadingCells.push(C.glow(pythonEnvPrompt));
         }
 
         // 时钟（始终显示，放在 venv prompt 后面，最后被隐藏）
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
-        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
         const weekdayKey = `datetime.weekday.${['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()]}`;
         const weekdayName = t(weekdayKey);
-        cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
+        this.leadingCells = leadingCells;
+        this.clockCell = `🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`;
         // 快捷键提示（键位从 TUI 快捷键配置中读取）
-        cells.push(this.buildShortcutCell());
+        this.helpCell = this.buildHelpHintCell();
+
+        const trailingCells: string[] = [];
 
         // 通知角标
         const badge = getNotificationBadge();
         if (badge) {
-            cells.push(badge);
+            trailingCells.push(badge);
         }
 
         // 从所有应用拉取状态
@@ -711,11 +218,11 @@ export class DashboardBar implements Component {
         const results = await Promise.allSettled(apps.map((app) => app.getTUIStatusBlock()));
         for (const result of results) {
             if (result.status === 'fulfilled' && result.value) {
-                cells.push(result.value);
+                trailingCells.push(result.value);
             }
         }
 
-        this.cells = cells;
+        this.trailingCells = trailingCells;
         this.initialFetchDone = true;
         this.invalidated = true;
         this.requestRender();
@@ -723,11 +230,14 @@ export class DashboardBar implements Component {
 
     invalidate(): void {
         this.invalidated = true;
+        // cell 内容中含有本地化文案（免责声明、帮助提示），语言切换与通知变化都会走到这里，
+        // 因此顺带重新拉取 cell，避免文案要等到下一次定时刷新才更新。
+        if (this.initialFetchDone) {
+            void this.refresh();
+        }
     }
 
     render(width: number): string[] {
-        if (!this.visible) return [];
-
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
@@ -741,17 +251,21 @@ export class DashboardBar implements Component {
             return this.cachedOutput;
         }
 
-        const responsiveCells: ResponsiveCell[] = this.cells.map((text) => ({ text }));
+        const sep = C.ghost(DASHBOARD_SEPARATOR);
+        const sepWidth = visibleWidth(sep);
+        const disclaimerCell = this.buildDisclaimerCell(width - 2, sepWidth);
 
-        if (responsiveCells.length === 0) {
-            this.cachedOutput = [];
-            this.invalidated = false;
-            return [];
-        }
+        const responsiveCells: ResponsiveCell[] = [
+            ...this.leadingCells,
+            this.clockCell,
+            ...(disclaimerCell ? [disclaimerCell] : []),
+            this.helpCell,
+            ...this.trailingCells
+        ].map((text) => ({ text }));
 
-        const sep = C.ghost(' • ');
         const line = renderResponsiveCells(responsiveCells, width, {
             separator: sep,
+            separatorWidth: sepWidth,
             horizontalPadding: 1
         });
 

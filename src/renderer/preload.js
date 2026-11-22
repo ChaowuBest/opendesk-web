@@ -522,6 +522,16 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        // 按需读取外置的工具结果原图（issue #341）：恢复任务后内存里只有缩略图，
+        // 点击查看大图等显式消费才走本通道加载完整图片
+        readExternalizedImage: async (taskId, relativePath) => {
+            const result = await ipcRenderer.invoke('taskManager:readExternalizedImage', taskId, relativePath);
+            if (result.status !== 'ok') {
+                console.error('reading externalized image failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getSessionMemory: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getSessionMemory', taskId);
             if (result.status === 'ok') {
@@ -1332,7 +1342,7 @@ if (shouldExposeMainWindowAPIs()) {
             return () => ipcRenderer.removeListener('updater:stateChanged', listener);
         }
     });
-    // 插件特性禁用状态（ctx.features.disable / disableApplication）：
+    // 插件特性禁用状态（ctx.features.disableFeature / disableApplication）：
     // sidebar 记忆与文件系统图标、agentinput 搜索按钮等据此显隐
     safeExposeInMainWorld('featuresAPI', {
         getState: async () => {
