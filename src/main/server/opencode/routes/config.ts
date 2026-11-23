@@ -18,7 +18,7 @@ import {
     isOpenDeskConfigReloadRequest,
     mergeOpenCodeConfigPatch,
     notifyOpenCodeConfigUpdated,
-    reloadOpenDeskConfigFromFile
+    reloadServerConfigFromDisk
 } from '../config-compat.js';
 import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
@@ -42,13 +42,7 @@ export function ConfigRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         const body = await c.req.json().catch(() => ({}));
         const setting = Setting.getInstance();
         if (isOpenDeskConfigReloadRequest(body)) {
-            const data = await reloadOpenDeskConfigFromFile(setting);
-            const reloadResult = permissionRuntime?.reload(data.permission);
-            if (reloadResult && reloadResult.status !== 'disabled') {
-                ServerPermissionBroker.getInstance().dispose();
-            }
-            notifyOpenCodeConfigUpdated(data);
-            return c.json(buildOpenCodeConfig(data));
+            return c.json(buildOpenCodeConfig(await reloadServerConfigFromDisk(permissionRuntime)));
         }
 
         const nextData = mergeOpenCodeConfigPatch(setting.getData(), body);

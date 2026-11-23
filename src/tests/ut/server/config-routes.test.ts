@@ -2,6 +2,8 @@ import { jest } from '@jest/globals';
 import { ConfigRoutes } from '../../../main/server/opencode/routes/config.js';
 import { GlobalRoutes } from '../../../main/server/opencode/routes/global.js';
 import { ProviderRoutes } from '../../../main/server/opencode/routes/provider.js';
+import { InstanceRoutes } from '../../../main/server/opencode/routes/instance.js';
+import { EventBus } from '../../../main/server/opencode/event-bus.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
@@ -238,6 +240,44 @@ describe('opencode config routes', () => {
         expect(removeResponse.status).toBe(200);
         expect(permissionRuntime.reload).toHaveBeenCalledWith(undefined);
         expect(await removeResponse.json()).not.toHaveProperty('permission');
+    });
+
+    test('POST /global/dispose and POST /instance/dispose reload config from disk and announce the directory', async () => {
+        const setting = mockSetting();
+        const postMessage = mockGlobalWorkerWithAck();
+        jest.spyOn(Setting, 'load').mockReturnValue({
+            getData: () => ({ ...baseSettingData(), default_model: 'gpt4o' })
+        } as unknown as Setting);
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        jest.spyOn(GlobalState, 'getInstance').mockReturnValue({ taskManagerState: { tasks: [] } } as any);
+        const publish = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const permissionRuntime = {
+            reload: jest.fn(() => ({ status: 'disabled' }))
+        } as unknown as ConfigPermissionRuntime;
+        const directory = '/tmp/opendesk-dispose-test';
+
+        const globalResponse = await GlobalRoutes(permissionRuntime).request(
+            `/dispose?directory=${encodeURIComponent(directory)}`,
+            { method: 'POST' }
+        );
+        const instanceResponse = await InstanceRoutes(permissionRuntime).request(
+            `/instance/dispose?directory=${encodeURIComponent(directory)}`,
+            { method: 'POST' }
+        );
+
+        for (const response of [globalResponse, instanceResponse]) {
+            expect(response.status).toBe(200);
+            await expect(response.json()).resolves.toBe(true);
+        }
+        expect(Setting.load).toHaveBeenCalledTimes(2);
+        expect(setting.setData).toHaveBeenCalledWith(expect.objectContaining({ default_model: 'gpt4o' }));
+        expect(permissionRuntime.reload).toHaveBeenCalledTimes(2);
+        expect(postMessage).toHaveBeenCalled();
+        const disposed = publish.mock.calls.filter(([event]) => event.type === 'server.instance.disposed');
+        expect(disposed.map(([event]) => event)).toEqual([
+            { type: 'server.instance.disposed', directory, properties: { directory } },
+            { type: 'server.instance.disposed', directory, properties: { directory } }
+        ]);
     });
 
     test('opencode provider responses honor provider enabled flags', async () => {

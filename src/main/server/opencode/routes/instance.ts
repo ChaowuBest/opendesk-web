@@ -9,13 +9,17 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import path from 'path';
+import type { Path } from '@opencode-ai/sdk/v2/types';
 import { AgentRegistry } from '../../../aikernel/agents/registry.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { SkillRegistry } from '../../../aikernel/skill.js';
-import { Setting } from '../../../utils/setting.js';
+import { getOpendeskDirectory, Setting } from '../../../utils/setting.js';
+import { getHomeDir } from '../../../utils/temp.js';
+import { reloadServerConfigFromDisk } from '../config-compat.js';
 import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
+import { EventBus } from '../event-bus.js';
 import {
     getOpenCodeProject,
     getOpenCodeVcsInfo,
@@ -23,8 +27,14 @@ import {
     skillsToOpenCodeCommands,
     toOpenCodeAgent
 } from '../instance-info.js';
+import { findFiles, findText, InvalidSearchPatternError } from '../search.js';
 import { getOpenCodeSessionTime } from '../session-info.js';
 import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '../workspace.js';
+
+/** opencode BadRequestError 结构的 400 响应 */
+function badRequest(c: Context, message: string) {
+    return c.json({ name: 'BadRequest' as const, data: { message, kind: 'Query' as const } }, 400);
+}
 
 /**
  * 实例级别路由。
@@ -36,13 +46,15 @@ export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
     // GET /path - 获取路径信息
     app.get('/path', (c) => {
         const directory = getRequestWorkspace(c);
+        // OpenDesk 的设置与运行状态（任务、日志等）都在同一个数据目录下
+        const dataDirectory = getOpendeskDirectory();
         return c.json({
-            directory,
-            home: process.env.HOME || process.env.USERPROFILE || '',
-            state: '',
-            config: '',
-            worktree: directory
-        });
+            home: getHomeDir(),
+            state: dataDirectory,
+            config: dataDirectory,
+            worktree: directory,
+            directory
+        } satisfies Path);
     });
 
     // GET /command - 列出所有命令（用户可调用的 Skill）
@@ -73,8 +85,11 @@ export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         );
     });
 
-    // POST /instance/dispose - 释放当前实例
-    app.post('/instance/dispose', (c) => {
+    // POST /instance/dispose - 与 opencode 重建实例对应：从磁盘重新加载配置，客户端收到事件后重新拉取状态
+    app.post('/instance/dispose', async (c) => {
+        await reloadServerConfigFromDisk(permissionRuntime);
+        const directory = getRequestWorkspace(c);
+        EventBus.publish({ type: 'server.instance.disposed', directory, properties: { directory } });
         return c.json(true);
     });
 
@@ -88,32 +103,56 @@ export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         return c.json(await getOpenCodeVcsInfo(getRequestWorkspace(c)));
     });
 
-    // GET /lsp - LSP 状态 stub
+    // GET /lsp - OpenDesk 不运行 LSP，没有 LSP 服务
     app.get('/lsp', (c) => {
         return c.json([]);
     });
 
-    // GET /formatter - Formatter 列表 stub
+    // GET /formatter - OpenDesk 不在写文件后自动格式化，没有 formatter
     app.get('/formatter', (c) => {
         return c.json([]);
     });
 
-    // GET /find - 文件搜索 stub
-    app.get('/find', (c) => {
-        return c.json([]);
+    // GET /find - 按正则搜索工作空间内的文本（对应 opencode 的 ripgrep 搜索）
+    app.get('/find', async (c) => {
+        const pattern = c.req.query('pattern');
+        if (!pattern) return badRequest(c, 'pattern is required');
+        try {
+            return c.json(await findText(getRequestWorkspace(c), pattern));
+        } catch (error) {
+            if (error instanceof InvalidSearchPatternError) return badRequest(c, error.message);
+            throw error;
+        }
     });
 
-    // GET /find/file - 文件搜索 stub
-    app.get('/find/file', (c) => {
-        return c.json([]);
+    // GET /find/file - 模糊搜索工作空间内的文件与目录
+    app.get('/find/file', async (c) => {
+        const query = c.req.query('query');
+        if (query === undefined) return badRequest(c, 'query is required');
+        const limit = c.req.query('limit');
+        const parsedLimit = limit === undefined ? undefined : Number(limit);
+        if (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 200)) {
+            return badRequest(c, 'limit must be an integer between 1 and 200');
+        }
+        const type = c.req.query('type');
+        if (type !== undefined && type !== 'file' && type !== 'directory') {
+            return badRequest(c, 'type must be file or directory');
+        }
+        return c.json(
+            await findFiles(getRequestWorkspace(c), {
+                query,
+                type: type ?? (c.req.query('dirs') === 'false' ? 'file' : undefined),
+                limit: parsedLimit
+            })
+        );
     });
 
-    // GET /find/symbol - 符号搜索 stub
+    // GET /find/symbol - 与 opencode 1.19.6 相同，没有符号搜索（依赖 LSP），返回空列表
     app.get('/find/symbol', (c) => {
         return c.json([]);
     });
 
-    // GET /experimental/console - Console 状态 stub（TUI bootstrap 需要）
+    // GET /experimental/console - OpenDesk 没有 opencode Console 组织账号，不托管任何 provider（TUI bootstrap 需要）
     // 必须返回 ConsoleState 格式，特别是 consoleManagedProviders 字段，
     // 否则 TUI 的 isConsoleManagedProvider() 会在 undefined.has() 处崩溃。
     app.get('/experimental/console', (c) => {
@@ -124,7 +163,7 @@ export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         });
     });
 
-    // GET /experimental/resource - MCP 资源列表 stub
+    // GET /experimental/resource - OpenDesk 的 MCP 管理只接入工具，不读取 MCP resources
     app.get('/experimental/resource', (c) => {
         return c.json({});
     });
@@ -195,24 +234,24 @@ export function InstanceRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         );
     });
 
-    // GET /experimental/worktree - worktree 列表 stub
+    // GET /experimental/worktree - OpenDesk 不为任务创建 git worktree 沙箱
     app.get('/experimental/worktree', (c) => {
         return c.json([]);
     });
 
-    // GET /experimental/workspace - workspace 列表 stub
+    // GET /experimental/workspace - OpenDesk 没有 opencode 的远程工作空间适配器，没有已注册的 workspace
     app.get('/experimental/workspace', (c) => {
         return c.json([]);
     });
 
-    // GET /experimental/workspace/status - workspace 状态 stub
+    // GET /experimental/workspace/status - 没有远程 workspace，也就没有连接状态
     app.get('/experimental/workspace/status', (c) => {
         return c.json([]);
     });
 
-    // POST /experimental/workspace/sync-list - workspace sync stub
+    // POST /experimental/workspace/sync-list - 没有适配器需要同步，按规范返回 204
     app.post('/experimental/workspace/sync-list', (c) => {
-        return c.json([]);
+        return c.body(null, 204);
     });
 
     // POST /session/:sessionID/command - slash 命令处理 stub

@@ -8,7 +8,8 @@ import { SkillRegistry, type Skill } from '../../../main/aikernel/skill.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { ConfigPermissionRuntime } from '../../../main/server/opencode/config-permission-runtime.js';
 import { InstanceRoutes } from '../../../main/server/opencode/routes/instance.js';
-import { Setting } from '../../../main/utils/setting.js';
+import { getOpendeskDirectory, Setting } from '../../../main/utils/setting.js';
+import { getHomeDir } from '../../../main/utils/temp.js';
 
 function makeSkill(options: { name: string; description?: string; directory?: string }): Skill {
     return {
@@ -162,6 +163,60 @@ describe('opencode instance routes', () => {
 
         const vcs = await InstanceRoutes().request(`/vcs${query}`);
         await expect(vcs.json()).resolves.toEqual({});
+    });
+
+    test('GET /path reports the OpenDesk data directory as config and state', async () => {
+        const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-instance-path-'));
+        const response = await InstanceRoutes().request(`/path?directory=${encodeURIComponent(workspace)}`);
+
+        await expect(response.json()).resolves.toEqual({
+            home: getHomeDir(),
+            state: getOpendeskDirectory(),
+            config: getOpendeskDirectory(),
+            worktree: workspace,
+            directory: workspace
+        });
+    });
+
+    test('GET /find and GET /find/file search the requested workspace', async () => {
+        const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-instance-find-')));
+        fs.mkdirSync(path.join(workspace, 'src'));
+        fs.writeFileSync(path.join(workspace, 'src', 'main.ts'), 'export const answer = 42;\n');
+        const query = `directory=${encodeURIComponent(workspace)}`;
+
+        const text = await InstanceRoutes().request(`/find?pattern=answer&${query}`);
+        expect(text.status).toBe(200);
+        await expect(text.json()).resolves.toEqual([
+            expect.objectContaining({ path: { text: 'src/main.ts' }, line_number: 1 })
+        ]);
+
+        const files = await InstanceRoutes().request(`/find/file?query=main&${query}`);
+        await expect(files.json()).resolves.toEqual(['src/main.ts']);
+        const directories = await InstanceRoutes().request(`/find/file?query=src&type=directory&${query}`);
+        await expect(directories.json()).resolves.toEqual(['src/']);
+    });
+
+    test('find endpoints reject invalid queries with an opencode BadRequest error', async () => {
+        for (const url of [
+            '/find',
+            '/find?pattern=(unclosed',
+            '/find/file',
+            '/find/file?query=a&limit=0',
+            '/find/file?query=a&type=link'
+        ]) {
+            const response = await InstanceRoutes().request(url);
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toEqual({
+                name: 'BadRequest',
+                data: { message: expect.any(String), kind: 'Query' }
+            });
+        }
+    });
+
+    test('POST /experimental/workspace/sync-list answers 204 without a body', async () => {
+        const response = await InstanceRoutes().request('/experimental/workspace/sync-list', { method: 'POST' });
+        expect(response.status).toBe(204);
+        await expect(response.text()).resolves.toBe('');
     });
 
     test('GET /experimental/session uses stable task lifecycle timestamps', async () => {

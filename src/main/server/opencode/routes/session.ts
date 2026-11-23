@@ -40,6 +40,8 @@ import {
     getTaskWorkspace
 } from '../workspace.js';
 import { getOpenCodeSessionTime } from '../session-info.js';
+import { getOpenCodeSessionDiff, getTurnMessages, toOpenCodeTodos } from '../session-artifacts.js';
+import { getTaskTodosForDisplay } from '../../../aikernel/todos/task-todos.js';
 import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
 import type { TaskTurnInstrumentationExternalContext } from '../../../telemetry/agent-execution.js';
 
@@ -434,6 +436,11 @@ function toSessionStatus(taskStatus: string): Record<string, unknown> {
     return { type: 'idle' };
 }
 
+/** opencode NotFoundError 结构的 404 响应 */
+function sessionNotFound(c: Context, sessionID: string) {
+    return c.json({ name: 'NotFoundError' as const, data: { message: `Session not found: ${sessionID}` } }, 404);
+}
+
 function publishSessionStatus(sessionID: string, workspace: string, status: Record<string, unknown>, task?: any): void {
     const parentID = task?.parent_id ? toExternalId(task.parent_id) : undefined;
     EventBus.publish({
@@ -447,6 +454,7 @@ function publishSessionStatus(sessionID: string, workspace: string, status: Reco
     });
 
     if (status.type === 'idle') {
+        publishSessionDiff(sessionID, workspace, task);
         EventBus.publish({
             type: 'session.idle',
             directory: workspace,
@@ -456,6 +464,33 @@ function publishSessionStatus(sessionID: string, workspace: string, status: Reco
             }
         });
     }
+}
+
+/** 一轮结束时推送会话的文件变更，客户端据此刷新变更列表 */
+function publishSessionDiff(sessionID: string, workspace: string, task?: any): void {
+    const diffTask = task ?? GlobalState.getInstance().taskManagerState.getTask(toInternalId(sessionID));
+    if (!diffTask?.chat_context) return;
+    try {
+        EventBus.publish({
+            type: 'session.diff',
+            directory: workspace,
+            properties: { sessionID, diff: getOpenCodeSessionDiff(diffTask) }
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[server] failed to compute session diff for ${sessionID}: ${message}`);
+    }
+}
+
+/** 上次推送给客户端的待办列表（按 sessionID），只在内容变化时发送 todo.updated */
+const _publishedTodos = new Map<string, string>();
+
+function publishTodosIfChanged(sessionID: string, workspace: string): void {
+    const todos = toOpenCodeTodos(getTaskTodosForDisplay(toInternalId(sessionID)));
+    const snapshot = JSON.stringify(todos);
+    if ((_publishedTodos.get(sessionID) ?? '[]') === snapshot) return;
+    _publishedTodos.set(sessionID, snapshot);
+    EventBus.publish({ type: 'todo.updated', directory: workspace, properties: { sessionID, todos } });
 }
 
 class ServerTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -1548,6 +1583,7 @@ export function publishChunkEvents(
     workspace = getTaskWorkspace(undefined),
     modelInfo: OpenCodeModelInfo = EMPTY_OPEN_CODE_MODEL_INFO
 ): string | undefined {
+    publishTodosIfChanged(sessionID, workspace);
     if (chunk.type === 'retry') {
         if (chunk.status === 'cleared') {
             publishSessionStatus(sessionID, workspace, toSessionStatus(chunk.task_status));
@@ -2198,14 +2234,33 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         return c.json(taskToSessionInfo(forked, getTaskWorkspace(forked), getRequestWorkspaceID(c)));
     });
 
-    // GET /session/:sessionID/todo - 获取会话 todo 列表（opencode TUI sync 需要）
+    // GET /session/:sessionID/todo - 会话的待办列表
     app.get('/:sessionID/todo', (c) => {
-        return c.json([]);
+        const sessionID = c.req.param('sessionID');
+        const task = GlobalState.getInstance().taskManagerState.getTask(toInternalId(sessionID));
+        if (!task) return sessionNotFound(c, sessionID);
+        return c.json(toOpenCodeTodos(getTaskTodosForDisplay(task.task_id)));
     });
 
-    // GET /session/:sessionID/diff - 获取会话 diff 信息（opencode TUI sync 需要）
+    // GET /session/:sessionID/diff - 会话的文件变更；带 messageID 时只统计该用户消息这一轮
     app.get('/:sessionID/diff', (c) => {
-        return c.json([]);
+        const sessionID = c.req.param('sessionID');
+        const task = GlobalState.getInstance().taskManagerState.getTask(toInternalId(sessionID));
+        if (!task) return sessionNotFound(c, sessionID);
+        const messageID = c.req.query('messageID');
+        if (!messageID) return c.json(getOpenCodeSessionDiff(task));
+        const turn = getTurnMessages(
+            task.chat_context.messages,
+            (message, index) =>
+                getStableMessageId((message as any).message_id, `${sessionID}:message:${index}`) === messageID
+        );
+        if (!turn) {
+            return c.json(
+                { name: 'BadRequest', data: { message: `message ${messageID} not found`, kind: 'Query' } },
+                400
+            );
+        }
+        return c.json(getOpenCodeSessionDiff(task, turn));
     });
 
     // DELETE /session/:sessionID/message/:messageID - 删除消息
@@ -2232,6 +2287,11 @@ export function SessionRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         messages.splice(idx, 1);
         task.persistLater();
         tms.save();
+        EventBus.publish({
+            type: 'message.removed',
+            directory: getTaskWorkspace(task),
+            properties: { sessionID, messageID }
+        });
 
         return c.json(true);
     });

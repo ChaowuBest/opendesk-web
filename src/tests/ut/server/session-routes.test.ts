@@ -1,4 +1,7 @@
 import { jest } from '@jest/globals';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
     registerServerSubTaskLifecycle,
     SessionRoutes,
@@ -22,6 +25,8 @@ import {
     UserMessage
 } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { deleteTaskTodos, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
+import '../../../main/applications/filemgr/harness/index.js';
 import type { ConfigPermissionRuntime } from '../../../main/server/opencode/config-permission-runtime.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
@@ -726,6 +731,12 @@ describe('opencode session routes', () => {
                 properties: { sessionID: 'ses_model' }
             })
         );
+        // 一轮结束时推送文件变更，且在 session.idle 之前
+        const types = publishSpy.mock.calls.map(([event]) => event.type);
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'session.diff', properties: { sessionID: 'ses_model', diff: [] } })
+        );
+        expect(types.lastIndexOf('session.diff')).toBeLessThan(types.lastIndexOf('session.idle'));
     });
 
     test('POST /session/:id/message publishes retry session status for LLM retry chunks', async () => {
@@ -857,6 +868,120 @@ describe('opencode session routes', () => {
         expect(messages[1].info.parentID).toBe(messages[0].info.id);
     });
 
+    test('GET /session/:id/todo returns the task todos in the opencode Todo shape', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        mockGlobalTaskManager(makeTask(workspace));
+        setTaskTodos('task_model', [
+            {
+                id: 'todo-1',
+                task_id: 'task_model',
+                title: 'Write tests',
+                content: 'cover todo route',
+                status: 'in_progress',
+                created_at: '2026-11-23T00:00:00.000Z',
+                updated_at: '2026-11-23T00:00:00.000Z'
+            }
+        ]);
+
+        try {
+            const response = await SessionRoutes().request('/ses_model/todo');
+            await expect(response.json()).resolves.toEqual([
+                { content: 'Write tests', status: 'in_progress', priority: 'medium' }
+            ]);
+
+            const missing = await SessionRoutes().request('/ses_missing/todo');
+            expect(missing.status).toBe(404);
+            await expect(missing.json()).resolves.toEqual({
+                name: 'NotFoundError',
+                data: { message: expect.stringContaining('ses_missing') }
+            });
+        } finally {
+            deleteTaskTodos('task_model');
+        }
+    });
+
+    test('publishes todo.updated only when the todo list changes', () => {
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const chunk = { type: 'retry', status: 'cleared', task_status: 'running' } as any;
+        setTaskTodos('task_todo_events', [
+            {
+                id: 'todo-1',
+                task_id: 'task_todo_events',
+                title: 'Step one',
+                content: '',
+                status: 'pending',
+                created_at: '2026-11-23T00:00:00.000Z',
+                updated_at: '2026-11-23T00:00:00.000Z'
+            }
+        ]);
+
+        try {
+            publishChunkEvents('ses_todo_events', chunk, '', workspace);
+            publishChunkEvents('ses_todo_events', chunk, '', workspace);
+            const todoEvents = publishSpy.mock.calls.filter(([event]) => event.type === 'todo.updated');
+            expect(todoEvents.map(([event]) => event)).toEqual([
+                {
+                    type: 'todo.updated',
+                    directory: workspace,
+                    properties: {
+                        sessionID: 'ses_todo_events',
+                        todos: [{ content: 'Step one', status: 'pending', priority: 'medium' }]
+                    }
+                }
+            ]);
+        } finally {
+            deleteTaskTodos('task_todo_events');
+        }
+    });
+
+    test('GET /session/:id/diff returns the session file changes, optionally for one turn', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        const diffWorkspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-session-diff-')));
+        fs.writeFileSync(path.join(diffWorkspace, 'a.txt'), 'A2\n');
+        fs.writeFileSync(path.join(diffWorkspace, 'b.txt'), 'B2\n');
+        const task = new TaskState(new TaskManagerState(), null);
+        (task as any).task_id = 'task_model';
+        task.harnessContext.workspace = diffWorkspace;
+        const appendEdit = (filePath: string, oldString: string, newString: string) => {
+            const args = { filePath, oldString, newString };
+            const toolCall = new ToolCall(0, `call_${filePath}`, 'filemgr-editFile', JSON.stringify(args));
+            toolCall.args_object = args;
+            toolCall.status = 'success';
+            const part = new ToolCallMessagePart();
+            part.toolcalls.push(toolCall);
+            task.chat_context.appendMessage(new AssistantMessage([part]));
+        };
+        task.chat_context.appendMessage(new UserMessage('edit a'));
+        appendEdit('a.txt', 'A1', 'A2');
+        task.chat_context.appendMessage(new UserMessage('edit b'));
+        appendEdit('b.txt', 'B1', 'B2');
+        mockGlobalTaskManager(task as any);
+
+        try {
+            const all = await SessionRoutes().request('/ses_model/diff');
+            const allDiff = (await all.json()) as Array<{ file: string; additions: number; deletions: number }>;
+            expect(allDiff.map(({ file, additions, deletions }) => ({ file, additions, deletions }))).toEqual([
+                { file: 'a.txt', additions: 1, deletions: 1 },
+                { file: 'b.txt', additions: 1, deletions: 1 }
+            ]);
+
+            const messages = (await (await SessionRoutes().request('/ses_model/message')).json()) as Array<{
+                info: { id: string; role: string };
+            }>;
+            const firstUserID = messages.find((message) => message.info.role === 'user')!.info.id;
+            const turn = await SessionRoutes().request(`/ses_model/diff?messageID=${firstUserID}`);
+            const turnDiff = (await turn.json()) as Array<{ file: string }>;
+            expect(turnDiff.map((file) => file.file)).toEqual(['a.txt']);
+
+            const unknown = await SessionRoutes().request('/ses_model/diff?messageID=msg_unknown');
+            expect(unknown.status).toBe(400);
+        } finally {
+            fs.rmSync(diffWorkspace, { recursive: true, force: true });
+        }
+    });
+
     test('DELETE /session/:id/message/:messageID accepts the public message id and persists removal', async () => {
         mockSessionDependencies();
         mockSetting();
@@ -874,6 +999,7 @@ describe('opencode session routes', () => {
         const messages = await listResponse.json();
         const publicMessageID = messages[0].info.id;
 
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
         const deleteResponse = await SessionRoutes().request(
             `/ses_model/message/${publicMessageID}?directory=${encodeURIComponent(workspace)}`,
             { method: 'DELETE' }
@@ -882,6 +1008,11 @@ describe('opencode session routes', () => {
         expect(deleteResponse.status).toBe(200);
         expect(task.chat_context.messages).toEqual([]);
         expect(task.persistLater).toHaveBeenCalledTimes(1);
+        expect(publishSpy).toHaveBeenCalledWith({
+            type: 'message.removed',
+            directory: workspace,
+            properties: { sessionID: 'ses_model', messageID: publicMessageID }
+        });
     });
 
     test('GET /session/:id/message exposes a compact boundary as OpenCode compaction messages', async () => {

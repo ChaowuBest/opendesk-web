@@ -15,6 +15,8 @@ import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../../applicatio
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { logger } from '../../utils/logger.js';
+import type { ConfigPermissionRuntime } from './config-permission-runtime.js';
+import { ServerPermissionBroker } from './permission-broker.js';
 
 type JsonRecord = Record<string, unknown>;
 type RefreshableApplication = {
@@ -394,6 +396,20 @@ async function refreshOpenDeskTaskContexts(): Promise<void> {
 
 function errorToMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 从磁盘重新加载 setting.json（含 Skill 与任务上下文），刷新配置权限并通知全局 Worker。
+ * 空 PATCH /config、PATCH /global/config 与 opencode 的 dispose 请求共用这一流程。
+ */
+export async function reloadServerConfigFromDisk(permissionRuntime?: ConfigPermissionRuntime): Promise<SettingData> {
+    const data = await reloadOpenDeskConfigFromFile(Setting.getInstance());
+    const reloadResult = permissionRuntime?.reload(data.permission);
+    if (reloadResult && reloadResult.status !== 'disabled') {
+        ServerPermissionBroker.getInstance().dispose();
+    }
+    notifyOpenCodeConfigUpdated(data);
+    return data;
 }
 
 export function notifyOpenCodeConfigUpdated(data: SettingData): void {
