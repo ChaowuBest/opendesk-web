@@ -2850,7 +2850,7 @@ const WALK_MAX_SCANNED_FILES = 200_000;
  */
 const WALK_DIR_CONCURRENCY = 8;
 
-interface WalkFilesOptions {
+export interface WalkFilesOptions {
     /** 文件相对路径匹配模式（picomatch 语法），如 **\/*.ts */
     filePattern: string;
     /** 额外忽略模式（相对搜索根，picomatch 语法；`!` 前缀表示重新纳入，尾 `/` 表示仅目录），
@@ -2990,7 +2990,7 @@ function createIgnoreMatcher(patterns: string[]): IgnoreMatcher {
  *    （实测 C:/Windows 18 万文件：串行 7.2s → 并发 8 路 3.3s）；
  * 5. 受时间预算与扫描文件数上限约束，任何规模的目录树都不会撑爆堆。
  */
-async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerator<string> {
+export async function* walkFiles(root: string, options: WalkFilesOptions): AsyncGenerator<string> {
     const dot = options.dot === true;
     const skipIgnoredFiles = options.skipIgnoredFiles !== false;
     const fileMatch = picomatch(options.filePattern, { dot });
@@ -3473,7 +3473,7 @@ async function readGitignorePatterns(filePath: string, prefix: string): Promise<
     return patterns;
 }
 
-async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+export async function collectGitignorePatterns(basePath: string): Promise<string[]> {
     const patterns: string[] = [];
     const appendPatterns = (newPatterns: string[]): boolean => {
         const remaining = GREP_MAX_GITIGNORE_PATTERNS - patterns.length;

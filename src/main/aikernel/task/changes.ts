@@ -73,13 +73,17 @@ export interface FileChangeGroup {
 /**
  * 分析任务中所有文件修改工具调用，生成文件变更汇总。
  * 之前是 TaskState.getTaskChanges()。
+ * 传入 messages 时只统计这部分消息（例如某一轮对话），反向回放仍以磁盘上的当前内容为起点。
  */
-export function getTaskChangesFromTask(task: TaskState): TaskChangesResult {
+export function getTaskChangesFromTask(
+    task: TaskState,
+    messages: readonly TaskState['chat_context']['messages'][number][] = task.chat_context.messages
+): TaskChangesResult {
     // 文件修改工具名（短名称，不含 toolset 前缀）
     const FILE_MODIFY_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace']);
     const fileMap = new Map<string, FileChangeGroup>();
 
-    for (const message of task.chat_context.messages) {
+    for (const message of messages) {
         if (message.role !== 'assistant') continue;
         const assistantMsg = message as AssistantMessage;
         const content = Array.isArray(assistantMsg.content) ? assistantMsg.content : [];

@@ -22,7 +22,7 @@ import {
     isOpenDeskConfigReloadRequest,
     mergeOpenCodeConfigPatch,
     notifyOpenCodeConfigUpdated,
-    reloadOpenDeskConfigFromFile
+    reloadServerConfigFromDisk
 } from '../config-compat.js';
 import type { ConfigPermissionRuntime } from '../config-permission-runtime.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
@@ -136,13 +136,7 @@ export function GlobalRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         const body = await c.req.json().catch(() => ({}));
         const setting = Setting.getInstance();
         if (isOpenDeskConfigReloadRequest(body)) {
-            const data = await reloadOpenDeskConfigFromFile(setting);
-            const reloadResult = permissionRuntime?.reload(data.permission);
-            if (reloadResult && reloadResult.status !== 'disabled') {
-                ServerPermissionBroker.getInstance().dispose();
-            }
-            notifyOpenCodeConfigUpdated(data);
-            return c.json(buildOpenCodeConfig(data));
+            return c.json(buildOpenCodeConfig(await reloadServerConfigFromDisk(permissionRuntime)));
         }
 
         const nextData = mergeOpenCodeConfigPatch(setting.getData(), body);
@@ -157,13 +151,11 @@ export function GlobalRoutes(permissionRuntime?: ConfigPermissionRuntime) {
         return c.json(buildOpenCodeConfig(setting.getData()));
     });
 
-    // POST /global/dispose
-    app.post('/dispose', (c) => {
-        EventBus.publish({
-            type: 'server.instance.disposed',
-            directory: getRequestWorkspace(c),
-            properties: {}
-        });
+    // POST /global/dispose - 与 opencode 释放全部实例对应：从磁盘重新加载配置，客户端收到事件后重新拉取状态
+    app.post('/dispose', async (c) => {
+        await reloadServerConfigFromDisk(permissionRuntime);
+        const directory = getRequestWorkspace(c);
+        EventBus.publish({ type: 'server.instance.disposed', directory, properties: { directory } });
         return c.json(true);
     });
 
