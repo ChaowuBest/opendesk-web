@@ -10,7 +10,7 @@
  */
 
 /**
- * opencode 协议契约测试：启动 `opendesk serve`（模型用 genui-mock-llm.mjs 的桩），
+ * opencode 协议契约测试：启动 `opendesk serve`（模型用脚本内置的 OpenAI 兼容桩），
  * 逐个调用已实现的端点并订阅 /event，用 opencode 官方 OpenAPI 规范校验响应与事件。
  * 规范版本取 package.json 中固定的 @opencode-ai/sdk 版本（devDependencies）。
  *
@@ -22,11 +22,11 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMockLlm } from './genui-mock-llm.mjs';
 
 const require = createRequire(import.meta.url);
 const Ajv2020 = require('ajv/dist/2020').default;
@@ -44,6 +44,111 @@ const base = `http://127.0.0.1:${port}`;
 
 /** 规范中没有、服务端仍会发出的事件（已知差异）；出现时只提示，不算失败 */
 const KNOWN_NON_SPEC_EVENTS = new Set(['session.aborted', 'server.heartbeat']);
+
+/** 用户消息带这个标记时，模型桩先调用 TodoWrite 与 writeFile，拿到工具结果后再回复文本 */
+const TOOLS_MARKER = '[contract:tools]';
+const CONTRACT_FILE = 'contract-output.txt';
+const MOCK_REPLY = 'contract reply from the mock model';
+
+function textOf(content) {
+    if (typeof content === 'string') return content;
+    return Array.isArray(content) ? content.map((part) => part?.text ?? '').join('') : '';
+}
+
+/**
+ * 以最近一条带标记的用户消息为本轮起点（宿主可能在其后插入提醒类 user 消息），之后已有工具结果就收尾。
+ * 待办直接标记为 completed：未完成的待办会让 OpenDesk 每隔几秒追加提醒、继续推进任务。
+ */
+function planReply(body) {
+    const messages = body.messages ?? [];
+    const turnStart = messages.findLastIndex(
+        (message) => message.role === 'user' && textOf(message.content).includes(TOOLS_MARKER)
+    );
+    if (turnStart === -1 || messages.slice(turnStart + 1).some((message) => message.role === 'tool')) {
+        return { text: MOCK_REPLY };
+    }
+    // 宿主给工具名加了工具集前缀（如 filemgr-writeFile），按后缀找到实际名称
+    const names = (body.tools ?? []).map((tool) => tool?.function?.name).filter(Boolean);
+    const resolve = (name) => names.find((candidate) => candidate === name || candidate.endsWith(`-${name}`));
+    const toolCalls = [
+        { name: resolve('TodoWrite'), arguments: { todos: [{ content: 'contract todo', status: 'completed' }] } },
+        { name: resolve('writeFile'), arguments: { path: CONTRACT_FILE, content: 'written by the contract test\n' } }
+    ].filter((call) => call.name);
+    return toolCalls.length > 0 ? { toolCalls } : { text: MOCK_REPLY };
+}
+
+/** OpenAI 兼容的模型桩：文本分几段流式下发（覆盖 message.part.delta），工具调用的参数同样流式下发 */
+function startMockModel(listenPort) {
+    let callSeq = 0;
+    const server = http.createServer((req, res) => {
+        let raw = '';
+        req.on('data', (chunk) => (raw += chunk));
+        req.on('end', () => {
+            if (req.method !== 'POST' || !req.url.endsWith('/chat/completions')) {
+                res.writeHead(404).end();
+                return;
+            }
+            const body = JSON.parse(raw || '{}');
+            const reply = planReply(body);
+            const model = body.model ?? 'contract-mock';
+            const base = { id: 'chatcmpl-contract', created: Math.floor(Date.now() / 1000), model };
+            const usage = { prompt_tokens: 10, completion_tokens: 6, total_tokens: 16 };
+            const toolCalls = (reply.toolCalls ?? []).map((call) => ({
+                id: `call_contract_${++callSeq}`,
+                type: 'function',
+                function: { name: call.name, arguments: JSON.stringify(call.arguments) }
+            }));
+            const finishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
+            if (!body.stream) {
+                const message = toolCalls.length
+                    ? { role: 'assistant', content: null, tool_calls: toolCalls }
+                    : { role: 'assistant', content: reply.text };
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(
+                    JSON.stringify({
+                        ...base,
+                        object: 'chat.completion',
+                        choices: [{ index: 0, message, finish_reason: finishReason }],
+                        usage
+                    })
+                );
+                return;
+            }
+            res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            const send = (delta, finish = null, extra = {}) =>
+                res.write(
+                    `data: ${JSON.stringify({ ...base, object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }], ...extra })}\n\n`
+                );
+            if (toolCalls.length > 0) {
+                toolCalls.forEach((call, index) => {
+                    send({
+                        role: 'assistant',
+                        content: null,
+                        tool_calls: [
+                            {
+                                index,
+                                id: call.id,
+                                type: 'function',
+                                function: { name: call.function.name, arguments: '' }
+                            }
+                        ]
+                    });
+                    send({ tool_calls: [{ index, function: { arguments: call.function.arguments } }] });
+                });
+            } else {
+                send({ role: 'assistant', content: '' });
+                for (const word of reply.text.split(' ')) send({ content: `${word} ` });
+            }
+            send({}, finishReason, { usage });
+            res.end('data: [DONE]\n\n');
+        });
+    });
+    return new Promise((resolve) =>
+        server.listen(listenPort, '127.0.0.1', () =>
+            resolve({ close: () => new Promise((done) => server.close(() => done())) })
+        )
+    );
+}
 
 async function loadSpec() {
     const explicit = option('spec');
@@ -99,6 +204,7 @@ const git = (...args) => execFileSync('git', args, { cwd: workspace, env: gitEnv
 git('-c', 'init.defaultBranch=main', 'init');
 git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'init');
 git('checkout', '-b', 'feature');
+fs.writeFileSync(path.join(workspace, 'notes.md'), '# Notes\nthe contract needle lives here\n');
 fs.writeFileSync(
     path.join(configDir, 'setting.json'),
     JSON.stringify({
@@ -126,7 +232,7 @@ fs.writeFileSync(
     })
 );
 
-const mock = await startMockLlm({ port: mockPort, host: '127.0.0.1' });
+const mock = await startMockModel(mockPort);
 const server = spawn(cliPath, ['--config-directory', configDir, 'serve', '--port', String(port)], {
     env: gitEnv,
     stdio: ['ignore', 'ignore', 'pipe']
@@ -191,7 +297,17 @@ try {
             for (let index = buffer.indexOf('\n\n'); index >= 0; index = buffer.indexOf('\n\n')) {
                 const data = buffer.slice(0, index).match(/^data: (.*)$/m)?.[1];
                 buffer = buffer.slice(index + 2);
-                if (data) events.push(JSON.parse(data));
+                if (!data) continue;
+                const event = JSON.parse(data);
+                events.push(event);
+                // 写文件等工具会请求权限，测试里统一批准一次
+                if (event.type === 'permission.asked') {
+                    void fetch(`${base}/permission/${event.properties.id}/reply?${directory}`, {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ reply: 'once' })
+                    });
+                }
             }
         }
     })().catch(() => undefined);
@@ -203,17 +319,44 @@ try {
         '/global/health',
         '/provider',
         '/mcp',
-        '/path',
         '/permission',
         '/question',
         '/skill',
         '/session',
         '/session/status',
         '/experimental/session',
-        '/experimental/console'
+        '/experimental/console',
+        '/lsp',
+        '/formatter',
+        '/experimental/resource',
+        '/experimental/worktree',
+        '/experimental/workspace',
+        '/experimental/workspace/status'
     ]) {
         await step(`GET ${specPath}`, () => call('GET', specPath, specPath));
     }
+
+    await step('GET /path', async () => {
+        const paths = await call('GET', '/path', '/path');
+        assert(paths.config === configDir && paths.state === configDir, JSON.stringify(paths));
+        assert(paths.directory === workspace && paths.worktree === workspace, JSON.stringify(paths));
+    });
+    await step('GET /find', async () => {
+        const matches = await call('GET', '/find', '/find?pattern=contract%20needle');
+        assert(matches.length === 1 && matches[0].path.text === 'notes.md', JSON.stringify(matches));
+        assert(matches[0].line_number === 2 && matches[0].submatches[0].start === 4, JSON.stringify(matches[0]));
+    });
+    await step('GET /find/file', async () => {
+        const files = await call('GET', '/find/file', '/find/file?query=notes');
+        assert(files[0] === 'notes.md', JSON.stringify(files));
+    });
+    await step('GET /find/symbol', () => call('GET', '/find/symbol', '/find/symbol?query=anything'));
+    await step('POST /experimental/workspace/sync-list', async () => {
+        const response = await fetch(base + withDirectory('/experimental/workspace/sync-list'), { method: 'POST' });
+        assert(response.status === 204 && (await response.text()) === '', `HTTP ${response.status}`);
+    });
+    await step('POST /instance/dispose', () => call('POST', '/instance/dispose', '/instance/dispose'));
+    await step('POST /global/dispose', () => call('POST', '/global/dispose', '/global/dispose'));
 
     await step('GET /agent', async () => {
         const agents = await call('GET', '/agent', '/agent');
@@ -268,6 +411,34 @@ try {
     await step('GET /session/{sessionID}/children', () =>
         call('GET', '/session/{sessionID}/children', sessionPath('/children'))
     );
+    await step('POST /session/{sessionID}/message (todo and file tools)', async () => {
+        await call('POST', '/session/{sessionID}/message', sessionPath('/message'), {
+            parts: [{ type: 'text', text: `${TOOLS_MARKER} write the contract file` }]
+        });
+        assert(fs.existsSync(path.join(workspace, CONTRACT_FILE)), 'writeFile did not run');
+    });
+    await step('GET /session/{sessionID}/todo', async () => {
+        const todos = await call('GET', '/session/{sessionID}/todo', sessionPath('/todo'));
+        assert(todos.length === 1 && todos[0].content === 'contract todo', JSON.stringify(todos));
+    });
+    await step('GET /session/{sessionID}/diff (session and per turn)', async () => {
+        const diff = await call('GET', '/session/{sessionID}/diff', sessionPath('/diff'));
+        const file = diff.find((entry) => entry.file === CONTRACT_FILE);
+        assert(
+            file?.status === 'added' && file.additions === 1 && file.patch.includes('+written'),
+            JSON.stringify(diff)
+        );
+        const userIDs = (await call('GET', '/session/{sessionID}/message', sessionPath('/message')))
+            .filter((message) => message.info.role === 'user')
+            .map((message) => message.info.id);
+        const firstTurn = await call('GET', '/session/{sessionID}/diff', sessionPath(`/diff?messageID=${userIDs[0]}`));
+        const toolsTurn = await call('GET', '/session/{sessionID}/diff', sessionPath(`/diff?messageID=${userIDs[1]}`));
+        assert(firstTurn.length === 0, JSON.stringify(firstTurn));
+        assert(
+            toolsTurn.some((entry) => entry.file === CONTRACT_FILE),
+            JSON.stringify(toolsTurn)
+        );
+    });
     await step('POST /session/{sessionID}/prompt_async', async () => {
         const response = await fetch(base + withDirectory(sessionPath('/prompt_async')), {
             method: 'POST',
@@ -282,6 +453,13 @@ try {
     );
     await step('POST /session/{sessionID}/fork', async () => {
         forkID = (await call('POST', '/session/{sessionID}/fork', sessionPath('/fork'), {})).id;
+    });
+    await step('DELETE /session/{sessionID}/message/{messageID}', async () => {
+        const messages = await call('GET', '/session/{sessionID}/message', `/session/${forkID}/message`);
+        const messageID = messages.at(-1).info.id;
+        await call('DELETE', '/session/{sessionID}/message/{messageID}', `/session/${forkID}/message/${messageID}`);
+        const remaining = await call('GET', '/session/{sessionID}/message', `/session/${forkID}/message`);
+        assert(!remaining.some((message) => message.info.id === messageID), 'message still listed');
     });
     await step('DELETE /session/{sessionID}', () => call('DELETE', '/session/{sessionID}', `/session/${forkID}`));
 
@@ -299,7 +477,20 @@ try {
                 invalid.set(event.type, JSON.stringify(event).slice(0, 300));
         }
         const types = [...new Set(events.map((event) => event.type))];
-        assert(types.includes('message.updated'), `no message.updated among ${types.join(', ')}`);
+        for (const type of [
+            'message.updated',
+            'message.part.delta',
+            'todo.updated',
+            'session.diff',
+            'message.removed'
+        ]) {
+            assert(types.includes(type), `no ${type} among ${types.join(', ')}`);
+        }
+        const diffEvent = events.findLast((event) => event.type === 'session.diff');
+        assert(
+            diffEvent.properties.diff.some((entry) => entry.file === CONTRACT_FILE),
+            `session.diff without ${CONTRACT_FILE}`
+        );
         if (known.size) console.log(`  known non-spec events: ${[...known].join(', ')}`);
         assert(invalid.size === 0, [...invalid].map(([type, sample]) => `${type}: ${sample}`).join('\n  '));
     });
