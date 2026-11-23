@@ -21,6 +21,8 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Mutex } from 'async-mutex';
+import { atomicWriteFile } from '../../utils/temp.js';
 import {
     BrowserNavigateTool,
     BrowserSnapshotTool,
@@ -883,35 +885,46 @@ class BrowserApplication extends BaseApplication {
     }
 
     // =====================================================================
-    //  证书管理（导入/删除后需重启 OpenDesk 生效）
+    //  证书管理
     // =====================================================================
+
+    private readonly certificateStoreLock = new Mutex();
 
     private async _getCertStorePath(): Promise<string> {
         if (this._cachedCertStorePath) return this._cachedCertStorePath;
-        const { app } = await import('electron');
         this._cachedCertStorePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
         return this._cachedCertStorePath;
     }
     private _cachedCertStorePath: string | null = null;
 
     private async _getCertsDir(): Promise<string> {
-        const { app } = await import('electron');
         return path.join(getElectronApp().getPath('userData'), 'certificates');
     }
 
     async getBrowserCertificates(): Promise<CertInfo[]> {
         try {
             const storePath = await this._getCertStorePath();
-            const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
+            const data = await fs.readFile(storePath, 'utf-8');
             return JSON.parse(data) as CertInfo[];
-        } catch {
-            return [];
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+            throw error;
         }
     }
 
-    async importBrowserCertificate(certPem: string): Promise<{ success: boolean; message: string; cert?: CertInfo }> {
+    async importBrowserCertificate(
+        data: string | Buffer
+    ): Promise<{ success: boolean; message: string; cert?: CertInfo }> {
+        let certificate: crypto.X509Certificate;
         try {
-            const certInfo = BrowserApplication.parseCertPem(certPem);
+            certificate = new crypto.X509Certificate(typeof data === 'string' ? data.trim() : data);
+        } catch {
+            return { success: false, message: t('error.certInvalid') };
+        }
+
+        const certInfo = BrowserApplication.parseCertPem(certificate);
+        const release = await this.certificateStoreLock.acquire();
+        try {
             const certs = await this.getBrowserCertificates();
 
             if (certs.some((c) => c.fingerprint === certInfo.fingerprint)) {
@@ -922,27 +935,36 @@ class BrowserApplication extends BaseApplication {
             await fs.mkdir(certsDir, { recursive: true });
             const certFileName = `imported-${certInfo.fingerprint.substring(0, 16)}.pem`;
             const certFilePath = path.join(certsDir, certFileName);
-            await fs.writeFile(certFilePath, certPem, 'utf-8');
+            await atomicWriteFile(certFilePath, certificate.toString());
 
             certInfo.filePath = certFilePath;
             certInfo.importedAt = new Date().toISOString();
 
             certs.push(certInfo);
             const storePath = await this._getCertStorePath();
-            await fs.writeFile(storePath, JSON.stringify(certs, null, 2), 'utf-8');
+            try {
+                await atomicWriteFile(storePath, JSON.stringify(certs, null, 2));
+            } catch (error) {
+                await fs.unlink(certFilePath).catch(() => {});
+                throw error;
+            }
+            await this.applyBrowserCertificates(certs);
 
             return {
                 success: true,
                 message: t('message.certImported', { name: certInfo.commonName }),
                 cert: certInfo
             };
-        } catch (err: any) {
-            logger.error(`导入证书失败: ${err.message}`);
-            return { success: false, message: err.message };
+        } catch (error) {
+            logger.error('Failed to import browser certificate', error);
+            return { success: false, message: t('error.certStoreWrite') };
+        } finally {
+            release();
         }
     }
 
     async removeBrowserCertificate(fingerprint: string): Promise<{ success: boolean; message: string }> {
+        const release = await this.certificateStoreLock.acquire();
         try {
             let certs = await this.getBrowserCertificates();
             const removed = certs.find((c) => c.fingerprint === fingerprint);
@@ -950,16 +972,19 @@ class BrowserApplication extends BaseApplication {
 
             certs = certs.filter((c) => c.fingerprint !== fingerprint);
             const storePath = await this._getCertStorePath();
-            await fs.writeFile(storePath, JSON.stringify(certs, null, 2), 'utf-8');
+            await atomicWriteFile(storePath, JSON.stringify(certs, null, 2));
+            await this.applyBrowserCertificates(certs, true);
 
             if (removed.filePath) {
                 await fs.unlink(removed.filePath).catch(() => {});
             }
 
             return { success: true, message: t('message.certDeleted', { name: removed.commonName }) };
-        } catch (err: any) {
-            logger.error(`删除证书失败: ${err.message}`);
-            return { success: false, message: err.message };
+        } catch (error) {
+            logger.error('Failed to delete browser certificate', error);
+            return { success: false, message: t('error.certStoreWrite') };
+        } finally {
+            release();
         }
     }
 
@@ -978,68 +1003,54 @@ class BrowserApplication extends BaseApplication {
         }
     }
 
-    // ---- 证书验证器（启动时从文件加载到内存） ----
+    // ---- 证书验证器（更新列表时同步刷新内存） ----
 
-    private static _cachedFingerprints: Set<string> = new Set();
+    private certificateFingerprints = new Set<string>();
 
-    static async _refreshCertCache(): Promise<void> {
-        const certs = await BrowserApplication._loadUserCerts();
-        BrowserApplication._cachedFingerprints.clear();
-        for (const c of certs) {
-            BrowserApplication._cachedFingerprints.add(c.fingerprint);
-            if (c.fingerprint256) BrowserApplication._cachedFingerprints.add(c.fingerprint256);
-        }
+    private static getCertificateFingerprints(cert: crypto.X509Certificate): [string, string] {
+        return [
+            cert.fingerprint.replace(/:/g, '').toLowerCase(),
+            crypto.createHash('sha256').update(cert.raw).digest('base64')
+        ];
     }
 
-    static matchCachedFingerprint(serverFingerprint: string): boolean {
-        const clean = serverFingerprint.replace(/^sha256\//, '');
-        return BrowserApplication._cachedFingerprints.has(clean);
-    }
-
-    private static async _loadUserCerts(): Promise<CertInfo[]> {
+    matchesBrowserCertificate(data: string): boolean {
+        if (this.certificateFingerprints.size === 0) return false;
         try {
-            const { app } = await import('electron');
-            const storePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
-            const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
-            return JSON.parse(data) as CertInfo[];
+            const [fingerprint, fingerprint256] = BrowserApplication.getCertificateFingerprints(
+                new crypto.X509Certificate(data)
+            );
+            return this.certificateFingerprints.has(fingerprint) || this.certificateFingerprints.has(fingerprint256);
         } catch {
-            return [];
+            return false;
         }
     }
 
-    async initCertificateVerifier(): Promise<void> {
+    private async applyBrowserCertificates(certs: CertInfo[], disconnect = false): Promise<void> {
+        this.certificateFingerprints = new Set(
+            certs.flatMap(({ fingerprint, fingerprint256 }) =>
+                fingerprint256 ? [fingerprint, fingerprint256] : [fingerprint]
+            )
+        );
         const ses = BrowserManager.browserSession;
         if (!ses) return;
 
-        await BrowserApplication._refreshCertCache();
-
+        // Reinstall the verifier so fresh connections can see the new rules.
         ses.setCertificateVerifyProc((request, callback) => {
-            if (request.errorCode === 0) {
-                callback(0);
-                return;
-            }
-            try {
-                const sc = new crypto.X509Certificate(request.certificate.data);
-                const fp1 = sc.fingerprint.replace(/:/g, '').toLowerCase();
-                const fp256 = crypto.createHash('sha256').update(sc.raw).digest('base64');
-                if (
-                    BrowserApplication._cachedFingerprints.has(fp1) ||
-                    BrowserApplication._cachedFingerprints.has(fp256)
-                ) {
-                    callback(0);
-                    return;
-                }
-            } catch {
-                /* ignore */
-            }
-            callback(-2);
+            const stillUntrusted = request.errorCode !== 0;
+            callback(stillUntrusted && this.matchesBrowserCertificate(request.certificate.data) ? 0 : -3);
+        });
+        if (disconnect) await ses.closeAllConnections();
+    }
+
+    async initCertificateVerifier(): Promise<void> {
+        await this.certificateStoreLock.runExclusive(async () => {
+            await this.applyBrowserCertificates(await this.getBrowserCertificates());
         });
     }
 
-    private static parseCertPem(pem: string): CertInfo {
-        const cert = new crypto.X509Certificate(pem);
-        const fingerprint = cert.fingerprint.replace(/:/g, '').toLowerCase();
-        const fingerprint256 = crypto.createHash('sha256').update(cert.raw).digest('base64');
+    private static parseCertPem(cert: crypto.X509Certificate): CertInfo {
+        const [fingerprint, fingerprint256] = BrowserApplication.getCertificateFingerprints(cert);
         const subject = cert.subject;
         const issuer = cert.issuer;
 

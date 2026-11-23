@@ -28,8 +28,11 @@ export const enUs: Record<string, string> = {
     'message.autofillCleared': 'Cleared passwords and autofill data',
     'error.certAlreadyImported': 'Certificate already imported',
     'error.certNotFound': 'Certificate not found',
-    'message.certImported': 'Certificate "${name}" imported. Restart OpenDesk to apply it.',
-    'message.certDeleted': 'Certificate "${name}" deleted. Restart OpenDesk to apply the change.',
+    'error.certInvalid': 'The selected file is invalid. Choose an X.509 certificate in PEM or DER format.',
+    'error.certStoreWrite':
+        'Could not update imported certificates. Check that the OpenDesk configuration folder is writable.',
+    'message.certImported': 'Certificate "${name}" imported. Reload the page to apply it.',
+    'message.certDeleted': 'Certificate "${name}" deleted.',
     'common.unknown': 'Unknown',
 
     // ========== 原生对话框 / TUI ==========
@@ -260,12 +263,13 @@ export const enUs: Record<string, string> = {
         'This will clear all passwords and form autofill data saved by the browser. This cannot be undone.',
     'renderer.browser.settings.cert.title': 'Certificate Management',
     'renderer.browser.settings.cert.desc':
-        'Manage custom root certificates. Imported certificates apply to browser tabs and the embedded browser.',
-    'renderer.browser.settings.cert.imported': 'Imported Root Certificates',
+        'Imported server certificates apply immediately to the browser and Task sidebar. Reload any open pages.',
+    'renderer.browser.settings.cert.imported': 'Imported Certificates',
     'renderer.browser.settings.cert.import': 'Import Certificate',
+    'renderer.browser.settings.cert.fileFilter': 'X.509 Certificates',
     'renderer.browser.settings.cert.loading': 'Loading...',
     'renderer.browser.settings.cert.systemHint':
-        'System root certificates are trusted by default. Custom root certificates imported here are added to the browser trust chain.',
+        'OpenDesk trusts system certificates by default. For a self-signed site, you can import the server certificate presented by the site.',
     'renderer.browser.settings.cert.issuer': 'Issuer: ',
     'renderer.browser.settings.cert.validity': 'Validity: ',
     'renderer.browser.settings.cert.none': 'No certificates imported',
@@ -277,6 +281,16 @@ export const enUs: Record<string, string> = {
     'renderer.browser.settings.cert.importSuccess': 'Import Succeeded',
     'renderer.browser.settings.cert.importFailed': 'Import Failed',
     'renderer.browser.settings.cert.readFailed': 'Cannot read the certificate file',
+    'renderer.browser.certWarning.title': 'This site’s identity could not be verified',
+    'renderer.browser.certWarning.message':
+        'OpenDesk could not verify the certificate for ${site}. If you continue, information you send could be read or modified by others.',
+    'renderer.browser.certWarning.back': 'Leave site',
+    'renderer.browser.certWarning.advanced': 'Advanced',
+    'renderer.browser.certWarning.risk':
+        'If you recognize this site, you can accept the risk and continue. OpenDesk will remember this choice for the site and certificate until you quit.',
+    'renderer.browser.certWarning.continue': 'Accept risk and continue',
+    'renderer.browser.certWarning.continueFailed': 'This warning has expired. Try opening the address again.',
+    'renderer.browser.certWarning.notSecure': 'Certificate not verified',
     'renderer.browser.settings.ua.desc': 'Customize the browser User Agent. Leave empty to use the system default.',
     'renderer.browser.settings.ua.placeholder': 'Leave empty for the system default UA',
     'renderer.browser.settings.ua.hint': 'Applies to newly created tabs; existing tabs are unaffected',

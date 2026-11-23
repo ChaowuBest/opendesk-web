@@ -41,7 +41,7 @@ import '../../main/applications/browser/renderer/entry.ts';
 import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
-import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
+import { createRendererTranslator, notifyRendererSettingChanged, onLocalePacksChanged } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
 import { installQuickCaptureInbox } from './quickcaptureInbox.ts';
 import { installTaskComposeListener } from './taskCompose.ts';
@@ -76,6 +76,7 @@ window.__odT = createRendererTranslator();
 (async () => {
     try {
         const settings = await window.settingAPI.loadSettingObject();
+        notifyRendererSettingChanged(settings);
         window.__odT = createRendererTranslator(settings);
     } catch {
         /* fallback to browser locale */

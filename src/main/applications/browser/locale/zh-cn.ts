@@ -28,8 +28,10 @@ export const zhCn: Record<string, string> = {
     'message.autofillCleared': '已清除密码与自动填充数据',
     'error.certAlreadyImported': '该证书已导入',
     'error.certNotFound': '证书未找到',
-    'message.certImported': '证书 "${name}" 已导入。请重启 OpenDesk 以使证书生效。',
-    'message.certDeleted': '证书 "${name}" 已删除。请重启 OpenDesk 以使更改生效。',
+    'error.certInvalid': '无法识别所选文件。请选择 PEM 或 DER 格式的 X.509 证书。',
+    'error.certStoreWrite': '无法更新已导入的证书。请检查 OpenDesk 配置目录是否可写。',
+    'message.certImported': '证书「${name}」已导入。重新加载网页即可生效。',
+    'message.certDeleted': '证书「${name}」已删除。',
     'common.unknown': '未知',
 
     // ========== 原生对话框 / TUI ==========
@@ -258,12 +260,14 @@ export const zhCn: Record<string, string> = {
     'renderer.browser.settings.clearAutofill.confirmMessage':
         '将清除浏览器保存的所有密码和表单自动填充数据。此操作不可撤销。',
     'renderer.browser.settings.cert.title': '证书管理',
-    'renderer.browser.settings.cert.desc': '管理自定义根证书。导入的证书将在浏览器标签页和内置浏览器中生效。',
-    'renderer.browser.settings.cert.imported': '已导入的根证书',
+    'renderer.browser.settings.cert.desc':
+        '此处导入的服务器证书会立即应用于浏览器和 Task 侧栏。已打开的网页可以重新加载。',
+    'renderer.browser.settings.cert.imported': '已导入的证书',
     'renderer.browser.settings.cert.import': '导入证书',
+    'renderer.browser.settings.cert.fileFilter': 'X.509 证书',
     'renderer.browser.settings.cert.loading': '加载中…',
     'renderer.browser.settings.cert.systemHint':
-        '系统根证书已默认受信任。此处导入的自定义根证书将额外添加到浏览器信任链中。',
+        'OpenDesk 默认使用系统信任的证书。访问自签 HTTPS 站点时，可以在此导入站点实际提供的服务器证书。',
     'renderer.browser.settings.cert.issuer': '颁发者: ',
     'renderer.browser.settings.cert.validity': '有效期: ',
     'renderer.browser.settings.cert.none': '暂无已导入的证书',
@@ -275,6 +279,16 @@ export const zhCn: Record<string, string> = {
     'renderer.browser.settings.cert.importSuccess': '导入成功',
     'renderer.browser.settings.cert.importFailed': '导入失败',
     'renderer.browser.settings.cert.readFailed': '无法读取证书文件',
+    'renderer.browser.certWarning.title': '无法验证此网站的身份',
+    'renderer.browser.certWarning.message':
+        'OpenDesk 无法验证 ${site} 的证书。继续访问时，你发送的信息可能被他人读取或篡改。',
+    'renderer.browser.certWarning.back': '退出访问',
+    'renderer.browser.certWarning.advanced': '高级',
+    'renderer.browser.certWarning.risk':
+        '确认这是你预期访问的站点后，可以自行承担风险并继续。OpenDesk 本次运行期间会记住对这个站点和证书的选择。',
+    'renderer.browser.certWarning.continue': '接受风险并继续',
+    'renderer.browser.certWarning.continueFailed': '当前警告已失效，请重新访问此地址。',
+    'renderer.browser.certWarning.notSecure': '证书未验证',
     'renderer.browser.settings.ua.desc': '自定义浏览器 User Agent 标识。留空则使用系统默认值。',
     'renderer.browser.settings.ua.placeholder': '留空使用系统默认 UA',
     'renderer.browser.settings.ua.hint': '修改后新建的标签页生效，已有标签页不受影响',

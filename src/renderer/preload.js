@@ -2185,6 +2185,15 @@ if (shouldExposeMainWindowAPIs()) {
     // Browser API — delegated to embedBrowserUse library
     defineBrowserBridge('browserAPI', contextBridge, ipcRenderer);
 
+    const browserCertificateDispatcher = createIpcChannelDispatcher(ipcRenderer, 'browser:certificateExceptionApplied');
+    safeExposeInMainWorld('browserCertificateAPI', {
+        pickCertificate: () => ipcRenderer.invoke('browser:pickCertificate'),
+        canContinue: (webContentsId, url) => ipcRenderer.invoke('browser:canContinueCertificate', webContentsId, url),
+        continueNavigation: (webContentsId, url) =>
+            ipcRenderer.invoke('browser:continueCertificate', webContentsId, url),
+        onExceptionApplied: (callback) => browserCertificateDispatcher.subscribe(callback)
+    });
+
     // 下载管理 API
     safeExposeInMainWorld('downloadAPI', {
         getDownloads: async () => {
