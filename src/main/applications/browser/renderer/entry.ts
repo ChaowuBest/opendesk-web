@@ -3230,12 +3230,13 @@ class BrowserEntryWidget extends HTMLElement {
         });
 
         wv.addEventListener('page-title-updated', (event: any) => {
-            tab.title = isBrowserCertificateError(tab.errorInfo?.description)
+            const certificateError = isBrowserCertificateError(tab.errorInfo?.description);
+            tab.title = certificateError
                 ? getBrowserCertificateWarningTitle()
                 : event.title || this.extractTitle(tab.url);
             this.renderTabBar();
             /* Also update the history entry title for the most recent matching URL */
-            if (tab.url && event.title) {
+            if (!certificateError && tab.url && event.title) {
                 const hEntry = this.history.find((h) => h.url === tab.url);
                 if (hEntry) {
                     hEntry.title = tab.title;
@@ -4485,7 +4486,7 @@ class BrowserEntryWidget extends HTMLElement {
                         iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
                         iconColor: result?.success ? '#059669' : '#DC2626',
                         title: this._t('renderer.browser.modal.opDone'),
-                        message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                        message: escapeModalText(result?.message || this._t('renderer.browser.modal.unknownResult')),
                         confirmText: this._t('renderer.browser.modal.acknowledge'),
                         cancelText: null
                     });

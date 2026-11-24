@@ -54,6 +54,7 @@ function inPlaceNav(): Event {
 
 describe('browser entry widget navigation', () => {
     let widget: TestWidget;
+    const showConfirmModal = jest.fn(async (_options: { message: string }) => false);
 
     beforeAll(async () => {
         const { window } = parseHTML('<!doctype html><html><body></body></html>');
@@ -84,7 +85,7 @@ describe('browser entry widget navigation', () => {
         jest.useFakeTimers();
 
         await jest.unstable_mockModule('../../../renderer/components/confirmModal.ts', () => ({
-            showConfirmModal: jest.fn(async () => false),
+            showConfirmModal,
             // entry.ts 也从这个模块取 escapeModalText（真实实现是 escapeHtml + 换行转 <br>）
             escapeModalText: (text: string) => escapeHtml(text)
         }));
@@ -100,6 +101,26 @@ describe('browser entry widget navigation', () => {
 
     afterEach(() => {
         delete (window as any).settingAPI;
+        delete (window as any).applicationRegistryAPI;
+    });
+
+    test('renders the certificate name as text in the deletion result', async () => {
+        const name = '<b>Test Certificate</b>';
+        (window as any).applicationRegistryAPI = {
+            callMainWorld: async (_bundle: string, method: string) =>
+                method === 'getBrowserCertificates'
+                    ? [{ fingerprint: 'cert-fingerprint', commonName: name }]
+                    : { success: true, message: name }
+        };
+        showConfirmModal.mockResolvedValueOnce(true);
+        const container = document.createElement('div');
+        container.innerHTML = '<div id="wb-cert-list"></div>';
+
+        await (widget as any)._loadCertificates(container);
+        container.querySelector<HTMLButtonElement>('[data-action="bs-delete-cert"]')!.click();
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(showConfirmModal).toHaveBeenLastCalledWith(expect.objectContaining({ message: escapeHtml(name) }));
     });
 
     function activeTab(): TestTab {
