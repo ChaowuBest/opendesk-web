@@ -2014,7 +2014,7 @@ export const enUs: Record<string, string> = {
     'sp.network.proxyAddr': 'Custom proxy address',
     'sp.network.noProxy': 'No-proxy addresses',
     'sp.network.noProxy.hint':
-        'Separate addresses with commas. A leading dot matches a domain and its subdomains. System proxy mode keeps system bypass rules. Mail tries a direct connection first and uses the proxy if it cannot connect; no entry is needed.',
+        'Separate multiple addresses with commas. Supports wildcards. Format is compatible with standard NO_PROXY.',
     'sp.gateway.title': 'Device Gateway',
     'sp.gateway.disabled': 'Disabled',
     'sp.gateway.host': 'Listen address',
