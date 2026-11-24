@@ -44,16 +44,36 @@ function parseNoProxyPattern(pattern: string): { host: string; port?: string } {
 
 function hostnameMatchesNoProxyPattern(hostname: string, pattern: string): boolean {
     if (pattern === '*') return true;
+    if (pattern.includes('*')) {
+        let hostnameIndex = 0;
+        let patternIndex = 0;
+        let wildcardIndex = -1;
+        let wildcardMatchIndex = 0;
+
+        while (hostnameIndex < hostname.length) {
+            if (patternIndex < pattern.length && pattern[patternIndex] === hostname[hostnameIndex]) {
+                hostnameIndex++;
+                patternIndex++;
+            } else if (patternIndex < pattern.length && pattern[patternIndex] === '*') {
+                wildcardIndex = patternIndex++;
+                wildcardMatchIndex = hostnameIndex;
+            } else if (wildcardIndex !== -1) {
+                patternIndex = wildcardIndex + 1;
+                hostnameIndex = ++wildcardMatchIndex;
+            } else {
+                return false;
+            }
+        }
+
+        while (patternIndex < pattern.length && pattern[patternIndex] === '*') {
+            patternIndex++;
+        }
+        return patternIndex === pattern.length;
+    }
     if (pattern.startsWith('.')) {
         return hostname.endsWith(pattern) || hostname === pattern.slice(1);
     }
     return hostname === pattern || hostname.endsWith('.' + pattern);
-}
-
-export function mergeNoProxyLists(...lists: (string | undefined)[]): string {
-    return [
-        ...new Set(lists.flatMap((list) => (list || '').split(',').map((item) => item.trim())).filter(Boolean))
-    ].join(',');
 }
 
 export function isLoopbackUrl(urlStr: string): boolean {
@@ -95,7 +115,7 @@ export function isHostInNoProxyList(hostname: string, port: string | number, noP
 
 /**
  * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
- * 支持精确域名、.example.com 后缀匹配、host:port、IPv6 [host]:port、* 通配。
+ * 支持精确域名、.example.com 后缀匹配、任意位置的 * 通配、host:port、IPv6 [host]:port。
  */
 export function isHostInNoProxy(urlStr: string): boolean {
     const noProxy = process.env.NO_PROXY || process.env.no_proxy;

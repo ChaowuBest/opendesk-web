@@ -147,29 +147,6 @@ describe('resolveProxyEnvVars', () => {
         expect(await resolveProxyEnvVars()).toEqual({});
     });
 
-    test.each([
-        { exclusions: [], expected: 'imap.private.example,localhost' },
-        { exclusions: ['localhost', '.corp.example.com'], expected: 'localhost,.corp.example.com,imap.private.example' }
-    ])(
-        'system mode adds application bypass addresses to system exclusions $exclusions',
-        async ({ exclusions, expected }) => {
-            setPlatform('openharmony');
-            settingData.network_config.use_proxy = 'system';
-            settingData.network_config.no_proxy = 'imap.private.example, localhost';
-            getHarmonyOSSystemProxyMock.mockResolvedValue({
-                host: 'proxy.example.com',
-                port: 8080,
-                exclusionList: exclusions
-            });
-
-            const { resolveProxyEnvVars } = await loadModule();
-            const result = await resolveProxyEnvVars();
-            expect(result.HTTP_PROXY).toBe('http://proxy.example.com:8080');
-            expect(result.NO_PROXY).toBe(expected);
-            expect(result.no_proxy).toBe(expected);
-        }
-    );
-
     test('system mode on OpenHarmony strips protocol prefix from host', async () => {
         setPlatform('openharmony');
         settingData.network_config.use_proxy = 'system';
@@ -291,18 +268,15 @@ describe('resolveProxyEnvVars', () => {
         setPlatform('darwin');
         settingData.network_config.use_proxy = 'system';
         const scutilOutput = [
-            '<dictionary> {',
             'HTTPEnable : 1',
             'HTTPProxy : 127.0.0.1',
             'HTTPPort : 8080',
             'HTTPSEnable : 1',
             'HTTPSProxy : 127.0.0.1',
             'HTTPSPort : 8080',
-            'ExceptionsList : <array> {',
+            'ExceptionsList :',
             '  0 : intranet.example.com',
             '  1 : localhost',
-            '}',
-            '}',
             ''
         ].join('\n');
         execFileMock.mockImplementation(

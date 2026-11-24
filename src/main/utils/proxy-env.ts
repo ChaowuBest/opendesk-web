@@ -10,7 +10,6 @@
  */
 
 import { Setting } from './setting.js';
-import { mergeNoProxyLists } from './proxy.js';
 import type { HarmonyOSSystemProxy } from '../../platforms/bridges/harmonyos/proxy.js';
 
 export interface ProxyEnvVars {
@@ -137,10 +136,6 @@ async function getMacOSSystemProxy(): Promise<EffectiveSystemProxy | null> {
     for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        if (trimmed === '}') {
-            currentArrayKey = null;
-            continue;
-        }
         // 数组项："  0 : value"
         const arrMatch = trimmed.match(/^(\d+)\s*:\s*(.+)$/);
         if (arrMatch && currentArrayKey) {
@@ -154,7 +149,7 @@ async function getMacOSSystemProxy(): Promise<EffectiveSystemProxy | null> {
             currentArrayKey = null;
             const key = kvMatch[1];
             const val = kvMatch[2];
-            if (val === '' || val === '<array> {') {
+            if (val === '') {
                 map[key] = [];
                 currentArrayKey = key;
             } else {
@@ -221,7 +216,7 @@ export async function resolveProxyEnvVars(): Promise<ProxyEnvVars> {
         const sys = await getEffectiveSystemProxy();
         if (sys) {
             proxyUrl = sys.url;
-            noProxy = mergeNoProxyLists(sys.bypassList, nc.no_proxy);
+            noProxy = sys.bypassList;
         }
     }
 
