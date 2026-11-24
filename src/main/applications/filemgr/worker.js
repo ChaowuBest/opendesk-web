@@ -2656,10 +2656,11 @@ class FileManagerWorker extends BaseWorker {
     /**
      * 在 Worker 线程中提取文件文本，避免 CPU 密集型解析阻塞主线程。
      * @param {string} filePath
+     * @param {{ locale?: string }} [options]
      * @returns {Promise<string | null>}
      */
-    async extractFileText(filePath) {
-        return await extractFileTextFromParser(filePath);
+    async extractFileText(filePath, options = {}) {
+        return await extractFileTextFromParser(filePath, options);
     }
 
     async resetFileSystemStorage() {

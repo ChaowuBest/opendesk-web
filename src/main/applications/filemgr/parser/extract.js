@@ -20,6 +20,7 @@ import { createRequire } from 'module';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
 import WordExtractor from 'word-extractor';
+import { format as formatSpreadsheetValue } from 'numfmt';
 import { readOfd } from '@sharp9/ofdjs';
 import {
     initDOMParser as initOfdDOMParser,
@@ -33,6 +34,7 @@ import { logger as staticLogger } from '../../../utils/logger.js';
 import { xlsxLoader } from '../../../loader/xlsx.js';
 import { prepareHostResource } from '../../../../platforms/runtime.js';
 import { detectEncoding, decodeBuffer } from '../../terminal/encoding.js';
+import { resolveSpreadsheetLocale } from './spreadsheet-locale.js';
 
 function getLogger() {
     return staticLogger;
@@ -288,13 +290,22 @@ function isXmlEntryReadable(filePath, ext) {
     });
 }
 
-async function extractSpreadsheetText(buffer) {
+async function extractSpreadsheetText(buffer, locale) {
     const XLSX = await xlsxLoader.ensure();
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    // Keep raw values and Excel format codes for explicitly localized tool reads.
+    // Other callers, including indexing, retain the existing SheetJS behavior.
+    const workbook = XLSX.read(
+        buffer,
+        locale === undefined
+            ? { type: 'buffer' }
+            : { type: 'buffer', cellNF: true, cellText: false, cellFormula: true, sheetStubs: true }
+    );
+    const resolvedLocale = locale === undefined ? undefined : resolveSpreadsheetLocale(locale);
+    const date1904 = Boolean(workbook.Workbook?.WBProps?.date1904);
     const sheets = [];
     for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
-        const lines = sheetToRowNumberedLines(XLSX, sheet);
+        const lines = sheetToRowNumberedLines(XLSX, sheet, resolvedLocale, date1904);
         if (lines.length === 0) continue;
         const text = lines.join('\n');
         sheets.push(workbook.SheetNames.length > 1 ? `[${sheetName}]\n${text}` : text);
@@ -302,7 +313,7 @@ async function extractSpreadsheetText(buffer) {
     return sheets.join('\n\n');
 }
 
-function sheetToRowNumberedLines(XLSX, sheet) {
+function sheetToRowNumberedLines(XLSX, sheet, locale, date1904) {
     if (!sheet['!ref']) return [];
     const range = XLSX.utils.decode_range(sheet['!ref']);
     const lines = [];
@@ -311,7 +322,7 @@ function sheetToRowNumberedLines(XLSX, sheet) {
         let hasValue = false;
         for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex++) {
             const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
-            const value = cell ? XLSX.utils.format_cell(cell) : '';
+            const value = cell ? formatCellValue(XLSX, cell, locale, date1904) : '';
             if (value !== '') {
                 hasValue = true;
             }
@@ -322,6 +333,25 @@ function sheetToRowNumberedLines(XLSX, sheet) {
         }
     }
     return lines;
+}
+
+function formatCellValue(XLSX, cell, locale, date1904) {
+    if (locale === undefined) return XLSX.utils.format_cell(cell);
+    if (cell.f && (cell.t === 'z' || cell.v === undefined || cell.v === null)) return `=${cell.f}`;
+    if (cell.t === 'n' && typeof cell.v === 'number') {
+        const format = cell.z ?? 'General';
+        try {
+            // numfmt only supports the 1900 epoch. SheetJS preserves 1904 dates
+            // and elapsed times without shifting ordinary numbers in the workbook.
+            if (date1904 && XLSX.SSF.is_date(format)) {
+                return XLSX.SSF.format(format, cell.v, { date1904 });
+            }
+            return formatSpreadsheetValue(format, cell.v, { locale });
+        } catch {
+            // Unsupported format codes retain the existing SheetJS fallback.
+        }
+    }
+    return String(XLSX.utils.format_cell(cell) ?? '');
 }
 
 /** 确保 @sharp9/ofdjs 在 Node.js 中的 DOMParser 已初始化 */
@@ -448,11 +478,13 @@ async function extractOfdTextFromFile(filePath) {
 /**
  * 从文件中提取原始文本
  * @param {string} filePath
+ * @param {{ locale?: string }} [options]
+ *   locale is supplied by the extractText tool; omitted callers retain existing formatting.
  * @returns {Promise<string | null>}
  *   不支持的格式或解析失败返回 null；
  *   合法文件解析为空内容时返回 ''（空字符串）
  */
-export async function extractText(filePath) {
+export async function extractText(filePath, options = {}) {
     const ext = path.extname(filePath).slice(1).toLowerCase();
     try {
         const stat = await fs.promises.stat(filePath);
@@ -504,7 +536,7 @@ export async function extractText(filePath) {
 
         if (SPREADSHEET_EXTS.has(ext)) {
             const buffer = await fs.promises.readFile(filePath);
-            return await extractSpreadsheetText(buffer);
+            return await extractSpreadsheetText(buffer, options.locale);
         }
 
         if (ext === 'pptx') {
