@@ -18,6 +18,15 @@ import {
     fetchBrowserHintsForPage,
     type BrowserHintPanelHandle
 } from '../../../../renderer/components/browserHintPanel.js';
+import {
+    clearBrowserCertificateWarning,
+    getBrowserCertificateAPI,
+    getBrowserCertificateWarningTitle,
+    isBrowserCertificateError,
+    observeBrowserCertificateExceptions,
+    renderBrowserCertificateIndicator,
+    showBrowserCertificateWarning
+} from '../../../../renderer/components/browserCertificateWarning.js';
 import { createRendererTranslator, onLocalePacksChanged, resolveRendererLocale } from '../../../../renderer/locale.js';
 import { createTranslatorForBrowser } from '../locale/renderer.js';
 // 注册 <content-loading-view> 加载中组件，用于页面加载反馈
@@ -61,6 +70,7 @@ interface BrowserTab {
     isHomePage: boolean;
     internalUrl?: string;
     errorInfo?: ErrorInfo;
+    unverifiedOrigins?: Set<string>;
     lastActiveTime?: number;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
@@ -154,6 +164,7 @@ class BrowserEntryWidget extends HTMLElement {
     private activeTabId: number = -1;
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
+    private _removeCertificateListener: (() => void) | undefined;
     private _cleanupTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
     private static readonly CLEANUP_DELAY_MS = 900_000; // 15 minutes
     private _cachedUserAgent: string = '';
@@ -196,6 +207,10 @@ class BrowserEntryWidget extends HTMLElement {
         // 等待设置加载期间元素可能已被移除，避免对脱离 DOM 的元素继续渲染
         if (!this.isConnected) return;
         this._subscribeLocaleChanges();
+        this._removeCertificateListener = observeBrowserCertificateExceptions(
+            () => this.tabs,
+            () => this.syncUrlBar()
+        );
         this.history = loadHistory();
         this.bookmarks = loadBookmarks();
         this.setAttribute('data-od-browser-focus-scope', '');
@@ -246,6 +261,8 @@ class BrowserEntryWidget extends HTMLElement {
 
     disconnectedCallback() {
         this._initialized = false;
+        this._removeCertificateListener?.();
+        this._removeCertificateListener = undefined;
         if (this._settingUnsubscribe) {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
@@ -3130,6 +3147,7 @@ class BrowserEntryWidget extends HTMLElement {
         // 页面反复闪现加载遮罩；同文档导航（pushState/hash）也不需要遮罩。
         wv.addEventListener('did-start-navigation', (event: any) => {
             if (event.isMainFrame && !event.isInPlace) {
+                clearBrowserCertificateWarning(tab.wrapEl);
                 this.showTabLoading(tab);
             }
         });
@@ -3212,13 +3230,16 @@ class BrowserEntryWidget extends HTMLElement {
         });
 
         wv.addEventListener('page-title-updated', (event: any) => {
-            tab.title = event.title || this.extractTitle(tab.url);
+            const certificateError = isBrowserCertificateError(tab.errorInfo?.description);
+            tab.title = certificateError
+                ? getBrowserCertificateWarningTitle()
+                : event.title || this.extractTitle(tab.url);
             this.renderTabBar();
             /* Also update the history entry title for the most recent matching URL */
-            if (tab.url && event.title) {
+            if (!certificateError && tab.url && event.title) {
                 const hEntry = this.history.find((h) => h.url === tab.url);
                 if (hEntry) {
-                    hEntry.title = event.title;
+                    hEntry.title = tab.title;
                     saveHistory(this.history);
                 }
             }
@@ -3317,11 +3338,19 @@ class BrowserEntryWidget extends HTMLElement {
             };
 
             // 更新 tab 标题显示错误
-            tab.title = this.extractTitle(validatedURL || tab.url) + this._t('renderer.browser.tab.loadFailedSuffix');
+            const certificateError = isBrowserCertificateError(errorDescription);
+            tab.title = certificateError
+                ? getBrowserCertificateWarningTitle()
+                : this.extractTitle(validatedURL || tab.url) + this._t('renderer.browser.tab.loadFailedSuffix');
             this.renderTabBar();
 
             // 显示错误覆盖层
             this.injectErrorPage(tab);
+            if (tab.wrapEl && certificateError) {
+                const url = tab.errorInfo.url;
+                tab.url = url;
+                showBrowserCertificateWarning(tab.wrapEl, wv, tab.errorInfo, () => this.navigateTo('about:blank', tab));
+            }
 
             // 同步地址栏显示失败的 URL
             if (tab.id === this.activeTabId) {
@@ -3536,13 +3565,7 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     private updateLockIcon(url: string): void {
-        const lockIcon = this.querySelector('.wb-lock') as HTMLElement;
-        if (!lockIcon) return;
-        if (url && url.startsWith('https://')) {
-            lockIcon.style.display = '';
-        } else {
-            lockIcon.style.display = 'none';
-        }
+        renderBrowserCertificateIndicator(this.querySelector('.wb-lock'), url, this.getActiveTab());
     }
 
     private syncNavButtons(): void {
@@ -4228,7 +4251,10 @@ class BrowserEntryWidget extends HTMLElement {
      */
     private injectErrorPage(tab: BrowserTab): void {
         if (!tab.webview || !tab.errorInfo) return;
-        const script = buildErrorPageScript(tab.errorInfo);
+        const title = isBrowserCertificateError(tab.errorInfo.description)
+            ? getBrowserCertificateWarningTitle()
+            : undefined;
+        const script = buildErrorPageScript(tab.errorInfo, title);
         try {
             tab.webview.executeJavaScript(script);
         } catch {
@@ -4427,7 +4453,7 @@ class BrowserEntryWidget extends HTMLElement {
                         <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${escapeHtml(cert.issuer)}</div>
                         <div style="font-size: var(--fs-sm);color:#b0b3b8">${this._t('renderer.browser.settings.cert.validity')}${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
                     </div>
-                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${escapeHtml(cert.fingerprint256)}" style="font-size: var(--fs-sm);padding:4px 10px">
                         <i class="fas fa-xmark"></i>
                     </button>
                 </div>`
@@ -4460,83 +4486,51 @@ class BrowserEntryWidget extends HTMLElement {
                         iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
                         iconColor: result?.success ? '#059669' : '#DC2626',
                         title: this._t('renderer.browser.modal.opDone'),
-                        message: result?.message || this._t('renderer.browser.modal.unknownResult'),
+                        message: escapeModalText(result?.message || this._t('renderer.browser.modal.unknownResult')),
                         confirmText: this._t('renderer.browser.modal.acknowledge'),
                         cancelText: null
                     });
                 });
             });
-        } catch {
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : this._t('renderer.browser.settings.cert.loadFailed');
             certListEl.innerHTML =
                 '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">' +
-                this._t('renderer.browser.settings.cert.loadFailed') +
+                escapeHtml(message) +
                 '</div>';
         }
     }
 
     private async _importCertificate(container: HTMLElement): Promise<void> {
-        // 使用 FileReader 通过 input[type=file] 选择证书文件
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.pem,.crt,.cer,.cert,application/x-pem-file,application/x-x509-ca-cert';
-        input.style.display = 'none';
-        document.body.appendChild(input);
+        const button = container.querySelector<HTMLButtonElement>('[data-action="bs-import-cert"]');
+        if (!button || button.disabled) return;
+        button.disabled = true;
+        try {
+            const api = getBrowserCertificateAPI();
+            const result = api
+                ? await api.pickCertificate().catch((error) => {
+                      console.error('Browser certificate import failed', error);
+                      return { success: false, message: this._t('renderer.browser.settings.cert.readFailed') };
+                  })
+                : { success: false, message: this._t('renderer.browser.settings.cert.importUnsupported') };
+            if (!result) return;
 
-        input.onchange = async () => {
-            const file = input.files?.[0];
-            if (!file) {
-                document.body.removeChild(input);
-                return;
-            }
-
-            try {
-                const pemText = await file.text();
-                const registryAPI = (window as any).applicationRegistryAPI;
-                if (!registryAPI?.callMainWorld) {
-                    await showConfirmModal({
-                        icon: 'fa-circle-exclamation',
-                        iconBg: '#FEF2F2',
-                        iconColor: '#DC2626',
-                        title: this._t('renderer.browser.settings.cert.importFailed'),
-                        message: this._t('renderer.browser.settings.cert.importUnsupported'),
-                        confirmText: this._t('renderer.browser.modal.acknowledge'),
-                        cancelText: null
-                    });
-                    return;
-                }
-
-                const result = await registryAPI.callMainWorld('browser', 'importBrowserCertificate', pemText);
-                await showConfirmModal({
-                    icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
-                    iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
-                    iconColor: result?.success ? '#059669' : '#DC2626',
-                    title: result?.success
-                        ? this._t('renderer.browser.settings.cert.importSuccess')
-                        : this._t('renderer.browser.settings.cert.importFailed'),
-                    message: result?.message || this._t('renderer.browser.modal.unknownResult'),
-                    confirmText: this._t('renderer.browser.modal.acknowledge'),
-                    cancelText: null
-                });
-
-                if (result?.success) {
-                    this._loadCertificates(container);
-                }
-            } catch (err: any) {
-                await showConfirmModal({
-                    icon: 'fa-circle-exclamation',
-                    iconBg: '#FEF2F2',
-                    iconColor: '#DC2626',
-                    title: this._t('renderer.browser.settings.cert.importFailed'),
-                    message: err?.message || this._t('renderer.browser.settings.cert.readFailed'),
-                    confirmText: this._t('renderer.browser.modal.acknowledge'),
-                    cancelText: null
-                });
-            }
-
-            document.body.removeChild(input);
-        };
-
-        input.click();
+            if (result.success) await this._loadCertificates(container);
+            await showConfirmModal({
+                icon: result.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                iconBg: result.success ? '#ECFDF5' : '#FEF2F2',
+                iconColor: result.success ? '#059669' : '#DC2626',
+                title: result.success
+                    ? this._t('renderer.browser.settings.cert.importSuccess')
+                    : this._t('renderer.browser.settings.cert.importFailed'),
+                message: escapeModalText(result.message) || this._t('renderer.browser.modal.unknownResult'),
+                confirmText: this._t('renderer.browser.modal.acknowledge'),
+                cancelText: null
+            });
+        } finally {
+            button.disabled = false;
+        }
     }
 
     private formatTime(ts: number): string {

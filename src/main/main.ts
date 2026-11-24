@@ -33,6 +33,7 @@ import {
     clipboard
 } from 'electron';
 import type { WebContents } from 'electron';
+import { installBrowserCertificates } from './applications/browser/certificateElectron.js';
 import { installBrowserCredentials } from './services/browser-credentials/manager.js';
 import { initializeBrowserCredentials } from './services/browser-credentials/runtime.js';
 import {
@@ -695,9 +696,9 @@ async function initBrowserSession() {
             // 获取 BrowserApplication 实例
             const browserApp = ApplicationRegistry.getApplication('browser') as any;
 
-            // 初始化证书验证器（支持用户导入的根证书 + 系统根证书）
+            // 初始化证书验证器（支持用户导入的证书 + 系统根证书）
             if (browserApp?.initCertificateVerifier) {
-                void browserApp.initCertificateVerifier().catch((err: any) => {
+                await browserApp.initCertificateVerifier().catch((err: any) => {
                     logger.error(`initCertificateVerifier 失败: ${err?.message || err}`);
                 });
             }
@@ -1150,6 +1151,7 @@ const createWindow = () => {
     displayZoomSync.add(mainWindow);
     mainWindow.once('closed', () => displayZoomSync.remove(mainWindow));
     installWebviewHostHandlers(mainWindow);
+    installBrowserCertificates(mainWindow, isEmbeddedBrowserContents);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
     } else {
@@ -3526,24 +3528,8 @@ async function startApplication(): Promise<void> {
         const ensureBrowserReady = (): Promise<void> => {
             if (!browserReadyPromise) {
                 browserReadyPromise = (async () => {
-                    try {
-                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
-                        if (browserApp?.constructor?._refreshCertCache) {
-                            await browserApp.constructor._refreshCertCache();
-                        }
-                    } catch (err: any) {
-                        logger.error(`证书缓存初始化失败: ${err?.message || err}`);
-                    }
-
                     await initBrowserSession();
                     registerRendererFramePreload();
-
-                    // 全局证书错误处理：使用内存缓存同步匹配
-                    app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
-                        const matched = browserApp?.constructor?.matchCachedFingerprint?.(certificate.fingerprint);
-                        callback(!!matched);
-                    });
                 })();
             }
             return browserReadyPromise;

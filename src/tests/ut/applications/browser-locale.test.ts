@@ -32,7 +32,7 @@ describe('browser locale', () => {
         expect(browserT('app.name')).toBe('Browser');
         expect(browserT('error.sessionNotInitialized')).toBe('Browser session not initialized');
         expect(browserT('message.certImported', { name: 'RootCA' })).toBe(
-            'Certificate "RootCA" imported. Restart OpenDesk to apply it.'
+            'Certificate "RootCA" imported. Reload the page to apply it.'
         );
     });
 

@@ -1,6 +1,8 @@
 import { describe, expect, jest, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createTranslatorForBrowser } from '../../../main/applications/browser/locale/renderer.js';
+import { createRendererTranslator, notifyRendererSettingChanged } from '../../../renderer/locale.js';
 
 const rendererHtml = readFileSync(new URL('../../../renderer/index.html', import.meta.url), 'utf8');
 const rendererEntry = readFileSync(new URL('../../../renderer/scripts/index.js', import.meta.url), 'utf8');
@@ -14,6 +16,27 @@ function sourceBetween(source: string, start: string, end: string): string {
 }
 
 describe('renderer startup shell', () => {
+    test('uses the saved language in the shared browser translator at startup', async () => {
+        notifyRendererSettingChanged({ locale: 'en-US' });
+        const shell = vm.createContext({
+            window: { settingAPI: { loadSettingObject: async () => ({ locale: 'zh-CN' }) } },
+            createRendererTranslator,
+            notifyRendererSettingChanged,
+            onLocalePacksChanged: undefined
+        });
+
+        try {
+            vm.runInContext(
+                sourceBetween(rendererEntry, '// 暴露翻译器实例', '// 启动时把持久化的快速截图开关'),
+                shell
+            );
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(createTranslatorForBrowser()('renderer.browser.certWarning.title')).toBe('无法验证此网站的身份');
+        } finally {
+            notifyRendererSettingChanged({ locale: 'en-US' });
+        }
+    });
+
     test('expanding navigation does not invoke preview cleanup', () => {
         const suspendPreviewLayout = jest.fn();
         const document = Object.assign(new EventTarget(), {
