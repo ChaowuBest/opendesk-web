@@ -526,7 +526,7 @@ class SideBar extends HTMLElement {
                     getTasks: () => this.taskList,
                     search: (query, limit) => window.taskManagerAPI.searchTasks(query, limit),
                     subscribe: (callback) => window.taskManagerAPI.subscribeSearchUpdates(callback),
-                    translate: (key) => this._t(key),
+                    translate: (key, params) => this._t(key, params),
                     open: async (hit) => {
                         await window.globalControlAPI.openTask(hit.taskId);
                         if (!hit.messageId) return;

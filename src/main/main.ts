@@ -1536,7 +1536,7 @@ const registerTaskManagerAPIHandlers = () => {
     registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
     const taskSearch = new TaskSearchService(
         getTaskDirectory(),
-        path.join(getOpendeskDirectory(), 'task-search-v1.sqlite'),
+        path.join(getOpendeskDirectory(), 'task-search-v3.sqlite'),
         {
             onChange: (unavailable) => broadcastToAllWindows('taskManager:searchChanged', unavailable === true),
             onError: (error) => logger.warn(`Task search worker failed: ${error.stack || error.message}`)

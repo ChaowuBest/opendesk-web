@@ -70,6 +70,8 @@ test('search worker pushes file changes and preserves startup errors', { timeout
     const initial = nextMatch('原始正文', 1);
     service.start();
     assert.equal((await initial).items[0].messageId, 'm1');
+    assert.equal((await service.search('原*正?', 20)).items[0].messageId, 'm1');
+    assert.equal((await service.search('原\\*正\\?', 20)).items.length, 0);
     const updated = nextMatch('更新正文', 1);
     task.chat_context.messages[0].content[0].text = '更新正文';
     await writeFile(path.join(directory, 'one.json'), JSON.stringify(task));

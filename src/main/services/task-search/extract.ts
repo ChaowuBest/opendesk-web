@@ -9,11 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { compactSearchText, TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_WILDCARD_GAP } from '../../../common/task-search.js';
 import {
     getGoalSupplementDisplayText,
     shouldRenderGoalUserMessage,
     type GoalUserMessageDisplayLike
 } from '../../../common/goal/user-message-display.js';
+
+const CHUNK_LENGTH = 4000;
+// Wildcards can match characters that occupy two UTF-16 units each.
+const CHUNK_OVERLAP = 2 * (TASK_SEARCH_MAX_QUERY + TASK_SEARCH_MAX_WILDCARD_GAP);
 
 export interface SearchDocument {
     key: string;
@@ -45,10 +50,14 @@ export function extractSearchDocuments(task: SearchTask): SearchDocument[] {
     if (!isSearchableTask(task)) return [];
     const docs: SearchDocument[] = [];
     const add = (key: string, text: string, messageId: string, priority: number) => {
-        const compact = text.replace(/\s+/gu, ' ').trim();
-        // Overlap covers the maximum query length, including a hit spanning two chunks.
-        for (let start = 0; start < compact.length; start += 3800) {
-            docs.push({ key: key + ':' + start, messageId, priority, text: compact.slice(start, start + 4000) });
+        const compact = compactSearchText(text, true);
+        for (let start = 0; start < compact.length; start += CHUNK_LENGTH - CHUNK_OVERLAP) {
+            docs.push({
+                key: key + ':' + start,
+                messageId,
+                priority,
+                text: compact.slice(start, start + CHUNK_LENGTH)
+            });
         }
     };
     add('title', task.task_name || '', '', 2);
