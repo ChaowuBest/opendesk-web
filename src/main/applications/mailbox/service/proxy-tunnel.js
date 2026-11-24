@@ -24,7 +24,7 @@ import net from 'net';
 import tls from 'tls';
 import { getPlatform } from '../../../../platforms/base.js';
 import { getEffectiveSystemProxy } from '../../../../main/utils/proxy-env.js';
-import { isHostInNoProxyList } from '../../../../main/utils/proxy.js';
+import { isHostInNoProxyList, mergeNoProxyLists } from '../../../../main/utils/proxy.js';
 import { logger } from '../../../../main/utils/logger.js';
 
 /** key = `${host}:${port}`，value = 当前代理配置对应的隧道 */
@@ -42,6 +42,8 @@ const CONNECT_TIMEOUT_MS = 15000;
 /** 代理配置缓存：解析 system 代理要 fork scutil/reg，避免每次建连都执行 */
 const PROXY_CACHE_TTL_MS = 30000;
 let proxyCache = null;
+const DIRECT_CONNECT_TIMEOUT_MS = 2000;
+const DIRECT_RETRY_TTL_MS = 30000;
 
 const ENV_PROXY_KEYS = [
     'ALL_PROXY',
@@ -61,7 +63,7 @@ function currentEnvProxyKey() {
 /**
  * 解析出当前生效的代理地址。
  * platform 配置优先；平台未提供时退回环境变量代理约定。
- * @returns {Promise<{ url: string, noProxy: string } | null>}
+ * @returns {Promise<{ url: string, noProxy: string, tryDirect?: boolean } | null>}
  */
 export async function resolveMailProxyConfig() {
     let nc = null;
@@ -96,7 +98,7 @@ async function detectMailProxyConfig(nc) {
     try {
         const sys = await getEffectiveSystemProxy();
         if (sys?.url) {
-            return { url: sys.url, noProxy: noProxy || sys.bypassList || '' };
+            return { url: sys.url, noProxy: mergeNoProxyLists(sys.bypassList, noProxy), tryDirect: true };
         }
     } catch (err) {
         logger.warn(`mailbox: unable to detect system proxy: ${err?.message || err}`);
@@ -110,7 +112,46 @@ async function detectMailProxyConfig(nc) {
         process.env.HTTP_PROXY ||
         process.env.http_proxy;
     if (!envProxy) return null;
-    return { url: envProxy, noProxy: noProxy || process.env.NO_PROXY || process.env.no_proxy || '' };
+    return {
+        url: envProxy,
+        noProxy: mergeNoProxyLists(process.env.NO_PROXY || process.env.no_proxy, noProxy),
+        tryDirect: true
+    };
+}
+
+function openDirectMailConnection(targetHost, targetPort, signal) {
+    return new Promise((resolve, reject) => {
+        const socket = net.connect(targetPort, targetHost);
+        let settled = false;
+        const timer = setTimeout(() => fail(new Error('mail direct connection timeout')), DIRECT_CONNECT_TIMEOUT_MS);
+        timer.unref?.();
+        const cleanup = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+            socket.removeListener('connect', onConnect);
+            socket.removeListener('close', onClose);
+        };
+        const fail = (err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            socket.destroy();
+            reject(err);
+        };
+        const onAbort = () => fail(new Error('mail direct connection aborted'));
+        const onClose = () => fail(new Error('mail direct connection closed before connect'));
+        const onConnect = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(socket);
+        };
+        socket.on('error', fail);
+        socket.once('close', onClose);
+        socket.once('connect', onConnect);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+    });
 }
 
 /**
@@ -173,8 +214,8 @@ function tunnelKey(host, port) {
     return JSON.stringify([host, port]);
 }
 
-function proxySignature(proxy) {
-    return JSON.stringify([proxy.kind, proxy.host, proxy.port, proxy.username, proxy.password]);
+function proxySignature(proxy, tryDirect) {
+    return JSON.stringify([proxy.kind, proxy.host, proxy.port, proxy.username, proxy.password, tryDirect]);
 }
 
 function closeTunnelServer(server) {
@@ -194,9 +235,27 @@ function closeTunnelServer(server) {
     }
 }
 
-/** 起一个本地监听，把每个进来的连接经代理转发到 targetHost:targetPort。 */
-function createTunnelServer(proxy, targetHost, targetPort) {
+/** 起一个本地监听，系统代理模式先尝试直连，否则经代理转发到 targetHost:targetPort。 */
+function createTunnelServer(proxy, targetHost, targetPort, tryDirect) {
     const connections = new Set();
+    let directRetryAt = 0;
+    const openUpstream = async (signal) => {
+        if (tryDirect && Date.now() >= directRetryAt) {
+            try {
+                return await openDirectMailConnection(targetHost, targetPort, signal);
+            } catch (err) {
+                if (signal.aborted) throw err;
+                directRetryAt = Date.now() + DIRECT_RETRY_TTL_MS;
+                logger.debug(
+                    `mailbox: direct connection to ${targetHost}:${targetPort} failed, trying proxy: ${err.message}`
+                );
+            }
+        }
+        if (signal.aborted) throw new Error('mail connection aborted');
+        return proxy.kind === 'socks5'
+            ? openSocks5Tunnel(proxy, targetHost, targetPort, signal)
+            : openHttpConnectTunnel(proxy, targetHost, targetPort, signal);
+    };
     const server = net.createServer((client) => {
         const connection = {
             client,
@@ -221,10 +280,8 @@ function createTunnelServer(proxy, targetHost, targetPort) {
         client.once('close', () => destroyBoth());
         client.setTimeout(CONNECT_TIMEOUT_MS, () => destroyBoth(new Error('tunnel client idle timeout')));
 
-        const pending =
-            proxy.kind === 'socks5'
-                ? openSocks5Tunnel(proxy, targetHost, targetPort, connection.controller.signal)
-                : openHttpConnectTunnel(proxy, targetHost, targetPort, connection.controller.signal);
+        // 仅在 TCP 建连阶段切换路径，复用成功的 socket；传输邮件后不重试，避免重复发信。
+        const pending = openUpstream(connection.controller.signal);
         pending.then((socket) => {
             if (connection.closed) {
                 socket.destroy();
@@ -508,7 +565,8 @@ export async function resolveMailEndpoint(host, port) {
     }
 
     const key = tunnelKey(host, port);
-    const signature = proxySignature(proxy);
+    const tryDirect = proxyConfig.tryDirect === true;
+    const signature = proxySignature(proxy, tryDirect);
     desiredTunnelSignatures.set(key, signature);
 
     const entry = tunnelEntries.get(key);
@@ -531,7 +589,7 @@ export async function resolveMailEndpoint(host, port) {
     const pendingKey = `${key}|${signature}`;
     let pending = pendingTunnels.get(pendingKey);
     if (!pending) {
-        pending = createTunnelServer(proxy, host, port)
+        pending = createTunnelServer(proxy, host, port, tryDirect)
             .then((server) => {
                 const actualPort = server.address().port;
                 // 创建期间代理配置又变了：丢弃这次结果，避免把旧代理监听写回缓存
@@ -547,7 +605,7 @@ export async function resolveMailEndpoint(host, port) {
                 });
                 tunnelEntries.set(key, { signature, port: actualPort, server });
                 logger.info(
-                    `mailbox: ${host}:${port} now connects via ${proxy.kind} proxy ${proxy.host}:${proxy.port}`
+                    `mailbox: ${host}:${port} routing=${tryDirect ? 'direct-then-proxy' : 'proxy'}, ${proxy.kind} proxy ${proxy.host}:${proxy.port}`
                 );
                 return actualPort;
             })

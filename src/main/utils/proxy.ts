@@ -50,6 +50,12 @@ function hostnameMatchesNoProxyPattern(hostname: string, pattern: string): boole
     return hostname === pattern || hostname.endsWith('.' + pattern);
 }
 
+export function mergeNoProxyLists(...lists: (string | undefined)[]): string {
+    return [
+        ...new Set(lists.flatMap((list) => (list || '').split(',').map((item) => item.trim())).filter(Boolean))
+    ].join(',');
+}
+
 export function isLoopbackUrl(urlStr: string): boolean {
     try {
         const hostname = normalizeHostname(new URL(urlStr).hostname);

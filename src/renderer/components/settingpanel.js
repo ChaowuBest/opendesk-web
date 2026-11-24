@@ -2780,7 +2780,7 @@ class SettingPanel extends HTMLElement {
                 <label style="font-size:13px;color:var(--sp-color-text-secondary)">${this._t('sp.network.proxyAddr')}</label>
                 <input id="network-custom-proxy-addr-input" type="text" class="sp-form-input" value="${escapeHtml(customProxyAddr)}" placeholder="http://proxy.example.com:8080" style="margin:0">
             </div>
-            <div id="network-no-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:start;gap:16px;padding:12px 0;${useProxy === 'custom' ? '' : 'display:none;'}">
+            <div id="network-no-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:start;gap:16px;padding:12px 0;${useProxy === 'none' ? 'display:none;' : ''}">
                 <label style="font-size:13px;color:var(--sp-color-text-secondary);padding-top:8px">${this._t('sp.network.noProxy')}</label>
                 <div>
                     <input id="network-no-proxy-input" type="text" class="sp-form-input" value="${escapeHtml(noProxy)}" placeholder="localhost,127.0.0.1,.local" style="margin:0">
@@ -5843,7 +5843,7 @@ class SettingPanel extends HTMLElement {
             }
             const noProxyGroup = this.querySelector('#network-no-proxy-group');
             if (noProxyGroup) {
-                noProxyGroup.style.display = isCustom ? 'grid' : 'none';
+                noProxyGroup.style.display = e.target.value === 'none' ? 'none' : 'grid';
             }
             this.saveImmediately();
         });

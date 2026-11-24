@@ -1938,7 +1938,8 @@ export const zhCn: Record<string, string> = {
     'sp.network.proxy.custom': '自定义代理',
     'sp.network.proxyAddr': '自定义代理地址',
     'sp.network.noProxy': '不代理的地址',
-    'sp.network.noProxy.hint': '多个地址用逗号分隔，支持通配符，格式与标准 NO_PROXY 一致',
+    'sp.network.noProxy.hint':
+        '多个地址用逗号分隔，以点开头可匹配整个域名及子域名。系统代理模式下会保留系统绕过规则，邮箱会先尝试直连，建连失败后自动使用代理，无需填写。',
     'sp.gateway.title': '设备网关',
     'sp.gateway.disabled': '已关闭',
     'sp.gateway.host': '监听地址',

@@ -23,19 +23,26 @@ function baseConfig(overrides = {}) {
 }
 
 /** 目标邮件服务器替身：连接后主动发送一个标识字节。 */
-async function startTargetServer(banner = 'TARGET') {
+async function startTargetServer(banner = 'TARGET', closeOnData = false) {
     const sockets = new Set();
+    const stats = { connections: 0, received: [] };
     const server = net.createServer((socket) => {
+        stats.connections += 1;
         sockets.add(socket);
         socket.on('error', () => undefined);
         socket.on('close', () => sockets.delete(socket));
         socket.write(banner);
         // echo，便于验证双向转发
-        socket.on('data', (chunk) => socket.write(chunk));
+        socket.on('data', (chunk) => {
+            stats.received.push(chunk);
+            if (closeOnData) socket.destroy();
+            else socket.write(chunk);
+        });
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     return {
         port: server.address().port,
+        stats,
         close() {
             for (const socket of sockets) socket.destroy();
             server.close();
@@ -105,7 +112,7 @@ function createReader(socket) {
 }
 
 /** 最小 HTTP CONNECT 代理，转发到真实目标，并统计收到的隧道连接数。 */
-async function startHttpProxy() {
+async function startHttpProxy(targetHostOverride) {
     const stats = { connections: 0 };
     const server = net.createServer((client) => {
         stats.connections += 1;
@@ -115,7 +122,7 @@ async function startHttpProxy() {
             const firstLine = head.toString('latin1').split('\r\n')[0];
             const [, authority] = firstLine.split(' ');
             const [host, port] = authority.split(':');
-            const upstream = net.connect(Number(port), host);
+            const upstream = net.connect(Number(port), targetHostOverride || host);
             upstream.on('connect', () => {
                 client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
                 upstream.pipe(client);
@@ -357,4 +364,131 @@ test('client disconnect during CONNECT handshake releases the proxy socket', asy
         closeMailTunnels();
         proxy.close();
     }
+});
+
+/** 用本地服务器模拟“公网 IP 经企业路由直达”，不访问真实外网。 */
+async function automaticMailSetup(t, directMode = 'connect', closeOnData = false) {
+    const target = await startTargetServer('MAILOK', closeOnData);
+    const proxy = await startHttpProxy('127.0.0.1');
+    const originalPlatform = process.platform;
+    const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy'];
+    const savedEnv = Object.fromEntries(proxyKeys.map((key) => [key, process.env[key]]));
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    for (const key of proxyKeys) delete process.env[key];
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxy.port}`;
+    const config = baseConfig({ use_proxy: 'system' });
+    useNetworkConfig(config);
+    const originalConnect = net.connect;
+    const stats = { directAttempts: 0, directSockets: [], directMode };
+    t.mock.method(net, 'connect', (...args) => {
+        const host = typeof args[0] === 'object' ? args[0].host : args[1];
+        const port = typeof args[0] === 'object' ? args[0].port : args[0];
+        if (host !== '203.0.113.10' || port !== target.port) return originalConnect.apply(net, args);
+        stats.directAttempts += 1;
+        const socket = stats.directMode === 'connect' ? originalConnect(target.port, '127.0.0.1') : new net.Socket();
+        stats.directSockets.push(socket);
+        if (stats.directMode === 'refuse') {
+            process.nextTick(() => socket.destroy(new Error('ECONNREFUSED')));
+        }
+        return socket;
+    });
+    t.after(() => {
+        closeMailTunnels();
+        proxy.close();
+        target.close();
+        for (const socket of stats.directSockets) socket.destroy();
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        for (const key of proxyKeys) {
+            if (savedEnv[key] === undefined) delete process.env[key];
+            else process.env[key] = savedEnv[key];
+        }
+    });
+    return {
+        target,
+        proxy,
+        config,
+        stats,
+        endpoint: () => resolveMailEndpoint('203.0.113.10', target.port)
+    };
+}
+
+test('system proxy uses a reachable public-IP mail server directly without a whitelist or extra probe', async (t) => {
+    const { endpoint, proxy, target, stats } = await automaticMailSetup(t);
+    const resolved = await endpoint();
+    assert.equal(resolved.servername, '203.0.113.10');
+    assert.equal(await readBannerViaEndpoint(resolved), 'MAILOK');
+    assert.equal(stats.directAttempts, 1);
+    assert.equal(target.stats.connections, 1, 'reuse the connection for mail instead of probing and reconnecting');
+    assert.equal(proxy.stats.connections, 0);
+});
+
+test('system proxy falls back after direct refusal and briefly remembers the proxy route', async (t) => {
+    const { endpoint, proxy, stats } = await automaticMailSetup(t, 'refuse');
+    const resolved = await endpoint();
+    assert.equal(await readBannerViaEndpoint(resolved), 'MAILOK');
+    assert.equal(await readBannerViaEndpoint(resolved), 'MAILOK');
+    assert.equal(stats.directAttempts, 1, 'avoid retrying an unavailable direct route on every mail operation');
+    assert.equal(proxy.stats.connections, 2);
+    assert.equal(stats.directSockets[0].destroyed, true);
+});
+
+test('system proxy falls back after direct timeout and closes the abandoned connection', async (t) => {
+    const { endpoint, proxy, stats } = await automaticMailSetup(t, 'stall');
+    assert.equal(await readBannerViaEndpoint(await endpoint()), 'MAILOK');
+    assert.equal(stats.directAttempts, 1);
+    assert.equal(stats.directSockets[0].destroyed, true);
+    assert.equal(proxy.stats.connections, 1);
+});
+
+test('system proxy retries the direct route after the short cache expires', async (t) => {
+    const { endpoint, proxy, stats } = await automaticMailSetup(t, 'refuse');
+    const resolved = await endpoint();
+    assert.equal(await readBannerViaEndpoint(resolved), 'MAILOK');
+    stats.directMode = 'connect';
+    const later = Date.now() + 30001;
+    t.mock.method(Date, 'now', () => later);
+    assert.equal(await readBannerViaEndpoint(resolved), 'MAILOK');
+    assert.equal(stats.directAttempts, 2);
+    assert.equal(proxy.stats.connections, 1);
+});
+
+test('system proxy cancels a pending direct connection when the mail client disconnects', async (t) => {
+    const { endpoint, proxy, stats } = await automaticMailSetup(t, 'stall');
+    const resolved = await endpoint();
+    const client = net.connect(resolved.port, resolved.host);
+    client.on('error', () => undefined);
+    t.after(() => client.destroy());
+    await waitFor(() => stats.directAttempts === 1, 'direct connection should have started');
+    client.destroy();
+    await waitFor(() => stats.directSockets[0].destroyed, 'disconnect must release the pending direct socket');
+    await new Promise(setImmediate);
+    assert.equal(proxy.stats.connections, 0, 'cancellation must not start a fallback connection');
+});
+
+test('system proxy does not replay mail data through the proxy after an established direct connection fails', async (t) => {
+    const { endpoint, proxy, target } = await automaticMailSetup(t, 'connect', true);
+    const resolved = await endpoint();
+    const client = net.connect(resolved.port, resolved.host);
+    t.after(() => client.destroy());
+    const reader = createReader(client);
+    assert.equal((await reader.readBytes(6)).toString(), 'MAILOK');
+    client.write('SEND');
+    await assert.rejects(reader.readBytes(1));
+    await new Promise(setImmediate);
+    assert.equal(Buffer.concat(target.stats.received).toString(), 'SEND');
+    assert.equal(target.stats.connections, 1);
+    assert.equal(proxy.stats.connections, 0);
+});
+
+test('system proxy automatic routing is replaced when switching to an explicit custom proxy', async (t) => {
+    const { endpoint, config, proxy, stats } = await automaticMailSetup(t);
+    const first = await endpoint();
+    assert.equal(await readBannerViaEndpoint(first), 'MAILOK');
+    config.use_proxy = 'custom';
+    config.custom_proxy_addr = `http://127.0.0.1:${proxy.port}`;
+    const second = await endpoint();
+    assert.notEqual(first.port, second.port);
+    assert.equal(await readBannerViaEndpoint(second), 'MAILOK');
+    assert.equal(stats.directAttempts, 1);
+    assert.equal(proxy.stats.connections, 1);
 });
