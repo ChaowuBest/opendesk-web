@@ -1,0 +1,468 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
+ * 原生数据通道运行时验收驱动。
+ *
+ * 覆盖真实 react-native-webrtc 原生库上的发送窗口与单写入者顺序判据 —— 这是纯 JS
+ * 单测证明不了的部分，因此作为长期脚手架保留。依赖本轮人工 Server、测试账号、
+ * coturn 与 PC 侧控制口的联调场景（选路/中继/大消息/证书负向）随临时接线一并移除。
+ *
+ * 刻意不使用 `.test.*` 后缀：它要启动 Metro、构建原生产物、驱动模拟器，
+ * 不能被 `npm run test:node` 的全量收集误启动。
+ *
+ * 用法：
+ *   node --import tsx src/tests/ut/node/remote-access/native-runtime-acceptance.mjs \
+ *     --mobile-root <path> --platform android|ios --device <serial|udid> \
+ *     --out <artifacts dir>
+ *
+ * 退出码：0 全部通过；非 0 表示有场景失败或前置缺失。未执行的场景明确记为未验，
+ * 不会被计成成功。
+ */
+
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { mkdirSync, writeFileSync, appendFileSync, cpSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+const REPORT_PORT = 8099;
+const METRO_PORT = 8081;
+
+function parseArgs(argv) {
+    const args = {};
+    for (let i = 0; i < argv.length; i += 1) {
+        if (!argv[i].startsWith('--')) continue;
+        const key = argv[i].slice(2);
+        const next = argv[i + 1];
+        args[key] = next && !next.startsWith('--') ? ((i += 1), next) : 'true';
+    }
+    return args;
+}
+
+function run(command, commandArgs, options = {}) {
+    const result = spawnSync(command, commandArgs, { encoding: 'utf8', ...options });
+    return {
+        code: result.status,
+        stdout: (result.stdout ?? '').trim(),
+        stderr: (result.stderr ?? '').trim()
+    };
+}
+
+/** 白名单归类：只留类型/数量/有限耗时，不落地正文、凭据、完整 SDP/candidate。 */
+function sanitize(value) {
+    if (value === null || typeof value === 'number' || typeof value === 'boolean') return value;
+    if (typeof value === 'string') return value.length > 200 ? `${value.slice(0, 200)}…` : value;
+    if (Array.isArray(value)) return value.slice(0, 64).map(sanitize);
+    if (typeof value === 'object') {
+        const out = {};
+        for (const [key, item] of Object.entries(value)) {
+            // 候选**类型/数量**是必须留下的观测；只有候选原文、SDP 与凭据要脱敏。
+            const summaryKey = /Types?$|Count$/.test(key);
+            if (!summaryKey && /sdp|candidate|credential|secret|token|password|authorization/i.test(key)) {
+                out[key] = '[redacted]';
+                continue;
+            }
+            out[key] = sanitize(item);
+        }
+        return out;
+    }
+    return String(value);
+}
+
+class Artifacts {
+    constructor(directory) {
+        this.directory = directory;
+        mkdirSync(directory, { recursive: true });
+        this.eventsPath = join(directory, 'events.jsonl');
+        writeFileSync(this.eventsPath, '');
+    }
+    event(kind, payload) {
+        appendFileSync(this.eventsPath, `${JSON.stringify({ kind, ...sanitize(payload) })}\n`);
+    }
+    write(name, value) {
+        writeFileSync(join(this.directory, name), JSON.stringify(sanitize(value), null, 2));
+    }
+}
+
+/** 记录实际参与版本；未取到的写 null，不填猜测值。 */
+function collectVersions(mobileRoot, platform, device) {
+    const node = run('node', ['--version']).stdout || null;
+    const manifest = JSON.parse(run('cat', [join(mobileRoot, 'package.json')]).stdout || '{}');
+    const versions = {
+        node,
+        reactNative: manifest.dependencies?.['react-native'] ?? null,
+        reactNativeWebrtc: manifest.dependencies?.['react-native-webrtc'] ?? null,
+        patchPackage: manifest.devDependencies?.['patch-package'] ?? null,
+        platform,
+        device: device ?? null
+    };
+    if (platform === 'android') {
+        const gradleFile = run('cat', [
+            join(mobileRoot, 'node_modules/react-native-webrtc/android/build.gradle')
+        ]).stdout;
+        versions.nativeWebrtc = /org\.jitsi:webrtc:([^'"]+)/.exec(gradleFile)?.[1] ?? null;
+        versions.adb = run('adb', ['version']).stdout.split('\n')[0] ?? null;
+    } else {
+        const podfile = run('cat', [join(mobileRoot, 'ios/Podfile')]).stdout;
+        versions.nativeWebrtc = /pod 'JitsiWebRTC',\s*'([^']+)'/.exec(podfile)?.[1] ?? null;
+        versions.xcode = run('xcodebuild', ['-version']).stdout.split('\n')[0] ?? null;
+    }
+    return versions;
+}
+
+/**
+ * 临时 Metro 根：index.js 转向独立测试入口，其余配置继承实际应用配置。
+ * 只覆盖 projectRoot / watchFolders / resolver.nodeModulesPaths，不改产品构建模式，
+ * 也不动原生启动文件。
+ */
+function prepareMetroRoot(mobileRoot, artifacts) {
+    const root = join(artifacts.directory, 'metro-root');
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+        join(root, 'index.js'),
+        `// Generated by native-runtime-acceptance.mjs; redirects to the isolated native entry.\n` +
+            `require(${JSON.stringify(join(mobileRoot, '__tests__/native/native-runtime-entry.js'))});\n`
+    );
+    // 临时根可能位于一个 "type":"module" 的仓库内（PC 仓就是），那样拷过来的
+    // CommonJS babel.config.js 会被按 ES module 解析而报 "module is not defined"。
+    // 放一个不带 type 字段的 package.json，把这棵子树钉回 CommonJS 默认语义。
+    writeFileSync(
+        join(root, 'package.json'),
+        `${JSON.stringify({ name: 'native-runtime-acceptance-root', version: '0.0.0', private: true }, null, 2)}\n`
+    );
+    cpSync(join(mobileRoot, 'babel.config.js'), join(root, 'babel.config.js'));
+    const linked = join(root, 'node_modules');
+    if (!existsSync(linked)) symlinkSync(join(mobileRoot, 'node_modules'), linked, 'dir');
+    writeFileSync(
+        join(root, 'metro.config.cjs'),
+        `const base = require(${JSON.stringify(join(mobileRoot, 'metro.config.js'))});\n` +
+            `module.exports = {\n` +
+            `  ...base,\n` +
+            `  projectRoot: ${JSON.stringify(root)},\n` +
+            `  watchFolders: [${JSON.stringify(mobileRoot)}],\n` +
+            `  resolver: { ...(base.resolver || {}), nodeModulesPaths: [${JSON.stringify(
+                join(mobileRoot, 'node_modules')
+            )}] },\n` +
+            `};\n`
+    );
+    return root;
+}
+
+/** 收集设备回传的报告（只在 127.0.0.1 上监听）。 */
+function startCollector(artifacts) {
+    const reports = [];
+    const server = createServer((request, response) => {
+        if (request.method !== 'POST') {
+            response.writeHead(405).end();
+            return;
+        }
+        let body = '';
+        request.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 1_000_000) request.destroy();
+        });
+        request.on('end', () => {
+            try {
+                const parsed = JSON.parse(body);
+                reports.push(parsed);
+                artifacts.event('device-report', parsed);
+            } catch {
+                artifacts.event('device-report-invalid', { bytes: body.length });
+            }
+            response.writeHead(204).end();
+        });
+    });
+    return new Promise((resolveServer) => {
+        server.listen(REPORT_PORT, '127.0.0.1', () => resolveServer({ server, reports }));
+    });
+}
+
+async function waitFor(predicate, timeoutMs, intervalMs = 500) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (await predicate()) return true;
+        await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    return false;
+}
+
+async function main() {
+    const args = parseArgs(process.argv.slice(2));
+    const mobileRoot = resolve(args['mobile-root'] ?? '');
+    const platform = args.platform ?? 'android';
+    const device = args.device;
+    const scenario = args.scenario ?? 'native-single-writer';
+    const artifacts = new Artifacts(resolve(args.out ?? join(process.cwd(), '.tmp/native-runtime-acceptance')));
+
+    const owned = { metro: null, reversed: false, installed: false };
+    const results = { scenario, platform, started: new Date().toISOString(), checks: [], verdict: 'unknown' };
+
+    const fail = (reason, detail) => {
+        results.checks.push({ name: reason, ok: false, detail: detail ?? null });
+        artifacts.event('check', { name: reason, ok: false });
+    };
+    const pass = (name, detail) => {
+        results.checks.push({ name, ok: true, detail: detail ?? null });
+        artifacts.event('check', { name, ok: true });
+    };
+
+    try {
+        // ---- 前置完整性：缺工具是环境缺口，不是通过 ----
+        if (!mobileRoot || !existsSync(mobileRoot)) {
+            fail('mobile-root missing');
+            throw new Error('--mobile-root is required and must exist');
+        }
+        if (!existsSync(join(mobileRoot, '__tests__/native/native-runtime-entry.js'))) {
+            fail('native entry missing');
+            throw new Error('__tests__/native/native-runtime-entry.js is required');
+        }
+        if (!existsSync(join(mobileRoot, 'patches/react-native-webrtc+124.0.8.patch'))) {
+            fail('patch missing');
+            throw new Error('the pinned react-native-webrtc patch must be present');
+        }
+        pass('prerequisites');
+
+        const versions = collectVersions(mobileRoot, platform, device);
+        artifacts.write('versions.json', versions);
+        if (!versions.nativeWebrtc) fail('native webrtc version not pinned');
+        else pass('native webrtc pinned', versions.nativeWebrtc);
+
+        if (platform === 'android') {
+            if (!device) {
+                fail('device serial required');
+                throw new Error('--device is required; do not default to the first device');
+            }
+            const devices = run('adb', ['devices']).stdout;
+            if (!devices.includes(device)) {
+                fail('device not attached', device);
+                throw new Error(`device ${device} is not attached`);
+            }
+            pass('device attached', device);
+        }
+
+        const metroRoot = prepareMetroRoot(mobileRoot, artifacts);
+        pass('temporary metro root', metroRoot);
+
+        const collector = await startCollector(artifacts);
+        owned.collector = collector.server;
+
+        if (platform === 'android') {
+            // 只对本次设备建立映射，结束时只撤销本次创建的。
+            run('adb', ['-s', device, 'reverse', `tcp:${METRO_PORT}`, `tcp:${METRO_PORT}`]);
+            run('adb', ['-s', device, 'reverse', `tcp:${REPORT_PORT}`, `tcp:${REPORT_PORT}`]);
+            owned.reversed = true;
+            pass('adb reverse', `${METRO_PORT},${REPORT_PORT}`);
+        }
+
+        // ---- 启动本轮自己的 Metro ----
+        owned.metro = spawn(
+            'npx',
+            ['react-native', 'start', '--config', join(metroRoot, 'metro.config.cjs'), '--port', String(METRO_PORT)],
+            { cwd: mobileRoot, stdio: 'ignore', detached: false }
+        );
+        const metroUp = await waitFor(async () => {
+            try {
+                const response = await fetch(`http://127.0.0.1:${METRO_PORT}/status`);
+                return response.ok;
+            } catch {
+                return false;
+            }
+        }, 60000);
+        if (!metroUp) {
+            fail('metro did not start');
+            throw new Error('metro did not become ready');
+        }
+        pass('metro ready');
+
+        // ---- 启动被测 App ----
+        if (platform === 'android') {
+            const appId = /applicationId\s+"([^"]+)"/.exec(
+                run('cat', [join(mobileRoot, 'android/app/build.gradle')]).stdout
+            )?.[1];
+            if (!appId) {
+                fail('application id not found');
+                throw new Error('could not read applicationId from android/app/build.gradle');
+            }
+            const apk = join(mobileRoot, 'android/app/build/outputs/apk/debug/app-debug.apk');
+            if (!existsSync(apk)) {
+                fail('debug apk missing', 'run :app:assembleDebug first');
+                throw new Error('debug apk is missing');
+            }
+            const install = run('adb', ['-s', device, 'install', '-r', apk]);
+            if (install.code !== 0) {
+                fail('apk install failed');
+                throw new Error(install.stderr || 'install failed');
+            }
+            owned.installed = true;
+            run('adb', ['-s', device, 'shell', 'am', 'force-stop', appId]);
+            run('adb', ['-s', device, 'shell', 'monkey', '-p', appId, '-c', 'android.intent.category.LAUNCHER', '1']);
+            pass('app launched', appId);
+        } else {
+            const appPath = args['ios-app'];
+            if (!appPath || !existsSync(appPath)) {
+                fail('ios app bundle missing', 'pass --ios-app <path to .app>');
+                throw new Error('--ios-app is required for the ios platform');
+            }
+            if (!device) {
+                fail('simulator udid required');
+                throw new Error('--device is required; do not default to the booted simulator');
+            }
+            // 专用模拟器：先确保启动完成，不抹除常用设备。
+            run('xcrun', ['simctl', 'bootstatus', device, '-b']);
+            const appId = run('plutil', [
+                '-extract',
+                'CFBundleIdentifier',
+                'raw',
+                '-o',
+                '-',
+                join(appPath, 'Info.plist')
+            ]).stdout;
+            if (!appId) {
+                fail('bundle identifier not found');
+                throw new Error('could not read CFBundleIdentifier from the app bundle');
+            }
+            // 每次 install 都会换一个新的 Bundle 容器 UUID，对 macOS 应用防火墙就是
+            // 一个全新程序：已授予的「允许接受传入网络连接」随旧路径作废，并重新弹窗。
+            // Debug 构建的 JS 由 Metro 现场提供，跳过安装不会让被测代码变旧。
+            if (args['skip-ios-install'] === 'true') {
+                pass('reusing the installed app bundle', 'skipped simctl install');
+            } else {
+                const install = run('xcrun', ['simctl', 'install', device, appPath]);
+                if (install.code !== 0) {
+                    fail('simulator install failed');
+                    throw new Error(install.stderr || 'install failed');
+                }
+                owned.installed = true;
+            }
+            run('xcrun', ['simctl', 'terminate', device, appId]);
+            const launch = run('xcrun', ['simctl', 'launch', device, appId]);
+            if (launch.code !== 0) {
+                fail('simulator launch failed');
+                throw new Error(launch.stderr || 'launch failed');
+            }
+            // 模拟器与主机共用 loopback，无需端口映射。
+            pass('app launched', appId);
+        }
+
+        // ---- 等设备回传 ----
+        const got = await waitFor(async () => collector.reports.length > 0, 180000, 1000);
+        if (!got) {
+            fail('no device report');
+            throw new Error('the device did not report within the deadline');
+        }
+        const report = collector.reports[collector.reports.length - 1];
+        artifacts.write('device-report.json', report);
+
+        // 原生运行时判据：发送窗口与单写入者顺序。
+        // 窗口为 0 时任何一帧都不得被接纳：证明这个限制被执行了。
+        const zero = report?.observations?.zeroWindow;
+        if (!zero) fail('zero-window observation missing');
+        else if (!zero.ok) fail('zero window not enforced', `accepted=${zero.accepted}`);
+        else pass('zero window enforced', `blocked=${zero.blocked}/${zero.attempts}`);
+
+        // 比较的是 buffered + bytes 与 limit：limit 正好等于帧字节放行，少一字节即 blocked。
+        const comparison = report?.observations?.windowComparison;
+        if (!comparison) fail('window comparison observation missing');
+        else if (!comparison.ok)
+            fail(
+                'window comparison not evaluated against a live reading',
+                `atLimit=${comparison.atExactLimit} oneUnder=${comparison.oneByteUnder}`
+            );
+        else
+            pass(
+                'window compares the live reading against the limit',
+                `atLimit=${comparison.atExactLimit} oneUnder=${comparison.oneByteUnder}`
+            );
+
+        // 缓冲水位只作记录：它在同进程 loopback 上堆不起来，顺序判据不依赖它。
+        const buildup = report?.observations?.bufferBuildup;
+        if (buildup) artifacts.event('buffer-buildup', buildup);
+
+        // 单写入者顺序：区间进出的计数器读数相等 <=> 区间内没有本通道的其它发送插入。
+        // 自检：同批里的原库 plain send 必须也推进了同一个计数器，否则判据是空话。
+        const writer = report?.observations?.singleWriter;
+        if (!writer) {
+            fail('single writer observation missing');
+        } else if (writer.ok === null || writer.conclusive === false) {
+            results.unverified = results.unverified ?? [];
+            results.unverified.push({
+                name: 'single writer ordering',
+                reason:
+                    writer.reason ??
+                    'the other send entry point did not advance the same counter, ' +
+                        'so an unchanged region reading would not discriminate',
+                observed: writer
+            });
+            process.stdout.write('UNVERIFIED  single writer ordering  (see results.json)\n');
+        } else if (writer.interleavedRegions > 0) {
+            fail('single writer violated', `interleaved=${writer.interleavedRegions}`);
+        } else if (writer.uniqueEnters !== writer.controlledCalls) {
+            fail('region counter not unique per submission', `unique=${writer.uniqueEnters}`);
+        } else {
+            pass(
+                'single writer ordering',
+                `controlled=${writer.controlledCalls} plain=${writer.plainCalls} ` +
+                    `counterAdvance=${writer.counterAdvance} interleaved=${writer.interleavedRegions}`
+            );
+        }
+
+        // 关闭与发送交错：在途发送有界收敛，关闭后不得再被接纳。
+        const closing = report?.observations?.closeInterleave;
+        if (!closing) {
+            fail('close interleave observation missing');
+        } else if (!closing.openedBefore) {
+            fail('close interleave ran on a channel that was not open');
+        } else if (closing.afterAccepted > 0) {
+            fail('accepted a submission after close', `accepted=${closing.afterAccepted}`);
+        } else if (!closing.allBounded) {
+            fail('close interleave produced an unbounded status');
+        } else if (closing.interleavedRegions > 0) {
+            fail('single writer violated during close', `interleaved=${closing.interleavedRegions}`);
+        } else {
+            pass('close interleaves without a stray accept', `after=${closing.afterStatuses.join(',')}`);
+        }
+
+        for (const check of report?.observations?.platformChecks ?? []) {
+            if (check.ok) pass(`device: ${check.name}`);
+            else fail(`device: ${check.name}`);
+        }
+        for (const error of report?.observations?.errors ?? []) fail('device error', error);
+    } catch (error) {
+        artifacts.event('driver-error', { message: String(error?.message ?? error) });
+    } finally {
+        // 只清理本轮自己创建的东西：不抹常用设备、不动默认数据、不关别人的 Metro。
+        if (owned.metro && !owned.metro.killed) owned.metro.kill('SIGTERM');
+        if (owned.reversed && device) {
+            run('adb', ['-s', device, 'reverse', '--remove', `tcp:${METRO_PORT}`]);
+            run('adb', ['-s', device, 'reverse', '--remove', `tcp:${REPORT_PORT}`]);
+        }
+        owned.collector?.close();
+    }
+
+    results.finished = new Date().toISOString();
+    const allPassed = results.checks.every((check) => check.ok);
+    results.verdict = !allPassed ? 'failed' : results.unverified?.length ? 'passed-with-unverified' : 'passed';
+    artifacts.write('results.json', results);
+    for (const check of results.checks) {
+        process.stdout.write(
+            `${check.ok ? 'PASS' : 'FAIL'}  ${check.name}${check.detail ? `  (${check.detail})` : ''}\n`
+        );
+    }
+    for (const item of results.unverified ?? []) {
+        process.stdout.write(`UNVERIFIED  ${item.name}\n            reason: ${item.reason}\n`);
+    }
+    process.stdout.write(`\nverdict: ${results.verdict}\nartifacts: ${artifacts.directory}\n`);
+    // 未验不当成失败退出，但也绝不写成通过：verdict 与 results.json 都留痕。
+    process.exit(results.verdict === 'failed' ? 1 : 0);
+}
+
+await main();

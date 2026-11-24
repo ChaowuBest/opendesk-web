@@ -28,6 +28,7 @@ jest.unstable_mockModule('../../../main/utils/setting.js', () => ({
 
 // CliPlatform 顶层静态引入了全部内置应用，仅替换为空类以满足加载，测试本身不触碰它们
 const builtinApplications: [string, string][] = [
+    ['mobileaccess', 'MobileAccessApplication'],
     ['mailbox', 'MailboxApplication'],
     ['filemgr', 'FileMgrApplication'],
     ['calendar', 'CalendarApplication'],

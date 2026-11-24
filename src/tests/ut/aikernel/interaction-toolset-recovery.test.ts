@@ -1,6 +1,8 @@
 import { jest } from '@jest/globals';
 import { BaseTool, BaseToolset, InteractiveToolset, ToolResult } from '../../../main/aikernel/tool.js';
 import { z } from 'zod';
+import fs from 'node:fs';
+import path from 'node:path';
 
 function createMockInteractionToolset(): BaseToolset {
     const toolset = new BaseToolset('interaction');
@@ -406,5 +408,21 @@ describe('手动停止/中断任务时自动取消交互提示（askUser / exitP
         });
         expect(askProvider.cancelCurrent).toHaveBeenCalledTimes(1);
         expect(exitProvider.cancelCurrent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Electron interaction delivery composition', () => {
+    test('all permission creation paths use the platform factory and providers capture one channel', () => {
+        const mainSource = fs.readFileSync(path.resolve(process.cwd(), 'src/main/main.ts'), 'utf8');
+        const platformSource = fs.readFileSync(path.resolve(process.cwd(), 'src/platforms/electron.ts'), 'utf8');
+
+        expect(mainSource.match(/new ElectronPermissionPromptProvider/g) ?? []).toHaveLength(0);
+        expect(platformSource.match(/new ElectronPermissionPromptProvider/g) ?? []).toHaveLength(1);
+        expect(mainSource).toContain(
+            'electronPlatform.setInteractionDeliveryChannel(deliveryChannel)'
+        );
+        expect(platformSource).toContain('new ElectronAskUserProvider(this.interactionDeliveryChannel)');
+        expect(platformSource).toContain('new ElectronExitPlanModeProvider(this.interactionDeliveryChannel)');
+        expect(platformSource).toContain('new ElectronPermissionPromptProvider(this.interactionDeliveryChannel)');
     });
 });

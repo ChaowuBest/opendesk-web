@@ -21,10 +21,17 @@ import type {
     PermissionRequest,
     PermissionUserResponse,
     PermissionPromptProvider,
-    PermissionTaskInfo,
     PermissionPromptContext,
+    PermissionTaskInfo,
     PermissionEnforcer
 } from './permission.js';
+import type {
+    InteractionDeliveryChannel,
+    InteractionDeliveryHandle,
+    InteractionRemoteSettlement
+} from '../interaction/delivery.js';
+import { createPermissionDeliveryOptions } from './permission-delivery-options.js';
+import { RemoteFinishBarrier } from '../interaction/remote-finish-barrier.js';
 import {
     clearInterval as nodeClearInterval,
     clearTimeout as nodeClearTimeout,
@@ -57,6 +64,9 @@ interface QueuedElectronPermissionPrompt {
     taskInfo?: PermissionTaskInfo;
     /** 弹窗附加上下文（工具调用参数，如沙箱命令的 command），随 payload 下发展示 */
     context?: PermissionPromptContext;
+    delivery?: InteractionDeliveryHandle;
+    /** Endpoint generation this request was published to, so a re-offer never repeats. */
+    deliveredGeneration?: number;
     deadlineMs: number;
     resolve: (response: PermissionUserResponse) => void;
     settled: boolean;
@@ -111,6 +121,26 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     private queue: QueuedElectronPermissionPrompt[] = [];
     private current: QueuedElectronPermissionPrompt | null = null;
     private grantedPermissions: GrantedElectronPermission[] = [];
+    private readonly remoteFinish = new RemoteFinishBarrier();
+
+    private readyUnsubscribe?: () => void;
+
+    constructor(private readonly deliveryChannel?: InteractionDeliveryChannel) {}
+
+    /**
+     * Listens only while a request is actually current. Providers are created per Task and have no
+     * production dispose, so a constructor-long subscription would retain one closure per Task.
+     */
+    private watchEndpointReady(): void {
+        this.readyUnsubscribe ??= this.deliveryChannel?.subscribeEndpointReady((generation) =>
+            this.reofferCurrentToMobile(generation)
+        );
+    }
+
+    private unwatchEndpointReady(): void {
+        this.readyUnsubscribe?.();
+        this.readyUnsubscribe = undefined;
+    }
 
     async prompt(
         requests: PermissionRequest[],
@@ -120,14 +150,6 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         context?: PermissionPromptContext
     ): Promise<PermissionUserResponse> {
         try {
-            const { BrowserWindow } = electron();
-            const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
-
-            if (!focusedWindow) {
-                logger.warn('No Electron window available for permission prompt, denying');
-                return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
-            }
-
             const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
             return new Promise<PermissionUserResponse>((resolve) => {
@@ -159,7 +181,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                 if (this.current === current && !current.settled && askOrDeny.length === 0) {
                     this.cleanupCurrent();
                     this.dismiss(current);
-                    this.settleItem(current, { decision: 'allow', rememberScope: 'none' });
+                    this.settleItem(current, { decision: 'allow', rememberScope: 'none' }, 'rule');
                     this.current = null;
                 }
             } catch (err) {
@@ -179,7 +201,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                     const index = this.queue.indexOf(item);
                     if (index >= 0) {
                         this.queue.splice(index, 1);
-                        this.settleItem(item, { decision: 'allow', rememberScope: 'none' });
+                        this.settleItem(item, { decision: 'allow', rememberScope: 'none' }, 'rule');
                     }
                 } else {
                     this.invalidateGrants(item.requests);
@@ -197,36 +219,43 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
         this.queue = this.queue.filter((item) => {
             if (!this.matchesTask(item, ids)) return true;
-            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' }, 'cancel');
             return false;
         });
         if (this.current && this.matchesTask(this.current, ids)) {
             const current = this.current;
             this.cleanupCurrent();
             this.dismiss(current);
-            this.settleItem(current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settleItem(current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' }, 'cancel');
             this.current = null;
             this.processQueue();
         }
     }
 
     dispose(): void {
+        this.unwatchEndpointReady();
         if (this.current) {
             this.cleanupCurrent();
-            this.settleItem(this.current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settleItem(
+                this.current,
+                { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' },
+                'cancel'
+            );
             this.current = null;
         }
 
         const queued = this.queue;
         this.queue = [];
         for (const item of queued) {
-            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' }, 'cancel');
         }
         this.grantedPermissions = [];
     }
 
     private processQueue(): void {
         if (this.current) return;
+        // Every advance entry point waits out a closing remote delivery, including a brand new prompt().
+        if (this.remoteFinish.blocked) return;
 
         while (this.queue.length > 0) {
             const item = this.queue.shift()!;
@@ -234,18 +263,20 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
             const cachedResponse = this.tryAutoResolve(item);
             if (cachedResponse) {
-                this.settleItem(item, cachedResponse);
+                this.settleItem(item, cachedResponse, 'rule');
                 continue;
             }
 
             const remainingMs = item.deadlineMs - Date.now();
             if (remainingMs <= 0) {
                 logger.warn(`Queued permission prompt timed out before display, denying`);
-                this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' });
+                this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' }, 'timeout');
                 continue;
             }
 
             this.current = item;
+            // A request may outlive the phone's absence: watch so a newly ready endpoint gets it re-offered.
+            this.watchEndpointReady();
             this.showCurrent(item, remainingMs);
             return;
         }
@@ -253,13 +284,32 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
     private showCurrent(item: QueuedElectronPermissionPrompt, remainingMs: number): void {
         const { BrowserWindow, ipcMain } = electron();
-        // 没有任何窗口时 renderer 无法展示弹窗，直接拒绝；通知的唤起目标由 system-notification 解析主窗口
-        if (!BrowserWindow.getAllWindows().some((w) => !w.isDestroyed())) {
+        const hasWindow = BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+        const delivered = this.publishCurrentToMobile(item);
+
+        item.timeoutTimer = safeSetTimeout(() => {
+            if (this.current !== item || item.settled) return;
+            this.cleanupCurrent();
+            this.dismiss(item);
+            logger.warn(`Permission prompt timed out after ${PROMPT_TIMEOUT_MS}ms, denying`);
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' }, 'timeout');
             this.current = null;
-            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' });
+            this.processQueue();
+        }, remainingMs);
+
+        if (!hasWindow && !delivered) {
+            this.cleanupCurrent();
+            this.current = null;
+            this.settleItem(
+                item,
+                { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' },
+                'fallback'
+            );
             this.processQueue();
             return;
         }
+
+        if (!hasWindow) return;
 
         const first = item.requests[0];
         const actionLabel = getActionLabel(first.action);
@@ -275,21 +325,10 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             taskId: item.taskInfo?.taskId
         });
 
-        item.timeoutTimer = safeSetTimeout(() => {
-            if (this.current !== item || item.settled) return;
-            this.cleanupCurrent();
-            this.dismiss(item);
-            logger.warn(`Permission prompt timed out after ${PROMPT_TIMEOUT_MS}ms, denying`);
-            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' });
-            this.current = null;
-            this.processQueue();
-        }, remainingMs);
-
         item.responseHandler = (_event: any, respRequestId: string, response: any) => {
             if (respRequestId !== item.requestId) return;
             if (this.current !== item || item.settled) return;
 
-            this.cleanupCurrent();
             const decision = response.decision || 'deny';
             const userResponse: PermissionUserResponse = {
                 decision,
@@ -298,20 +337,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                 denyReason:
                     decision === 'deny' ? (response.denyReason === 'timeout' ? 'timeout' : 'user_denied') : undefined
             };
-            this.settleItem(item, userResponse);
-            this.current = null;
-
-            const persistent =
-                userResponse.decision === 'allow' &&
-                (userResponse.rememberScope === 'type' ||
-                    (userResponse.rememberScope === 'prefix' && !!userResponse.selectedPrefixPattern));
-            this.recordGrant(item, userResponse);
-            if (persistent) {
-                // 让调用方先把持久化规则写回，再处理队列，避免短暂绕过更具体的 ask/deny 规则。
-                safeSetTimeout(() => this.processQueue(), 0);
-            } else {
-                this.processQueue();
-            }
+            this.completeCurrentResponse(item, userResponse, 'local');
         };
         ipcMain.on('permission:response', item.responseHandler);
 
@@ -352,6 +378,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     }
 
     private cleanupCurrent(): void {
+        this.unwatchEndpointReady();
         if (!this.current) return;
         const { ipcMain } = electron();
         if (this.current.responseHandler) {
@@ -376,13 +403,92 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         }
     }
 
-    private settleItem(item: QueuedElectronPermissionPrompt, response: PermissionUserResponse): void {
-        if (item.settled) return;
+    private settleItem(
+        item: QueuedElectronPermissionPrompt,
+        response: PermissionUserResponse,
+        source: 'local' | 'mobile' | 'rule' | 'timeout' | 'cancel' | 'fallback'
+    ): boolean {
+        if (item.settled) return false;
         item.settled = true;
         // 请求已结算（应答 / 超时 / 任务停止），通知的待打开记录必须一并作废：
         // 用户多半是在应用内直接应答的，留着会让之后任意一次窗口聚焦把他跳回这个任务。
         clearPendingOpenTasks(item.taskInfo?.taskId);
+        if (source === 'local') item.delivery?.close('superseded');
+        if (source === 'rule') item.delivery?.close('resolved');
+        if (source === 'timeout') item.delivery?.close('timeout');
+        if (source === 'cancel') item.delivery?.close('cancelled');
+        if (source === 'mobile') this.dismiss(item);
         item.resolve(response);
+        return true;
+    }
+
+    /**
+     * Re-offers the request still being waited on to a newly ready endpoint. The queue, the settle gate
+     * and the original deadline stay here; nothing is revived and no answer is replayed.
+     */
+    private reofferCurrentToMobile(generation: number): void {
+        const item = this.current;
+        if (!item || item.settled) return;
+        if (item.deliveredGeneration === generation) return;
+        if (item.deadlineMs - Date.now() <= 0) return;
+        this.publishCurrentToMobile(item);
+    }
+
+    private publishCurrentToMobile(item: QueuedElectronPermissionPrompt): boolean {
+        const sourceTaskId = item.taskInfo?.sourceTaskId;
+        if (typeof sourceTaskId !== 'string' || sourceTaskId.trim().length === 0) return false;
+        const options = createPermissionDeliveryOptions(item.toolName, item.prefixOptions);
+        const delivery = this.deliveryChannel?.publishPermission(
+            {
+                type: 'permission',
+                requestId: item.requestId,
+                sourceTaskId,
+                ...(item.taskInfo?.sourceTaskName ? { taskName: item.taskInfo.sourceTaskName } : {}),
+                expiresAt: item.deadlineMs,
+                toolName: item.toolName,
+                resources: item.requests.map((request) => request.resourcePath),
+                options
+            },
+            (response, settlement) => this.completeCurrentResponse(item, response, 'mobile', settlement)
+        );
+        // A failed re-offer must keep the handle from the delivery that is still open.
+        if (!delivery) return false;
+        item.delivery = delivery;
+        item.deliveredGeneration = this.deliveryChannel?.endpointGeneration;
+        return true;
+    }
+
+    private completeCurrentResponse(
+        item: QueuedElectronPermissionPrompt,
+        response: PermissionUserResponse,
+        source: 'local' | 'mobile',
+        settlement?: InteractionRemoteSettlement
+    ): boolean {
+        if (this.current !== item || item.settled) return false;
+        this.cleanupCurrent();
+        if (!this.settleItem(item, response, source)) return false;
+        this.current = null;
+        const persistent =
+            response.decision === 'allow' &&
+            (response.rememberScope === 'type' ||
+                (response.rememberScope === 'prefix' && !!response.selectedPrefixPattern));
+        this.recordGrant(item, response);
+        const advance = persistent
+            ? // Let the caller persist rules before processing the next request.
+              () => safeSetTimeout(() => this.processQueue(), 0)
+            : () => this.processQueue();
+        // A remote answer must not advance the queue while the remote exit still carries this request,
+        // or the next item is published into a busy endpoint and never reaches the phone.
+        if (settlement) {
+            const release = this.remoteFinish.hold();
+            settlement.afterRemoteClose(() => {
+                release();
+                advance();
+            });
+        } else {
+            advance();
+        }
+        return true;
     }
 
     private matchesTask(item: QueuedElectronPermissionPrompt, taskIds: Set<string>): boolean {

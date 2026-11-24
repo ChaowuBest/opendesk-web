@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { UpdateCoordinator } from '../../../../main/updater/coordinator.js';
+import { createMobileQuitBarrier } from '../../../../main/applications/mobileaccess/acp/mobile/hosts/electron-lifecycle.js';
 
 function createCoordinator(overrides: Record<string, unknown> = {}) {
     const calls: string[] = [];
@@ -245,3 +246,58 @@ test('manual restart stays on the installed state when an editor refuses to clos
     assert.deepEqual(calls, ['service', 'stop', 'flush', 'prepare']);
     assert.equal(coordinator.getState().status, 'installed');
 });
+
+for (const approved of [true, false]) {
+    test(`update restart preserves the remote lifecycle when Office approval is ${approved}`, async (t) => {
+        const events: string[] = [];
+        let releaseClose!: () => void;
+        const closed = new Promise<void>((resolve) => {
+            releaseClose = resolve;
+        });
+        t.after(releaseClose);
+        const deferQuit = createMobileQuitBarrier(
+            async () => {
+                events.push('close-remote');
+                await closed;
+            },
+            () => {
+                assert.equal(deferQuit(), false);
+                events.push('quit');
+            }
+        );
+
+        const { coordinator, root } = createCoordinator({
+            stopActiveTasks: async () => {
+                events.push('stop');
+            },
+            flushState: async () => {
+                events.push('flush');
+            },
+            prepareWindowsForQuit: async () => {
+                events.push('confirm');
+                return approved;
+            },
+            relaunch: () => {
+                events.push('relaunch');
+            },
+            quit: () => {
+                assert.equal(deferQuit(), true);
+            }
+        });
+        t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+        await coordinator.checkForUpdates();
+
+        assert.equal(await coordinator.restartToApplyUpdate(), approved);
+        assert.equal(coordinator.getState().status, approved ? 'restarting' : 'installed');
+        assert.deepEqual(
+            events,
+            approved ? ['stop', 'flush', 'confirm', 'relaunch', 'close-remote'] : ['stop', 'flush', 'confirm']
+        );
+        releaseClose();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(
+            events,
+            approved ? ['stop', 'flush', 'confirm', 'relaunch', 'close-remote', 'quit'] : ['stop', 'flush', 'confirm']
+        );
+    });
+}

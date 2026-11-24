@@ -76,6 +76,10 @@ jest.unstable_mockModule('../../../main/utils/electron-ipc.js', () => ({
     safeSendToWebFrame: jest.fn()
 }));
 
+jest.unstable_mockModule('../../../main/applications/mobileaccess/app.js', () => ({
+    MobileAccessApplication: class {}
+}));
+
 jest.unstable_mockModule('../../../main/applications/slides/app.js', () => ({
     SlidesApplication: class {}
 }));

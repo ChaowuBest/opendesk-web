@@ -25,54 +25,10 @@ import type { TaskState } from '../states/tasks.js';
 import { findMessageIdForToolCallForTask } from '../task/permission.js';
 import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
+import type { AskUserPromptContext, AskUserProvider, AskUserRequest } from './contracts.js';
+export type { AskUserOption, AskUserPromptContext, AskUserProvider, AskUserQuestion, AskUserRequest, AskUserResponse } from './contracts.js';
 
 // ─── Provider 接口 ────────────────────────────────────────────────────────────
-
-export interface AskUserOption {
-    label: string;
-    description: string;
-}
-
-export interface AskUserQuestion {
-    question: string;
-    /** 简短标签，最多 30 字符，显示为 chip */
-    header: string;
-    options: AskUserOption[];
-    /** 是否允许多选，默认 false */
-    multiple?: boolean;
-}
-
-export interface AskUserRequest {
-    requestId: string;
-    questions: AskUserQuestion[];
-    taskId: string;
-    taskName: string | null;
-    workspace?: string;
-}
-
-export interface AskUserPromptContext {
-    toolCallId?: string;
-    messageId?: string;
-}
-
-export interface AskUserResponse {
-    /** question index → 选中的 label 数组（单选时长度为 1） */
-    answers: Record<number, string[]>;
-    /** 用户是否取消（Escape） */
-    cancelled?: boolean;
-}
-
-/**
- * AskUser 交互提供者接口。
- * TUI 和 Electron 各自实现此接口。
- */
-export interface AskUserProvider {
-    prompt(request: AskUserRequest, context?: AskUserPromptContext): Promise<AskUserResponse>;
-    /** 当前是否正在显示用户交互界面（TUI 专用，避免 taskview 重复渲染） */
-    isPrompting?(): boolean;
-    /** 主动取消当前等待中的提问（模式切换为不交互模式时调用），resolve 为 cancelled。 */
-    cancelCurrent?(): void;
-}
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 

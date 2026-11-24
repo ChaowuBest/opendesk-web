@@ -147,6 +147,7 @@ export interface SimplifiedTaskSnapshot {
 export function serializeTaskSimplified(task: TaskState): SimplifiedTaskSnapshot {
     return {
         task_id: task.task_id,
+        modelConfiguration: { model: task.model, reasoningEffort: task.reasoningEffort },
         parent_id: task.parent_id,
         task_name: task.task_name,
         task_status: task.task_status,
@@ -176,7 +177,8 @@ export function serializeTaskSimplified(task: TaskState): SimplifiedTaskSnapshot
  * 来渲染任务列表中的终态标签，避免把 objective、criteria、evaluation 等重复写入 task_list.json。
  */
 export function normalizeTaskIndexEntry(entry: Record<string, unknown>): SimplifiedTaskSnapshot {
-    const { goal, ...metadata } = entry;
+    // Model controls are live UI metadata; cold task indexes must not overwrite an open task's configuration.
+    const { goal, modelConfiguration: _modelConfiguration, ...metadata } = entry;
     // 磁盘索引条目在此边界收敛回快照形状（条目源自 serializeTaskForIndex 的输出）
     const base = metadata as SimplifiedTaskSnapshot;
     if (goal === null || typeof goal !== 'object' || Array.isArray(goal)) {

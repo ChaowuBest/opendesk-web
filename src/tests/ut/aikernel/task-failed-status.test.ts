@@ -133,6 +133,8 @@ describe('task failed status on model error termination', () => {
         });
 
         await task.submitUserMessage('review the pr');
+        expect(task.task_status).toBe('running');
+        const finished = task.waitUntilFinished(undefined, true);
         await (processSpy.mock.results[0]?.value as Promise<void>);
 
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
@@ -142,6 +144,7 @@ describe('task failed status on model error termination', () => {
         expect(task.finished_at).toBeDefined();
         // 简化快照直接携带 failed 状态，无需额外字段
         expect(serializeTaskSimplified(task).task_status).toBe('failed');
+        await finished;
     });
 
     test('marks task as stopped when the turn completes normally', async () => {
