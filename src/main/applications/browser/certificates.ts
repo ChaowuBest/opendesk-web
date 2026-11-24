@@ -16,6 +16,10 @@ const overridableErrors = new Set([
     'ERR_CERT_COMMON_NAME_INVALID',
     'ERR_CERT_DATE_INVALID'
 ]);
+
+export function isOverridableCertificateError(error: string): boolean {
+    return overridableErrors.has(error.replace(/^net::/, ''));
+}
 const localAddresses = new BlockList();
 localAddresses.addSubnet('10.0.0.0', 8);
 localAddresses.addSubnet('100.64.0.0', 10);

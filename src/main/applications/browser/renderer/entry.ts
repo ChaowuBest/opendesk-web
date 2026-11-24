@@ -4453,7 +4453,7 @@ class BrowserEntryWidget extends HTMLElement {
                         <div style="font-size: var(--fs-sm);color:#9ca3af">${this._t('renderer.browser.settings.cert.issuer')}${escapeHtml(cert.issuer)}</div>
                         <div style="font-size: var(--fs-sm);color:#b0b3b8">${this._t('renderer.browser.settings.cert.validity')}${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
                     </div>
-                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size: var(--fs-sm);padding:4px 10px">
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${escapeHtml(cert.fingerprint256)}" style="font-size: var(--fs-sm);padding:4px 10px">
                         <i class="fas fa-xmark"></i>
                     </button>
                 </div>`
@@ -4492,10 +4492,12 @@ class BrowserEntryWidget extends HTMLElement {
                     });
                 });
             });
-        } catch {
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : this._t('renderer.browser.settings.cert.loadFailed');
             certListEl.innerHTML =
                 '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size: var(--fs-base)">' +
-                this._t('renderer.browser.settings.cert.loadFailed') +
+                escapeHtml(message) +
                 '</div>';
         }
     }

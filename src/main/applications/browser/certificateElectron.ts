@@ -9,7 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { buffer } from 'node:stream/consumers';
 import { dialog, webContents } from 'electron';
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron';
 import { ApplicationRegistry } from '../registry.js';
@@ -22,6 +23,7 @@ import { t as browserT } from './locale/index.js';
 type BrowserContentsCheck = (contents: WebContents) => boolean;
 
 const browserCertificateExceptions = new BrowserCertificateExceptions<WebContents>();
+const MAX_CERTIFICATE_BYTES = 1024 * 1024;
 
 export function installBrowserCertificates(host: BrowserWindow, isEmbeddedBrowserContents: BrowserContentsCheck): void {
     host.webContents.on('did-attach-webview', (_event, guest) => {
@@ -62,7 +64,9 @@ export function installBrowserCertificates(host: BrowserWindow, isEmbeddedBrowse
             });
             const filePath = result.filePaths[0];
             if (result.canceled || !filePath) return null;
-            return await browserApp.importBrowserCertificate(await readFile(filePath));
+            const data = await buffer(createReadStream(filePath, { end: MAX_CERTIFICATE_BYTES }));
+            if (data.length > MAX_CERTIFICATE_BYTES) return { success: false, message: browserT('error.certTooLarge') };
+            return await browserApp.importBrowserCertificate(data);
         } catch (error) {
             logger.warn('Failed to select or read a browser certificate', error);
             return { success: false, message: browserT('renderer.browser.settings.cert.readFailed') };
@@ -90,7 +94,7 @@ function installBrowserCertificateHandlers(contents: WebContents): void {
     });
     contents.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
         const browserApp = ApplicationRegistry.getApplication('browser') as BrowserApplication | undefined;
-        const explicitlyTrusted = browserApp?.matchesBrowserCertificate(certificate.data);
+        const explicitlyTrusted = browserApp?.matchesBrowserCertificate(certificate.data, error);
         const allowedByException =
             !explicitlyTrusted &&
             (isMainFrame

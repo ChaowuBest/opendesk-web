@@ -109,7 +109,7 @@ describe('browser entry widget navigation', () => {
         (window as any).applicationRegistryAPI = {
             callMainWorld: async (_bundle: string, method: string) =>
                 method === 'getBrowserCertificates'
-                    ? [{ fingerprint: 'cert-fingerprint', commonName: name }]
+                    ? [{ fingerprint256: 'cert-fingerprint', commonName: name }]
                     : { success: true, message: name }
         };
         showConfirmModal.mockResolvedValueOnce(true);

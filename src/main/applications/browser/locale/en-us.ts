@@ -29,10 +29,12 @@ export const enUs: Record<string, string> = {
     'error.certAlreadyImported': 'Certificate already imported',
     'error.certNotFound': 'Certificate not found',
     'error.certInvalid': 'The selected file is invalid. Choose an X.509 certificate in PEM or DER format.',
+    'error.certTooLarge': 'The selected file exceeds 1 MB. Choose a single X.509 certificate.',
+    'error.certStoreCorrupt': 'The imported certificate list is corrupted. Restore it from a backup and try again.',
     'error.certStoreWrite':
         'Could not update imported certificates. Check that the OpenDesk configuration folder is writable.',
     'message.certImported': 'Certificate "${name}" imported. Reload the page to apply it.',
-    'message.certDeleted': 'Certificate "${name}" deleted.',
+    'message.certDeleted': 'Certificate "${name}" deleted. Restart OpenDesk to finish removing trust.',
     'common.unknown': 'Unknown',
 
     // ========== 原生对话框 / TUI ==========
@@ -269,13 +271,14 @@ export const enUs: Record<string, string> = {
     'renderer.browser.settings.cert.fileFilter': 'X.509 Certificates',
     'renderer.browser.settings.cert.loading': 'Loading...',
     'renderer.browser.settings.cert.systemHint':
-        'OpenDesk trusts system certificates by default. For a self-signed site, you can import the server certificate presented by the site.',
+        'For a self-signed HTTPS site, import its server certificate. Trust applies to any site presenting that same certificate in the embedded browser.',
     'renderer.browser.settings.cert.issuer': 'Issuer: ',
     'renderer.browser.settings.cert.validity': 'Validity: ',
     'renderer.browser.settings.cert.none': 'No certificates imported',
     'renderer.browser.settings.cert.unsupported': 'Certificate management is not supported in this environment',
     'renderer.browser.settings.cert.deleteTitle': 'Delete Certificate',
-    'renderer.browser.settings.cert.deleteMessage': 'Delete this certificate?',
+    'renderer.browser.settings.cert.deleteMessage':
+        'Delete this certificate? Its trust will be removed after you restart OpenDesk.',
     'renderer.browser.settings.cert.loadFailed': 'Failed to load certificates',
     'renderer.browser.settings.cert.importUnsupported': 'Certificate import is not supported in this environment.',
     'renderer.browser.settings.cert.importSuccess': 'Import Succeeded',

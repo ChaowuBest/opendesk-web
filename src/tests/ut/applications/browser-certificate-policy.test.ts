@@ -1,5 +1,5 @@
 import { X509Certificate } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { jest } from '@jest/globals';
@@ -21,23 +21,39 @@ test('lists a binary DER import and trusts it in the existing browser session', 
     const directory = await mkdtemp(join(tmpdir(), 'opendesk-cert-'));
     const browser = new BrowserApplication();
     const store = browser as unknown as { _getCertStorePath(): Promise<string>; _getCertsDir(): Promise<string> };
-    jest.spyOn(store, '_getCertStorePath').mockResolvedValue(join(directory, 'certificates.json'));
+    const storePath = join(directory, 'certificates.json');
+    jest.spyOn(store, '_getCertStorePath').mockResolvedValue(storePath);
     jest.spyOn(store, '_getCertsDir').mockResolvedValue(directory);
     const setCertificateVerifyProc = jest.fn<Electron.Session['setCertificateVerifyProc']>();
     const session = jest.spyOn(BrowserManager, 'browserSession', 'get').mockReturnValue({
         setCertificateVerifyProc
     } as unknown as Electron.Session);
     try {
+        await browser.initCertificateVerifier();
         const result = await browser.importBrowserCertificate(new X509Certificate(pem).raw);
         expect(result).toMatchObject({ success: true, cert: { commonName: 'opendesk-test' } });
         expect(await browser.getBrowserCertificates()).toEqual([result.cert]);
         const verify = setCertificateVerifyProc.mock.lastCall?.[0];
         const finish = jest.fn();
-        verify!({ errorCode: -202, certificate: { data: pem } } as Electron.Request, finish);
+        const request = { certificate: { data: pem } } as Electron.Request;
+        verify!({ ...request, verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID' }, finish);
         expect(finish).toHaveBeenCalledWith(0);
+        verify!({ ...request, verificationResult: 'net::ERR_CERT_REVOKED' }, finish);
+        expect(finish).toHaveBeenLastCalledWith(-3);
+        expect(browser.matchesBrowserCertificate(pem, 'net::ERR_CERT_REVOKED')).toBe(false);
         await expect(browser.importBrowserCertificate('invalid certificate')).resolves.toMatchObject({
             success: false
         });
+
+        await expect(browser.removeBrowserCertificate(result.cert!.fingerprint256)).resolves.toMatchObject({
+            success: true
+        });
+        expect(await browser.getBrowserCertificates()).toEqual([]);
+        verify!({ ...request, verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID' }, finish);
+        expect(finish).toHaveBeenLastCalledWith(-3);
+        await writeFile(storePath, '{bad json');
+        const error = await browser.getBrowserCertificates().catch((failure: Error) => failure.message);
+        await expect(browser.importBrowserCertificate(pem)).resolves.toEqual({ success: false, message: error });
     } finally {
         session.mockRestore();
         await rm(directory, { recursive: true, force: true });

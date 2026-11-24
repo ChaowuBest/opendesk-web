@@ -29,9 +29,11 @@ export const zhCn: Record<string, string> = {
     'error.certAlreadyImported': '该证书已导入',
     'error.certNotFound': '证书未找到',
     'error.certInvalid': '无法识别所选文件。请选择 PEM 或 DER 格式的 X.509 证书。',
+    'error.certTooLarge': '所选证书文件超过 1 MB。请选择单个 X.509 证书。',
+    'error.certStoreCorrupt': '已导入的证书清单损坏。请从备份恢复证书清单后重试。',
     'error.certStoreWrite': '无法更新已导入的证书。请检查 OpenDesk 配置目录是否可写。',
     'message.certImported': '证书「${name}」已导入。重新加载网页即可生效。',
-    'message.certDeleted': '证书「${name}」已删除。',
+    'message.certDeleted': '证书「${name}」已删除。请重启 OpenDesk 以完成信任撤销。',
     'common.unknown': '未知',
 
     // ========== 原生对话框 / TUI ==========
@@ -267,13 +269,13 @@ export const zhCn: Record<string, string> = {
     'renderer.browser.settings.cert.fileFilter': 'X.509 证书',
     'renderer.browser.settings.cert.loading': '加载中…',
     'renderer.browser.settings.cert.systemHint':
-        'OpenDesk 默认使用系统信任的证书。访问自签 HTTPS 站点时，可以在此导入站点实际提供的服务器证书。',
+        '访问自签 HTTPS 站点时，可以导入服务器实际提供的证书。内置浏览器中使用同一张证书的站点会共享这份信任。',
     'renderer.browser.settings.cert.issuer': '颁发者: ',
     'renderer.browser.settings.cert.validity': '有效期: ',
     'renderer.browser.settings.cert.none': '暂无已导入的证书',
     'renderer.browser.settings.cert.unsupported': '当前环境不支持证书管理',
     'renderer.browser.settings.cert.deleteTitle': '删除证书',
-    'renderer.browser.settings.cert.deleteMessage': '确定要删除此证书吗？',
+    'renderer.browser.settings.cert.deleteMessage': '删除此证书？重启 OpenDesk 后将撤销对它的信任。',
     'renderer.browser.settings.cert.loadFailed': '加载证书失败',
     'renderer.browser.settings.cert.importUnsupported': '当前环境不支持证书导入。',
     'renderer.browser.settings.cert.importSuccess': '导入成功',
