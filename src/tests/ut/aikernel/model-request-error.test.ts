@@ -107,6 +107,48 @@ describe('model request error classification', () => {
         expect(classifyModelRequestError(error)).toBe('unknown');
     });
 
+    test('distinguishes OpenRouter daily quota messages from per-minute throttling', () => {
+        const daily = new Error('429 Rate limit exceeded: free-models-per-day-high-balance.');
+        const transient = parseModelErrorResponse({
+            provider: 'openai',
+            status: 429,
+            statusText: 'Too Many Requests',
+            headers: new Headers({ 'retry-after': '12' }),
+            rawText: JSON.stringify({ error: { code: 429, message: 'Rate limit exceeded: free-models-per-min.' } })
+        });
+
+        expect(classifyModelRequestError(daily)).toBe('non_retryable');
+        expect(RateLimitDetector.isRateLimitError(daily)).toBe(false);
+        expect(classifyModelRequestError(transient)).toBe('retryable');
+        expect(RateLimitDetector.isRateLimitError(transient)).toBe(true);
+    });
+
+    test('maps OpenRouter daily quota metadata to shouldRetry false before retry hints', () => {
+        const errorBody = {
+            code: 429,
+            message: 'Rate limit exceeded',
+            metadata: { limit_source: 'openrouter_free_tier_daily' }
+        };
+        const headers = new Headers({ 'retry-after': '12', 'x-should-retry': 'true' });
+        const parsed = parseModelErrorResponse({
+            provider: 'openai',
+            status: 429,
+            statusText: 'Too Many Requests',
+            headers,
+            rawText: JSON.stringify({ error: errorBody })
+        });
+        const normalized = normalizeModelRequestError(
+            Object.assign(new Error(errorBody.message), { status: 429, error: errorBody, headers }),
+            'openai'
+        );
+
+        for (const error of [parsed, normalized]) {
+            expect(error.metadata.shouldRetry).toBe(false);
+            expect(classifyModelRequestError(error)).toBe('non_retryable');
+            expect(RateLimitDetector.isRateLimitError(error)).toBe(false);
+        }
+    });
+
     test('distinguishes model service responses from transport failures', () => {
         const serviceResponse = parseModelErrorResponse({
             provider: 'openai',
