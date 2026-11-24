@@ -2188,9 +2188,9 @@ if (shouldExposeMainWindowAPIs()) {
     const browserCertificateDispatcher = createIpcChannelDispatcher(ipcRenderer, 'browser:certificateExceptionApplied');
     safeExposeInMainWorld('browserCertificateAPI', {
         pickCertificate: () => ipcRenderer.invoke('browser:pickCertificate'),
-        canContinue: (webContentsId, url) => ipcRenderer.invoke('browser:canContinueCertificate', webContentsId, url),
-        continueNavigation: (webContentsId, url) =>
-            ipcRenderer.invoke('browser:continueCertificate', webContentsId, url),
+        getChallenge: (webContentsId, url) => ipcRenderer.invoke('browser:getCertificateChallenge', webContentsId, url),
+        continueNavigation: (webContentsId, url, challengeId) =>
+            ipcRenderer.invoke('browser:continueCertificate', webContentsId, url, challengeId),
         onExceptionApplied: (callback) => browserCertificateDispatcher.subscribe(callback)
     });
 

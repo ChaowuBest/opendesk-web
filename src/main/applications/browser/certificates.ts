@@ -54,6 +54,7 @@ interface CertificateFailure {
 }
 
 interface CertificateChallenge extends CertificateFailure {
+    id: number;
     url: string;
     confirmedUntil?: number;
 }
@@ -61,6 +62,7 @@ interface CertificateChallenge extends CertificateFailure {
 export class BrowserCertificateExceptions<Guest extends object> {
     private readonly challenges = new WeakMap<Guest, CertificateChallenge>();
     private readonly remembered = new Map<string, CertificateFailure>();
+    private nextChallengeId = 0;
 
     handleError(guest: Guest, url: string, error: string, fingerprint: string): boolean {
         const target = localHttpsUrl(url);
@@ -85,7 +87,7 @@ export class BrowserCertificateExceptions<Guest extends object> {
             this.remembered.set(target.origin, { error: code, fingerprint });
             return true;
         }
-        this.challenges.set(guest, { url: target.href, error: code, fingerprint });
+        this.challenges.set(guest, { id: ++this.nextChallengeId, url: target.href, error: code, fingerprint });
         return false;
     }
 
@@ -106,14 +108,14 @@ export class BrowserCertificateExceptions<Guest extends object> {
         return false;
     }
 
-    canContinue(guest: Guest, url: string): boolean {
+    getChallenge(guest: Guest, url: string): number | undefined {
         const current = this.challenges.get(guest);
-        return !!current && current.url === localHttpsUrl(url)?.href;
+        return current && current.url === localHttpsUrl(url)?.href ? current.id : undefined;
     }
 
-    confirm(guest: Guest, url: string): boolean {
+    confirm(guest: Guest, url: string, challengeId: number): boolean {
         const current = this.challenges.get(guest);
-        if (!current || current.url !== localHttpsUrl(url)?.href) return false;
+        if (!current || current.id !== challengeId || current.url !== localHttpsUrl(url)?.href) return false;
         current.confirmedUntil = Date.now() + 15_000;
         return true;
     }

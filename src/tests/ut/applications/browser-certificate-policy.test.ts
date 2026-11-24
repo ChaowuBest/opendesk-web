@@ -67,7 +67,7 @@ test('requires consent and remembers it for same-origin navigation during this r
     const policy = new BrowserCertificateExceptions();
     const tab = {};
     expect(policy.handleError(tab, url, untrusted, 'cert-A')).toBe(false);
-    expect(policy.confirm(tab, url)).toBe(true);
+    expect(policy.confirm(tab, url, policy.getChallenge(tab, url)!)).toBe(true);
     policy.navigationStarted(tab, url);
     expect(policy.handleError(tab, url, untrusted, 'cert-A')).toBe(true);
     expect(policy.handleError({}, url + 'next', untrusted, 'cert-A')).toBe(true);
@@ -84,7 +84,7 @@ test.each([
     const policy = new BrowserCertificateExceptions();
     const tab = {};
     policy.handleError(tab, url, untrusted, 'cert-A');
-    policy.confirm(tab, url);
+    policy.confirm(tab, url, policy.getChallenge(tab, url)!);
     expect(policy.handleError(tab, url, untrusted, 'cert-A')).toBe(true);
     expect(policy.handleError(tab, url, error, fingerprint)).toBe(false);
 });
@@ -96,5 +96,15 @@ test.each([
     const policy = new BrowserCertificateExceptions();
     const tab = {};
     policy.handleError(tab, target, error, 'cert-A');
-    expect(policy.confirm(tab, target)).toBe(false);
+    expect(policy.getChallenge(tab, target)).toBeUndefined();
+});
+
+test('rejects the confirmation from a warning replaced at the same address', () => {
+    const policy = new BrowserCertificateExceptions();
+    const tab = {};
+    policy.handleError(tab, url, untrusted, 'cert-A');
+    const oldChallenge = policy.getChallenge(tab, url)!;
+    policy.handleError(tab, url, untrusted, 'cert-B');
+    expect(policy.confirm(tab, url, oldChallenge)).toBe(false);
+    expect(policy.confirm(tab, url, policy.getChallenge(tab, url)!)).toBe(true);
 });

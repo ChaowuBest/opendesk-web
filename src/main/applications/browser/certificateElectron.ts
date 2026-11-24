@@ -72,13 +72,15 @@ export function installBrowserCertificates(host: BrowserWindow, isEmbeddedBrowse
             return { success: false, message: browserT('renderer.browser.settings.cert.readFailed') };
         }
     });
-    ipc.handle('browser:canContinueCertificate', (event, id: number, url: string) => {
+    ipc.handle('browser:getCertificateChallenge', (event, id: number, url: string) => {
         const target = browserCertificateTarget(event, id);
-        return !!target && typeof url === 'string' && browserCertificateExceptions.canContinue(target, url);
+        if (target && typeof url === 'string') return browserCertificateExceptions.getChallenge(target, url);
     });
-    ipc.handle('browser:continueCertificate', (event, id: number, url: string) => {
+    ipc.handle('browser:continueCertificate', (event, id: number, url: string, challengeId: number) => {
         const target = browserCertificateTarget(event, id);
-        if (!target || typeof url !== 'string' || !browserCertificateExceptions.confirm(target, url)) return false;
+        if (!target || typeof url !== 'string' || !browserCertificateExceptions.confirm(target, url, challengeId)) {
+            return false;
+        }
         void target.loadURL(url).catch((error) => {
             logger.debug('Browser navigation after certificate confirmation did not commit', error);
         });

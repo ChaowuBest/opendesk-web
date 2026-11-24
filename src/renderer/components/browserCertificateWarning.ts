@@ -16,8 +16,8 @@ import { createTranslatorForBrowser } from '../../main/applications/browser/loca
 
 interface BrowserCertificateAPI {
     pickCertificate(): Promise<{ success: boolean; message: string } | null>;
-    canContinue(webContentsId: number, url: string): Promise<boolean>;
-    continueNavigation(webContentsId: number, url: string): Promise<boolean>;
+    getChallenge(webContentsId: number, url: string): Promise<number | undefined>;
+    continueNavigation(webContentsId: number, url: string, challengeId: number): Promise<boolean>;
     onExceptionApplied?(callback: (webContentsId: number, url: string) => void): () => void;
 }
 
@@ -145,18 +145,20 @@ export function showBrowserCertificateWarning(
     const details = overlay.querySelector<HTMLDetailsElement>('details')!;
     const continueButton = details.querySelector('button')!;
     const status = details.querySelector('[role="status"]')!;
+    let challengeId: number | undefined;
     void api
-        .canContinue(webContentsId, error.url)
-        .then((allowed) => {
-            if (allowed) details.hidden = false;
+        .getChallenge(webContentsId, error.url)
+        .then((id) => {
+            challengeId = id;
+            details.hidden = id === undefined;
         })
         .catch(() => {});
 
     continueButton.addEventListener('click', async (event) => {
-        if (!event.isTrusted || details.hidden) return;
+        if (!event.isTrusted || challengeId === undefined) return;
         continueButton.disabled = true;
         try {
-            if (await api.continueNavigation(webContentsId, error.url)) {
+            if (await api.continueNavigation(webContentsId, error.url, challengeId)) {
                 return;
             }
         } catch {

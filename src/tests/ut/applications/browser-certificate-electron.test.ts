@@ -15,11 +15,11 @@ jest.unstable_mockModule('../../../locale/index.js', () => ({ translateWithDomai
 const { installBrowserCertificates } = await import('../../../main/applications/browser/certificateElectron.js');
 
 test('only the main frame can approve a pending certificate error in its own browser tab', () => {
-    type Approve = (event: unknown, id: number, url: string) => boolean;
-    const handlers = new Map<string, Approve>();
+    type Handler = (event: unknown, id: number, url: string, challengeId?: number) => unknown;
+    const handlers = new Map<string, Handler>();
     const shell = Object.assign(new EventEmitter(), {
         mainFrame: {},
-        ipc: { handle: (channel: string, handler: Approve) => handlers.set(channel, handler) }
+        ipc: { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) }
     });
     const navigation = jest.fn(async (_url: string) => {});
     const guest = Object.assign(new EventEmitter(), {
@@ -52,13 +52,14 @@ test('only the main frame can approve a pending certificate error in its own bro
 
     const approve = handlers.get('browser:continueCertificate')!;
     const event = { sender: shell, senderFrame: shell.mainFrame };
-    expect(approve({ ...event, senderFrame: {} }, 17, url)).toBe(false);
+    const challenge = handlers.get('browser:getCertificateChallenge')!(event, 17, url) as number;
+    expect(approve({ ...event, senderFrame: {} }, 17, url, challenge)).toBe(false);
     guest.hostWebContents = Object.assign(new EventEmitter(), shell);
-    expect(approve(event, 17, url)).toBe(false);
+    expect(approve(event, 17, url, challenge)).toBe(false);
     expect(navigation).not.toHaveBeenCalled();
 
     guest.hostWebContents = shell;
-    expect(approve(event, 17, url)).toBe(true);
+    expect(approve(event, 17, url, challenge)).toBe(true);
     expect(navigation).toHaveBeenCalledWith(url);
     reportError();
     expect(finish).toHaveBeenCalledWith(true);
