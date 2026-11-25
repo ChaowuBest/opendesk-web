@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
     createIndexedSearchContext,
     splitIndexedSearchQuery,
+    toIndexedFileSearchResult,
     FILEMGR_SEARCH_MAX_PATHS,
     InvalidFilemgrSearchScopeError,
     filemgrSearchScopePaths,
@@ -54,6 +55,7 @@ test('createIndexedSearchContext normalizes query, routes, topK, and scope', () 
             topK: 5,
             routes: {
                 keyword: true,
+                bm25: false,
                 nameSemantic: true,
                 contentSemantic: false,
                 needsSemantic: true
@@ -63,6 +65,7 @@ test('createIndexedSearchContext normalizes query, routes, topK, and scope', () 
     );
     assert.deepEqual(createIndexedSearchContext('plan', { routes: [] }).routes, {
         keyword: false,
+        bm25: false,
         nameSemantic: false,
         contentSemantic: false,
         needsSemantic: false
@@ -501,6 +504,9 @@ test('query splitting preserves whole-query routes and applies ordered term rule
         assert.equal(context.query, normalized);
         assert.deepEqual(context.keywordTerms, terms);
     }
+    assert.equal(createIndexedSearchContext('query').routes.bm25, true);
+    assert.equal(createIndexedSearchContext('query', { routes: ['bm25'] }).routes.bm25, true);
+    assert.equal(createIndexedSearchContext('query', { routes: ['keyword'] }).routes.bm25, false);
 });
 
 test('aggregated search splits only filename terms and keeps complete semantic queries', async () => {
@@ -516,13 +522,15 @@ test('aggregated search splits only filename terms and keeps complete semantic q
                 calls.push(['keyword', query, options]);
                 return [item('/docs/文件系统设计.txt'), item('/docs/内存管理.txt')];
             },
-            searchFileByName: async (query, options) => {
-                calls.push(['name', query, options]);
-                return { results: [] };
-            },
-            searchIndexedChunks: async (query, options) => {
-                calls.push(['content', query, options]);
-                return { results: [] };
+            retrieval: {
+                searchNames: async (query, options) => {
+                    calls.push(['name', query, options]);
+                    return { results: [] };
+                },
+                searchContent: async (query, options) => {
+                    calls.push(['content', query, options]);
+                    return { results: [] };
+                }
             }
         }
     });
@@ -548,4 +556,97 @@ test('aggregated search splits only filename terms and keeps complete semantic q
     assert.equal(empty.query, '');
     assert.deepEqual(empty.results, []);
     assert.deepEqual(calls, []);
+});
+
+test('WF2 eight boxes and each within-box ordering use BM25 and global vector ranks', () => {
+    const keyword = [],
+        bm25 = [],
+        nameSemantic = [],
+        contentSemantic = [];
+    const cases = [
+        ['one-a', 1, 1, 0.2, 10],
+        ['one-b', 1, 2, 0.9, 20],
+        ['two-a', 1, 9, null, 30],
+        ['two-b', 1, 4, null, 40],
+        ['three-a', 1, null, 0.3, 50],
+        ['three-b', 1, null, 0.8, 60],
+        ['four-a', 1, null, null, 90],
+        ['four-b', 1, null, null, 80],
+        ['five-a', 0, 3, 0.7, 100],
+        ['five-b', 0, 10, 0.95, 110],
+        ['six-a', 0, 8, null, 120],
+        ['six-b', 0, 5, null, 130],
+        ['seven-a', 0, null, 0.6, 140],
+        ['seven-b', 0, null, 0.65, 150],
+        ['eight-a', 0, null, 0.99, 160],
+        ['eight-b', 0, null, 0.1, 170]
+    ];
+    for (const [id, k, b, v, modified] of cases) {
+        const row = item('/docs/' + id, { modified, bm25Rank: b, semanticScore: v });
+        if (k) keyword.push(row);
+        if (b) bm25.push(row);
+        if (v !== null) (id.startsWith('eight') ? nameSemantic : contentSemantic).push(row);
+    }
+    const merged = mergeSearchRoutes({ keyword, bm25, nameSemantic, contentSemantic });
+    assert.equal(merged.find((x) => x.filename === 'one-a').ranks?.bm25, 1);
+    const ranked = rankSearchResults(merged);
+    assert.deepEqual(
+        ranked.map((x) => x.filename),
+        [
+            'one-b',
+            'one-a',
+            'two-b',
+            'two-a',
+            'three-b',
+            'three-a',
+            'four-a',
+            'four-b',
+            'five-a',
+            'five-b',
+            'six-b',
+            'six-a',
+            'seven-b',
+            'seven-a',
+            'eight-a',
+            'eight-b'
+        ]
+    );
+    // Global vector ranks: eight-a=1, five-b=2, one-b=3, three-b=4, five-a=5 ... one-a=9.
+    assert.ok(1 / (60 + 2) + 1 / (60 + 3) > 1 / (60 + 1) + 1 / (60 + 9));
+    assert.ok(1 / (60 + 3) + 1 / (60 + 5) > 1 / (60 + 10) + 1 / (60 + 2));
+    assert.deepEqual(
+        rankSearchResults(mergeSearchRoutes({ keyword, bm25 })).map((x) => x.filename),
+        [
+            'one-a',
+            'one-b',
+            'two-b',
+            'two-a',
+            'three-a',
+            'three-b',
+            'four-a',
+            'four-b',
+            'five-a',
+            'six-b',
+            'six-a',
+            'five-b'
+        ]
+    );
+    assert.equal(
+        toIndexedFileSearchResult('q', [], 0, undefined, undefined, { fullTextAvailable: true }).fullTextAvailable,
+        true
+    );
+});
+
+test('WF2 vector ranks use the maximum actual semantic score, including negative scores and stable ties', () => {
+    const merged = mergeSearchRoutes({
+        keyword: [item('/a')],
+        bm25: [item('/a', { bm25Rank: 1 })],
+        nameSemantic: [item('/a', { semanticScore: -0.8 }), item('/b', { semanticScore: -0.2 })],
+        contentSemantic: [item('/a', { semanticScore: -0.5 }), item('/c', { semanticScore: -0.2 })]
+    });
+    assert.equal(merged[0].semanticScore, -0.5);
+    const ranked = rankSearchResults(merged);
+    assert.equal(ranked.find((x) => x.path === '/b').ranks.vector, 1);
+    assert.equal(ranked.find((x) => x.path === '/c').ranks.vector, 2);
+    assert.equal(ranked.find((x) => x.path === '/a').ranks.vector, 3);
 });

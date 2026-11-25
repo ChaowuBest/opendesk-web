@@ -36,7 +36,11 @@ for (const phase of ['pre-swap', 'post-swap'])
         assert.equal(f.worker._currentRebuildPromise, null);
         assert.equal(f.storage.scannerState.last_rebuild_event.status, 'failed');
         if (phase === 'pre-swap') assert.ok(f.worker.scanners.get(f.roots[0])?.isRunning());
-        else assert.equal(primary._postSwap, true);
+        else {
+            assert.equal(f.worker.status, 'error');
+            assert.equal(f.worker._initError, primary);
+            assert.equal(f.worker.scanners.size, 0);
+        }
     });
 
 for (const dual of [false, true])
@@ -83,9 +87,9 @@ test('C203 automatic rebuild consumes rejection without waiting on its own queue
         gate = deferred(t),
         entered = deferred(t);
     failFirstWrite(t, f, primary, gate, entered);
-    const sync = f.storage.syncEmbeddingMode.bind(f.storage);
+    const sync = f.storage.retrieval._syncMode.bind(f.storage.retrieval);
     let once = true;
-    t.mock.method(f.storage, 'syncEmbeddingMode', async (reason, ...args) => {
+    t.mock.method(f.storage.retrieval, '_syncMode', async (reason, ...args) => {
         if (once && reason === 'scan') {
             once = false;
             throw new RebuildRequiredError('fixture: auto');

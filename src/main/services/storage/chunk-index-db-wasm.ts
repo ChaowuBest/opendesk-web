@@ -19,6 +19,12 @@ import type { ChunkIndexRecord, ChunkSearchOptions, ChunkSearchResult, IChunkInd
 import { removeSqliteStoreFiles } from './drop-utils.js';
 import { HNSW_SAFE_TOTAL_BUDGET, shouldSkipLoadSnapshot } from './hnsw-snapshot-guard.js';
 import { toWasmDbPath } from './wasm-path.js';
+import {
+    recordStorageCleanupFailure,
+    recordStorageInitializationFailure,
+    handoffStorageInitializationCleanup,
+    type RetainStorageInitializationCleanup
+} from './platform.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -156,7 +162,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     private activeChunkCount = 0;
     private pointCap = 0;
 
-    constructor(dbPath: string, dimension: number = 1024) {
+    constructor(dbPath: string, dimension: number = 1024, retainCleanup?: RetainStorageInitializationCleanup) {
         this.dbPath = toWasmDbPath(dbPath);
         this.dimension = dimension;
         this.pointCap = Math.floor(HNSW_SAFE_TOTAL_BUDGET / this.dimension);
@@ -168,9 +174,21 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         }
 
         this.db = new sqlite3Wasm.Database(this.dbPath);
-        this.db.run('PRAGMA journal_mode = WAL');
-        this.db.run('PRAGMA busy_timeout = 5000');
-        this.hnsw = new HnswAdapter(this.dimension, this.snapshotPath, { metric: 'cosine' });
+        try {
+            this.db.run('PRAGMA journal_mode = WAL');
+            this.db.run('PRAGMA busy_timeout = 5000');
+            this.hnsw = new HnswAdapter(this.dimension, this.snapshotPath, { metric: 'cosine' });
+        } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'ChunkIndexer', backend: 'wasm' });
+            try {
+                this.db.close();
+                this.closed = true;
+            } catch (cleanupError) {
+                recordStorageCleanupFailure(error, cleanupError, 'ChunkIndexer');
+                handoffStorageInitializationCleanup(error, () => this.close(), retainCleanup);
+            }
+            throw error;
+        }
         this.initPromise = this.initializeInternal();
     }
 
@@ -239,7 +257,8 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private getState(key: string): string | null {
         const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as
-            { value?: string } | undefined;
+            | { value?: string }
+            | undefined;
         return row?.value ?? null;
     }
 
@@ -254,7 +273,8 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private refreshActiveCount(): void {
         const row = this.db.get(`SELECT COUNT(*) as cnt FROM ${this.tableName} WHERE active = 1`) as
-            { cnt: number } | undefined;
+            | { cnt: number }
+            | undefined;
         this.activeChunkCount = row?.cnt ?? 0;
     }
 
@@ -276,7 +296,8 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
 
     private getStoredDimSync(): number | null {
         const row = this.db.get(`SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`) as
-            { repr?: Uint8Array } | undefined;
+            | { repr?: Uint8Array }
+            | undefined;
         if (!row?.repr) return null;
         return Math.floor(Buffer.from(row.repr).byteLength / Float32Array.BYTES_PER_ELEMENT);
     }

@@ -148,7 +148,11 @@ class FileMgrApplication extends BaseApplication {
         if (!getFeatureManager().isFeatureDisabled('filesystem')) {
             toolset.addTool(
                 new SemanticSearchTool((query, maxResults, scope) =>
-                    this.searchIndexedFiles(query, { topK: maxResults, scope })
+                    this.searchIndexedFiles(query, {
+                        topK: maxResults,
+                        scope,
+                        routes: ['keyword', 'name_semantic', 'content_semantic']
+                    })
                 )
             );
         }
@@ -216,7 +220,7 @@ class FileMgrApplication extends BaseApplication {
             return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
         }
 
-        function sourceStateLine(source, mode) {
+        function sourceStateLine(source, mode, fullTextVisible) {
             const total = (source.total_files ?? 0).toLocaleString();
             const embedded = (source.embedded_count ?? 0).toLocaleString();
             const pending = (source.pending_count ?? 0).toLocaleString();
@@ -225,6 +229,11 @@ class FileMgrApplication extends BaseApplication {
             }
             if (source.state === 'unavailable') return `路径不可访问 · 上次 ${total} 文件`;
             if (source.metadata_write_pending === true) return t('renderer.filemgr.source.metadataWritePending');
+            if (fullTextVisible && source.full_text?.pending > 0)
+                return t('renderer.filemgr.source.fullText.withCounts', {
+                    done: (source.full_text.done + source.full_text.excluded).toLocaleString(),
+                    total
+                });
             if (source.state === 'pending') return '等待扫描';
             if (source.state === 'scanning') return `扫描中 · ${embedded} / ${total} 文件（待处理 ${pending}）`;
             if (source.state === 'completed' && mode === 'base-only') return `基础索引 · ${total} 文件`;
@@ -234,6 +243,10 @@ class FileMgrApplication extends BaseApplication {
 
         function formatFsStatusMessage(data) {
             const mode = data.mode ?? data.storage?.mode ?? null;
+            const fullTextVisible = Boolean(
+                data.full_text &&
+                !['unsupported', 'open_failed', 'tokenizer_unavailable'].includes(data.full_text.reason)
+            );
             const lines = [`状态: ${statusLabel(data.status)}${mode ? ` · ${modeLabel(mode)}` : ''}`, ''];
             const alert = data.alerts?.[0];
             const alertText = alertMessage(alert);
@@ -254,7 +267,9 @@ class FileMgrApplication extends BaseApplication {
                 for (const source of sources) {
                     const tags = source.is_workspace ? ' [工作空间]' : '';
                     lines.push(`  ${source.root}${tags}`);
-                    lines.push(`    ${sourceStateLine(source, mode)} · ${timeTag(source.last_scan_at)}`);
+                    lines.push(
+                        `    ${sourceStateLine(source, mode, fullTextVisible)} · ${timeTag(source.last_scan_at)}`
+                    );
                 }
             }
 
@@ -265,6 +280,26 @@ class FileMgrApplication extends BaseApplication {
                         `已嵌入 ${(data.totals.embedded_count ?? 0).toLocaleString()} | ` +
                         `待处理 ${(data.totals.pending_count ?? 0).toLocaleString()}`
                 );
+                if (fullTextVisible) {
+                    lines.push(
+                        t(
+                            data.full_text.reason === 'resetting'
+                                ? 'filemgr.status.fullText.resetting'
+                                : 'filemgr.status.fullText.summary',
+                            {
+                                done: (
+                                    (data.full_text.done ?? 0) +
+                                    sources.reduce((sum, source) => sum + (source.full_text?.excluded ?? 0), 0)
+                                ).toLocaleString(),
+                                total: sources
+                                    .reduce((sum, source) => sum + (source.full_text?.total ?? 0), 0)
+                                    .toLocaleString(),
+                                pending: (data.full_text.pending ?? 0).toLocaleString(),
+                                failed: (data.full_text.failed ?? 0).toLocaleString()
+                            }
+                        )
+                    );
+                }
                 if (data.totals.last_embedding_task_at) {
                     lines.push(`最近嵌入任务: ${timeTag(data.totals.last_embedding_task_at)}`);
                 }

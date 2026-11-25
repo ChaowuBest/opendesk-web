@@ -67,7 +67,24 @@ const cases: Array<{ method: string; kit?: string; operation: string; args: unkn
         operation: 'queryPrepared',
         args: ['store', 'select ?', [{ t: 'scalar', v: false }], { txId: 'tx' }]
     },
-    { method: 'databaseKit:beginTransaction', kit: 'databaseKit', operation: 'beginTransaction', args: ['store'] },
+    {
+        method: 'databaseKit:beginTransaction',
+        kit: 'databaseKit',
+        operation: 'beginTransaction',
+        args: ['store', { mode: 'read' }]
+    },
+    {
+        method: 'databaseKit:deleteStore',
+        kit: 'databaseKit',
+        operation: 'deleteStore',
+        args: ['store', { path: 'bm25.db', vector: false }]
+    },
+    {
+        method: 'databaseKit:bm25Query',
+        kit: 'databaseKit',
+        operation: 'bm25Query',
+        args: ['store', { deadline: 1, kind: 'search', field: 'body', terms: ['word'] }, 'otx_1_1']
+    },
     {
         method: 'databaseKit:commitTransaction',
         kit: 'databaseKit',

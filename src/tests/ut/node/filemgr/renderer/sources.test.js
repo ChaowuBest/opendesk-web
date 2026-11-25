@@ -84,7 +84,7 @@ test('source card renders compact base-only status without badges or duplicate f
     assert.equal(card.textContent.includes('WORKSPACE'), false);
     assert.equal(card.textContent.includes('普通目录'), false);
     assert.equal(card.textContent.includes('工作区目录'), false);
-    assert.equal(card.querySelector('.status-text')?.textContent, '基础索引 · 42 文件');
+    assert.equal(card.querySelector('.status-text')?.textContent, '索引完成 · 42 文件');
     assert.equal(card.textContent.match(/42 文件/g)?.length, 1);
 
     sources.destroy();
@@ -113,10 +113,7 @@ test('C109 metadata failure occupies only the existing status row and never chan
             assert.equal(failed.querySelector('.info').children.length, 2);
             assert.equal(failed.querySelector('.fs-mini-ring'), null);
             assert.doesNotMatch(failed.textContent, /已完成|未发现可扫描文件|100%|仍有.*未写入/);
-            assert.equal(
-                healthy.querySelector('.status-text').textContent,
-                mode === 'full' ? '已完成 · 3 文件' : '基础索引 · 3 文件'
-            );
+            assert.equal(healthy.querySelector('.status-text').textContent, '索引完成 · 3 文件');
             assert.ok(healthy.querySelector('.fs-mini-ring'));
             assert.equal(healthy.querySelector('.info').children.length, 2);
             const oldHtml = healthy.outerHTML;
@@ -237,9 +234,10 @@ test('source card protects long path and status text while exposing full titles'
 
     assert.equal(path?.textContent, '…/孟菲毕业设计');
     assert.equal(path?.getAttribute('title'), longPath);
-    assert.equal(row3?.getAttribute('title'), '扫描中 · 123456789 / 987654321 文件');
-    assert.equal(status?.textContent, '扫描中 · 123456789 / 987654321 文件');
-    assert.equal(status?.getAttribute('title'), '扫描中 · 123456789 / 987654321 文件');
+    const fullTitle = '语义索引 · 123456789/987654321';
+    assert.equal(row3?.getAttribute('title'), null);
+    assert.equal(status?.textContent, '语义索引 · 123456789/987654321');
+    assert.equal(status?.getAttribute('aria-label'), fullTitle);
 
     sources.destroy();
 });
@@ -328,7 +326,7 @@ test('initializing source list renders real sources when snapshot already contai
 
     assert.equal(document.querySelectorAll('.fs-source-card.skeleton').length, 0);
     assert.equal(document.querySelector('.path')?.getAttribute('title'), root);
-    assert.equal(document.querySelector('.status-text')?.textContent, '基础索引 · 0 文件');
+    assert.equal(document.querySelector('.status-text')?.textContent, '等待扫描');
 
     sources.destroy();
 });
@@ -765,4 +763,189 @@ test('different source cards can remain pending concurrently', async (t) => {
     await Promise.resolve();
     await Promise.resolve();
     assert.equal(document.querySelectorAll('.source-control-spinner').length, 0);
+});
+
+test('WF2 source rings and text follow full-text visibility through consecutive updates in both locales', async () => {
+    for (const [locale, ft, vec] of [
+        ['zh-CN', '关键词索引', '语义索引'],
+        ['en-US', 'Keyword index', 'Semantic index']
+    ]) {
+        const { document, window } = parseHTML('<html><head></head><body></body></html>');
+        const source = {
+            root: '/wf2',
+            state: 'scanning',
+            total_files: 10,
+            embedded_count: 10,
+            pending_count: 0,
+            last_scan_at: 1,
+            full_text: { total: 10, done: 2, excluded: 1, pending: 6, failed: 1 }
+        };
+        const snapshot = { status: 'running', mode: 'full', full_text: { available: true }, sources: [source] };
+        setSnapshot(snapshot);
+        const sources = createSources({ document, t: createRendererTranslator(locale) });
+        document.body.append(sources.element);
+        const card = document.querySelector('.fs-source-card');
+        const check = (count, text, last, title) => {
+            assert.equal(document.querySelector('.fs-source-card'), card);
+            const ring = card.querySelector('.mini-ring');
+            assert.equal(ring.querySelectorAll('.fill').length, count);
+            assert.ok(ring.querySelector(`.fill.${last}`));
+            assert.equal(card.querySelector('.status-text').getAttribute('aria-label'), title);
+            assert.ok(card.querySelector('.status-text').textContent.startsWith(text));
+        };
+        const bodyTitle = (done) => `${ft} · ${done + 1}/10`;
+        const vectorTitle = (done) => `${vec} · ${done}/10`;
+        const dualTitle = (body, vector) => `${bodyTitle(body)}\n${vectorTitle(vector)}`;
+        check(2, `${ft} · 3/10`, 'full-text', dualTitle(2, 10));
+        assert.equal(card.querySelector('.mini-ring title'), null);
+        assert.equal(card.querySelector('.status-text').getAttribute('title'), null);
+        const mutations = [];
+        const observer = new window.MutationObserver((changes) => mutations.push(...changes));
+        observer.observe(card, { childList: true, subtree: true, attributes: true });
+        setSnapshot(snapshot);
+        await Promise.resolve();
+        assert.equal(mutations.length, 0, 'unchanged dual-ring snapshot does not mutate DOM');
+        observer.disconnect();
+        source.full_text = { ...source.full_text, done: 8, pending: 0 };
+        source.embedded_count = 4;
+        source.pending_count = 6;
+        setSnapshot(snapshot);
+        check(2, `${vec} · 4/10`, 'vector', dualTitle(8, 4));
+        source.full_text = { ...source.full_text, done: 0, pending: 9 };
+        snapshot.full_text = { available: false, reason: 'resetting' };
+        setSnapshot(snapshot);
+        check(2, `${ft} · 1/10`, 'full-text', dualTitle(0, 4));
+        for (const state of [
+            { available: false, reason: 'open_failed' },
+            { available: false, reason: 'unsupported' },
+            { available: false, reason: 'tokenizer_unavailable', availability: 'terminal' },
+            { available: false, reason: 'tokenizer_unavailable', availability: 'unsupported' },
+            undefined
+        ]) {
+            snapshot.full_text = state;
+            setSnapshot(snapshot);
+            check(1, `${vec} · 4/10`, 'vector', vectorTitle(4));
+        }
+        snapshot.full_text = { available: true };
+        snapshot.mode = 'base-only';
+        setSnapshot(snapshot);
+        check(1, `${ft} · 1/10`, 'full-text', bodyTitle(0));
+        source.full_text.pending = 0;
+        source.state = 'completed';
+        setSnapshot(snapshot);
+        check(1, locale === 'zh-CN' ? '索引完成 · 10' : 'Index complete · 10', 'full-text', bodyTitle(0));
+        assert.equal(card.dataset.progress, '100');
+        sources.destroy();
+        __resetForTesting();
+    }
+});
+
+test('WF2 pending and paused sources keep zero progress in both modes', () => {
+    for (const mode of ['full', 'base-only']) {
+        const { document } = parseHTML('<html><head></head><body></body></html>');
+        const source = {
+            root: '/wf2',
+            state: 'pending',
+            total_files: 0,
+            embedded_count: 0,
+            full_text: { total: 0, done: 0, excluded: 0, pending: 0, failed: 0 }
+        };
+        const snapshot = { status: 'running', mode, full_text: { available: true }, sources: [source] };
+        setSnapshot(snapshot);
+        const sources = createSources({ document, t: createRendererTranslator('en-US') });
+        document.body.append(sources.element);
+        const card = document.querySelector('.fs-source-card');
+        assert.equal(card.dataset.progress, '0', `${mode}: initial pending source`);
+        assert.equal(Number(card.querySelector('.fill.full-text').style.strokeDashoffset), 37.7);
+        Object.assign(source, {
+            state: 'scanning',
+            paused: true,
+            total_files: 10,
+            embedded_count: 8,
+            full_text: { total: 10, done: 2, excluded: 1, pending: 7, failed: 0 }
+        });
+        setSnapshot(snapshot);
+        assert.equal(card.dataset.progress, '0', `${mode}: paused source`);
+        assert.equal(Number(card.querySelector('.fill.full-text').style.strokeDashoffset), 37.7);
+        assert.ok(card.querySelector('.status-text').textContent.startsWith('Paused'));
+        source.paused = false;
+        setSnapshot(snapshot);
+        assert.equal(card.dataset.progress, '30', `${mode}: resumed source`);
+        sources.destroy();
+        __resetForTesting();
+    }
+});
+
+test('full indexing labels retain both tasks and separate equal-progress rings', () => {
+    const { document } = parseHTML('<html><head></head><body></body></html>');
+    const source = {
+        root: '/large',
+        state: 'scanning',
+        total_files: 20000,
+        embedded_count: 12345,
+        last_scan_at: Date.now(),
+        full_text: { done: 12340, excluded: 5, pending: 7655 }
+    };
+    const snapshot = { status: 'running', mode: 'full', full_text: { available: true }, sources: [source] };
+    setSnapshot(snapshot);
+    const sources = createSources({ document });
+    document.body.append(sources.element);
+    const card = document.querySelector('.fs-source-card');
+    assert.equal(card.querySelector('.status-text').textContent, '关键词索引 · 12345/20000');
+    assert.notEqual(
+        card.querySelector('.fill.full-text').getAttribute('r'),
+        card.querySelector('.fill.vector').getAttribute('r')
+    );
+    assert.equal(card.querySelectorAll('.track').length, 2);
+    assert.ok(card.querySelector('.time-tag'));
+    source.embedded_count = 0;
+    setSnapshot(snapshot);
+    assert.equal(card.querySelectorAll('.track').length, 2, 'zero progress retains its own track');
+    assert.equal(card.querySelector('.fill.vector').style.visibility, 'hidden');
+    snapshot.mode = 'base-only';
+    setSnapshot(snapshot);
+    assert.equal(card.querySelector('.status-text').textContent, '关键词索引 · 12345/20000');
+    assert.equal(card.querySelectorAll('.track').length, 1);
+    source.state = 'completed';
+    source.full_text.pending = 0;
+    setSnapshot(snapshot);
+    assert.equal(card.querySelector('.status-text').textContent, '索引完成 · 20000 文件');
+    sources.destroy();
+});
+
+test('progress tooltip opens immediately, updates live and cleans up outside the scrolling grid', () => {
+    const { document, window } = parseHTML('<html><head></head><body></body></html>');
+    const source = {
+        root: '/hover',
+        state: 'scanning',
+        total_files: 100,
+        embedded_count: 40,
+        full_text: { done: 75, excluded: 5, pending: 20 }
+    };
+    const snapshot = { status: 'running', mode: 'full', full_text: { available: true }, sources: [source] };
+    setSnapshot(snapshot);
+    const sources = createSources({ document });
+    document.body.append(sources.element);
+    const status = document.querySelector('.status-text');
+    status.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
+    const tip = document.querySelector('[role="tooltip"]');
+    assert.ok(tip);
+    assert.equal(tip.parentElement, document.body);
+    assert.deepEqual(
+        [...tip.querySelectorAll('.fs-progress-tooltip-label')].map((n) => n.textContent),
+        ['关键词索引 · 80/100', '语义索引 · 40/100']
+    );
+    assert.equal(status.getAttribute('aria-describedby'), tip.id);
+    source.embedded_count = 50;
+    setSnapshot(snapshot);
+    assert.match(tip.textContent, /语义索引 · 50\/100/);
+    status.dispatchEvent(new window.Event('pointerout', { bubbles: true }));
+    assert.equal(document.querySelector('[role="tooltip"]'), null);
+    status.dispatchEvent(new window.Event('focus', { bubbles: false }));
+    assert.ok(document.querySelector('[role="tooltip"]'));
+    snapshot.mode = 'base-only';
+    setSnapshot(snapshot);
+    assert.equal(document.querySelectorAll('.fs-progress-tooltip-label').length, 1);
+    sources.destroy();
+    assert.equal(document.querySelector('[role="tooltip"]'), null);
 });

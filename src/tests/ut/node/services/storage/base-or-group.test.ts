@@ -151,6 +151,12 @@ for (const DB of [BaseIndexDB, BaseIndexDBWasm]) {
                 operator: 'bm25_match' as const,
                 value: { query: 'sharedtoken' }
             };
+            const scoped = await storage.searchScope({ preconditions: conditions, targetCondition });
+            assert.deepEqual(scoped.items.map((r) => r.item.item_id).sort(), [
+                '/docs/both',
+                '/docs/memory',
+                '/docs/name'
+            ]);
             const combined = await storage.search([...conditions, targetCondition]);
             assert.deepEqual(combined.items.map((r) => r.item.item_id).sort(), [
                 '/docs/both',

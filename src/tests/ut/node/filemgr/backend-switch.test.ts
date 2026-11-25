@@ -83,9 +83,9 @@ if (backend) {
         const status = await worker.storage.getStatus();
         assert.equal(status.vecdb_size, 2);
         assert.ok(status.chunk_size >= 2);
-        const search = await worker.storage.searchFileByName('fixture');
+        const search = await worker.storage.retrieval.searchNames('fixture');
         assert.equal(search.results.length, 2, 'base rows must join to the current vector store');
-        const chunks = await worker.storage.searchIndexedChunks('fixture', { topK: 10 });
+        const chunks = await worker.storage.retrieval.searchContent('fixture', { topK: 10 });
         assert.ok(chunks.results.length >= 2, 'base rows must join to the current chunk store');
         assert.ok(worker.storage.scannerState.roots[root].last_full_scan > 0);
         assert.ok(

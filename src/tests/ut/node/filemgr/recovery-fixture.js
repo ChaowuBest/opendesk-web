@@ -1,3 +1,4 @@
+import { runtimeState } from '../../../../main/applications/filemgr/document-retrieval/embedding/state.js';
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -35,6 +36,16 @@ export function withMemoryStateWriter(storage) {
         await storage.saveScannerState?.();
         commit();
     };
+    if (!(storage instanceof FSStorage)) {
+        const retrieval = (storage.retrieval ??= {});
+        retrieval.prepare ??= async () => {};
+        retrieval.getRuntimeState ??= () =>
+            runtimeState({
+                readState: () => storage.scannerState,
+                mode: () => storage.mode,
+                data: () => (storage.isDeferred?.() ? null : { identity: storage })
+            });
+    }
     return storage;
 }
 export async function flush() {
@@ -111,6 +122,8 @@ export async function fixture(t, names = ['A', 'B'], { start = true, files = ['o
         }
     };
     storage.storage = db;
+    // This in-memory metadata fixture has no BM25 store or build queue.
+    storage._fullTextByHolder.set(db, { bound: false, failure: 'open_failed' });
     for (const root of roots)
         storage.scannerState.roots[root] = {
             last_full_scan: 100,
@@ -129,6 +142,7 @@ export async function fixture(t, names = ['A', 'B'], { start = true, files = ['o
         worker.taskQueue.start();
         await worker.taskQueue.onIdle();
         await storage.close();
+        await worker._releaseScanLockIfHeld();
         fs.rmSync(directory, { recursive: true, force: true });
     });
     if (start) {

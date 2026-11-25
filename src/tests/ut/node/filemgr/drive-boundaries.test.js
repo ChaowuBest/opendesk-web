@@ -47,7 +47,7 @@ function workerFor(roots) {
             unavailable_roots: {}
         },
         isDeferred: () => false,
-        syncEmbeddingMode: async () => {},
+        retrieval: { prepare: async () => {} },
         saveScannerState: async () => {},
         saveFiles: async () => ({ saved: 1, failed: 0 }),
         removeDeletedFiles: async () => {}
@@ -270,6 +270,11 @@ test('workspace matching prefers exact source identity and uses effective/runnab
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(priority, undefined, 'all effective roots paused: no embedding work');
         originalState.paused = false;
+        worker._enqueueEmbeddingQueue();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(priority, undefined, 'readonly source cannot schedule embedding after it is unpaused');
+        worker._readonlyMode = false;
+        worker.status = 'running';
         worker._enqueueEmbeddingQueue();
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(priority, 'D:');

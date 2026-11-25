@@ -28,6 +28,66 @@ export function shouldUseWasm(): boolean {
 
 type Factory<T> = () => Promise<T>;
 
+export interface StorageInitializationCleanup {
+    readonly error: unknown;
+    close(): void | Promise<void>;
+}
+
+export type RetainStorageInitializationCleanup = (cleanup: StorageInitializationCleanup) => void;
+
+// Transfer only cleanup capability to the existing caller; never retain resources globally.
+export function handoffStorageInitializationCleanup(
+    error: unknown,
+    close: StorageInitializationCleanup['close'],
+    retain?: RetainStorageInitializationCleanup
+): void {
+    try {
+        retain?.({ error, close });
+    } catch (handoffError) {
+        recordStorageCleanupFailure(error, handoffError);
+    }
+}
+
+export interface StorageInitializationFailure {
+    indexer?: string;
+    backend?: 'native' | 'wasm' | 'arkdata';
+    operation?: 'initialize' | 'close' | 'delete';
+    cause: unknown;
+    cleanupFailures: ReadonlyArray<{ indexer?: string; error: unknown }>;
+}
+
+// Keep diagnostic context without replacing (or mutating) the original error.
+// Resource ownership and recovery policy stay with their existing callers.
+const initializationFailures = new WeakMap<object, StorageInitializationFailure>();
+
+export function getStorageInitializationFailure(error: unknown): Readonly<StorageInitializationFailure> | undefined {
+    return error !== null && typeof error === 'object' ? initializationFailures.get(error) : undefined;
+}
+
+export function recordStorageInitializationFailure(
+    error: unknown,
+    source: Pick<StorageInitializationFailure, 'indexer' | 'backend' | 'operation'>
+): void {
+    if (error === null || typeof error !== 'object') return;
+    const previous = initializationFailures.get(error);
+    initializationFailures.set(error, {
+        cause: (error as { cause?: unknown }).cause ?? error,
+        cleanupFailures: previous?.cleanupFailures ?? [],
+        ...previous,
+        ...source
+    });
+}
+
+export function recordStorageCleanupFailure(error: unknown, cleanupError: unknown, indexer?: string): void {
+    recordStorageInitializationFailure(error, {});
+    if (error === null || typeof error !== 'object') return;
+    const previous = initializationFailures.get(error)!;
+    initializationFailures.set(error, {
+        ...previous,
+        cleanupFailures: [...previous.cleanupFailures, { indexer, error: cleanupError }]
+    });
+}
+
 function getNativeSqliteErrorDetails(error: unknown): { code: string; message: string } {
     const err = error as { code?: unknown; message?: unknown } | null | undefined;
     return {
@@ -64,9 +124,17 @@ export async function createWithNativeSqliteFallback<T, U>(
     wasmFactory: Factory<U>,
     options: { forceWasm?: boolean } = {}
 ): Promise<T | U> {
+    const createWasm = async () => {
+        try {
+            return await wasmFactory();
+        } catch (error) {
+            recordStorageInitializationFailure(error, { backend: 'wasm' });
+            throw error;
+        }
+    };
     if (options.forceWasm ?? shouldUseWasm()) {
         logger.info('[storage-backend] using wasm (platform forced)');
-        return wasmFactory();
+        return createWasm();
     }
 
     try {
@@ -74,10 +142,11 @@ export async function createWithNativeSqliteFallback<T, U>(
         logger.info('[storage-backend] using native');
         return result;
     } catch (error) {
-        if (isNativeSqliteUnavailable(error)) {
+        recordStorageInitializationFailure(error, { backend: 'native' });
+        if (isNativeSqliteUnavailable(error) && !getStorageInitializationFailure(error)?.cleanupFailures.length) {
             const { code, message } = getNativeSqliteErrorDetails(error);
             logger.warn(`[storage-backend] native unavailable, falling back to wasm: code=${code} message=${message}`);
-            return wasmFactory();
+            return createWasm();
         }
         throw error;
     }

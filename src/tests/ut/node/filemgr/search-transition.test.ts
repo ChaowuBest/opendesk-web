@@ -87,11 +87,11 @@ for (const route of ['name', 'content'])
                 await owner.saveScannerState();
                 query =
                     route === 'name'
-                        ? owner.searchFileByName('query', { topK: 10 })
-                        : owner.searchIndexedChunks('query', { topK: 10 });
+                        ? owner.retrieval.searchNames('query', { topK: 10 })
+                        : owner.retrieval.searchContent('query', { topK: 10 });
                 await entered.promise;
                 model = 'model-b';
-                await owner._resetVectorChunk('embedding_config_changed', {
+                await owner.retrieval._resetVectorChunk('embedding_config_changed', {
                     dim: 2,
                     mode: 'full',
                     embeddingState: {
@@ -224,11 +224,11 @@ for (const stage of [
             );
             await owner.saveScannerState();
             if (stage === 'promotion-between-routes') {
-                await owner._demoteToBaseOnly('fixture before search');
+                await owner.retrieval._demoteToBaseOnly('fixture before search');
                 const keyword = worker._runKeywordRoute.bind(worker);
                 t.mock.method(worker, '_runKeywordRoute', async (context: any) => {
                     const result = await keyword(context);
-                    await owner._openFull(2);
+                    await owner.retrieval._openFull(2);
                     return result;
                 });
             }
@@ -258,7 +258,7 @@ for (const stage of [
             if (stage.endsWith('close')) await worker.finalize();
             else {
                 model = 'model-b';
-                await owner._resetVectorChunk('embedding_config_changed', {
+                await owner.retrieval._resetVectorChunk('embedding_config_changed', {
                     dim: 2,
                     mode: 'full',
                     embeddingState: {
@@ -322,8 +322,8 @@ for (const route of ['name', 'content'])
             model = 'model-b';
             const result =
                 route === 'name'
-                    ? await owner.searchFileByName('query', { topK: 10 })
-                    : await owner.searchIndexedChunks('query', { topK: 10 });
+                    ? await owner.retrieval.searchNames('query', { topK: 10 })
+                    : await owner.retrieval.searchContent('query', { topK: 10 });
             console.log(
                 JSON.stringify({
                     settingOnly: route,

@@ -6,6 +6,7 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import sharp from 'sharp';
 import * as XLSX from 'xlsx';
+import iconv from 'iconv-lite';
 import { setRuntimeLocale } from '../../../../locale/index.js';
 import { LLM } from '../../../../main/aikernel/llm.js';
 import { ToolCall } from '../../../../main/aikernel/messages.js';
@@ -73,6 +74,28 @@ test('extractText extracts supported text files', async () => {
         cleanup(dir);
     }
 });
+
+for (const encoding of ['utf8', 'utf16le', 'gbk'])
+    test(`extractText ${encoding} preserves Chinese, line numbers and numLines`, async () => {
+        const dir = makeTempDir();
+        try {
+            const text = 'ASCII header\n' + '中文编码检测，文件索引和工具提取应保留相同内容。'.repeat(20) + '\n末行';
+            const file = path.join(dir, `${encoding}.txt`);
+            fs.writeFileSync(file, iconv.encode(text, encoding, { addBOM: encoding === 'utf16le' }));
+            const result = JSON.parse(await new ExtractTextTool(extractText).executeCommand({ file_path: file }));
+            assert.equal(result.type, 'text');
+            assert.equal(result.file.numLines, 3);
+            assert.equal(
+                result.file.content,
+                text
+                    .split('\n')
+                    .map((line, i) => `${String(i + 1).padStart(6, ' ')}\t${line}`)
+                    .join('\n')
+            );
+        } finally {
+            cleanup(dir);
+        }
+    });
 
 test('extractText extracts structured files through the shared extractText support range', async () => {
     const dir = makeTempDir();
@@ -1008,4 +1031,24 @@ test('grepFiles stops walking the tree when the time budget is exhausted', async
         }
         cleanup(root);
     }
+});
+
+test('semanticSearch maps BM25 and semantic content to one existing content label', () => {
+    for (const [locale, label] of [
+        ['en-US', 'Content'],
+        ['zh-CN', '内容']
+    ]) {
+        setRuntimeLocale(locale);
+        for (const matchTypes of [['bm25'], ['bm25', 'content_semantic']]) {
+            const result = formatSemanticSearchMarkdown({
+                query: 'q',
+                results: [{ path: '/docs/a.txt', filename: 'a.txt', matchTypes }],
+                totalHits: 1
+            });
+            const firstLine = result.split('\n')[0].toLowerCase();
+            assert.ok(firstLine.includes(label.toLowerCase()));
+            assert.equal(firstLine.split(label.toLowerCase()).length - 1, 1);
+        }
+    }
+    setRuntimeLocale('en-US');
 });

@@ -24,8 +24,9 @@ import type {
     ArkDataRow,
     ArkDataValueType
 } from '../../../platforms/bridges/common.js';
-import { ArkDataStoreSession, getArkdataDatabaseKit } from './arkdata-bridge.js';
+import { ArkDataStoreSession, getArkdataDatabaseKit, retryArkdataStoreReleases } from './arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
+import { recordStorageInitializationFailure, recordStorageCleanupFailure } from './platform.js';
 import { pickArkdataVectorOperator, simFromArkdataDistance } from './arkdata-vector-metric.js';
 import { createArkDataStoreId, toArkDataDbPath } from './arkdata-path.js';
 import { getArkDataTxId, hasArkDataTx, runWithArkDataTx } from './arkdata-tx-context.js';
@@ -92,18 +93,16 @@ export async function probeVectorIndexStoreArkdata(dbPath: string): Promise<Base
 export async function dropVectorIndexStoreArkdata(dbPath: string): Promise<void> {
     const formalDbPath = toArkDataDbPath(dbPath);
     const storeId = createArkDataStoreId('arkdata-vector', formalDbPath);
-    const dbKit = getArkdataDatabaseKit();
-    const session = new ArkDataStoreSession(dbKit, storeId, { path: formalDbPath, vector: true }, true);
+    await retryArkdataStoreReleases([formalDbPath]);
     try {
-        await session.open();
-        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS vector_index');
-        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS __schema_meta_safe');
-    } finally {
-        await session
-            .close()
-            .catch((error) =>
-                logger.warn(`[arkdata-drop] vector close failed storeId=${storeId}`, arkDataProbeError(error))
-            );
+        await getArkdataDatabaseKit().deleteStore(storeId, { path: formalDbPath, vector: true });
+    } catch (error) {
+        recordStorageInitializationFailure(error, {
+            indexer: 'VectorIndexer',
+            backend: 'arkdata',
+            operation: 'delete'
+        });
+        throw error;
     }
 }
 
@@ -143,8 +142,10 @@ export class VectorIndexDBArkdata implements IVectorIndexDB {
     }
 
     private async initializeStore(generation: number, initializeTables: boolean): Promise<void> {
+        let operation: 'initialize' | 'close' = 'close';
         try {
             if (this.storeSession?.needsReplacement()) await this.releaseStoreReference();
+            operation = 'initialize';
             if (!this.storeSession) {
                 this.dbKit = getArkdataDatabaseKit();
                 // Retain the acquisition identity before awaiting a possibly late result.
@@ -159,8 +160,12 @@ export class VectorIndexDBArkdata implements IVectorIndexDB {
             this.assertInitializationActive(generation);
             this.isInitialized = initializeTables;
         } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'VectorIndexer', backend: 'arkdata', operation });
             if (this.storeSession) {
-                await this.releaseStoreReference().catch((e) => logger.warn('closeStore failed', e));
+                await this.releaseStoreReference().catch((e) => {
+                    recordStorageCleanupFailure(error, e, 'VectorIndexer');
+                    logger.warn('closeStore failed', e);
+                });
             } else {
                 this.dbKit = null;
             }
@@ -464,11 +469,8 @@ export class VectorIndexDBArkdata implements IVectorIndexDB {
     }
 
     async dropStorage(): Promise<void> {
-        // Deletion must not create schema or read a potentially incompatible dimension.
-        await this.ensureInitialized(false);
-        await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.tableName}`);
-        await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.schemaMetaTableName}`);
         await this.close();
+        await dropVectorIndexStoreArkdata(this.dbPath);
     }
 
     async searchMeta(conditions?: VectorMetaCondition[]): Promise<Array<{ item_id: string; item_type: string }>> {

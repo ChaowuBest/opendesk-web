@@ -24,6 +24,12 @@ const MINI_RING_CIRCUMFERENCE = 37.7;
 const SKELETON_CARD_COUNT = 3;
 export const WORKSPACE_SOURCE_PROTECTED_MESSAGE = '当前工作空间不能在这里移除。请回到主页面切换工作空间。';
 const SOURCE_CONTROL_FALLBACKS = {
+    'renderer.filemgr.source.progress.body': '关键词索引 · ${done}/${total}',
+    'renderer.filemgr.source.progress.semantic': '语义索引 · ${done}/${total}',
+    'renderer.filemgr.source.progress.completed': '索引完成',
+    'renderer.filemgr.source.fullText.withCounts': '全文索引 · ${done} / ${total} 文件',
+    'renderer.filemgr.source.ring.fullText': '全文索引 ${done}/${total}',
+    'renderer.filemgr.source.ring.vector': '向量索引 ${done}/${total}',
     'renderer.filemgr.source.metadataWritePending': '此前部分文件的扫描结果保存失败，等待后续扫描确认恢复。',
     'renderer.filemgr.source.unavailable': '路径不可访问',
     'renderer.filemgr.source.unavailableWithCount': '路径不可访问 · 上次 ${count} 文件',
@@ -187,6 +193,10 @@ function normalizeSource(source, entry, data, index) {
         totalFiles: toNumber(source?.total_files ?? source?.totalFiles, null),
         embeddedCount: toNumber(source?.embedded_count ?? source?.embeddedCount, null),
         failedCount: toNumber(source?.failed_count ?? source?.failedCount, null),
+        fullText:
+            data.full_text && !['unsupported', 'open_failed', 'tokenizer_unavailable'].includes(data.full_text.reason)
+                ? (source?.full_text ?? null)
+                : null,
         lastScanAt: source?.last_scan_at ?? source?.lastScanAt ?? source?.last_full_scan ?? null,
         unavailableInfo: source ? getUnavailableInfo(source, data, path) : null,
         workspace: Boolean(getDefaultWorkspace()) && normalizePath(path) === normalizePath(getDefaultWorkspace()),
@@ -214,18 +224,143 @@ function getDisplayState(source) {
     return ['pending', 'scanning', 'completed', 'unavailable'].includes(source.state) ? source.state : 'unknown';
 }
 
-function getProgress(source, displayState) {
+function getProgress(source, displayState, mode) {
+    const empty = { fullText: null, vector: null };
     if (
         !source.hasBackend ||
         (source.metadataWritePending && displayState !== 'paused' && displayState !== 'unavailable') ||
         source.totalFiles === null ||
         displayState === 'unknown'
     )
-        return null;
-    if (displayState === 'completed') return 100;
-    if (displayState !== 'scanning' || source.totalFiles <= 0) return 0;
-    if (source.embeddedCount === null) return null;
-    return Math.max(0, Math.min(100, Math.round((source.embeddedCount / source.totalFiles) * 100)));
+        return empty;
+    let vector = displayState === 'completed' ? 100 : 0;
+    if (displayState === 'scanning' && source.totalFiles > 0) {
+        vector =
+            source.embeddedCount === null
+                ? null
+                : Math.max(0, Math.min(100, Math.round((source.embeddedCount / source.totalFiles) * 100)));
+    }
+    const fullText = source.fullText
+        ? !['scanning', 'completed'].includes(displayState)
+            ? 0
+            : source.fullText.pending === 0
+              ? 100
+              : Math.max(
+                    0,
+                    Math.min(
+                        100,
+                        Math.round(((source.fullText.done + source.fullText.excluded) / (source.totalFiles || 1)) * 100)
+                    )
+                )
+        : null;
+    return { fullText, vector: mode === 'base-only' && source.fullText ? null : vector };
+}
+
+let progressTooltipId = 0;
+
+function progressLabels(source, progress, options) {
+    const labels = [];
+    if (progress.fullText !== null)
+        labels.push({
+            kind: 'full-text',
+            text: sourceControlText(options, 'renderer.filemgr.source.progress.body', {
+                done: source.fullText.done + source.fullText.excluded,
+                total: source.totalFiles
+            })
+        });
+    if (progress.vector !== null)
+        labels.push({
+            kind: 'vector',
+            text: sourceControlText(options, 'renderer.filemgr.source.progress.semantic', {
+                done: source.embeddedCount ?? 0,
+                total: source.totalFiles
+            })
+        });
+    return labels;
+}
+
+function createProgressTooltip(doc, row, status) {
+    const id = `filemgr-progress-tooltip-${++progressTooltipId}`;
+    const view = doc.defaultView;
+    let labels = [];
+    let tooltip = null;
+    const hide = () => {
+        tooltip?.remove();
+        tooltip = null;
+        status.removeAttribute('aria-describedby');
+    };
+    const position = () => {
+        if (!tooltip) return;
+        const rect = row.getBoundingClientRect?.();
+        if (!rect) return;
+        const bounds = tooltip.getBoundingClientRect();
+        const width = view.innerWidth || 1024;
+        const height = view.innerHeight || 768;
+        tooltip.style.left = `${Math.max(8, Math.min(rect.left, width - bounds.width - 8))}px`;
+        tooltip.style.top = `${Math.max(
+            8,
+            rect.bottom + 8 + bounds.height <= height - 8 ? rect.bottom + 8 : rect.top - bounds.height - 8
+        )}px`;
+    };
+    const render = () => {
+        if (!tooltip) return;
+        for (let i = 0; i < labels.length; i++) {
+            let line = tooltip.children[i];
+            if (!line) {
+                line = doc.createElement('div');
+                const dot = doc.createElement('span');
+                dot.setAttribute('aria-hidden', 'true');
+                const label = doc.createElement('span');
+                label.className = 'fs-progress-tooltip-label';
+                line.append(dot, label);
+                tooltip.append(line);
+            }
+            updateAttribute(line.firstChild, 'class', `fs-progress-tooltip-dot ${labels[i].kind}`);
+            updateText(line.lastChild, labels[i].text);
+        }
+        while (tooltip.children.length > labels.length) tooltip.lastChild.remove();
+        position();
+    };
+    const show = () => {
+        if (!labels.length || tooltip) return;
+        tooltip = doc.createElement('div');
+        tooltip.id = id;
+        tooltip.className = 'fs-progress-tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        doc.body.append(tooltip);
+        status.setAttribute('aria-describedby', id);
+        render();
+    };
+    const isTrigger = (target) => target && row.contains(target) && target.closest?.('.mini-ring, .status-text');
+    row.addEventListener('pointerover', (event) => {
+        if (isTrigger(event.target)) show();
+    });
+    row.addEventListener('pointerout', (event) => {
+        if (!isTrigger(event.relatedTarget)) hide();
+    });
+    status.addEventListener('focus', show);
+    status.addEventListener('blur', hide);
+    const onKey = (event) => {
+        if (event.key === 'Escape') hide();
+    };
+    doc.addEventListener('keydown', onKey);
+    view?.addEventListener('scroll', hide, true);
+    view?.addEventListener('resize', hide);
+    return {
+        update(nextLabels) {
+            labels = nextLabels;
+            updateAttribute(status, 'aria-label', labels.length ? labels.map((label) => label.text).join('\n') : null);
+            updateAttribute(status, 'tabindex', labels.length ? '0' : null);
+            if (!labels.length) hide();
+            else render();
+        },
+        destroy() {
+            hide();
+            doc.removeEventListener('keydown', onKey);
+            view?.removeEventListener('scroll', hide, true);
+            view?.removeEventListener('resize', hide);
+        }
+    };
 }
 
 function getStatusText(source, displayState, mode, options) {
@@ -255,17 +390,22 @@ function getStatusText(source, displayState, mode, options) {
         source.totalFiles === null
             ? ''
             : sourceControlText(options, 'renderer.filemgr.source.fileCount', { count: source.totalFiles });
-    if (mode === 'base-only') return sourceControlText(options, 'renderer.filemgr.mode.baseOnly') + countText;
+    if (displayState === 'completed')
+        return sourceControlText(options, 'renderer.filemgr.source.progress.completed') + countText;
     if (displayState === 'pending') return sourceControlText(options, 'renderer.filemgr.source.scan.pending');
-    if (displayState === 'scanning' && source.embeddedCount !== null && source.totalFiles !== null)
-        return sourceControlText(options, 'renderer.filemgr.source.scan.withCounts', {
-            embedded: source.embeddedCount,
-            total: source.totalFiles
-        });
-    return (
-        sourceControlText(options, `renderer.filemgr.source.scan.${displayState}`) +
-        (displayState === 'completed' ? countText : '')
-    );
+    if (displayState === 'scanning' && source.totalFiles !== null) {
+        const body = source.fullText ? source.fullText.done + source.fullText.excluded : null;
+        const semantic = mode === 'base-only' ? null : source.embeddedCount;
+        const showBody = body !== null && (source.fullText.pending > 0 || mode === 'base-only');
+        const done = showBody ? body : semantic;
+        if (done !== null)
+            return sourceControlText(
+                options,
+                showBody ? 'renderer.filemgr.source.progress.body' : 'renderer.filemgr.source.progress.semantic',
+                { done, total: source.totalFiles }
+            );
+    }
+    return sourceControlText(options, `renderer.filemgr.source.scan.${displayState}`);
 }
 
 function injectStyles(doc) {
@@ -276,6 +416,28 @@ function injectStyles(doc) {
     const style = doc.createElement('style');
     style.id = SOURCES_STYLE_ID;
     style.textContent = `
+.fs-progress-tooltip {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    padding: 10px 12px;
+    border: 1px solid var(--od-border, #d5dbe3);
+    border-radius: 9px;
+    background: var(--od-bg-elevated, #fff);
+    color: var(--od-text, #202530);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.6;
+    font-variant-numeric: tabular-nums;
+    max-width: calc(100vw - 16px);
+    overflow-wrap: anywhere;
+}
+.fs-progress-tooltip > div { display: flex; align-items: center; gap: 8px; }
+.fs-progress-tooltip > div + div { margin-top: 3px; }
+.fs-progress-tooltip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.fs-progress-tooltip-dot.full-text { background: color-mix(in srgb, var(--od-accent, #2563eb) 50%, white); }
+.fs-progress-tooltip-dot.vector { background: var(--od-accent, #2563eb); }
 .fs-upper {
     --filemgr-success: #10b981;
     --filemgr-danger: #ef4444;
@@ -802,12 +964,21 @@ function injectStyles(doc) {
     transition: stroke-dashoffset 0.9s var(--filemgr-ease-out), stroke 0.3s;
 }
 
-.fs-upper .fs-source-card.scan-done .mini-ring .fill {
-    stroke: var(--filemgr-success);
+.fs-upper .fs-source-card .mini-ring.dual .track,
+.fs-upper .fs-source-card .mini-ring.dual .fill {
+    stroke-width: 1.6;
 }
 
-.fs-upper .fs-source-card.base-only.scan-done .mini-ring .fill {
-    stroke: var(--od-text-muted);
+.fs-upper .fs-source-card .mini-ring .fill.full-text {
+    stroke: color-mix(in srgb, var(--od-accent) 50%, white);
+}
+
+.fs-upper .fs-source-card .mini-ring .fill.vector {
+    stroke: var(--od-accent);
+}
+
+.fs-upper .fs-source-card.scan-done .mini-ring .fill {
+    stroke: var(--filemgr-success);
 }
 
 .fs-upper .fs-source-card .status-accent {
@@ -817,10 +988,6 @@ function injectStyles(doc) {
 
 .fs-upper .fs-source-card.scan-done .status-accent {
     color: var(--filemgr-success);
-}
-
-.fs-upper .fs-source-card.base-only.scan-done .status-accent {
-    color: var(--od-text-muted);
 }
 
 .fs-upper .fs-warning-icon {
@@ -1020,21 +1187,47 @@ function createMiniRing(doc, progress) {
     svg.setAttribute('viewBox', '0 0 16 16');
     svg.setAttribute('aria-hidden', 'true');
 
-    const track = doc.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    track.classList.add('track');
-    track.setAttribute('cx', '8');
-    track.setAttribute('cy', '8');
-    track.setAttribute('r', '6');
-
-    const fill = doc.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    fill.classList.add('fill');
-    fill.setAttribute('cx', '8');
-    fill.setAttribute('cy', '8');
-    fill.setAttribute('r', '6');
-    fill.style.strokeDashoffset = String(MINI_RING_CIRCUMFERENCE * (1 - progress / 100));
-
-    svg.append(track, fill);
+    updateMiniRing(doc, svg, progress);
     return svg;
+}
+
+function updateMiniRing(doc, svg, progress) {
+    const layers = [
+        ['full-text', progress.fullText],
+        ['vector', progress.vector]
+    ];
+    for (const [name, value] of layers) {
+        if (value === null) svg.querySelector(`.fill.${name}`)?.remove();
+    }
+    const active = layers.filter(([, value]) => value !== null);
+    const dual = active.length === 2;
+    if (svg.classList.contains('dual') !== dual) svg.classList.toggle('dual', dual);
+    for (const name of ['full-text', 'vector']) {
+        if (!active.some(([key]) => key === name)) svg.querySelector(`.track.${name}`)?.remove();
+    }
+    for (const [name, value] of active) {
+        const radius = dual && name === 'vector' ? 3 : 6;
+        for (const kind of ['track', 'fill']) {
+            let circle = svg.querySelector(`.${kind}.${name}`);
+            if (!circle) {
+                circle = doc.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.classList.add(kind, name);
+                circle.setAttribute('cx', '8');
+                circle.setAttribute('cy', '8');
+                svg.append(circle);
+            }
+            updateAttribute(circle, 'r', radius);
+            if (kind === 'fill') {
+                const circumference = radius === 6 ? MINI_RING_CIRCUMFERENCE : 2 * Math.PI * radius;
+                const dash = String(circumference);
+                const offset = String(circumference * (1 - value / 100));
+                if (circle.style.strokeDasharray !== dash) circle.style.strokeDasharray = dash;
+                if (circle.style.strokeDashoffset !== offset) circle.style.strokeDashoffset = offset;
+                const visibility = value === 0 ? 'hidden' : 'visible';
+                if (circle.style.visibility !== visibility) circle.style.visibility = visibility;
+            }
+        }
+    }
 }
 
 function createIconBox(doc, source, displayState) {
@@ -1378,6 +1571,7 @@ function createSourceCard(doc, initialSource, mode, options) {
     let control = null;
     let timeTag = null;
     let error = null;
+    const progressTooltip = createProgressTooltip(doc, row3, status);
 
     const update = (nextSource, nextMode, workerStatus, translator = options.t) => {
         const rootIsPending = options.pendingByRoot.has(nextSource.path);
@@ -1397,7 +1591,9 @@ function createSourceCard(doc, initialSource, mode, options) {
         options.t = translator;
         const displayState = getDisplayState(source);
         const statusText = getStatusText(source, displayState, nextMode, options);
-        const progress = getProgress(source, displayState);
+        const progress = getProgress(source, displayState, nextMode);
+        const values = Object.values(progress).filter((value) => value !== null);
+        const hasProgress = values.length > 0;
         updateAttribute(
             card,
             'class',
@@ -1412,7 +1608,7 @@ function createSourceCard(doc, initialSource, mode, options) {
                 .join(' ')
         );
         updateData(card, 'state', displayState);
-        updateData(card, 'progress', progress);
+        updateData(card, 'progress', hasProgress ? Math.min(...values) : null);
         updateAttribute(card, 'aria-busy', String(rootIsPending));
         updateAttribute(
             iconBox.firstChild,
@@ -1451,15 +1647,14 @@ function createSourceCard(doc, initialSource, mode, options) {
         updateText(actions.remove, removeText);
         if (actions.remove.disabled !== rootIsPending) actions.remove.disabled = rootIsPending;
 
-        const iconClass =
-            displayState === 'unavailable' ? 'fs-warning-icon' : progress !== null ? 'fs-mini-ring' : null;
+        const iconClass = displayState === 'unavailable' ? 'fs-warning-icon' : hasProgress ? 'fs-mini-ring' : null;
         if (statusIcon && (!iconClass || !statusIcon.classList.contains(iconClass))) {
             statusIcon.remove();
             statusIcon = null;
         }
         if (iconClass && !statusIcon) {
             statusIcon =
-                progress !== null && displayState !== 'unavailable'
+                hasProgress && displayState !== 'unavailable'
                     ? createMiniRing(doc, progress)
                     : doc.createElement('span');
             if (iconClass === 'fs-warning-icon') {
@@ -1468,19 +1663,14 @@ function createSourceCard(doc, initialSource, mode, options) {
             }
             row3.insertBefore(statusIcon, status);
         }
-        if (iconClass === 'fs-mini-ring') {
-            const fill = statusIcon.lastChild;
-            const offset = String(MINI_RING_CIRCUMFERENCE * (1 - progress / 100));
-            if (fill.style.strokeDashoffset !== offset) fill.style.strokeDashoffset = offset;
-        }
-        updateAttribute(row3, 'title', statusText);
+        if (iconClass === 'fs-mini-ring') updateMiniRing(doc, statusIcon, progress);
+        progressTooltip.update(iconClass === 'fs-mini-ring' ? progressLabels(source, progress, options) : []);
         updateAttribute(
             status,
             'class',
             displayState === 'pending' || displayState === 'unavailable' ? 'status-text' : 'status-text status-accent'
         );
         updateText(status, statusText);
-        updateAttribute(status, 'title', statusText);
         if (source.lastScanAt) {
             if (!timeTag) {
                 timeTag = doc.createElement('span');
@@ -1529,6 +1719,7 @@ function createSourceCard(doc, initialSource, mode, options) {
         update,
         destroy() {
             options.sourceMenuPortal.closeFor(actions.menu);
+            progressTooltip.destroy();
             source = null;
             card.remove();
         }

@@ -31,12 +31,9 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import {
-    createChunkIndexDB,
-    createChunkIndexDBForDrop,
-    dropChunkIndexStore,
-    probeChunkIndexStore
-} from './chunk-index-db-factory.js';
+import { recordStorageInitializationFailure, recordStorageCleanupFailure } from './platform.js';
+import type { StorageInitializationCleanup } from './platform.js';
+import { createChunkIndexDB, dropChunkIndexStore, probeChunkIndexStore } from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
@@ -118,7 +115,9 @@ export class ChunkIndexer extends Indexer {
     private readonly dimension: number;
     private readonly schema: ColumnSchema;
     private isDropped = false;
+    private dropCompleted = false;
     private closingPromise: Promise<void> | null = null;
+    private initializationCleanup: StorageInitializationCleanup[] = [];
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -139,8 +138,11 @@ export class ChunkIndexer extends Indexer {
         if (this.isDropped) {
             throw new Error('ChunkIndexer storage has been dropped. Construct a new ChunkIndexer.');
         }
+        if (this.initializationCleanup.length > 0) throw this.initializationCleanup[0].error;
         if (!this.db) {
-            this.db = await createChunkIndexDB(this._dbPath, this.dimension);
+            this.db = await createChunkIndexDB(this._dbPath, this.dimension, (cleanup) => {
+                this.initializationCleanup.push(cleanup);
+            });
         }
         const storedDim = await this.db.getStoredDim();
         if (storedDim !== null && storedDim !== this.dimension) {
@@ -307,11 +309,26 @@ export class ChunkIndexer extends Indexer {
     close(): Promise<void> {
         if (this.closingPromise) return this.closingPromise;
         const db = this.db;
-        if (!db) return Promise.resolve();
-        // Keep the holder reachable until its reference has actually been released.
+        const cleanup = [...this.initializationCleanup];
+        if (!db && cleanup.length === 0) return Promise.resolve();
+        // Keep failed construction cleanup and normal holders owned until released.
         const closing = (async () => {
-            await db.close();
-            if (this.db === db) this.db = null;
+            const results = await Promise.allSettled([
+                ...cleanup.map(async (pending) => {
+                    await pending.close();
+                    this.initializationCleanup = this.initializationCleanup.filter((item) => item !== pending);
+                }),
+                ...(db
+                    ? [
+                          (async () => {
+                              await db.close();
+                              if (this.db === db) this.db = null;
+                          })()
+                      ]
+                    : [])
+            ]);
+            const failed = results.find((result) => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
         })().finally(() => {
             if (this.closingPromise === closing) this.closingPromise = null;
         });
@@ -320,8 +337,9 @@ export class ChunkIndexer extends Indexer {
     }
 
     async dropStorage(): Promise<void> {
-        if (this.isDropped) return;
-        if (!this.db) this.db = await createChunkIndexDBForDrop(this._dbPath, this.dimension);
+        if (this.initializationCleanup.length > 0) await this.close();
+        if (this.dropCompleted) return this.close();
+        this.isDropped = true;
         const db = this.db;
         let failure: unknown;
         let failed = false;
@@ -331,16 +349,25 @@ export class ChunkIndexer extends Indexer {
             } else {
                 await dropChunkIndexStore(this._dbPath);
             }
+            this.dropCompleted = true;
         } catch (error) {
             failure = error;
             failed = true;
+            recordStorageInitializationFailure(error, {
+                indexer: this.name,
+                operation: 'delete',
+                ...(db && { backend: db.backend })
+            });
         }
 
-        this.isDropped = true;
         try {
             await this.close();
         } catch (error) {
-            if (!failed) failure = error;
+            if (failed) recordStorageCleanupFailure(failure, error, this.name);
+            else {
+                failure = error;
+                recordStorageInitializationFailure(error, { indexer: this.name, operation: 'close' });
+            }
             failed = true;
         }
         if (failed) throw failure;

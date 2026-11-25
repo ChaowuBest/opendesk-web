@@ -32,6 +32,7 @@ import {
 import { logger as staticLogger } from '../../../utils/logger.js';
 import { xlsxLoader } from '../../../loader/xlsx.js';
 import { prepareHostResource } from '../../../../platforms/runtime.js';
+import { detectEncoding, decodeBuffer } from '../../terminal/encoding.js';
 
 function getLogger() {
     return staticLogger;
@@ -470,7 +471,9 @@ export async function extractText(filePath) {
 
     try {
         if (PLAIN_TEXT_EXTS.has(ext)) {
-            return await fs.promises.readFile(filePath, 'utf-8');
+            const buffer = await fs.promises.readFile(filePath);
+            const { encoding, bomOffset } = detectEncoding(buffer);
+            return decodeBuffer(buffer, encoding, bomOffset);
         }
 
         if (RTF_EXTS.has(ext)) {

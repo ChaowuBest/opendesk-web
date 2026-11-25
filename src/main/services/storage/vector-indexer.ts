@@ -31,12 +31,9 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import {
-    createVectorIndexDB,
-    createVectorIndexDBForDrop,
-    dropVectorIndexStore,
-    probeVectorIndexStore
-} from './vector-index-db-factory.js';
+import { recordStorageInitializationFailure, recordStorageCleanupFailure } from './platform.js';
+import type { StorageInitializationCleanup } from './platform.js';
+import { createVectorIndexDB, dropVectorIndexStore, probeVectorIndexStore } from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
@@ -125,7 +122,9 @@ export class VectorIndexer extends Indexer {
     private readonly dimension: number;
     private schema: ColumnSchema;
     private isDropped = false;
+    private dropCompleted = false;
     private closingPromise: Promise<void> | null = null;
+    private initializationCleanup: StorageInitializationCleanup[] = [];
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -144,8 +143,11 @@ export class VectorIndexer extends Indexer {
         if (this.isDropped) {
             throw new Error('VectorIndexer storage has been dropped. Construct a new VectorIndexer.');
         }
+        if (this.initializationCleanup.length > 0) throw this.initializationCleanup[0].error;
         if (!this.db) {
-            this.db = await createVectorIndexDB(this._dbPath, this.dimension);
+            this.db = await createVectorIndexDB(this._dbPath, this.dimension, (cleanup) => {
+                this.initializationCleanup.push(cleanup);
+            });
         }
         // Check stored dim matches configured dim
         const storedDim = await this.db.getStoredDim();
@@ -409,11 +411,26 @@ export class VectorIndexer extends Indexer {
     close(): Promise<void> {
         if (this.closingPromise) return this.closingPromise;
         const db = this.db;
-        if (!db) return Promise.resolve();
-        // Keep the holder reachable until its reference has actually been released.
+        const cleanup = [...this.initializationCleanup];
+        if (!db && cleanup.length === 0) return Promise.resolve();
+        // Keep failed construction cleanup and normal holders owned until released.
         const closing = (async () => {
-            await db.close();
-            if (this.db === db) this.db = null;
+            const results = await Promise.allSettled([
+                ...cleanup.map(async (pending) => {
+                    await pending.close();
+                    this.initializationCleanup = this.initializationCleanup.filter((item) => item !== pending);
+                }),
+                ...(db
+                    ? [
+                          (async () => {
+                              await db.close();
+                              if (this.db === db) this.db = null;
+                          })()
+                      ]
+                    : [])
+            ]);
+            const failed = results.find((result) => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
         })().finally(() => {
             if (this.closingPromise === closing) this.closingPromise = null;
         });
@@ -422,8 +439,9 @@ export class VectorIndexer extends Indexer {
     }
 
     async dropStorage(): Promise<void> {
-        if (this.isDropped) return;
-        if (!this.db) this.db = await createVectorIndexDBForDrop(this._dbPath, this.dimension);
+        if (this.initializationCleanup.length > 0) await this.close();
+        if (this.dropCompleted) return this.close();
+        this.isDropped = true;
         const db = this.db;
         let failure: unknown;
         let failed = false;
@@ -433,16 +451,25 @@ export class VectorIndexer extends Indexer {
             } else {
                 await dropVectorIndexStore(this._dbPath);
             }
+            this.dropCompleted = true;
         } catch (error) {
             failure = error;
             failed = true;
+            recordStorageInitializationFailure(error, {
+                indexer: this.name,
+                operation: 'delete',
+                ...(db && { backend: db.backend })
+            });
         }
 
-        this.isDropped = true;
         try {
             await this.close();
         } catch (error) {
-            if (!failed) failure = error;
+            if (failed) recordStorageCleanupFailure(failure, error, this.name);
+            else {
+                failure = error;
+                recordStorageInitializationFailure(error, { indexer: this.name, operation: 'close' });
+            }
             failed = true;
         }
         if (failed) throw failure;
