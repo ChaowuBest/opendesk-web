@@ -5,6 +5,7 @@ import { setPlatform } from '../../../../platforms/base.js';
 import {
     closeMailTunnels,
     parseProxyUrl,
+    resolveMailProxyConfig,
     resolveMailEndpoint
 } from '../../../../main/applications/mailbox/service/proxy-tunnel.js';
 
@@ -357,4 +358,204 @@ test('client disconnect during CONNECT handshake releases the proxy socket', asy
         closeMailTunnels();
         proxy.close();
     }
+});
+
+test('bypassing one target immediately closes its tunnel and preserves other targets', async (t) => {
+    const targetA = await startTargetServer('MAIL_A');
+    const targetB = await startTargetServer('MAIL_B');
+    const proxy = await startHttpProxy();
+    const config = baseConfig({ use_proxy: 'custom', custom_proxy_addr: `http://127.0.0.1:${proxy.port}` });
+    useNetworkConfig(config);
+    const activeClients = new Set();
+    t.after(() => {
+        for (const client of activeClients) client.destroy();
+        closeMailTunnels();
+        proxy.close();
+        targetA.close();
+        targetB.close();
+    });
+
+    const endpointA = await resolveMailEndpoint('127.0.0.1', targetA.port);
+    const endpointB = await resolveMailEndpoint('127.0.0.1', targetB.port);
+    const clientA = net.connect(endpointA.port, endpointA.host);
+    activeClients.add(clientA);
+    clientA.on('error', () => undefined);
+    const readerA = createReader(clientA);
+    assert.equal((await readerA.readBytes(6)).toString(), 'MAIL_A');
+    const clientB = net.connect(endpointB.port, endpointB.host);
+    activeClients.add(clientB);
+    const readerB = createReader(clientB);
+    assert.equal((await readerB.readBytes(6)).toString(), 'MAIL_B');
+
+    config.no_proxy = `127.0.0.1:${targetA.port}`;
+    assert.equal(await resolveMailEndpoint('127.0.0.1', targetA.port), null);
+    await waitFor(() => clientA.destroyed, 'bypass must close the active client connection');
+
+    await assert.rejects(
+        async () => readBannerViaEndpoint(endpointA),
+        'bypassed target must not retain its old listener'
+    );
+    const endpointBAgain = await resolveMailEndpoint('127.0.0.1', targetB.port);
+    assert.equal(endpointBAgain.port, endpointB.port, 'unrelated target tunnel should remain cached');
+    clientB.write('PING');
+    assert.equal((await readerB.readBytes(4)).toString(), 'PING');
+
+    config.no_proxy = '';
+    const restored = await resolveMailEndpoint('127.0.0.1', targetA.port);
+    assert.equal(await readBannerViaEndpoint(restored), 'MAIL_A');
+});
+
+test('bypassing a target aborts its pending proxy handshake', async (t) => {
+    const proxy = await startStallingHttpProxy();
+    const config = baseConfig({ use_proxy: 'custom', custom_proxy_addr: `http://127.0.0.1:${proxy.port}` });
+    useNetworkConfig(config);
+    const endpoint = await resolveMailEndpoint('mail.example.test', 993);
+    const client = net.connect(endpoint.port, endpoint.host);
+    client.on('error', () => undefined);
+    t.after(() => {
+        client.destroy();
+        closeMailTunnels();
+        proxy.close();
+    });
+    await waitFor(() => proxy.activeConnections === 1, 'proxy handshake should have started');
+    config.no_proxy = 'mail.example.test';
+    assert.equal(await resolveMailEndpoint('mail.example.test', 993), null);
+    await waitFor(() => proxy.activeConnections === 0 && client.destroyed, 'bypass must release both sockets');
+});
+
+test('bypass invalidates pending creation even if the same proxy is enabled again before completion', async (t) => {
+    const target = await startTargetServer('MAILOK');
+    const proxy = await startHttpProxy();
+    const config = baseConfig({ use_proxy: 'custom', custom_proxy_addr: `http://127.0.0.1:${proxy.port}` });
+    useNetworkConfig(config);
+    const originalCreateServer = net.createServer;
+    const creations = [];
+    t.mock.method(net, 'createServer', (...args) => {
+        const server = originalCreateServer.apply(net, args);
+        const creation = { server, release: null, port: null };
+        creations.push(creation);
+        if (creations.length <= 2) {
+            const originalListen = server.listen;
+            t.mock.method(server, 'listen', (...listenArgs) => {
+                const onListening = listenArgs.pop();
+                return originalListen.call(server, ...listenArgs, () => {
+                    creation.port = server.address().port;
+                    creation.release = onListening;
+                });
+            });
+        }
+        return server;
+    });
+    t.after(() => {
+        closeMailTunnels();
+        for (const creation of creations) {
+            creation.release?.();
+            if (creation.server.listening) creation.server.close();
+        }
+        proxy.close();
+        target.close();
+    });
+
+    const oldPending = resolveMailEndpoint('127.0.0.1', target.port);
+    await waitFor(() => creations[0]?.release, 'first tunnel should be waiting for creation to finish');
+    config.no_proxy = '127.0.0.1';
+    assert.equal(await resolveMailEndpoint('127.0.0.1', target.port), null);
+
+    config.no_proxy = '';
+    const newPending = resolveMailEndpoint('127.0.0.1', target.port);
+    await waitFor(() => creations[1]?.release, 'restoring the proxy must start a new tunnel');
+    creations[0].release();
+    assert.equal(await oldPending, null, 'invalidated creation must not return a proxy endpoint');
+
+    const concurrentPending = resolveMailEndpoint('127.0.0.1', target.port);
+    await new Promise(setImmediate);
+    assert.equal(creations.length, 2, 'old completion must not evict the newer pending tunnel');
+    creations[1].release();
+    const endpoint = await newPending;
+    assert.deepEqual(await concurrentPending, endpoint);
+    assert.equal((await resolveMailEndpoint('127.0.0.1', target.port)).port, endpoint.port);
+    await assert.rejects(() => readBannerViaEndpoint({ host: '127.0.0.1', port: creations[0].port }));
+    assert.equal(await readBannerViaEndpoint(endpoint), 'MAILOK');
+});
+
+function useSystemProxy(t, config, env) {
+    const originalPlatform = process.platform;
+    const keys = [
+        'ALL_PROXY',
+        'all_proxy',
+        'HTTPS_PROXY',
+        'https_proxy',
+        'HTTP_PROXY',
+        'http_proxy',
+        'NO_PROXY',
+        'no_proxy'
+    ];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    for (const key of keys) delete process.env[key];
+    Object.assign(process.env, env);
+    useNetworkConfig(config);
+    t.after(() => {
+        closeMailTunnels();
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        for (const key of keys) {
+            if (saved[key] === undefined) delete process.env[key];
+            else process.env[key] = saved[key];
+        }
+    });
+}
+
+test('system mail proxy uses only the system bypass list and ignores custom-mode settings', async (t) => {
+    useSystemProxy(t, baseConfig({ use_proxy: 'system', no_proxy: 'app-only.example.test' }), {
+        HTTP_PROXY: 'http://127.0.0.1:9',
+        NO_PROXY: '*.huawei.com'
+    });
+    assert.equal((await resolveMailProxyConfig()).noProxy, '*.huawei.com');
+    assert.notEqual(await resolveMailEndpoint('app-only.example.test', 993), null);
+    assert.equal(await resolveMailEndpoint('mail.huawei.com', 993), null);
+    assert.notEqual(await resolveMailEndpoint('mail.example.com', 993), null);
+
+    delete process.env.NO_PROXY;
+    assert.equal((await resolveMailProxyConfig()).noProxy, '');
+    assert.notEqual(await resolveMailEndpoint('app-only.example.test', 993), null);
+});
+
+test('mail environment fallback uses only the environment bypass list', async (t) => {
+    useSystemProxy(t, baseConfig({ use_proxy: 'system', no_proxy: 'app-only.example.test' }), {
+        ALL_PROXY: 'socks5://127.0.0.1:9',
+        no_proxy: '*.huawei.com'
+    });
+    assert.equal((await resolveMailProxyConfig()).noProxy, '*.huawei.com');
+    assert.notEqual(await resolveMailEndpoint('app-only.example.test', 993), null);
+    assert.equal(await resolveMailEndpoint('mail.huawei.com', 993), null);
+});
+
+test('custom mail proxy uses its own bypass list without inheriting the system list', async (t) => {
+    useSystemProxy(
+        t,
+        baseConfig({
+            use_proxy: 'custom',
+            custom_proxy_addr: 'http://127.0.0.1:9',
+            no_proxy: '*.huawei.com:993'
+        }),
+        { HTTP_PROXY: 'http://127.0.0.1:10', NO_PROXY: '*.example.com' }
+    );
+    assert.equal(await resolveMailEndpoint('mail.huawei.com', 993), null);
+    assert.notEqual(await resolveMailEndpoint('mail.huawei.com', 465), null);
+    assert.notEqual(await resolveMailEndpoint('mail.example.com', 993), null);
+});
+
+test('system mail proxy routes reachable targets through the proxy unless bypassed', async (t) => {
+    const target = await startTargetServer('MAILOK');
+    const proxy = await startHttpProxy();
+    t.after(() => {
+        target.close();
+        proxy.close();
+    });
+    useSystemProxy(t, baseConfig({ use_proxy: 'system', no_proxy: 'localhost' }), {
+        HTTP_PROXY: `http://127.0.0.1:${proxy.port}`
+    });
+    const endpoint = await resolveMailEndpoint('127.0.0.1', target.port);
+    assert.equal(await readBannerViaEndpoint(endpoint), 'MAILOK');
+    assert.equal(proxy.stats.connections, 1);
 });
