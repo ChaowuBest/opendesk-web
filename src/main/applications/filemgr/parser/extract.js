@@ -20,7 +20,12 @@ import { createRequire } from 'module';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
 import WordExtractor from 'word-extractor';
-import { format as formatSpreadsheetValue } from 'numfmt';
+import {
+    format as formatSpreadsheetValue,
+    getFormatDateInfo,
+    getLocale as getSpreadsheetLocale,
+    tokenize
+} from 'numfmt';
 import { readOfd } from '@sharp9/ofdjs';
 import {
     initDOMParser as initOfdDOMParser,
@@ -335,16 +340,66 @@ function sheetToRowNumberedLines(XLSX, sheet, locale, date1904) {
     return lines;
 }
 
+function format1904CellValue(XLSX, format, value, locale) {
+    const tokens = tokenize(format);
+    const sections = [[]];
+    for (const token of tokens) {
+        if (token.type === 'BREAK') sections.push([]);
+        else sections[sections.length - 1].push(token);
+    }
+
+    // Let numfmt select the section with the original value. Shifting first can
+    // change a condition's result or move zero into the positive-value section.
+    const selector = sections
+        .map((section, index) => {
+            const conditions = section.filter((token) => token.type === 'CONDITION').map((token) => token.raw);
+            return conditions.join('') + (section.some((token) => token.type === 'TEXT') ? '@' : `"section${index}"`);
+        })
+        .join(';');
+    const selected = formatSpreadsheetValue(selector, value).match(/^-?section([0-3])$/);
+    const section = selected && sections[Number(selected[1])];
+    if (!section) return formatSpreadsheetValue(format, value, { locale });
+
+    const sectionFormat = section
+        .filter((token) => token.type !== 'CONDITION')
+        .map((token) => token.raw)
+        .join('');
+    const dateInfo = getFormatDateInfo(sectionFormat);
+    const systemDate = section.some((token) => token.type === 'LOCALE' && /^-(?:f800|x-sysdate)$/i.test(token.value));
+    if (dateInfo.type !== 'date' && dateInfo.type !== 'datetime' && !systemDate) {
+        return formatSpreadsheetValue(format, value, { locale });
+    }
+    // A format mixing calendar dates with elapsed units needs both epochs;
+    // preserve the existing SheetJS handling for that uncommon combination.
+    if (section.some((token) => token.type === 'DURATION')) {
+        return XLSX.SSF.format(format, value, { date1904: true });
+    }
+    // numfmt applies an explicit locale from any section to the whole format.
+    let localeOverride;
+    for (const token of tokens) {
+        if (token.type !== 'LOCALE') continue;
+        const candidate = token.value.match(/^[^-]*-(.+)$/)?.[1];
+        if (candidate && getSpreadsheetLocale(candidate)) {
+            // Keep only the LCID so calendar/numbering modifiers stay in their own section.
+            localeOverride = /^[0-9a-f]{3,8}$/i.test(candidate)
+                ? (parseInt(candidate, 16) & 0xffff).toString(16)
+                : candidate;
+        }
+    }
+    const localizedFormat = localeOverride ? `${sectionFormat}[$-${localeOverride}]` : sectionFormat;
+    return formatSpreadsheetValue(localizedFormat, value + 1462, { locale });
+}
+
 function formatCellValue(XLSX, cell, locale, date1904) {
     if (locale === undefined) return XLSX.utils.format_cell(cell);
     if (cell.f && (cell.t === 'z' || cell.v === undefined || cell.v === null)) return `=${cell.f}`;
     if (cell.t === 'n' && typeof cell.v === 'number') {
         const format = cell.z ?? 'General';
         try {
-            // numfmt only supports the 1900 epoch. SheetJS preserves 1904 dates
-            // and elapsed times without shifting ordinary numbers in the workbook.
-            if (date1904 && XLSX.SSF.is_date(format)) {
-                return XLSX.SSF.format(format, cell.v, { date1904 });
+            // numfmt only supports the 1900 epoch. Adapt calendar dates without
+            // shifting ordinary numbers or elapsed times in the workbook.
+            if (date1904) {
+                return format1904CellValue(XLSX, format, cell.v, locale);
             }
             return formatSpreadsheetValue(format, cell.v, { locale });
         } catch {

@@ -168,17 +168,78 @@ test('1904 workbooks keep calendar dates and durations while numbers follow the 
                     B1: { t: 'n', v: 1.5, z: 'yyyy-mm-dd hh:mm' },
                     C1: { t: 'n', v: 0.5, z: 'h:mm' },
                     D1: { t: 'n', v: 1.5, z: '[h]:mm:ss' },
-                    E1: { t: 'n', v: 1234.5, z: '#,##0.00' }
+                    E1: { t: 'n', v: 1234.5, z: '#,##0.00' },
+                    F1: { t: 'n', v: 1.5, z: 'yyyy-mm-dd [h]:mm' }
                 },
-                'A1:E1',
+                'A1:F1',
                 { date1904: true, extension }
             );
             assert.equal(
                 await extractText(filePath, { locale: 'tr-TR' }),
-                '1\t1904-01-01\t1904-01-02 12:00\t12:00\t36:00:00\t1.234,50'
+                '1\t1904-01-01\t1904-01-02 12:00\t12:00\t36:00:00\t1.234,50\t1904-01-02 36:00'
             );
         });
     }
+});
+
+test('1904 calendar dates follow the extraction locale and explicit Excel locale', async (t) => {
+    for (const extension of ['xls', 'xlsx'] as const) {
+        await t.test(extension, async () => {
+            const filePath = writeWorkbook(
+                {
+                    A1: { t: 'n', v: 0, z: 'dddd d mmmm yyyy' },
+                    B1: { t: 'n', v: 1.5, z: '[$-041F]dddd d mmmm yyyy h:mm' },
+                    C1: { t: 'n', v: 1.5, z: '[h]:mm:ss' },
+                    D1: { t: 'n', v: 0.5, z: 'h:mm' }
+                },
+                'A1:D1',
+                { date1904: true, extension }
+            );
+            assert.equal(
+                await extractText(filePath, { locale: 'en-US' }),
+                '1\tFriday 1 January 1904\tCumartesi 2 Ocak 1904 12:00\t36:00:00\t12:00'
+            );
+            assert.equal(
+                await extractText(filePath, { locale: 'tr-TR' }),
+                '1\tCuma 1 Ocak 1904\tCumartesi 2 Ocak 1904 12:00\t36:00:00\t12:00'
+            );
+        });
+    }
+});
+
+test('1904 format sections are selected using the original value before converting calendar dates', async () => {
+    const filePath = writeWorkbook(
+        {
+            A1: { t: 'n', v: 1.5, z: '[<2]dddd d mmmm yyyy "v;2" h:mm;0.00' },
+            B1: { t: 'n', v: 3, z: '[<2]dddd d mmmm yyyy;0.00' },
+            C1: { t: 'n', v: 0, z: '0.00;0.00;dddd d mmmm yyyy' },
+            D1: { t: 'n', v: 0, z: '[>0]0.00;[<0]0.00;dddd d mmmm yyyy' },
+            E1: { t: 'n', v: 0.5, z: '[>=2]dddd d mmmm yyyy' }
+        },
+        'A1:E1',
+        { date1904: true }
+    );
+    assert.equal(
+        await extractText(filePath, { locale: 'tr-TR' }),
+        '1\tCumartesi 2 Ocak 1904 v;2 12:00\t3,00\tCuma 1 Ocak 1904\tCuma 1 Ocak 1904\t0,5'
+    );
+});
+
+test('1904 system dates and locales inherited from other sections remain localized', async () => {
+    const filePath = writeWorkbook(
+        {
+            A1: { t: 'n', v: 0, z: '[$-F800]' },
+            B1: { t: 'n', v: 0, z: '[$-x-sysdate]' },
+            C1: { t: 'n', v: 0, z: '[$-0409]0.00;0.00;dddd d mmmm yyyy' },
+            D1: { t: 'n', v: 0, z: '[$-0409]dddd d mmmm yyyy;[$-041F]0.00' }
+        },
+        'A1:D1',
+        { date1904: true }
+    );
+    assert.equal(
+        await extractText(filePath, { locale: 'tr-TR' }),
+        '1\t1 Ocak 1904 Cuma\t1 Ocak 1904 Cuma\tFriday 1 January 1904\tCuma 1 Ocak 1904'
+    );
 });
 
 test('unsupported formats fall back without losing other cells or cached formula values', async () => {
