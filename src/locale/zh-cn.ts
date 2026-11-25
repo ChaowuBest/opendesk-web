@@ -105,6 +105,8 @@ export const zhCn: Record<string, string> = {
     'renderer.chatFind.next': '下一处（Enter）',
     'renderer.chatFind.close': '关闭查找（Esc）',
     'renderer.taskSearch.placeholder': '搜索任务标题和正文',
+    'renderer.taskSearch.wildcardHint':
+        '通配符在同一行内匹配，* 合计最多匹配 ${max} 个字符，? 匹配单个字符。输入 \\* 或 \\? 搜索符号本身。',
     'renderer.taskSearch.close': '关闭搜索',
     'renderer.taskSearch.chats': '聊天',
     'renderer.taskSearch.searching': '正在搜索',

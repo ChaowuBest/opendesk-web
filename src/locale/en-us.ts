@@ -112,6 +112,8 @@ export const enUs: Record<string, string> = {
     'renderer.chatFind.next': 'Next match (Enter)',
     'renderer.chatFind.close': 'Close find (Esc)',
     'renderer.taskSearch.placeholder': 'Search task titles and messages',
+    'renderer.taskSearch.wildcardHint':
+        'Wildcards match within one line. * matches up to ${max} characters in total, ? matches one. Use \\* or \\? to search for the symbol itself.',
     'renderer.taskSearch.close': 'Close search',
     'renderer.taskSearch.chats': 'Chats',
     'renderer.taskSearch.searching': 'Searching',

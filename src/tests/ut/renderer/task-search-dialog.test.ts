@@ -81,6 +81,45 @@ test('ignores old requests and highlights the current query', async () => {
     expect(document.querySelector('[data-task-id="one"]')).toBeNull();
     expect(document.querySelector('dialog mark')?.textContent).toBe('创建');
 });
+test('matches wildcards without a toggle and treats escaped wildcards as literal text', async () => {
+    jest.useFakeTimers({ legacyFakeTimers: true });
+    const search = jest.fn<any>().mockResolvedValue({
+        ...response('two'),
+        items: [{ ...hit('two'), snippet: '正文 o__e' }]
+    });
+    const element = setup(search);
+    input(element, 'o*e');
+    expect(document.querySelector('dialog [aria-pressed]')).toBeNull();
+    expect(document.querySelector('[data-task-id="one"] mark')?.textContent).toBe('one');
+    jest.advanceTimersByTime(150);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(search).toHaveBeenCalledWith('o*e', 20);
+    expect(document.querySelector('[data-task-id="two"] .od-task-search-snippet mark')?.textContent).toBe('o__e');
+    search.mockResolvedValue({ ...response('two'), items: [{ ...hit('two'), snippet: 'literal o*e?' }] });
+    input(element, 'o\\*e\\?');
+    expect(document.querySelector('[data-task-id="one"]')).toBeNull();
+    expect(document.querySelector('[data-task-id="two"]')).toBeNull();
+    jest.advanceTimersByTime(150);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(search).toHaveBeenLastCalledWith('o\\*e\\?', 20);
+    expect(document.querySelector('[data-task-id="two"] .od-task-search-snippet mark')?.textContent).toBe('o*e?');
+});
+test('highlights the shortest wildcard match in a result snippet', async () => {
+    jest.useFakeTimers({ legacyFakeTimers: true });
+    const search = jest.fn<any>().mockResolvedValue({
+        ...response('two'),
+        items: [{ ...hit('two'), snippet: '/too-long.doc 和 /work/新建.docx' }]
+    });
+    const element = setup(search);
+    input(element, '/*.doc');
+    jest.advanceTimersByTime(150);
+    await Promise.resolve();
+    await Promise.resolve();
+    const marks = document.querySelectorAll('[data-task-id="two"] .od-task-search-snippet mark');
+    expect([...marks].map((mark) => mark.textContent)).toEqual(['/新建.doc']);
+});
 test('does not search while composing and stops querying after closing', () => {
     jest.useFakeTimers({ legacyFakeTimers: true });
     const search = jest.fn<any>().mockResolvedValue(response('one'));
