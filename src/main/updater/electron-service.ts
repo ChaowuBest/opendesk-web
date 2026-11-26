@@ -16,6 +16,7 @@ import { app, ipcMain } from 'electron';
 import { GlobalState } from '../aikernel/states/global.js';
 import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import { getPlatform } from '../../platforms/base.js';
+import { isValidVersion } from '../utils/version.js';
 import { UpdateCoordinator } from './coordinator.js';
 import {
     DEFAULT_UPDATE_FEED_URL,
@@ -128,7 +129,7 @@ function registerWhatsNewHandlers(userDataDirectory: string, feedUrl: string): v
     // 设置页"查看版本说明"按钮：按指定版本拉取更新内容，与 seen 记录无关，
     // 因此不读 hasPreviewedReleaseNotes 也不落 markReleaseNotesSeen。
     ipcMain.handle('updater:getReleaseNotes', async (_event, version: unknown) => {
-        if (typeof version !== 'string' || version.trim() === '') {
+        if (typeof version !== 'string' || version.trim() === '' || !isValidVersion(version)) {
             throw new Error('A version is required to fetch release notes');
         }
         let notes: string | undefined;

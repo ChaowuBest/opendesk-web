@@ -252,5 +252,8 @@ test('getReleaseNotes rejects a missing or malformed version', async () => {
 
     await expect(handler(null, '')).rejects.toThrow('A version is required to fetch release notes');
     await expect(handler(null, 42)).rejects.toThrow('A version is required to fetch release notes');
+    // 非 SemVer 的版本号不允许触达官网（与 whats-new 账本/更新检查的版本闸门保持一致）
+    await expect(handler(null, 'latest')).rejects.toThrow('A version is required to fetch release notes');
+    await expect(handler(null, '1.0')).rejects.toThrow('A version is required to fetch release notes');
     expect(platformFetch).not.toHaveBeenCalled();
 });

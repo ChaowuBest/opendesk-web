@@ -18,6 +18,10 @@ const execFileAsync = promisify(execFile);
 
 // 备份与目标 .app 同目录，保证 mv 在同一卷上是原子操作
 const BACKUP_SUFFIX = '.opendesk-update-backup';
+// staging 同样与目标同目录：rename 才能瞬时完成
+const STAGING_SUFFIX = '.opendesk-update-staging';
+// hdiutil 在 DMG 损坏/卷冲突/许可协议场景可能永久挂起，超时兜底防止状态卡死 installing
+const HDIUTIL_TIMEOUT_MS = 120_000;
 
 export interface MacInstallRunner {
     run(command: string, args: string[]): Promise<void>;
@@ -28,6 +32,10 @@ export interface MacInstallRunner {
 export function createMacInstallRunner(): MacInstallRunner {
     return {
         run: async (command, args) => {
+            if (command === 'hdiutil') {
+                await execFileAsync(command, args, { timeout: HDIUTIL_TIMEOUT_MS, killSignal: 'SIGKILL' });
+                return;
+            }
             await execFileAsync(command, args);
         },
         listDir: (directory) => fs.promises.readdir(directory),
@@ -68,20 +76,36 @@ export async function installFromDmg(options: InstallFromDmgOptions): Promise<vo
     try {
         const sourceApp = await findAppBundleOnVolume(mountPoint, runner);
         const backupPath = appBundlePath + BACKUP_SUFFIX;
-        const hadPreviousBundle = runner.pathExists(appBundlePath);
-        if (hadPreviousBundle) await runner.run('mv', [appBundlePath, backupPath]);
+        const stagingPath = appBundlePath + STAGING_SUFFIX;
+        // 残留预清理：上次安装中断或备份删除失败会让 backup/staging 残留。
+        // BSD mv 对已存在目录会把源移入其内部，不清掉会破坏本次替换与回滚
+        if (runner.pathExists(appBundlePath) && runner.pathExists(backupPath)) {
+            await runner.run('rm', ['-rf', backupPath]);
+        }
+        if (runner.pathExists(stagingPath)) {
+            await runner.run('rm', ['-rf', stagingPath]);
+        }
+        // ditto 先复制到同卷临时目录：复制阶段（秒级）失败或进程中断时旧包原封不动，无需回滚
         try {
-            // ditto 会保留 bundle 的元数据与权限，是替换 .app 的标准做法
-            await runner.run('ditto', [sourceApp, appBundlePath]);
+            await runner.run('ditto', [sourceApp, stagingPath]);
         } catch (error) {
-            // 替换失败必须回滚：清掉半安装目录，把旧包移回原位
-            if (hadPreviousBundle) {
-                await runner.run('rm', ['-rf', appBundlePath]);
+            await runner.run('rm', ['-rf', stagingPath]).catch(() => undefined);
+            throw error;
+        }
+        const hadPreviousBundle = runner.pathExists(appBundlePath) || runner.pathExists(backupPath);
+        try {
+            if (runner.pathExists(appBundlePath)) await runner.run('mv', [appBundlePath, backupPath]);
+            // 两次同卷 rename 瞬时完成：运行中的 app 只暴露在毫秒级窗口内
+            await runner.run('mv', [stagingPath, appBundlePath]);
+        } catch (error) {
+            // 替换失败必须回滚：把旧包从备份移回原位
+            if (hadPreviousBundle && runner.pathExists(backupPath)) {
                 await runner.run('mv', [backupPath, appBundlePath]);
             }
             throw error;
         }
-        if (hadPreviousBundle) await runner.run('rm', ['-rf', backupPath]);
+        // 备份清理失败不遮蔽安装结果（新包已就位）；残留由下次安装的预清理兜底
+        if (hadPreviousBundle) await runner.run('rm', ['-rf', backupPath]).catch(() => undefined);
     } finally {
         // 安装成败都要尝试卸载；卸载失败不遮蔽安装结果（卷会在弹出/重启时释放）
         await runner.run('hdiutil', ['detach', mountPoint]).catch(() => undefined);
