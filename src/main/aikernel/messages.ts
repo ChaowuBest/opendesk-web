@@ -1110,7 +1110,7 @@ export class FileMessagePart implements BaseFileMessagePart {
         <div class="od-file-card" data-file-path="${escapeHtml(this.path)}" data-open-preview="${escapeHtml(this.path)}">
             <div class="od-file-card-icon">${fileIcon}</div>
             <div class="od-file-card-info">
-                <span class="od-file-card-name">${fileName}</span>
+                <span class="od-file-card-name">${escapeHtml(fileName)}</span>
                 ${metaInfo ? `<span class="od-file-card-meta">${metaInfo}</span>` : `<span class="od-file-card-meta">${ext} 文档</span>`}
             </div>
             <button class="od-file-card-menu" aria-label="文件操作" data-open-preview="${escapeHtml(this.path)}">
