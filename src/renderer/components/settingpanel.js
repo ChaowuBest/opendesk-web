@@ -28,6 +28,7 @@ import { ACP_AGENT_PRESETS, createAcpAgentPresetDraft } from '../../common/acp/a
 import { AcpAgentFormError, buildAcpAgentProfile } from './acpAgentSettings.ts';
 import {
     showConfirmModal,
+    showWhatsNewModal,
     escapeModalText,
     MODAL_CSS,
     MODAL_ANIM_DURATION_OUT,
@@ -2832,11 +2833,20 @@ class SettingPanel extends HTMLElement {
             statusText = this._t('sp.update.status.downloading', { version: state.version, progress: percent });
             disabled = true;
         } else if (state.status === 'ready') {
-            statusText = this._t('sp.update.status.ready', { version: state.version });
-            actionText = this._t('sp.update.installing');
-            disabled = true;
+            // macOS：安装包下载校验完成后停在 ready，由用户触发本地安装（挂载 DMG 替换 .app）
+            if (this._isManualUpdateInstall()) {
+                statusText = this._t('sp.update.status.manualReady', { version: state.version });
+                actionText = this._t('sp.update.installNow');
+            } else {
+                statusText = this._t('sp.update.status.ready', { version: state.version });
+                actionText = this._t('sp.update.installing');
+                disabled = true;
+            }
         } else if (state.status === 'installing') {
-            statusText = this._t('sp.update.status.installing', { version: state.version });
+            statusText = this._t(
+                this._isManualUpdateInstall() ? 'sp.update.status.manualInstalling' : 'sp.update.status.installing',
+                { version: state.version }
+            );
             actionText = this._t('sp.update.installing');
             disabled = true;
         } else if (state.status === 'installed') {
@@ -2872,6 +2882,21 @@ class SettingPanel extends HTMLElement {
                         ${actionText}
                     </button>
                 </div>
+                <div class="sp-toggle-row">
+                    <button id="view-current-release-notes" class="sp-btn sp-btn-secondary">
+                        <i class="fas fa-file-lines"></i>
+                        ${this._t('sp.update.viewCurrentNotes')}
+                    </button>
+                    ${
+                        'version' in state
+                            ? `
+                    <button id="view-latest-release-notes" class="sp-btn sp-btn-secondary">
+                        <i class="fas fa-arrow-up"></i>
+                        ${this._t('sp.update.viewLatestNotes')}
+                    </button>`
+                            : ''
+                    }
+                </div>
             </div>
         </section>`;
     }
@@ -2888,6 +2913,11 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#tab-general')?.insertAdjacentHTML('afterbegin', html);
         }
         this._bindUpdateEvent();
+    }
+
+    _isManualUpdateInstall() {
+        // renderer 拿不到 process.platform，用 UA 判定 macOS（Electron UA 恒含 Macintosh）
+        return typeof navigator !== 'undefined' && !!navigator.userAgent?.includes('Macintosh');
     }
 
     _bindUpdateEvent() {
@@ -2910,11 +2940,45 @@ class SettingPanel extends HTMLElement {
                 if (confirmed) await window.updateAPI.restart();
                 return;
             }
+            if (this.updateState?.status === 'ready' && this._isManualUpdateInstall()) {
+                // macOS 手动安装：挂载已下载的 DMG 替换 .app，进度与结果经 onStateChanged 刷新
+                await window.updateAPI.applyManual();
+                return;
+            }
             this.updateState = { status: 'checking' };
             this.refreshUpdateSection();
             this.updateState = await window.updateAPI.check();
             this.refreshUpdateSection();
         });
+        // 设置页"查看版本说明"：仅展示更新内容，不调用 dismissReleaseNotes 落账
+        this.querySelector('#view-current-release-notes')?.addEventListener('click', () => {
+            if (this.appVersion) this._showReleaseNotesModal(this.appVersion);
+        });
+        this.querySelector('#view-latest-release-notes')?.addEventListener('click', () => {
+            const state = this.updateState;
+            if (state && 'version' in state) this._showReleaseNotesModal(state.version);
+        });
+    }
+
+    _showReleaseNotesModal(version) {
+        void (async () => {
+            let notes;
+            try {
+                ({ notes } = (await window.updateAPI.getReleaseNotes(version)) ?? {});
+            } catch {
+                notes = undefined; // 断网 / 社区无条目统一走 noNotes 占位文案
+            }
+            await showWhatsNewModal({
+                title: this._t('update.whatsNew.title', { version }),
+                notes: notes ?? '',
+                noNotesText: this._t('update.whatsNew.noNotes'),
+                communityText: this._t('update.whatsNew.community'),
+                communityLinkText: this._t('update.whatsNew.communityLink'),
+                communityUrl: 'https://opendesk.matrix.openharmony.cn',
+                confirmText: this._t('update.whatsNew.confirm'),
+                mountTarget: this
+            });
+        })();
     }
 
     renderConfigManagementSection() {

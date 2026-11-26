@@ -1332,6 +1332,29 @@ if (shouldExposeMainWindowAPIs()) {
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
         },
+        applyManual: async () => {
+            const result = await ipcRenderer.invoke('updater:applyManual');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        // What's New：当前版本未预览过更新内容时返回 { version, notes }，否则返回 undefined
+        getPendingReleaseNotes: async () => {
+            const result = await ipcRenderer.invoke('updater:getPendingReleaseNotes');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        // What's New 弹窗关闭后落账：当前版本记入已预览历史
+        dismissReleaseNotes: async () => {
+            const result = await ipcRenderer.invoke('updater:dismissReleaseNotes');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        // 设置页"查看版本说明"：按指定版本拉取更新内容，不读写已预览历史
+        getReleaseNotes: async (version) => {
+            const result = await ipcRenderer.invoke('updater:getReleaseNotes', version);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
         onStateChanged: (callback) => {
             const listener = (_event, state) => callback(state);
             ipcRenderer.on('updater:stateChanged', listener);

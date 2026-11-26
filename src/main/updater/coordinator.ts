@@ -32,6 +32,12 @@ export interface UpdateCoordinatorDependencies {
     prepareWindowsForQuit: () => Promise<boolean>;
     relaunch: () => void;
     quit: () => void;
+    // 手动安装模式（macOS）：下载校验完成后停在 ready，安装由 applyManualUpdate 本地完成
+    manualInstall?: boolean;
+    // 安装包扩展名校验：Windows 为 .exe（默认），macOS 为 .dmg
+    installerExtension?: string;
+    // 手动安装模式的本地安装实现（macOS：挂载 DMG 替换 .app bundle），成功即视为 installed
+    installManually?: (record: ReadyUpdateRecord) => Promise<void>;
     onStateChanged?: (state: UpdateState) => void;
 }
 
@@ -62,6 +68,10 @@ export class UpdateCoordinator {
         return path.join(this.dependencies.stateDirectory, 'ready.json');
     }
 
+    private get expectedInstallerExtension(): string {
+        return (this.dependencies.installerExtension ?? '.exe').toLowerCase();
+    }
+
     async restore(): Promise<UpdateState> {
         try {
             const raw = JSON.parse(await fs.promises.readFile(this.readyRecordPath, 'utf8')) as ReadyUpdateRecord;
@@ -78,7 +88,7 @@ export class UpdateCoordinator {
                 // 远端发布版本必须比本地更新（本地可能是预发布/开发构建，按 SemVer 优先级比较）
                 !isNewerVersion(raw.version, this.dependencies.currentVersion) ||
                 path.dirname(path.resolve(raw.installerPath)) !== path.resolve(this.dependencies.stateDirectory) ||
-                !raw.installerPath.toLowerCase().endsWith('.exe') ||
+                !raw.installerPath.toLowerCase().endsWith(this.expectedInstallerExtension) ||
                 !fs.existsSync(raw.installerPath)
             ) {
                 await this.discardRecord(raw);
@@ -104,6 +114,10 @@ export class UpdateCoordinator {
         }
         if (this.operation) return this.operation;
         if (this.pendingRecord) {
+            if (this.dependencies.manualInstall) {
+                // 待安装包仍在缓存里：恢复 ready 等用户再次触发安装（安装失败后的重试不重新下载）
+                return this.setState({ ...this.pendingRecord, status: 'ready', activeTaskCount: 0 });
+            }
             this.operation = this.submitRecord(this.pendingRecord).finally(() => {
                 this.operation = undefined;
             });
@@ -123,7 +137,10 @@ export class UpdateCoordinator {
                 return this.setState({ status: 'upToDate', checkedAt: new Date().toISOString() });
             }
             const safeName = path.basename(release.installerName);
-            if (safeName !== release.installerName || !safeName.toLowerCase().endsWith('.exe')) {
+            if (
+                safeName !== release.installerName ||
+                !safeName.toLowerCase().endsWith(this.expectedInstallerExtension)
+            ) {
                 throw new Error('Release contains an invalid installer filename');
             }
             await fs.promises.mkdir(this.dependencies.stateDirectory, { recursive: true });
@@ -149,7 +166,9 @@ export class UpdateCoordinator {
             await fs.promises.rm(this.readyRecordPath, { force: true });
             await fs.promises.rename(`${this.readyRecordPath}.tmp`, this.readyRecordPath);
             this.pendingRecord = record;
-            this.setState({ ...record, status: 'ready', activeTaskCount: 0 });
+            const readyState = this.setState({ ...record, status: 'ready', activeTaskCount: 0 });
+            // 手动安装模式：包就绪即停在 ready，等用户触发 applyManualUpdate 本地安装
+            if (this.dependencies.manualInstall) return readyState;
             return await this.submitRecord(record);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -158,6 +177,8 @@ export class UpdateCoordinator {
     }
 
     async submitPendingUpdate(): Promise<boolean> {
+        // 手动安装模式下安装由 applyManualUpdate 完成，不经系统服务
+        if (this.dependencies.manualInstall) return false;
         if (!this.pendingRecord || this.state.status !== 'ready') return false;
         if (this.operation) {
             await this.operation;
@@ -168,6 +189,38 @@ export class UpdateCoordinator {
         });
         await this.operation;
         return (this.state as UpdateState).status === 'installed';
+    }
+
+    // 手动安装模式（macOS 二期）：ready 后由用户触发的本地安装，
+    // 成功后与 Windows 服务安装一样进入 installed，再由 restartToApplyUpdate 重启
+    async applyManualUpdate(): Promise<boolean> {
+        if (!this.dependencies.manualInstall || !this.dependencies.installManually) return false;
+        const record = this.pendingRecord;
+        if (!record || this.state.status !== 'ready') return false;
+        this.operation = this.performManualInstall(record).finally(() => {
+            this.operation = undefined;
+        });
+        const state = await this.operation;
+        return state.status === 'installed';
+    }
+
+    private async performManualInstall(record: ReadyUpdateRecord): Promise<UpdateState> {
+        this.setState({ status: 'installing', version: record.version });
+        try {
+            await this.dependencies.installManually!(record);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            // 安装包与 ready 记录保留，用户可重试（checkForUpdates 会恢复 ready）
+            return this.setState({ status: 'error', code: 'update_install_failed', message });
+        }
+        this.installedRecord = { version: record.version, notes: record.notes };
+        await this.discardRecord(record);
+        return this.setState({
+            status: 'installed',
+            version: record.version,
+            notes: record.notes,
+            activeTaskCount: 0
+        });
     }
 
     private async submitRecord(record: ReadyUpdateRecord): Promise<UpdateState> {

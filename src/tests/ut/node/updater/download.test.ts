@@ -150,3 +150,19 @@ test('copyLocalInstaller stages a local test package through a partial file', as
     assert.equal(fs.readFileSync(destination, 'utf8'), 'local installer');
     assert.equal(fs.existsSync(`${destination}.partial`), false);
 });
+
+test('copyLocalInstaller accepts a dmg test package when the expected extension is overridden', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-updater-local-copy-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const source = path.join(root, 'source.dmg');
+    const destination = path.join(root, 'cache', 'opendesk-darwin-arm64-0.3.8.dmg');
+    fs.writeFileSync(source, 'local dmg');
+
+    // 默认仍按 Windows 的 .exe 校验，macOS 本地测试包需显式传入 .dmg
+    await assert.rejects(copyLocalInstaller(source, destination), /\.exe file/);
+
+    await copyLocalInstaller(source, destination, undefined, '.dmg');
+
+    assert.equal(fs.readFileSync(destination, 'utf8'), 'local dmg');
+    assert.equal(fs.existsSync(`${destination}.partial`), false);
+});
