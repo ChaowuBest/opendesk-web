@@ -68,6 +68,13 @@ const mock = await startMockLlm({ port: mockPort, log: (line) => process.env.GEN
 const browser = await chromium.launch({ channel: process.env.PW_CHROME ? 'chrome' : undefined });
 const context = await browser.newContext({ viewport: { width: 1400, height: 960 }, deviceScaleFactor: 2 });
 const page = await context.newPage();
+/** 新版本的「更新内容」弹窗随时可能在发布说明下载完后弹出，挡住后续点击；出现即关闭 */
+async function dismissWhatsNew(target) {
+    await target.addLocatorHandler(target.locator('.od-whats-new-card'), async (card) => {
+        await card.locator('[data-action="close"]').click();
+    });
+}
+await dismissWhatsNew(page);
 const pageErrors = [];
 page.on('pageerror', (error) => pageErrors.push(String(error)));
 
@@ -191,6 +198,7 @@ try {
         await shot(page, '03-option-list-waiting', list);
 
         second = await context.newPage();
+        await dismissWhatsNew(second);
         second.on('pageerror', (error) => pageErrors.push(`[tab2] ${String(error)}`));
         await second.goto(baseUrl, { waitUntil: 'domcontentloaded' });
         await openTask(second);
@@ -246,6 +254,15 @@ try {
         await flow.getByRole('button', { name: /^低/ }).click({ timeout: 10_000 });
         const final = await waitForFinal(page, 'flow');
         assert(final.includes('回答：10 人以上') && final.includes('回答：低'), `flow result: ${final}`);
+    });
+
+    await step('built-in askUser prompt is answered in web mode', async () => {
+        await send(page, '[genui:askuser] 导出报告');
+        const option = page.locator('.ask-option-btn:visible', { hasText: 'Markdown' });
+        await option.waitFor({ state: 'visible', timeout: TURN_TIMEOUT });
+        await option.click();
+        const final = await waitForFinal(page, 'askuser');
+        assert(final.includes('Markdown'), `askUser answer not returned to the model: ${final}`);
     });
 
     await step('invalid props come back to the model as a tool error', async () => {

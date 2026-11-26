@@ -187,6 +187,25 @@ const SCENARIOS = {
         }
     ],
     // 参数不合法：工具报错，错误信息应原样回到模型
+    // 内置 askUser（非 genui）：确认 web 模式下的提问投递与回答
+    askuser: [
+        {
+            name: 'askUser',
+            arguments: {
+                questions: [
+                    {
+                        question: '报告导出成什么格式？',
+                        header: '格式',
+                        options: [
+                            { label: 'PDF', description: '适合打印' },
+                            { label: 'Markdown', description: '方便继续编辑' }
+                        ],
+                        multiple: false
+                    }
+                ]
+            }
+        }
+    ],
     invalid: [
         { name: 'showUI', arguments: { component: 'chart', props: { label: '坏数据', value: '1', points: [1] } } }
     ]
