@@ -92,12 +92,13 @@ export interface ErrorInfo {
  * 关键：使用 Chromium 错误页面的标准 DOM id/class，使得 embedBrowserUse 的
  * readPageInfo() 无需任何修改即可读取到中文错误信息。
  */
-export function buildErrorPageScript(errorInfo: ErrorInfo): string {
+export function buildErrorPageScript(errorInfo: ErrorInfo, title = '无法访问此页面'): string {
     const iconClass = getErrorIconClass(errorInfo.description);
     // 输出最终被包进 document.write(`...`) 的模板字面量，必须消解 ` $ \ 的逃逸
     const escUrl = escapeHtmlInsideJsTemplate(errorInfo.url);
     const escMsg = escapeHtmlInsideJsTemplate(errorInfo.userMessage);
     const escCode = escapeHtmlInsideJsTemplate(errorInfo.description);
+    const escTitle = escapeHtmlInsideJsTemplate(title);
     // 将原始 URL 编码后嵌入 data 属性，供重新加载时使用
     const encodedUrl = encodeURIComponent(errorInfo.url);
     return `document.open(); document.write(\`<!DOCTYPE html>
@@ -106,7 +107,7 @@ export function buildErrorPageScript(errorInfo: ErrorInfo): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<title>无法访问此页面</title>
+<title>${escTitle}</title>
 <style>
 body { margin:0; padding:0; background:#fafafa; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
 .error-container { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:20px 16px; box-sizing:border-box; overflow:hidden; }
@@ -122,7 +123,7 @@ body { margin:0; padding:0; background:#fafafa; font-family:-apple-system,BlinkM
 <body>
 <div class="error-container" data-original-url="${escapeHtmlInsideJsTemplate(encodedUrl)}">
     <div class="error-icon"><i class="${iconClass}"></i></div>
-    <h1 class="error-title">无法访问此页面</h1>
+    <h1 class="error-title">${escTitle}</h1>
     <p id="main-message" class="error-message">${escMsg}</p>
     <p class="error-url">${escUrl}</p>
     <p class="error-code">${escCode}</p>

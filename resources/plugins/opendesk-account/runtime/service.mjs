@@ -76,6 +76,19 @@ export class OpenDeskAccountBackend {
         return this.session ? this.toPublicSession(this.session) : null;
     }
 
+    /**
+     * 向宿主提供当前凭据（含 access token）。
+     * 只在主进程内使用，不进入 getSession() 的公开会话，也不经 IPC 下发 renderer。
+     */
+    getCredential() {
+        if (!this.session) return null;
+        return {
+            ...this.toPublicSession(this.session),
+            accessToken: this.session.accessToken,
+            tokenType: this.session.tokenType
+        };
+    }
+
     /** 从服务端读取登录方式：第三方 Provider + 可选的密码登录。 */
     async fetchAuthMethods(baseUrl) {
         try {

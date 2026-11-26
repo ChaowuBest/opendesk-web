@@ -37,7 +37,8 @@ jest.unstable_mockModule('electron', () => ({
         getVersion: () => '0.3.7',
         getPath: () => userDataDir
     },
-    ipcMain: { handle: jest.fn() }
+    ipcMain: { handle: jest.fn() },
+    shell: { openPath: jest.fn() }
 }));
 
 jest.unstable_mockModule('../../../main/aikernel/states/global.js', () => ({

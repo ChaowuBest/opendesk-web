@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { parseHTML } from 'linkedom';
+import { notifyRendererSettingChanged } from '../../../renderer/locale.js';
 
 describe('embedded browser (task-level tab) loading feedback', () => {
     let EmbeddedBrowser: any;
@@ -156,6 +157,29 @@ describe('embedded browser (task-level tab) loading feedback', () => {
         (failEvent as any).isMainFrame = true;
         tab.webview.dispatchEvent(failEvent);
         expect(tab.wrapEl.querySelector('.bw-loading-overlay')).toBeNull();
+    });
+
+    test('uses the application language for both the certificate warning and tab title', () => {
+        notifyRendererSettingChanged({ locale: 'en-US' });
+        try {
+            const { webview, wrapEl } = createBrowser().tabs[0];
+            stubWebview(webview);
+            webview.dispatchEvent(
+                Object.assign(new window.Event('did-fail-load'), {
+                    errorCode: -202,
+                    errorDescription: 'ERR_CERT_AUTHORITY_INVALID',
+                    validatedURL: 'https://127.0.0.1:8443/',
+                    isMainFrame: true
+                })
+            );
+            webview.dispatchEvent(Object.assign(new window.Event('page-title-updated'), { title: 'Chromium' }));
+
+            const title = 'This site’s identity could not be verified';
+            expect(wrapEl.querySelector('.od-browser-cert-warning h1')?.textContent).toBe(title);
+            expect(document.querySelector('.bw-tab-active .bw-tab-title')?.textContent).toBe(title);
+        } finally {
+            notifyRendererSettingChanged({ locale: 'zh-CN' });
+        }
     });
 
     test('subframe navigation does not flash the loading overlay', () => {

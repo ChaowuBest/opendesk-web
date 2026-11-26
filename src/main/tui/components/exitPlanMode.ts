@@ -21,9 +21,18 @@ import type { OpenDeskTUI } from '../entry.js';
 import type {
     ExitPlanModeProvider,
     ExitPlanModeResponse,
-    ExitPlanModeAction
-} from '../../aikernel/interaction/exitPlanMode.js';
+    ExitPlanModeAction,
+    ExitPlanModeRemoteContext
+} from '../../aikernel/interaction/contracts.js';
+import type {
+    InteractionDeliveryChannel,
+    InteractionDeliveryHandle,
+    InteractionRemoteSettlement
+} from '../../aikernel/interaction/delivery.js';
+import { RemoteFinishBarrier } from '../../aikernel/interaction/remote-finish-barrier.js';
+import { takeItem } from './interactionLatch.js';
 import { defaultMarkdownTheme } from '../theme.js';
+import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
@@ -285,11 +294,19 @@ function padBgLine(line: string, width: number, bgFn: (s: string) => string): st
  * 当用户选择执行模式时，自动切换 TUI 的当前模式。
  */
 interface QueuedExitPlanModeRequest {
+    requestId: string;
     planContent: string;
     planFilePath: string;
     taskId: string;
+    sourceTaskId?: string;
+    planRelativePath?: string;
     taskName?: string;
     resolve: (response: ExitPlanModeResponse) => void;
+    settled: boolean;
+    widget: ExitPlanModeWidget | null;
+    delivery?: InteractionDeliveryHandle;
+    /** Endpoint generation this request was published to, so a re-offer never repeats. */
+    deliveredGeneration?: number;
 }
 
 export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
@@ -297,9 +314,16 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
     private _isPrompting = false;
     private _queue: QueuedExitPlanModeRequest[] = [];
     private _activeItem: QueuedExitPlanModeRequest | null = null;
+    private readonly remoteFinish = new RemoteFinishBarrier();
 
-    constructor(openDeskTUI: OpenDeskTUI) {
+    constructor(
+        openDeskTUI: OpenDeskTUI,
+        private readonly deliveryChannel?: InteractionDeliveryChannel
+    ) {
         this.openDeskTUI = openDeskTUI;
+        // One Provider per TUI instance, so this subscription lives as long as the host and needs no
+        // per-request scoping (unlike the Electron Providers, which are created per Task).
+        deliveryChannel?.subscribeEndpointReady((generation) => this.reofferActiveToMobile(generation));
     }
 
     isPrompting(): boolean {
@@ -308,16 +332,11 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
 
     cancelCurrent(): void {
         for (const item of this._queue.splice(0)) {
-            item.resolve({ action: 'continue-editing' });
+            if (takeItem(item)) item.resolve({ action: 'continue-editing' });
         }
         if (this._isPrompting && this._activeItem) {
             const item = this._activeItem;
-            this._activeItem = null;
-            this.openDeskTUI.inputArea.hidePromptWidget();
-            this._isPrompting = false;
-            this.openDeskTUI.focusInputAreaIfAvailable();
-            this.openDeskTUI.tui.requestRender();
-            item.resolve({ action: 'continue-editing' });
+            this.settleActiveExit(item, { action: 'continue-editing' }, 'cancel');
         }
     }
 
@@ -327,6 +346,8 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
     processQueueIfReady(): void {
         if (this._isPrompting || this._queue.length === 0) return;
         if (this.openDeskTUI.isInputBlocked()) return;
+        // Every advance entry point waits out a closing remote delivery, not just the deferred one.
+        if (this.remoteFinish.blocked) return;
 
         const item = this._queue.shift()!;
         this._showWidget(item);
@@ -336,12 +357,24 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         planContent: string,
         planFilePath: string,
         taskId?: string,
-        taskName?: string
+        taskName?: string,
+        remoteContext?: ExitPlanModeRemoteContext
     ): Promise<ExitPlanModeResponse> {
         const effectiveTaskId = taskId || 'unknown';
 
         return new Promise<ExitPlanModeResponse>((resolve) => {
-            this._queue.push({ planContent, planFilePath, taskId: effectiveTaskId, taskName, resolve });
+            this._queue.push({
+                requestId: `exitPlan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                planContent,
+                planFilePath,
+                taskId: effectiveTaskId,
+                sourceTaskId: taskId,
+                planRelativePath: remoteContext?.planRelativePath,
+                taskName,
+                resolve,
+                settled: false,
+                widget: null
+            });
 
             if (this.openDeskTUI.isInputBlocked()) return;
 
@@ -349,11 +382,54 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         });
     }
 
+    /**
+     * Re-offers the approval still being waited on to a newly ready endpoint. This Provider owns the
+     * queue, the settle gate and the lifetime; nothing is revived and no answer is replayed.
+     */
+    private reofferActiveToMobile(generation: number): void {
+        const item = this._activeItem;
+        if (!item || item.settled) return;
+        if (item.deliveredGeneration === generation) return;
+        this.publishExitPlanModeToMobile(item);
+    }
+
+    private publishExitPlanModeToMobile(item: QueuedExitPlanModeRequest): void {
+        const sourceTaskId = item.sourceTaskId;
+        const planRelativePath = item.planRelativePath;
+        if (
+            typeof sourceTaskId !== 'string' ||
+            sourceTaskId.trim().length === 0 ||
+            sourceTaskId === 'unknown' ||
+            typeof planRelativePath !== 'string' ||
+            planRelativePath.trim().length === 0
+        ) {
+            return;
+        }
+        const delivery = this.deliveryChannel?.publishExitPlanMode(
+            {
+                type: 'exitPlanMode',
+                requestId: item.requestId,
+                sourceTaskId,
+                ...(item.taskName === undefined ? {} : { taskName: item.taskName }),
+                planContent: item.planContent,
+                planRelativePath
+            },
+            (response, settlement) => this.settleActiveExit(item, response, 'mobile', settlement)
+        );
+        // A failed re-offer must keep the handle from the delivery that is still open.
+        if (!delivery) return;
+        item.delivery = delivery;
+        item.deliveredGeneration = this.deliveryChannel?.endpointGeneration;
+    }
+
     private _showWidget(item: QueuedExitPlanModeRequest): void {
         this._isPrompting = true;
         this._activeItem = item;
 
+        this.publishExitPlanModeToMobile(item);
+
         const widget = new ExitPlanModeWidget(item.planContent, item.planFilePath);
+        item.widget = widget;
         widget.terminalHeight = this.openDeskTUI.tui.terminal.rows;
 
         // 如果不是当前活跃任务，标记为后台任务
@@ -366,38 +442,70 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
             this.openDeskTUI.tui.requestRender();
         });
 
-        widget.onDone = async (action) => {
-            this.openDeskTUI.inputArea.hidePromptWidget(widget);
-            this._isPrompting = false;
-            this._activeItem = null;
-            this.openDeskTUI.focusInputAreaIfAvailable();
-
-            if (action === 'execute-standard') {
-                await this.openDeskTUI.setMode('standard');
-            } else if (action === 'execute-solo') {
-                await this.openDeskTUI.setMode('solo');
-            }
-
-            this.openDeskTUI.tui.requestRender();
-            item.resolve({ action });
-
-            // 处理下一个排队的请求
-            this.processQueueIfReady();
+        widget.onDone = (action) => {
+            this.settleActiveExit(item, { action }, 'local');
         };
 
         widget.onCancel = () => {
-            this.openDeskTUI.inputArea.hidePromptWidget(widget);
-            this._isPrompting = false;
-            this._activeItem = null;
-            this.openDeskTUI.focusInputAreaIfAvailable();
-            this.openDeskTUI.tui.requestRender();
-            item.resolve({ action: 'continue-editing' });
-
-            this.processQueueIfReady();
+            this.settleActiveExit(item, { action: 'continue-editing' }, 'cancel');
         };
 
         this.openDeskTUI.inputArea.showPromptWidget(widget);
         this.openDeskTUI.tui.setFocus(widget);
         this.openDeskTUI.tui.requestRender();
+    }
+
+    private settleActiveExit(
+        item: QueuedExitPlanModeRequest,
+        response: ExitPlanModeResponse,
+        source: 'local' | 'mobile' | 'cancel',
+        settlement?: InteractionRemoteSettlement
+    ): boolean {
+        if (this._activeItem !== item || !takeItem(item)) return false;
+        if (item.widget) this.openDeskTUI.inputArea.hidePromptWidget(item.widget);
+        item.widget = null;
+        this.openDeskTUI.focusInputAreaIfAvailable();
+        this.openDeskTUI.tui.requestRender();
+        if (source === 'local') item.delivery?.close('superseded');
+        if (source === 'cancel') item.delivery?.close('cancelled');
+        // The hold must be taken here, synchronously with accepting the answer: the mode switch below
+        // is awaited, so registering the release only afterwards would leave the window unguarded.
+        const release = settlement ? this.remoteFinish.hold() : undefined;
+        this.resolveTuiExitAfterModeSwitch(item, response, settlement, release);
+        return true;
+    }
+
+    private resolveTuiExitAfterModeSwitch(
+        item: QueuedExitPlanModeRequest,
+        response: ExitPlanModeResponse,
+        settlement?: InteractionRemoteSettlement,
+        release?: () => void
+    ): void {
+        void (async () => {
+            let finalResponse = response;
+            try {
+                if (response.action === 'execute-standard') {
+                    await this.openDeskTUI.setMode('standard');
+                } else if (response.action === 'execute-solo') {
+                    await this.openDeskTUI.setMode('solo');
+                }
+            } catch (error) {
+                logger.warn(`TUIExitPlanModeProvider mode switch failed: ${error}`);
+                finalResponse = { action: 'continue-editing' };
+            }
+            if (this._activeItem === item) this._activeItem = null;
+            this._isPrompting = false;
+            item.resolve(finalResponse);
+            // A remote answer must release the remote exit before the next item is published. The exit
+            // may already be free by now, so the endpoint runs this immediately in that case.
+            if (settlement) {
+                settlement.afterRemoteClose(() => {
+                    release?.();
+                    this.processQueueIfReady();
+                });
+            } else {
+                this.processQueueIfReady();
+            }
+        })();
     }
 }

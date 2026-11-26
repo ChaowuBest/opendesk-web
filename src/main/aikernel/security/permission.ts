@@ -25,8 +25,10 @@ import type {
     PermissionResourceType,
     PermissionRule
 } from '../types/permissions.js';
+import type { PermissionUserResponse } from '../interaction/contracts.js';
 
 export type { PermissionAction, PermissionEffect, PermissionRequest, PermissionResourceType, PermissionRule };
+export type { PermissionDenyReason, PermissionUserResponse } from '../interaction/contracts.js';
 
 // ─── ResourcePath：统一的权限客体路径抽象 ────────────────────────
 
@@ -311,9 +313,6 @@ export interface PermissionEnforcer {
     getRules?(): PermissionRule[];
 }
 
-/** 权限拒绝原因 */
-export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provider' | 'task_stopped';
-
 /**
  * 权限请求的任务上下文信息，用于在 UI 中标识请求来源。
  */
@@ -336,30 +335,6 @@ export interface PermissionPromptContext {
     toolCallId?: string;
     messageId?: string;
     input?: Record<string, unknown>;
-}
-
-/**
- * 用户对权限 ask 请求做出的响应
- */
-export interface PermissionUserResponse {
-    /** 用户的选择 */
-    decision: 'allow' | 'deny';
-    /**
-     * 记住范围：
-     * - 'none': 仅本次允许
-     * - 'prefix': 始终允许选中的前缀范围（由 selectedPrefixPattern 指定具体 glob）
-     * - 'type': 允许所有同类操作（如所有"写入技能"操作）
-     */
-    rememberScope: 'none' | 'prefix' | 'type';
-    /**
-     * 当 rememberScope='prefix' 时，用户选择的授权 glob pattern。
-     * 由 PermissionPromptProvider 根据 ResourcePath.getPrefixes() 的选项设定。
-     */
-    selectedPrefixPattern?: string;
-    /**
-     * 当 decision='deny' 时，拒绝的原因。
-     */
-    denyReason?: PermissionDenyReason;
 }
 
 /**

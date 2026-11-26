@@ -64,11 +64,14 @@ test('the actual WorkerPlatform method consumes the common catalog', () => {
     expect(loadPlatformCatalogMethod('worker', 'WorkerPlatform')).toEqual(classes);
 });
 
-test('the actual ElectronPlatform method adds Slides only for its configured host', () => {
+test('ElectronPlatform adds Slides and MobileAccess after the common GUI applications', () => {
     class SlidesApplication {}
-    expect(loadPlatformCatalogMethod('electron', 'ElectronPlatform', { SlidesApplication })).toEqual([
-        ...classes,
-        SlidesApplication
-    ]);
+    class MobileAccessApplication {}
+    const catalog = loadPlatformCatalogMethod('electron', 'ElectronPlatform', {
+        SlidesApplication,
+        MobileAccessApplication
+    });
+    expect(catalog).toEqual([...classes, SlidesApplication, MobileAccessApplication]);
     expect(getGuiApplicationClasses()).not.toContain(SlidesApplication);
+    expect(getGuiApplicationClasses()).not.toContain(MobileAccessApplication);
 });

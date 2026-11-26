@@ -81,6 +81,15 @@ test('开发期夹具目录 test/ 不进安装包，且不误伤同前缀目录'
     }
 });
 
+test('Electron 的实际复制过滤器排除 CLI 专用 werift，保留桌面运行依赖', async () => {
+    const options = { ...forgeConfig.packagerConfig, name: 'OpenDesk', dir: process.cwd(), prune: true };
+    populateIgnoredPaths(options);
+    const filter = userPathFilter(options);
+    assert.equal(await filter(path.resolve('node_modules/werift')), false);
+    assert.equal(await filter(path.resolve('node_modules/@agentclientprotocol/sdk')), true);
+    assert.equal(await filter(path.resolve('node_modules/debug')), true);
+});
+
 test('应用复制阶段排除整个 Windows 沙箱构建树，且不误伤其他 native 资源', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-sandbox-copy-'));
     try {

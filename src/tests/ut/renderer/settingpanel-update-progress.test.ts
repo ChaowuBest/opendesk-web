@@ -28,6 +28,7 @@ describe('setting-panel update section download progress', () => {
 
     beforeEach(() => {
         document.body.innerHTML = '';
+        delete (window as { updateAPI?: unknown }).updateAPI;
         window.notificationAPI = {
             sendNotification: jest.fn(async () => undefined)
         };
@@ -91,5 +92,84 @@ describe('setting-panel update section download progress', () => {
 
         expect(status).toContain('Downloading 0.3.8');
         expect(status).toContain('(5%)');
+    });
+
+    // 「查看版本说明」按钮：查看场景只展示更新内容，不落 whats-new-seen.json 账
+    function mockNotesApi() {
+        const api = {
+            getReleaseNotes: jest.fn(async (version: string) => ({
+                version,
+                notes: `# OpenDesk ${version} 更新内容\n\n- 条目`
+            })),
+            dismissReleaseNotes: jest.fn(async () => true)
+        };
+        (window as unknown as { updateAPI: unknown }).updateAPI = api;
+        return api;
+    }
+
+    test('idle state renders only the current-notes button', () => {
+        const panel = createPanel('zh-CN');
+        panel.updateState = { status: 'idle' };
+        panel.innerHTML = panel.renderUpdateSection();
+
+        expect(panel.querySelector('#view-current-release-notes')).not.toBeNull();
+        expect(panel.querySelector('#view-latest-release-notes')).toBeNull();
+    });
+
+    test('a state with a pending version renders both notes buttons', () => {
+        const panel = createPanel('zh-CN');
+        panel.updateState = { status: 'downloading', version: '0.3.8', receivedBytes: 10 };
+        panel.innerHTML = panel.renderUpdateSection();
+
+        expect(panel.querySelector('#view-current-release-notes')).not.toBeNull();
+        expect(panel.querySelector('#view-latest-release-notes')).not.toBeNull();
+    });
+
+    test('viewing current version notes fetches by appVersion and never records seen', async () => {
+        const api = mockNotesApi();
+        const panel = createPanel('zh-CN');
+        panel.updateState = { status: 'idle' };
+        panel.innerHTML = panel.renderUpdateSection();
+        panel._bindUpdateEvent();
+
+        panel.querySelector('#view-current-release-notes').click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(api.getReleaseNotes).toHaveBeenCalledWith('0.3.7');
+        expect(api.dismissReleaseNotes).not.toHaveBeenCalled();
+        const overlay = panel.querySelector('.od-confirm-modal-overlay');
+        expect(overlay?.textContent).toContain('OpenDesk 0.3.7 更新内容');
+    });
+
+    test('viewing latest version notes fetches by the pending version', async () => {
+        const api = mockNotesApi();
+        const panel = createPanel('zh-CN');
+        panel.updateState = { status: 'downloading', version: '0.3.8', receivedBytes: 10 };
+        panel.innerHTML = panel.renderUpdateSection();
+        panel._bindUpdateEvent();
+
+        panel.querySelector('#view-latest-release-notes').click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(api.getReleaseNotes).toHaveBeenCalledWith('0.3.8');
+        expect(api.dismissReleaseNotes).not.toHaveBeenCalled();
+        const overlay = panel.querySelector('.od-confirm-modal-overlay');
+        expect(overlay?.textContent).toContain('OpenDesk 0.3.8 更新内容');
+    });
+
+    test('a notes fetch failure still opens the modal with the generic placeholder', async () => {
+        const api = mockNotesApi();
+        api.getReleaseNotes.mockRejectedValueOnce(new Error('offline'));
+        const panel = createPanel('zh-CN');
+        panel.updateState = { status: 'idle' };
+        panel.innerHTML = panel.renderUpdateSection();
+        panel._bindUpdateEvent();
+
+        panel.querySelector('#view-current-release-notes').click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(api.dismissReleaseNotes).not.toHaveBeenCalled();
+        const paragraph = panel.querySelector('.od-whats-new-paragraph');
+        expect(paragraph?.textContent).toBe('本次更新包含稳定性与性能优化。');
     });
 });

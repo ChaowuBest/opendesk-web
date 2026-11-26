@@ -27,6 +27,13 @@ import { toWasmDbPath } from './wasm-path.js';
 import { normalizePathDescendantOrSelfValues, pathDescendantOrSelfSqlValues } from './path-scope.js';
 import { ensureWasmOpenableDb } from './wasm-wal-compat.js';
 import {
+    recordStorageInitializationFailure,
+    recordStorageCleanupFailure,
+    handoffStorageInitializationCleanup,
+    type RetainStorageInitializationCleanup
+} from './platform.js';
+
+import {
     compileOrGroup,
     literalContainsPattern,
     type BaseIndexStoreProbeResult,
@@ -95,7 +102,7 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
     private readonly dbPath: string;
     private transactionDepth = 0;
 
-    constructor(dbPath: string, schema: ColumnSchema) {
+    constructor(dbPath: string, schema: ColumnSchema, retainCleanup?: RetainStorageInitializationCleanup) {
         validateColumnSchema(schema);
         this.schema = schema;
         this.validFields = Object.keys(schema.columns);
@@ -116,10 +123,12 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
             this.initializeTable();
         } catch (error) {
             // The caller cannot close a connection from a failed constructor.
+            recordStorageInitializationFailure(error, { indexer: 'BaseIndexer', backend: 'wasm' });
             try {
                 this.db.close();
-            } catch {
-                // Preserve the initialization error if cleanup also fails.
+            } catch (cleanupError) {
+                recordStorageCleanupFailure(error, cleanupError, 'BaseIndexer');
+                handoffStorageInitializationCleanup(error, () => this.close(), retainCleanup);
             }
             throw error;
         }

@@ -1296,6 +1296,29 @@ async function generateFullCompactSummaryWithTransportRetry(
     }
 }
 
+function serializeCompactSnapshotMessage(message: ChatMessage): string {
+    if (isCompactBoundaryMessage(message)) return JSON.stringify(message);
+
+    // Opening a task mutates render caches, including partially rebuilt tool HTML.
+    // Exclude only known cache fields; identically named fields in business data remain significant.
+    return JSON.stringify({
+        ...message,
+        content: message.content.map((part) => ({
+            ...part,
+            rendered: undefined,
+            ...(part.type === 'text' ? { renderedWorkspace: undefined } : {}),
+            ...(part.type === 'tool_call'
+                ? {
+                      toolcalls: part.toolcalls.map((toolCall) => ({
+                          ...toolCall.toJSON(),
+                          rendered: undefined
+                      }))
+                  }
+                : {})
+        }))
+    });
+}
+
 export async function compactFullContext(
     chatContext: ChatContext,
     model?: string,
@@ -1323,13 +1346,17 @@ export async function compactFullContext(
         return { compacted: false };
     }
 
-    const snapshot = chatContext.messages.map((message) => ({ message, content: JSON.stringify(message) }));
+    const snapshot = chatContext.messages.map((message) => ({
+        message,
+        content: serializeCompactSnapshotMessage(message)
+    }));
     const isCurrent = () =>
         options.isCurrent?.() !== false &&
         snapshot.length === chatContext.messages.length &&
         snapshot.every(
             (item, index) =>
-                item.message === chatContext.messages[index] && item.content === JSON.stringify(item.message)
+                item.message === chatContext.messages[index] &&
+                item.content === serializeCompactSnapshotMessage(item.message)
         );
     let summary = '';
     for (let attempt = 0; attempt < (recovery ? MAX_COMPACT_RECOVERY_ATTEMPTS : 2); attempt++) {

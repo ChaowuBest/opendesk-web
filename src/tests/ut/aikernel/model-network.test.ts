@@ -328,10 +328,24 @@ describe('model network configuration', () => {
                 });
             }
             expect(process.env.NO_PROXY).toBe('existing.local');
-            expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
+            // no_ssl 只作用于本次请求（skipTlsVerification），不再改动进程级 TLS 开关
+            expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
         } finally {
             infoSpy.mockRestore();
         }
+    });
+
+    test('no_ssl 不通过进程级环境变量关闭其它请求的 TLS 校验', async () => {
+        const platform = new RecordingPlatform();
+        setPlatform(platform);
+
+        await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: true },
+            'https://model.local/v1/chat/completions'
+        );
+
+        expect(platform.records[0].options?.skipTlsVerification).toBe(true);
+        expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
     });
 
     test('adapter cache separates otherwise-identical providers with different network flags', async () => {
@@ -408,7 +422,8 @@ describe('model network configuration', () => {
             });
         }
         expect(process.env.NO_PROXY).toBe('existing.local');
-        expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe('0');
+        // no_ssl 只作用于本次请求，不再改动进程级 TLS 开关
+        expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
     });
 
     test('model metadata API uses the same network flags as model completions', async () => {

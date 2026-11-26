@@ -1,6 +1,6 @@
 # Storage 内部架构文档
 
-> 文档日期：2026-04-07
+> 文档日期：2026-10-31（BM25 更新）
 > 对应代码：`src/main/services/storage/`
 > 面向读者：Storage 模块的开发者和维护者
 
@@ -30,7 +30,7 @@ Storage 采用三层架构，职责自上而下递进：
 │  base-index-db.ts / base-index-db-wasm.ts / ...   │
 │  - 实现 I*IndexDB 接口                            │
 │  - 每种 Indexer 有 2 个生产实现（node/wasm）         │
-│  - 直接操作 SQLite / FTS5 / sqlite-vec / hnsw     │
+│  - 直接操作 SQLite / sqlite-vec / hnsw     │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -56,13 +56,13 @@ Storage 采用三层架构，职责自上而下递进：
 | `abstract-storage.ts` | 协调层  | BaseStorage 类、Item/ColumnSchema/FilterCondition 等核心类型 |
 | `indexer.ts`          | 抽象    | Indexer 抽象基类定义                                         |
 | `base-indexer.ts`     | Indexer | 标量元数据索引，schema 驱动动态建表                          |
-| `bm25-indexer.ts`     | Indexer | 全文搜索索引，FTS5 分词                                      |
+| `bm25-indexer.ts`     | Indexer | 记录级 BM25，Jieba 分词与共享统计层                          |
 | `vector-indexer.ts`   | Indexer | 向量相似度索引，sqlite-vec                                   |
 | `tag-indexer.ts`      | Indexer | 标签精确匹配索引                                             |
 | `chunk-indexer.ts`    | Indexer | 分块向量索引（1:N），RAG 场景                                |
 | `*-index-db.ts`       | IndexDB | Node.js 平台实现（5 个，生产使用）                           |
 | `*-index-db-wasm.ts`  | IndexDB | WASM 实现（5 个，生产使用）                                  |
-| `*-index-db-hm.ts`    | IndexDB | HM native addon 实现（5 个，已废弃，仅保留参考）             |
+| `*-index-db-hm.ts`    | IndexDB | 其它索引器的废弃 HM 实现；BM25 HM 已删除                     |
 | `hnsw-adapter.ts`     | 辅助    | HNSW ANN 索引封装，供 WASM 向量实现使用                      |
 
 ---
@@ -93,14 +93,14 @@ abstract class Indexer {
 
 ### 3.2 五种 Indexer 对比
 
-| 属性          | BaseIndexer      | BM25Indexer                 | VectorIndexer               | TagIndexer       | ChunkIndexer      |
-| ------------- | ---------------- | --------------------------- | --------------------------- | ---------------- | ----------------- |
-| 数据模型      | 1 item : 1 row   | 1 item : N rows（每列一条） | 1 item : N rows（每列一条） | 1 item : 1 row   | 1 item : N chunks |
-| 底层引擎      | SQLite 标量表    | SQLite FTS5                 | sqlite-vec / HNSW           | SQLite 标量表    | sqlite-vec / HNSW |
-| 是否必需      | 是（始终创建）   | 否（按 schema）             | 否（按 schema）             | 否（按 schema）  | 否（按 schema）   |
-| search() 行为 | 无条件时返回全部 | 无条件时返回空              | 无条件时返回空              | 无条件时返回全部 | 直接 throw        |
-| insert 去重   | 依赖 BaseStorage | 自行检查                    | 依赖 BaseStorage            | 依赖 BaseStorage | 自行检查          |
-| 支持的操作符  | 全部标量操作符   | bm25_match                  | vector\_\* 系列             | 标量操作符子集   | vector\_\* 系列   |
+| 属性          | BaseIndexer      | BM25Indexer                      | VectorIndexer               | TagIndexer       | ChunkIndexer      |
+| ------------- | ---------------- | -------------------------------- | --------------------------- | ---------------- | ----------------- |
+| 数据模型      | 1 item : 1 row   | 1 item : N rows（field/subKey）  | 1 item : N rows（每列一条） | 1 item : 1 row   | 1 item : N chunks |
+| 底层引擎      | SQLite 标量表    | SQLite 四表统计                  | sqlite-vec / HNSW           | SQLite 标量表    | sqlite-vec / HNSW |
+| 是否必需      | 是（始终创建）   | 否（按 schema）                  | 否（按 schema）             | 否（按 schema）  | 否（按 schema）   |
+| search() 行为 | 无条件时返回全部 | 直接 throw，委托 holder 专用入口 | 无条件时返回空              | 无条件时返回全部 | 直接 throw        |
+| insert 去重   | 依赖 BaseStorage | 自行检查                         | 依赖 BaseStorage            | 依赖 BaseStorage | 自行检查          |
+| 支持的操作符  | 全部标量操作符   | bm25_match                       | vector\_\* 系列             | 标量操作符子集   | vector\_\* 系列   |
 
 ### 3.3 BaseIndexer — 元数据主索引
 
@@ -110,12 +110,16 @@ abstract class Indexer {
 - **支持全部标量操作符**：`= != > < >= <= like notlike in notin between notbetween path_descendant_or_self`
 - **`path_descendant_or_self` 合同**：接受单个非空路径字符串或非空路径字符串数组；数组内各成员在同一个 operator 内部做 OR，不同 FilterCondition 之间仍是 AND。空数组或包含非字符串/空字符串成员一律视为非法，不代表"不限定范围"。`///`、`C:////` 等纯斜杠或畸形盘符根值在进入数据库前即被拒绝。Native/WASM/ArkData 三个 backend 各自负责把该 operator 编译为等价的 SQL `OR` group（`LIKE ... ESCAPE '\'`），FileMgr 不拼接 SQL，只传入 string/string[] value。
 
-### 3.4 BM25Indexer — 全文搜索
+### 3.4 BM25Indexer — 记录统计搜索
 
-- **多列支持**：一个 item 可以有多个 BM25 列（如 title + body），每列生成一条 BM25 记录
-- **分词机制**：Node.js 使用 SQLite FTS5 内置分词；WASM 使用 jieba-wasm 切词后写入 FTS tokens 列
-- **评分语义**：当前所有平台使用"分词命中数"作为确定性评分，不是标准 BM25 数值
-- **仅一个操作符**：`bm25_match`，传入 `BM25Query { query, topK? }`
+- 记录身份为 `(item_id, field, subKey)`，payload 的 id 对应 subKey，省略/undefined 时为空串，null 非法。`terms`、`records`、`postings`、`field_stats` 四表只存词项和统计，不存原文或拼接 tokens。
+- `bm25-stats-store.ts` 是两个同步 SQLite driver 共用的事务和查询实现；`bm25-tokenizer.ts`、`bm25-scoring.ts` 分别提供分词和纯评分。
+- 原文以最多 1,048,576 UTF-16 code units 分段，优先最后 LF、保护代理对；每段 NFKC→lower→Jieba HMM=true，仅保留含 Unicode 字母/数字的 token。native `@node-rs/jieba=2.0.1` 与 `jieba-wasm=2.4.0` 独立于 DB 选择；不保证分段与整文分词相同。
+- 标准 BM25：`k1=1.2, b=0.75`，正 IDF=`log1p((N-df+0.5)/(df+0.5))`。固定 UTF-16 查询词序累计，score 降序、item_id/subKey UTF-16 升序，不舍入、不聚合对象。
+- 全域或 allowlist 范围内的全部非空记录（包括未命中记录）决定 N/sum_len/df。TEMP allowlist、统计和 postings 在同一同步读事务内；无局部 TopK 合并。
+- 每次 CRUD 为一个同步写事务；update 资格取事务起始记录集合，upsert 只覆盖显式记录，零词删除该记录；省略兄弟记录不删除。词典孤词在整批末回收。跨 indexer 和外层 500-ID 删除组不具备整体事务保证。
+- `PRAGMA user_version=1` 绑定 schema/分词/评分规则。只有缺失或 v0 且无用户 schema 对象可以创建；不兼容库明确拒绝，无迁移、业务状态、generation 或重建决策。
+- `searchBM25` 返回原始记录命中，不查 Base；`searchScope` 完整 Base 预筛后返回带 `bm25Record` 的逐记录真实 Item；通用 `search` 保留旧对象管道，在取回的 2K 记录中有重复 item_id 时明确拒绝，提示专用入口。
 
 ### 3.5 VectorIndexer — 向量相似度
 
@@ -164,7 +168,7 @@ close()          ──→ 依次关闭所有 Indexer 的 DB 连接
 insert/delete/update/upsert/clear 的分发模式相同：
 
 ```typescript
-await Promise.all([
+await Promise.allSettled([
     this.baseIndexer.op(items),
     this.bm25Indexer?.op(items),
     this.vectorIndexer?.op(items),
@@ -172,6 +176,8 @@ await Promise.all([
     this.chunkIndexer?.op(items)
 ]);
 ```
+
+等待所有分发 settle 后，按 indexer 数组顺序抛出首个错误。
 
 **关键约束**：
 
@@ -221,7 +227,7 @@ await Promise.all([
 ```typescript
 {
     BaseIndexer:   { size: number },           // item 总数
-    BM25Indexer?:  { size: number },           // BM25 记录数（≥ item 数）
+    BM25Indexer?:  { size: number, backend, tokenizer, indexVersion, compatibility, fields }, // 非空记录数；fields 含 n/sum_len
     VectorIndexer?:{ size: number, dim: number },
     TagIndexer?:   { size: number },
     ChunkIndexer?: { size: number, dim: number }, // chunk 总数
@@ -236,13 +242,13 @@ await Promise.all([
 
 ### 5.1 两套生产实现
 
-| 平台               | 后缀       | SQLite 引擎               | 向量引擎                    | BM25 分词          | 状态                   |
-| ------------------ | ---------- | ------------------------- | --------------------------- | ------------------ | ---------------------- |
-| Node.js / Electron | 无后缀     | better-sqlite3            | sqlite-vec 扩展             | FTS5 内置          | **生产使用**           |
-| HarmonyOS WASM     | `-wasm.ts` | node-sqlite3-wasm         | SQLite BLOB + hnsw ANN 缓存 | jieba-wasm + FTS5  | **生产使用**           |
-| HarmonyOS Native   | `-hm.ts`   | hm_sqlite_addon（native） | hm_sqlite_addon             | jieba native addon | **已废弃，仅保留参考** |
+| 平台                          | 后缀       | SQLite 引擎               | 向量引擎                    | BM25 分词        | 状态                   |
+| ----------------------------- | ---------- | ------------------------- | --------------------------- | ---------------- | ---------------------- |
+| Node.js / Electron            | 无后缀     | better-sqlite3            | sqlite-vec 扩展             | @node-rs/jieba   | **生产使用**           |
+| WASM 路由（含 Windows ARM64） | `-wasm.ts` | node-sqlite3-wasm         | SQLite BLOB + hnsw ANN 缓存 | jieba-wasm       | **生产使用**           |
+| HarmonyOS Native              | `-hm.ts`   | hm_sqlite_addon（native） | hm_sqlite_addon             | 不再提供 BM25 HM | **已废弃，仅保留参考** |
 
-工厂函数只分发到 node 和 wasm 两条路径，`*-hm.ts` 不再被引用。
+桌面 BM25 使用 native 或 WASM 后端。鸿蒙 BM25 使用 `Intl.Segmenter` 分词（后端名 `harmonyos-intl`），在普通 ArkData 库的对象事务内执行查询和宿主评分。同一个库统一使用一种事务 API，迁移时一并切换该库的所有调用方。
 
 ### 5.2 工厂分发机制
 
@@ -261,25 +267,25 @@ export async function createBaseIndexDB(dbPath, schema): Promise<IBaseIndexDB> {
 
 工厂函数位置：
 
-| Indexer       | 工厂函数                | 定义文件             |
-| ------------- | ----------------------- | -------------------- |
-| BaseIndexer   | `createBaseIndexDB()`   | `base-index-db.ts`   |
-| BM25Indexer   | `createBM25IndexDB()`   | `bm25-index-db.ts`   |
-| VectorIndexer | `createVectorIndexDB()` | `vector-index-db.ts` |
-| TagIndexer    | `createTagIndexDB()`    | `tag-index-db.ts`    |
-| ChunkIndexer  | `createChunkIndexDB()`  | `chunk-indexer.ts`   |
+| Indexer       | 工厂函数                | 定义文件                   |
+| ------------- | ----------------------- | -------------------------- |
+| BaseIndexer   | `createBaseIndexDB()`   | `base-index-db.ts`         |
+| BM25Indexer   | `createBM25IndexDB()`   | `bm25-index-db-factory.ts` |
+| VectorIndexer | `createVectorIndexDB()` | `vector-index-db.ts`       |
+| TagIndexer    | `createTagIndexDB()`    | `tag-index-db.ts`          |
+| ChunkIndexer  | `createChunkIndexDB()`  | `chunk-indexer.ts`         |
 
 ### 5.3 接口约束
 
 每种 IndexDB 有对应的 TypeScript 接口（`I*IndexDB`），定义在对应的 Indexer 文件中：
 
-| 接口             | 定义文件            | 方法数 |
-| ---------------- | ------------------- | ------ |
-| `IBaseIndexDB`   | `base-indexer.ts`   | 19     |
-| `IBM25IndexDB`   | `bm25-indexer.ts`   | 10     |
-| `IVectorIndexDB` | `vector-indexer.ts` | 14     |
-| `ITagIndexDB`    | `tag-indexer.ts`    | 17     |
-| `IChunkIndexDB`  | `chunk-indexer.ts`  | 8      |
+| 接口             | 定义文件                                      | 方法数 |
+| ---------------- | --------------------------------------------- | ------ |
+| `IBaseIndexDB`   | `base-indexer.ts`                             | 19     |
+| `IBM25IndexDB`   | `bm25-indexer.ts`（共享 BM25StatsStore 类型） | 见实现 |
+| `IVectorIndexDB` | `vector-indexer.ts`                           | 14     |
+| `ITagIndexDB`    | `tag-indexer.ts`                              | 17     |
+| `IChunkIndexDB`  | `chunk-indexer.ts`                            | 8      |
 
 两套生产实现（node / wasm）必须实现对应接口的所有方法。`*-hm.ts` 实现同样遵循接口但已不被工厂分发。Indexer 层仅通过接口调用 DB 层，不依赖具体实现类。
 
@@ -322,7 +328,7 @@ interface Item {
         [indexer: string]: Array<{
             column: string;
             content: string | number[];
-            id?: string; // ChunkIndexer: chunk_id
+            id?: string; // ChunkIndexer: chunk_id；BM25Indexer: subKey
             text?: string; // ChunkIndexer: chunk_text
         }>;
     };
@@ -361,6 +367,7 @@ interface SearchItem {
     tags?: string; // tag 值
     VecScore?: number; // 向量相似度分数
     BM25Score?: number; // BM25 匹配分数
+    bm25Record?: { field: string; subKey: string }; // BM25 scope 记录身份
     ChunkScore?: number; // chunk 相似度分数
     chunk_id?: string; // 命中的 chunk 标识符
     chunk_text?: string; // 命中的 chunk 原文
@@ -391,14 +398,15 @@ BaseStorage 对外统一三种写语义：
 
 ### 8.1 架构约束
 
-| 约束                      | 说明                                                                 |
-| ------------------------- | -------------------------------------------------------------------- |
-| **单 BaseStorage 单实例** | 同一个 dbBasePath 不应被多个 BaseStorage 实例同时使用                |
-| **BaseIndexer 必须存在**  | 不可跳过，它是 item 存在性判断和元数据 join 的唯一来源               |
-| **维度不可变**            | VectorIndexer / ChunkIndexer 的 dim 在首次写入后固定，变更需清空重建 |
-| **无跨 Indexer 事务**     | 多个 Indexer 的写入并行执行，某个失败不会回滚其余                    |
-| **搜索只支持 AND**        | 多条件取交集；OR 需调用方多次查询取并集                              |
-| **ChunkIndexer 搜索受限** | 只能与 BaseIndexer 组合，不能与 BM25/Vector/Tag 联合搜索             |
+| 约束                      | 说明                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **单 BaseStorage 单实例** | 通用约束仍为同一个 dbBasePath 不应被多个 BaseStorage 实例同时使用；其它索引器的实例约束不因 BM25 改动而放宽                     |
+| **BM25 多 holder**        | BM25 索引支持同进程独立 holder 交替读写；native 跨进程由 SQLite WAL/锁协调，此能力不扩展为其它引擎或整个 BaseStorage 的并发保证 |
+| **BaseIndexer 必须存在**  | 不可跳过，它是 item 存在性判断和元数据 join 的唯一来源                                                                          |
+| **维度不可变**            | VectorIndexer / ChunkIndexer 的 dim 在首次写入后固定，变更需清空重建                                                            |
+| **无跨 Indexer 事务**     | 多个 Indexer 的写入并行执行，某个失败不会回滚其余                                                                               |
+| **搜索只支持 AND**        | 多条件取交集；OR 需调用方多次查询取并集                                                                                         |
+| **ChunkIndexer 搜索受限** | 只能与 BaseIndexer 组合，不能与 BM25/Vector/Tag 联合搜索                                                                        |
 
 ### 8.2 当前实现限制
 
@@ -414,13 +422,13 @@ BaseStorage 对外统一三种写语义：
 
 ### 8.3 平台特殊行为
 
-| 行为            | Node.js                        | WASM（HarmonyOS）                |
-| --------------- | ------------------------------ | -------------------------------- |
-| 向量搜索        | sqlite-vec 原生                | HNSW ANN 缓存 + SQLite 真源      |
-| BM25 分词       | FTS5 内置分词器                | jieba-wasm 切词 → FTS5 tokens 列 |
-| BM25 评分       | 分词命中数                     | 分词命中数（与 Node 一致）       |
-| DB 磁盘大小查询 | PRAGMA page_count \* page_size | 同左（hm-addon 返回 0）          |
-| 向量 compact    | 不需要                         | stale/total > 0.2 时触发         |
+| 行为            | Node.js                        | WASM 路由                   |
+| --------------- | ------------------------------ | --------------------------- |
+| 向量搜索        | sqlite-vec 原生                | HNSW ANN 缓存 + SQLite 真源 |
+| BM25 分词       | @node-rs/jieba分词器           | jieba-wasm，四表统计        |
+| BM25 评分       | 标准 BM25                      | 标准 BM25（共享算法）       |
+| DB 磁盘大小查询 | PRAGMA page_count \* page_size | 同左（hm-addon 返回 0）     |
+| 向量 compact    | 不需要                         | stale/total > 0.2 时触发    |
 
 ---
 
@@ -438,7 +446,7 @@ storage.insert([item])
        │    └─ 从 item 提取 schema 列 → DB.insertMany()
        │
        ├─ BM25Indexer.insert()
-       │    └─ 从 item.indexer_columns.BM25Indexer 提取文本 → DB.insertMany()
+       │    └─ 逐 entry 分词 → 记录级事务 insert()
        │
        ├─ VectorIndexer.insert()
        │    └─ 从 item.indexer_columns.VectorIndexer 提取向量 → DB.insertMany()
@@ -462,7 +470,7 @@ storage.search([
   ├─ Step 1: TagIndexer.search([tag='finance'])
   │    → 结果集 A: [item_1, item_3, item_7]
   │
-  ├─ Step 2: BM25Indexer.search([text match '报告'], existingResults=A)
+  ├─ Step 2: holder BM25 阶段：全域 searchHits('报告') → 校验记录唯一 → 与 A 交集
   │    → A ∩ BM25结果 → 结果集 B: [item_1, item_7]
   │
   ├─ (VectorIndexer 无条件，跳过)
@@ -478,7 +486,8 @@ storage.search([
 ```
 {dbBasePath}/
 ├── base-index.db          BaseIndexer 数据
-├── bm25-index.db          BM25Indexer 数据（含 FTS5 虚拟表）
+├── bm25-index.db          BM25 native 统计库（WAL）
+├── bm25-index.wasm.db     BM25 WASM 统计库（DELETE）
 ├── vector-index.db        VectorIndexer 数据
 ├── tag-index.db           TagIndexer 数据
 ├── chunk-index.db         ChunkIndexer 数据
@@ -501,3 +510,25 @@ storage.search([
 4. **[中] 平台工厂收敛** — 5 个工厂函数的平台判断逻辑合并到统一 `createDB()` 工厂
 5. **[低] Item 泛型化** — 消除 `[key: string]: any`，用泛型让 schema 列反映到 Item 类型
 6. **[低] IndexDB 基接口** — 抽出 `IIndexDB` 包含 close/clear/count 公共方法
+
+### BM25 资源与兼容边界
+
+DB 通过现有 SQLite helper 仅在 native 依赖不可用且清理成功后回退；不因文件缺失、忙、权限、损坏或版本不兼容换库。Jieba 独立回退，词典/输出异常不会伪装为模块缺失。两种连接 busy_timeout=5000；只读打开不切换 journal。
+
+readonly holder 初始化分别以机器错误码 `bm25_missing` / `bm25_uninitialized` 报告主库缺失 / 安全空库未建表；分类 `reason` 为 `missing` / `uninitialized`、`kind` 为 `other`。它们不属于 `BM25CompatibilityError`，不携带版本迁移方向，也不会自动创建或重建。
+
+BM25 binding 仅接受 `access: 'readwrite' | 'readonly'`，汇总显式值后默认 readwrite，冲突/未知键拒绝。readonly 禁所有持久写和 instance drop，允许连接局部 TEMP 查询。probe 不加载 tokenizer、不建目录/主库，先真实内存连接验证 addon，再只读探测所选文件；不是初始化租约。
+
+close 等待已接纳操作及 probe，失败资源保留供显式重试。BaseStorage.close 是 holder 终态；内部 BM25Indexer 成功 close 后回未初始化。初始化失败清理成功后，同一未关闭 holder 可重试 initialize。instance drop 完整关闭后只删所选物理文件及 sidecar；raw drop 要求调用者已关闭所有 holder，再精确删除 native/WASM 两套文件，拒绝未知 WASM 锁。
+
+真实 CLI tgz 仓外安装、Electron application worker、Windows ARM64 产物和新 HAP 内容验收留业务接入/发布阶段；本机测试及构建不代替这些验收。
+
+BM25 身份（item_id/field/subKey、候选及删除 ID）与保留词项必须不含 NUL，且 UTF-16 完整；非法值明确拒绝，写入整批在 BM25 事务前失败。合法字符串不转换。原始正文/查询文本仍按分词规则处理，不因原文含这些字符直接整段拒绝；分词后若保留非法词项则失败。
+
+### Windows SQLite 发布验收清单（待执行）
+
+本清单由后续 Windows 业务接入/发布验收执行，不作为本轮 storage 代码审核已通过的证据。根仓库不跟踪 `package-lock.json`，依赖声明单测也不能证明成品的依赖布局或原生模块可加载。
+
+- 在仓库外安装实际发布产物，从成品中的 `@kenhkl/agent-gate` 和 `@kenhkl/agent-moss` 各自运行位置核对 `better-sqlite3` 的解析路径、真实路径和版本。两者须按根 `$better-sqlite3` override 去重到根依赖；检查各自 `node_modules/better-sqlite3`，不得残留独立编译的嵌套副本。记录产物标识、目标架构、根依赖与两个调用方的解析证据，不借用开发仓库的 `node_modules`。
+- 在目标 Windows 架构（包括 ARM64）的成品既有 agent 子进程路径中，验证实际 Electron-as-node 运行时能够加载原生模块，并使用隔离临时数据库完成建库、写入、读取和关闭。记录 Electron/Node 版本、架构、加载结果和退出码；不得将捕获加载异常后的静默回退当作通过。
+- 任一路径解析、去重或原生加载不符时，保留该发布验收项未通过，修正产物后重验。包声明检查、构建成功、Mac 上的 SQLite 测试均不能代替本项；不为本项新增生产验收入口或调整安全设置。

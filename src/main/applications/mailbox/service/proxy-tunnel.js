@@ -93,10 +93,11 @@ async function detectMailProxyConfig(nc) {
     }
 
     // use_proxy=system（或平台未提供）：优先系统代理检测，其次环境变量
+    // 设置中的 no_proxy 仅属于自定义代理模式，不覆盖或扩展系统绕过规则。
     try {
         const sys = await getEffectiveSystemProxy();
         if (sys?.url) {
-            return { url: sys.url, noProxy: noProxy || sys.bypassList || '' };
+            return { url: sys.url, noProxy: sys.bypassList || '' };
         }
     } catch (err) {
         logger.warn(`mailbox: unable to detect system proxy: ${err?.message || err}`);
@@ -110,7 +111,10 @@ async function detectMailProxyConfig(nc) {
         process.env.HTTP_PROXY ||
         process.env.http_proxy;
     if (!envProxy) return null;
-    return { url: envProxy, noProxy: noProxy || process.env.NO_PROXY || process.env.no_proxy || '' };
+    return {
+        url: envProxy,
+        noProxy: process.env.NO_PROXY || process.env.no_proxy || ''
+    };
 }
 
 /**
@@ -192,6 +196,22 @@ function closeTunnelServer(server) {
     } catch {
         /* best-effort */
     }
+}
+
+/** 立即关闭单个目标的隧道，并使尚未完成的旧隧道创建失效。 */
+function closeMailTunnel(host, port) {
+    const key = tunnelKey(host, port);
+    desiredTunnelSignatures.delete(key);
+    const pendingPrefix = `${key}|`;
+    for (const pendingKey of pendingTunnels.keys()) {
+        if (pendingKey.startsWith(pendingPrefix)) pendingTunnels.delete(pendingKey);
+    }
+
+    const entry = tunnelEntries.get(key);
+    if (!entry) return;
+
+    tunnelEntries.delete(key);
+    closeTunnelServer(entry.server);
 }
 
 /** 起一个本地监听，把每个进来的连接经代理转发到 targetHost:targetPort。 */
@@ -499,7 +519,10 @@ export async function resolveMailEndpoint(host, port) {
         closeMailTunnels();
         return null;
     }
-    if (isHostInNoProxyList(host, port, proxyConfig.noProxy)) return null;
+    if (isHostInNoProxyList(host, port, proxyConfig.noProxy)) {
+        closeMailTunnel(host, port);
+        return null;
+    }
 
     const proxy = parseProxyUrl(proxyConfig.url);
     if (!proxy) {
@@ -534,8 +557,8 @@ export async function resolveMailEndpoint(host, port) {
         pending = createTunnelServer(proxy, host, port)
             .then((server) => {
                 const actualPort = server.address().port;
-                // 创建期间代理配置又变了：丢弃这次结果，避免把旧代理监听写回缓存
-                if (desiredTunnelSignatures.get(key) !== signature) {
+                // 创建期间配置变化或目标被绕过：即使恢复了同一代理，也不能复用已失效的旧创建。
+                if (desiredTunnelSignatures.get(key) !== signature || pendingTunnels.get(pendingKey) !== pending) {
                     closeTunnelServer(server);
                     throw new Error('proxy configuration changed while creating tunnel');
                 }
@@ -552,7 +575,7 @@ export async function resolveMailEndpoint(host, port) {
                 return actualPort;
             })
             .finally(() => {
-                pendingTunnels.delete(pendingKey);
+                if (pendingTunnels.get(pendingKey) === pending) pendingTunnels.delete(pendingKey);
             });
         pendingTunnels.set(pendingKey, pending);
     }

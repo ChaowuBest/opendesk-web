@@ -15,8 +15,16 @@ import type {
     PluginAccountLoginFlowState,
     PluginAccountLoginMethod
 } from '../../../../packages/plugin-sdk/src/index.js';
-import type { AccountKind, AccountSession, AccountUser } from './types.js';
+import type {
+    AccountChange,
+    AccountCredential,
+    AccountCredentialSnapshot,
+    AccountKind,
+    AccountSession,
+    AccountUser
+} from './types.js';
 import {
+    normalizeAccountCredential,
     normalizeAccountLoginFlowState,
     normalizeAccountLoginMethods,
     normalizeAccountSession,
@@ -32,6 +40,8 @@ export class AccountService {
     private backend: PluginAccountBackend | null = null;
     private loginFlow: { id: string; backend: PluginAccountBackend; flow: PluginAccountLoginFlow } | null = null;
     private nextLoginFlowId = 0;
+    private readonly credentialListeners = new Set<(change: AccountChange) => void>();
+    private lastCredential: AccountCredentialSnapshot | null = null;
 
     constructor(private readonly deps: AccountServiceDependencies) {}
 
@@ -48,6 +58,31 @@ export class AccountService {
         const backend = this.requireBackend();
         const session = backend.getSession();
         return session ? normalizeAccountSession(session, backend) : null;
+    }
+
+    /**
+     * 当前账号凭据（含 access token），仅供主进程内需要服务端鉴权的能力使用。
+     *
+     * 后端未注册、未登录或后端未实现 getCredential 时返回 null；调用方按“无凭据”
+     * 处理，不得降级为匿名访问。凭据不经 IPC 下发 renderer。
+     */
+    getCredential(): AccountCredential | null {
+        const credential = this.readCredential();
+        this.publishCredential(credential);
+        return credential;
+    }
+
+    /**
+     * 订阅账号凭据变化。
+     *
+     * 变化由本服务在所有会改变会话的入口处派生：renderer 经 IPC、TUI/CLI 直接调用，
+     * 都必须经过本服务，因此不依赖 IPC 层的 sessionChanged 通知。
+     */
+    subscribe(listener: (change: AccountChange) => void): () => void {
+        this.credentialListeners.add(listener);
+        return () => {
+            this.credentialListeners.delete(listener);
+        };
     }
 
     async getLoginMethods(kind: AccountKind): Promise<readonly PluginAccountLoginMethod[]> {
@@ -113,17 +148,31 @@ export class AccountService {
     }
 
     updateDisplayName(displayName: string): Promise<AccountUser> {
-        return this.requireBackend().updateDisplayName(displayName).then(normalizeAccountUser);
+        return this.requireBackend()
+            .updateDisplayName(displayName)
+            .then((user) => {
+                const normalized = normalizeAccountUser(user);
+                this.syncCredential();
+                return normalized;
+            });
     }
 
     refreshToken(): Promise<AccountSession> {
         const backend = this.requireBackend();
-        return backend.refreshToken().then((session) => normalizeAccountSession(session, backend));
+        return backend.refreshToken().then((session) => {
+            const normalized = normalizeAccountSession(session, backend);
+            this.syncCredential();
+            return normalized;
+        });
     }
 
     async logout(): Promise<void> {
         await this.cancelActiveLogin();
-        await this.requireBackend().logout();
+        try {
+            await this.requireBackend().logout();
+        } finally {
+            this.syncCredential();
+        }
     }
 
     private requireBackend(): PluginAccountBackend {
@@ -141,6 +190,7 @@ export class AccountService {
         if ((state.status === 'completed' || state.status === 'failed') && this.loginFlow?.id === flowId) {
             this.loginFlow = null;
         }
+        if (state.status === 'completed') this.syncCredential();
     }
 
     private async cancelActiveLogin(): Promise<void> {
@@ -162,23 +212,97 @@ export class AccountService {
     private selectBackend(kind: AccountKind): PluginAccountBackend {
         const backend = this.deps.getBackend(kind);
         if (!backend) throw new Error(`account:backend_unavailable:${kind}`);
-        if (this.backend !== backend) {
-            backend.initialize();
-            this.backend = backend;
-        }
+        this.adoptBackend(backend);
         return backend;
     }
 
     private resolveBackend(): PluginAccountBackend | undefined {
         const backend = this.deps.getBackend();
         if (!backend) {
-            this.backend = null;
+            if (this.backend) {
+                this.backend = null;
+                this.syncCredential();
+            }
             return undefined;
         }
-        if (this.backend !== backend) {
-            backend.initialize();
-            this.backend = backend;
-        }
+        this.adoptBackend(backend);
         return backend;
+    }
+
+    /**
+     * 后端身份变化（插件注册/重载/停用）时初始化一次并重新派生凭据：
+     * 启动时后端从磁盘恢复出的会话，也在这里产生一次 committed。
+     */
+    private adoptBackend(backend: PluginAccountBackend): void {
+        if (this.backend === backend) return;
+        backend.initialize();
+        this.backend = backend;
+        this.syncCredential();
+    }
+
+    /** 读取当前凭据；无后端、未登录或后端不支持时为 null，不抛错。 */
+    private readCredential(): AccountCredential | null {
+        const backend = this.backend ?? this.deps.getBackend();
+        if (!backend || typeof backend.getCredential !== 'function') return null;
+        const credential = backend.getCredential();
+        return credential ? normalizeAccountCredential(credential, backend) : null;
+    }
+
+    /** 比较当前凭据与上次已发布值，派生并广播 stopped / committed / token-updated。 */
+    private syncCredential(): void {
+        let next: AccountCredential | null = null;
+        try {
+            next = this.readCredential();
+        } catch {
+            // 后端返回了不合法的凭据：按失去凭据处理，不把坏数据发给消费方。
+            next = null;
+        }
+        this.publishCredential(next);
+    }
+
+    private publishCredential(next: AccountCredential | null): void {
+        const previous = this.lastCredential;
+        if (!previous && !next) return;
+        if (previous && !next) {
+            this.lastCredential = null;
+            this.emitCredential({ kind: 'stopped', credential: previous });
+            return;
+        }
+        if (!previous && next) {
+            this.lastCredential = next;
+            this.emitCredential({ kind: 'committed', credential: next });
+            return;
+        }
+        if (!previous || !next) return;
+        if (!AccountService.sameIdentity(previous, next)) {
+            this.lastCredential = null;
+            this.emitCredential({ kind: 'stopped', credential: previous });
+            this.lastCredential = next;
+            this.emitCredential({ kind: 'committed', credential: next });
+            return;
+        }
+        this.lastCredential = next;
+        if (previous.accessToken !== next.accessToken || previous.tokenType !== next.tokenType) {
+            this.emitCredential({ kind: 'token-updated', credential: next });
+        }
+    }
+
+    private emitCredential(change: AccountChange): void {
+        for (const listener of [...this.credentialListeners]) {
+            try {
+                listener(change);
+            } catch {
+                // 观察者异常不得影响账号状态或其他观察者。
+            }
+        }
+    }
+
+    private static sameIdentity(left: AccountCredentialSnapshot, right: AccountCredentialSnapshot): boolean {
+        return (
+            left.backendId === right.backendId &&
+            left.kind === right.kind &&
+            left.baseUrl === right.baseUrl &&
+            left.user.id === right.user.id
+        );
     }
 }

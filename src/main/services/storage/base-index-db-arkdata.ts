@@ -29,8 +29,9 @@ import type {
     ArkDataValueType,
     DatabaseKit
 } from '../../../platforms/bridges/common.js';
-import { ArkDataStoreSession, getArkdataDatabaseKit } from './arkdata-bridge.js';
+import { ArkDataStoreSession, getArkdataDatabaseKit, retryArkdataStoreReleases } from './arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
+import { recordStorageInitializationFailure, recordStorageCleanupFailure } from './platform.js';
 import { createArkDataStoreId, toArkDataDbPath } from './arkdata-path.js';
 import { getArkDataTxId, hasArkDataTx, runWithArkDataTx } from './arkdata-tx-context.js';
 import {
@@ -104,6 +105,18 @@ export async function probeBaseIndexStoreArkdata(dbPath: string): Promise<BaseIn
     }
 }
 
+export async function dropBaseIndexStoreArkdata(dbPath: string): Promise<void> {
+    const formalDbPath = toArkDataDbPath(dbPath);
+    const storeId = createArkDataStoreId('arkdata-base', formalDbPath);
+    await retryArkdataStoreReleases([formalDbPath]);
+    try {
+        await getArkdataDatabaseKit().deleteStore(storeId, { path: formalDbPath, vector: true });
+    } catch (error) {
+        recordStorageInitializationFailure(error, { indexer: 'BaseIndexer', backend: 'arkdata', operation: 'delete' });
+        throw error;
+    }
+}
+
 export class BaseIndexDBArkdata implements IBaseIndexDB {
     private readonly dbPath: string;
     private readonly tableName = 'base_index';
@@ -151,8 +164,10 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
     }
 
     private async initializeStore(generation: number): Promise<void> {
+        let operation: 'initialize' | 'close' = 'close';
         try {
             if (this.storeSession?.needsReplacement()) await this.releaseStoreReference();
+            operation = 'initialize';
             if (!this.storeSession) {
                 this.dbKit = getArkdataDatabaseKit();
                 // Retain the acquisition identity before awaiting a possibly late result.
@@ -167,8 +182,12 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             this.assertInitializationActive(generation);
             this.isInitialized = true;
         } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'BaseIndexer', backend: 'arkdata', operation });
             if (this.storeSession) {
-                await this.releaseStoreReference().catch((e) => logger.warn('closeStore failed', e));
+                await this.releaseStoreReference().catch((e) => {
+                    recordStorageCleanupFailure(error, e, 'BaseIndexer');
+                    logger.warn('closeStore failed', e);
+                });
             } else {
                 this.dbKit = null;
             }
@@ -882,10 +901,8 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
     }
 
     async dropStorage(): Promise<void> {
-        await this.ensureInitialized();
-        await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.tableName}`);
-        await this.kit().execSql(this.storeId, `DROP TABLE IF EXISTS ${this.schemaMetaTableName}`);
         await this.close();
+        await dropBaseIndexStoreArkdata(this.dbPath);
     }
 
     async transaction<T>(fn: () => Promise<T>): Promise<T> {
@@ -940,6 +957,25 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
         return rows[0];
     }
 
+    private buildLiteralLikeClause(field: string, pattern: string, params: any[]): string {
+        // The vector SDK mishandles bound patterns and doubled escape characters.
+        // Use an absent ASCII escape so literal characters never need doubling.
+        if (pattern.includes('\\') && !pattern.includes('\0')) {
+            const comparablePattern = pattern.toLowerCase();
+            for (let code = 32; code <= 126; code++) {
+                const escape = String.fromCharCode(code);
+                if ("'\\%_".includes(escape) || comparablePattern.includes(escape.toLowerCase())) continue;
+                const sdkPattern = pattern.replace(/\\([\\%_])/g, (_match, escaped: string) =>
+                    escaped === '\\' ? escaped : `${escape}${escaped}`
+                );
+                return `${field} LIKE '${sdkPattern.replaceAll("'", "''")}' ESCAPE '${escape}'`;
+            }
+        }
+        // Keep NUL and patterns without an available SDK escape on the original path.
+        params.push(pattern);
+        return `${field} LIKE ? ESCAPE '\\'`;
+    }
+
     private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
         const clauses: string[] = [];
         const params: any[] = [];
@@ -956,8 +992,8 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
             if (op === 'path_descendant_or_self') {
                 const pathClauses = normalizePathDescendantOrSelfValues(value).map((pathValue) => {
                     const [normalizedPath, descendantPattern] = pathDescendantOrSelfSqlValues(pathValue);
-                    params.push(normalizedPath, descendantPattern);
-                    return `(${field} = ? OR ${field} LIKE ? ESCAPE '\\')`;
+                    params.push(normalizedPath);
+                    return `(${field} = ? OR ${this.buildLiteralLikeClause(field, descendantPattern, params)})`;
                 });
                 clauses.push(pathClauses.length === 1 ? pathClauses[0] : `(${pathClauses.join(' OR ')})`);
             } else if (op === 'in' || op === 'notin') {
@@ -977,8 +1013,7 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
                 clauses.push(`${field} <> ?`);
                 params.push(value);
             } else if (op === 'contains_literal') {
-                clauses.push(`${field} LIKE ? ESCAPE '\\'`);
-                params.push(literalContainsPattern(value));
+                clauses.push(this.buildLiteralLikeClause(field, literalContainsPattern(value), params));
             } else if (op === 'like') {
                 clauses.push(`${field} LIKE ?`);
                 params.push(value);

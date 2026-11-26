@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
 import {
     loadFileMgrSettings,
+    resetFileSystemStorage,
+    forceRefreshScan,
     saveEntries,
     setSourcePaused,
     subscribeStatus
@@ -14,6 +16,7 @@ import {
     setEntries,
     setSnapshot
 } from '../../../../../main/applications/filemgr/renderer/state.js';
+import { createBanner } from '../../../../../main/applications/filemgr/renderer/banner.js';
 
 const mountedWidgets = new Set();
 
@@ -144,6 +147,72 @@ test('setSourcePaused preserves structured worker errors', async () => {
         (error) => error.code === 'persistence_failed' && error.snapshot === snapshot
     );
 });
+
+test('reset adapter waits for the worker result and propagates its original failure message', async () => {
+    let finish;
+    const response = new Promise((resolve) => {
+        finish = resolve;
+    });
+    const calls = [];
+    globalThis.window = {
+        applicationAPI: {
+            call: async (method) => {
+                calls.push(method);
+                return response;
+            }
+        }
+    };
+    let settled = false;
+    const reset = resetFileSystemStorage().finally(() => {
+        settled = true;
+    });
+    const failure = assert.rejects(reset, /fixture: raw reset deletion failed/);
+    await Promise.resolve();
+    assert.equal(settled, false);
+    finish({ status: 'error', message: 'fixture: raw reset deletion failed' });
+    await failure;
+    assert.deepEqual(calls, ['resetFileSystemStorage']);
+    window.applicationAPI.call = async () => ({ status: 'ok', data: { status: 'running' } });
+    assert.deepEqual(await resetFileSystemStorage(), { status: 'ok', data: { status: 'running' } });
+});
+
+for (const failed of [false, true]) {
+    test(`refresh adapter and banner wait for ${failed ? 'failure' : 'success'} and restore the button in finally`, async (t) => {
+        const { window, document } = parseHTML('<html><head></head><body></body></html>');
+        globalThis.window = window;
+        let finish;
+        const response = new Promise((resolve) => {
+            finish = resolve;
+        });
+        const calls = [],
+            warnings = [];
+        window.applicationAPI = {
+            call: async (method) => {
+                calls.push(method);
+                return response;
+            }
+        };
+        t.mock.method(console, 'warn', (...args) => warnings.push(args));
+        const banner = createBanner({ document, onForceRefresh: forceRefreshScan });
+        t.after(() => banner.destroy());
+        document.body.append(banner.element);
+        const button = banner.element.querySelector('.fs-refresh-btn');
+        button.dispatchEvent(new window.Event('click'));
+        button.dispatchEvent(new window.Event('click'));
+        assert.equal(button.disabled, true);
+        assert.equal(button.classList.contains('spinning'), true);
+        assert.deepEqual(calls, ['forceRefreshScan']);
+        finish(failed ? { status: 'error', message: 'fixture: refresh continuation failed' } : { status: 'ok' });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(button.disabled, false);
+        assert.equal(button.classList.contains('spinning'), false);
+        assert.equal(warnings.length, failed ? 1 : 0);
+        if (failed) {
+            assert.equal(warnings[0][1].message, 'fixture: refresh continuation failed');
+            await assert.rejects(forceRefreshScan(), /fixture: refresh continuation failed/);
+        }
+    });
+}
 
 test('filemgr entry mounts when initial status request fails', async () => {
     const { window } = parseHTML('<!doctype html><html><head></head><body></body></html>');

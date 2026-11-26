@@ -175,6 +175,8 @@ mkdir -p "$RELEASE_DIR"
 
 echo "Copying built CLI files..."
 cp dist/cli/opendesk "$RELEASE_DIR/opendesk"
+cp dist/cli/THIRD_PARTY_NOTICES.txt "$RELEASE_DIR/THIRD_PARTY_NOTICES.txt"
+cp dist/cli/webrtc-runtime-manifest.json "$RELEASE_DIR/webrtc-runtime-manifest.json"
 
 # Builtin plugins are required at runtime: the CLI locates them by walking up
 # from the bundle to the package root and reading dist/plugins (see
@@ -223,6 +225,10 @@ else
 fi
 VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 PI_TUI_VERSION=$(node -p "require('./package.json').dependencies['@earendil-works/pi-tui']")
+# The copied account plugin loads this package at runtime outside the CLI bundle.
+SERVER_SDK_VERSION=$(node -e "process.stdout.write(require('./package.json').dependencies['@bitclub.ai/opendesk-server-sdk'])")
+
+JIEBA_WASM_VERSION=$(node -p "require('./package.json').dependencies['jieba-wasm']")
 
 cat > "$RELEASE_DIR/package.json" << EOF
 {
@@ -244,8 +250,10 @@ cat > "$RELEASE_DIR/package.json" << EOF
   },
   "dependencies": {
     "@earendil-works/pi-tui": "${PI_TUI_VERSION}",
+    "@bitclub.ai/opendesk-server-sdk": "$SERVER_SDK_VERSION",
     "hnsw": "^1.1.1",
     "node-sqlite3-wasm": "^0.8.55",
+    "jieba-wasm": "${JIEBA_WASM_VERSION}",
     "number-to-alphabet": "^1.0.0",
     "vectra": "^0.11.1",
     "esbuild": "^0.27.3",

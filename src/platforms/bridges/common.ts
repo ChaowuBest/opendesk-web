@@ -430,6 +430,35 @@ export interface ArkDataTxHandle {
     readonly id: string;
 }
 
+export interface ArkDataTransactionOptions {
+    /** Use one transaction API per store. Migrate all users of a store together. */
+    mode: 'read' | 'write';
+}
+
+export interface ArkDataBM25Request {
+    deadline: number;
+    kind: 'allowlist' | 'search';
+    searchId?: string;
+    batchIndex?: number;
+    batchCount?: number;
+    itemIds?: string[];
+    field?: string;
+    terms?: string[];
+    topK?: number;
+    pageSize?: number;
+    collect?: boolean;
+}
+export interface ArkDataBM25Result {
+    uploaded?: boolean;
+    hits?: Array<{ item_id: string; field: string; subKey: string; score: number }>;
+    diagnostics?: {
+        strategy: 'exact_in';
+        totalTargetRows: number;
+        exactCandidateCount: number;
+        exactBatchSize: number;
+        exactBatchCount: number;
+    };
+}
 export interface ArkDataOpenStoreOptions {
     /** Stable identity of one acquisition; reuse it when a response times out. */
     sessionId?: string;
@@ -525,12 +554,14 @@ export async function executePreparedManyBatchedWith(
 }
 
 export interface DatabaseKit {
+    bm25Query(storeId: string, request: ArkDataBM25Request, txId: string): Promise<ArkDataBM25Result>;
     available(): Promise<boolean>;
 
     execSql(storeId: string, sql: string): Promise<void>;
     execSqlParams(storeId: string, sql: string, params: ArkDataValueType[]): Promise<void>;
     querySqlShort(storeId: string, sql: string): Promise<ArkDataRow[]>;
 
+    deleteStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void>;
     openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void>;
     closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void>;
 
@@ -559,7 +590,7 @@ export interface DatabaseKit {
         opts?: ArkDataExecOptions
     ): Promise<ArkDataRow[]>;
 
-    beginTransaction(storeId: string): Promise<ArkDataTxHandle>;
+    beginTransaction(storeId: string, opts?: ArkDataTransactionOptions): Promise<ArkDataTxHandle>;
     commitTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void>;
     rollbackTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void>;
 
@@ -581,6 +612,10 @@ export class ArkDataBridgeError extends Error {
 }
 
 export class NaiveDatabaseKit implements DatabaseKit {
+    async bm25Query(): Promise<ArkDataBM25Result> {
+        return this.unavailable();
+    }
+
     async available(): Promise<boolean> {
         return false;
     }
@@ -598,6 +633,10 @@ export class NaiveDatabaseKit implements DatabaseKit {
     }
 
     async querySqlShort(): Promise<ArkDataRow[]> {
+        this.unavailable();
+    }
+
+    async deleteStore(): Promise<void> {
         this.unavailable();
     }
 

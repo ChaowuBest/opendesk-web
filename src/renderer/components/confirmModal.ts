@@ -26,6 +26,7 @@ import { OVERLAY_CSS } from '../../common/overlay-styles.js';
 import { createOverlay } from './overlay.js';
 import { CONFIRM_BUTTON_CSS, CONFIRM_LIGHT_TOKENS, CONFIRM_DARK_TOKENS } from '../../common/confirm-button-styles.js';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { OPENDESK_THEME_CHANGED } from '../theme/theme-iframe-bridge.js';
 
 export type ModalVariant = 'danger' | 'info' | 'warn' | 'success';
 
@@ -859,5 +860,210 @@ export function showCloseDialog(options: CloseDialogOptions): Promise<CloseDialo
         overlay
             .querySelector('[data-action="quit"]')!
             .addEventListener('click', () => finish({ action: 'quit', dontAsk: getDontAsk() }));
+    });
+}
+
+/* ================ What's New 更新说明弹窗 ================ */
+
+/** What's New 弹窗专用样式：滚动正文容器 + 章节分层 + 社区链接行 */
+const WHATS_NEW_CSS = `
+.od-whats-new-card {
+    width: 560px;
+    display: flex; flex-direction: column;
+    max-height: min(600px, calc(100vh - 80px));
+}
+.od-confirm-modal-overlay.od-overlay-local .od-whats-new-card {
+    max-width: calc(100% - 24px);
+    max-height: calc(100% - 24px);
+    /* 滚动交给内部正文容器，避免出现双层滚动条 */
+    overflow: hidden;
+}
+.od-whats-new-body {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    padding: 14px 24px 6px;
+    font-size: 12.5px; color: var(--mc-ink3); line-height: 1.7;
+}
+.od-whats-new-body::-webkit-scrollbar { width: 8px; }
+.od-whats-new-body::-webkit-scrollbar-track { background: transparent; }
+.od-whats-new-body::-webkit-scrollbar-thumb { background: var(--mc-hover); border-radius: 4px; }
+.od-whats-new-body::-webkit-scrollbar-thumb:hover { background: var(--mc-ink4); }
+.od-whats-new-lead {
+    font-size: 13.5px; font-weight: 700; color: var(--mc-accent);
+    margin: 2px 0 8px;
+}
+.od-whats-new-heading {
+    font-size: 13px; font-weight: 600; color: var(--mc-ink);
+    margin: 14px 0 6px;
+}
+.od-whats-new-paragraph { margin: 6px 0; }
+.od-whats-new-list {
+    margin: 4px 0 8px; padding-left: 20px;
+    /* 显式声明圆点：全局样式或主题注入可能重置 ul/li 的默认 marker */
+    list-style: disc outside;
+}
+.od-whats-new-list li {
+    display: list-item;
+    margin: 4px 0;
+}
+.od-whats-new-list li::marker { color: var(--mc-accent); }
+.od-whats-new-community {
+    padding: 10px 24px 2px;
+    font-size: 12px; color: var(--mc-ink2);
+}
+.od-whats-new-community a { color: var(--mc-accent); font-weight: 600; text-decoration: none; }
+.od-whats-new-community a:hover { text-decoration: underline; }
+`;
+
+/**
+ * 将更新说明纯文本渲染为 What's New 弹窗的结构化正文 HTML。
+ *
+ * notes 来自更新 feed 的 news 详情页抓取，属于不可信输入：所有文本内容
+ * 一律经 escapeHtml 转义，输出中只有本函数生成的受控标签。
+ * 行级标记约定（由更新 feed 抓取侧负责生成）：
+ *   - "# 文本"   总标题（加粗、主题色）
+ *   - "## 文本"  章节标题（加粗、深色）
+ *   - "- 文本" / "· 文本" / "• 文本"  列表项，连续行合并进同一列表
+ *   - 其余非空行  普通段落
+ *   - 空行       分段
+ */
+export function renderReleaseNotesHtml(notes: string): string {
+    const parts: string[] = [];
+    let items: string[] = [];
+    const flushItems = () => {
+        if (items.length === 0) return;
+        parts.push(`<ul class="od-whats-new-list">${items.map((item) => `<li>${item}</li>`).join('')}</ul>`);
+        items = [];
+    };
+    for (const rawLine of notes.split('\n')) {
+        const line = rawLine.trim();
+        if (!line) {
+            flushItems();
+        } else if (line.startsWith('## ')) {
+            flushItems();
+            parts.push(`<div class="od-whats-new-heading">${escapeHtml(line.slice(3))}</div>`);
+        } else if (line.startsWith('# ')) {
+            flushItems();
+            parts.push(`<div class="od-whats-new-lead">${escapeHtml(line.slice(2))}</div>`);
+        } else if (/^[-·•]\s+/.test(line)) {
+            items.push(escapeHtml(line.replace(/^[-·•]\s+/, '')));
+        } else {
+            flushItems();
+            parts.push(`<div class="od-whats-new-paragraph">${escapeHtml(line)}</div>`);
+        }
+    }
+    flushItems();
+    return parts.join('');
+}
+
+export interface WhatsNewModalOptions {
+    /** 弹窗标题 */
+    title: string;
+    /** 更新说明纯文本（行级标记约定见 renderReleaseNotesHtml） */
+    notes: string;
+    /** notes 为空时的占位说明 */
+    noNotesText: string;
+    /** 社区引导文案（位于链接之前） */
+    communityText: string;
+    /** 社区链接显示文字 */
+    communityLinkText: string;
+    /** 社区链接地址 */
+    communityUrl: string;
+    /** 确认按钮文本 */
+    confirmText: string;
+    /** 挂载目标（默认 document.body） */
+    mountTarget?: HTMLElement;
+    /** Cover this non-scrolling panel shell instead of the window. */
+    target?: HTMLElement;
+}
+
+/**
+ * What's New 弹窗 — 升级重启后首次启动展示更新说明与社区入口。
+ *
+ * 与通用信息弹窗的区别：更新说明可能非常长，正文放入有高度上限的滚动容器，
+ * 章节标题加粗分层；社区链接固定在滚动容器下方，保证始终可见。
+ * 深浅色主题在弹窗存活期间实时跟随（OPENDESK_THEME_CHANGED）。
+ */
+export function showWhatsNewModal(options: WhatsNewModalOptions): Promise<void> {
+    return new Promise((resolve) => {
+        const {
+            title,
+            notes,
+            noNotesText,
+            communityText,
+            communityLinkText,
+            communityUrl,
+            confirmText,
+            mountTarget = document.body
+        } = options;
+
+        const notesHtml = notes.trim()
+            ? renderReleaseNotesHtml(notes)
+            : `<div class="od-whats-new-paragraph">${escapeHtml(noNotesText)}</div>`;
+
+        const overlayHandle = createOverlay({
+            target: options.target,
+            mountTarget,
+            className: 'od-confirm-modal-overlay'
+        });
+        const overlay = overlayHandle.element;
+        const themeScope = options.target ?? mountTarget;
+        const applyModalTheme = () => {
+            overlay.classList.toggle('od-modal-dark', detectDarkMode(themeScope));
+        };
+        applyModalTheme();
+        // 弹窗存活期间跟随深浅主题切换：事件在 html[data-theme] 更新后派发（见 theme-iframe-bridge）
+        const themeHandler = () => applyModalTheme();
+        document.addEventListener(OPENDESK_THEME_CHANGED, themeHandler);
+
+        overlay.innerHTML = `
+<style>${MODAL_CSS}${WHATS_NEW_CSS}</style>
+<div class="od-confirm-modal-card od-whats-new-card">
+    <div class="od-confirm-modal-banner success">
+        <div class="od-confirm-modal-icon">${renderIcon('fa-newspaper')}</div>
+        <div class="od-confirm-modal-banner-text">
+            <div class="od-confirm-modal-title">${title}</div>
+        </div>
+        <button class="od-confirm-modal-close" data-action="close" aria-label="关闭">${CLOSE_SVG}</button>
+    </div>
+    <div class="od-whats-new-body">${notesHtml}</div>
+    <div class="od-whats-new-community">
+        ${escapeHtml(communityText)}
+        <a href="${communityUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(communityLinkText)}</a>
+    </div>
+    <div class="od-confirm-modal-footer">
+        <button class="od-confirm-btn od-confirm-btn-primary" data-action="confirm">${confirmText}</button>
+    </div>
+</div>`;
+
+        let resolved = false;
+        const close = () => {
+            if (resolved) return;
+            resolved = true;
+            overlay.classList.add('od-modal-leaving');
+            setTimeout(() => {
+                overlayHandle.dispose();
+                resolve();
+            }, ANIM_DURATION_OUT);
+            document.removeEventListener('keydown', escHandler);
+            document.removeEventListener(OPENDESK_THEME_CHANGED, themeHandler);
+        };
+
+        const escHandler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                close();
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        bindOverlayDismiss(
+            overlay,
+            close,
+            (t) => !!(t as HTMLElement | null)?.classList?.contains?.('od-confirm-modal-overlay')
+        );
+
+        overlay.querySelector('[data-action="close"]')!.addEventListener('click', close);
+        overlay.querySelector('[data-action="confirm"]')!.addEventListener('click', close);
+        (overlay.querySelector('[data-action="confirm"]') as HTMLButtonElement | null)?.focus();
     });
 }

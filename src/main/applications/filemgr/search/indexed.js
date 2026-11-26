@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { logger } from '../../../utils/logger.js';
 import path from 'path';
 import { resolveDriveRootPath } from '../utils.js';
 import picomatch from 'picomatch';
@@ -16,6 +17,7 @@ import { normalizePathDescendantOrSelfValue } from '../../../services/storage/pa
 
 const SEARCH_ROUTE_ALIASES = {
     keyword: 'keyword',
+    bm25: 'bm25',
     name: 'name_semantic',
     name_semantic: 'name_semantic',
     content: 'content_semantic',
@@ -26,12 +28,13 @@ function normalizeIndexedSearchRoutes(options = {}) {
     const requested = Array.isArray(options?.routes)
         ? options.routes.map((route) => SEARCH_ROUTE_ALIASES[String(route)]).filter(Boolean)
         : null;
-    const routes = new Set(requested === null ? ['keyword', 'name_semantic', 'content_semantic'] : requested);
+    const routes = new Set(requested === null ? ['keyword', 'bm25', 'name_semantic', 'content_semantic'] : requested);
     if (options?.includeContentSemantic === false) {
         routes.delete('content_semantic');
     }
     return {
         keyword: routes.has('keyword'),
+        bm25: routes.has('bm25'),
         nameSemantic: routes.has('name_semantic'),
         contentSemantic: routes.has('content_semantic'),
         needsSemantic: routes.has('name_semantic') || routes.has('content_semantic')
@@ -100,6 +103,7 @@ function collapseScopePaths(rawPaths) {
     return collapsed;
 }
 
+/** @returns {import('../document-retrieval/contract.js').FileSearchScope | undefined} */
 export function normalizeFilemgrSearchScope(scope) {
     if (scope === undefined) return undefined;
     if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
@@ -216,6 +220,7 @@ function sourceToItem(source) {
         size: raw.size ?? 0,
         snippet: raw.snippet ?? null,
         snippets: raw.snippets,
+        bm25Rank: raw.bm25Rank,
         ref_count: raw.ref_count,
         root_refs: raw.root_refs,
         semanticScore:
@@ -232,11 +237,13 @@ function semanticScore(item) {
 }
 
 function rankBox(item) {
-    const matchTypes = item.matchTypes ?? [];
-    if (matchTypes.includes('keyword') && matchTypes.length > 1) return 1;
-    if (matchTypes.includes('keyword')) return 2;
-    if (matchTypes.includes('content_semantic')) return 3;
-    return 4;
+    const types = item.matchTypes ?? [];
+    const keyword = types.includes('keyword');
+    const bm25 = types.includes('bm25');
+    const vector = types.includes('name_semantic') || types.includes('content_semantic');
+    if (keyword) return bm25 ? (vector ? 1 : 2) : vector ? 3 : 4;
+    if (bm25) return vector ? 5 : 6;
+    return types.includes('content_semantic') ? 7 : 8;
 }
 
 function visibleRefCount(item) {
@@ -284,10 +291,11 @@ export function createIndexedSearchContext(query, options = {}) {
     };
 }
 
-export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSemantic = [] }) {
+export function mergeSearchRoutes({ keyword = [], bm25 = [], nameSemantic = [], contentSemantic = [] }) {
     const merged = new Map();
     const routes = [
         ['keyword', keyword],
+        ['bm25', bm25],
         ['name_semantic', nameSemantic],
         ['content_semantic', contentSemantic]
     ];
@@ -301,12 +309,13 @@ export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSema
             const existing = merged.get(key);
             if (existing) {
                 if (!existing.matchTypes.includes(matchType)) existing.matchTypes.push(matchType);
+                if (matchType === 'bm25') existing.ranks.bm25 = base.bm25Rank;
                 if (matchType === 'content_semantic' && base.snippet) existing.snippet = base.snippet;
                 if (matchType === 'content_semantic' && base.snippets) existing.snippets = base.snippets;
                 if (
                     (matchType === 'name_semantic' || matchType === 'content_semantic') &&
                     typeof base.semanticScore === 'number' &&
-                    base.semanticScore > semanticScore(existing)
+                    (typeof existing.semanticScore !== 'number' || base.semanticScore > existing.semanticScore)
                 ) {
                     existing.semanticScore = base.semanticScore;
                 }
@@ -318,6 +327,7 @@ export function mergeSearchRoutes({ keyword = [], nameSemantic = [], contentSema
                 ...base,
                 matchTypes: [matchType],
                 routeOrder: order++,
+                ranks: matchType === 'bm25' ? { bm25: base.bm25Rank } : {},
                 score: typeof base.semanticScore === 'number' ? base.semanticScore : 0
             });
         }
@@ -355,20 +365,26 @@ export function groupIndexedChunksByFile(chunkHits, fileLimit) {
 }
 
 export function rankSearchResults(items, _options = {}) {
-    return [...items]
+    const vectors = items
+        .filter((item) => item.matchTypes?.some((type) => type === 'name_semantic' || type === 'content_semantic'))
+        .sort((a, b) => semanticScore(b) - semanticScore(a));
+    const vectorRanks = new Map(vectors.map((item, i) => [item, i + 1]));
+    return items
         .map((item) => ({
             ...item,
-            score: semanticScore(item)
+            score: semanticScore(item),
+            ranks: { ...item.ranks, vector: vectorRanks.get(item) }
         }))
         .sort((a, b) => {
-            const boxDiff = rankBox(a) - rankBox(b);
-            if (boxDiff !== 0) return boxDiff;
-
-            if (rankBox(a) !== 2) {
-                return semanticScore(b) - semanticScore(a);
+            const box = rankBox(a);
+            const boxDiff = box - rankBox(b);
+            if (boxDiff) return boxDiff;
+            if (box === 1 || box === 5) {
+                const rrf = (item) => 1 / (60 + item.ranks.bm25) + 1 / (60 + item.ranks.vector);
+                return rrf(b) - rrf(a);
             }
-
-            return 0;
+            if (box === 2 || box === 6) return a.ranks.bm25 - b.ranks.bm25;
+            return box === 4 ? 0 : semanticScore(b) - semanticScore(a);
         });
 }
 
@@ -416,7 +432,7 @@ export async function filterIndexedResults(
     return items.filter((item) => kept.has(item.path));
 }
 
-export function toIndexedFileSearchResult(query, items, totalHits, warning = undefined, code = undefined) {
+export function toIndexedFileSearchResult(query, items, totalHits, warning = undefined, code = undefined, extras = {}) {
     return {
         query,
         results: items.map((item) => ({
@@ -430,7 +446,51 @@ export function toIndexedFileSearchResult(query, items, totalHits, warning = und
             score: item.score
         })),
         totalHits,
+        ...extras,
         ...(warning ? { warning } : {}),
         ...(code ? { code } : {})
     };
+}
+
+export function scopedSearchDiagnosticsEnabled() {
+    return process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS === '1';
+}
+
+function scopeOperatorValue(scope) {
+    if (!scope) return undefined;
+    return scope.type === 'path' ? scope.path : scope.paths;
+}
+
+export function logScopedSearchDiagnostics(route, scope, result) {
+    if (!scope || !scopedSearchDiagnosticsEnabled()) return;
+    logger.info(
+        `[filemgr] scoped search diagnostics ${JSON.stringify({
+            route,
+            scopeType: scope.type,
+            ...(scope.type === 'path' ? { scopePath: scope.path } : { scopePaths: scope.paths }),
+            diagnostics: result?.diagnostics
+        })}`
+    );
+}
+
+/**
+ * @param {{ scope?: import('../document-retrieval/contract.js').FileSearchScope, algorithmConditions?: import('../../../services/storage/abstract-storage.js').FilterCondition[] }} options
+ * @returns {import('../../../services/storage/abstract-storage.js').FilterCondition[]}
+ */
+export function buildIndexedFilePreconditions({ scope, algorithmConditions = [] }) {
+    return [
+        { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+        ...algorithmConditions,
+        { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 },
+        ...(scope
+            ? [
+                  {
+                      indexer: 'BaseIndexer',
+                      field: 'item_id',
+                      operator: 'path_descendant_or_self',
+                      value: scopeOperatorValue(scope)
+                  }
+              ]
+            : [])
+    ];
 }

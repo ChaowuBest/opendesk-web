@@ -10,14 +10,19 @@
  */
 
 import { createRequire } from 'node:module';
-import type { TaskSearchHit } from '../../../common/task-search.js';
-import { normalizeSearchText, TASK_SEARCH_MAX_QUERY, TASK_SEARCH_MAX_RESULTS } from '../../../common/task-search.js';
+import {
+    compileTaskSearch,
+    normalizeSearchText,
+    TASK_SEARCH_MAX_RESULTS,
+    type TaskSearchHit
+} from '../../../common/task-search.js';
 import { extractSearchDocuments, isSearchableTask, type SearchTask } from './extract.js';
 
 type Row = Record<string, string | number>;
 interface Database {
     run(sql: string, params?: (string | number)[]): unknown;
     all(sql: string, params?: (string | number)[]): Row[];
+    function(name: string, callback: (text: string) => number): void;
     close(): void;
 }
 const require = createRequire(import.meta.url);
@@ -40,7 +45,16 @@ function grams(text: string, lengths: number[]): string[] {
     }
     return [...result];
 }
+
+function makeMatchExpression(text: string): string {
+    return grams(text, [Math.min(3, Array.from(text).length)])
+        .map((token) => '"' + token + '"')
+        .join(' AND ');
+}
+
 export class TaskSearchIndex {
+    private wildcardMatcher = compileTaskSearch('').find;
+
     private constructor(
         readonly dbPath: string,
         private readonly db: Database
@@ -61,6 +75,11 @@ export class TaskSearchIndex {
         db.run(
             'CREATE TRIGGER IF NOT EXISTS remove_terms BEFORE DELETE ON documents BEGIN DELETE FROM terms WHERE rowid=old.id; END'
         );
+        db.function('task_search_wildcard', (text) => {
+            const lower = text.toLowerCase();
+            const match = this.wildcardMatcher(lower);
+            return match ? Array.from(lower.slice(...match)).length : 0;
+        });
     }
     static async open(dbPath: string, forceWasm = false): Promise<TaskSearchIndex> {
         let db: Database;
@@ -77,6 +96,7 @@ export class TaskSearchIndex {
             db = {
                 run: (sql, params = []) => native.prepare(sql).run(...params),
                 all: (sql, params = []) => native.prepare(sql).all(...params),
+                function: (name, callback) => native.function(name, callback),
                 close: () => native.close()
             };
         } catch (error) {
@@ -150,35 +170,45 @@ export class TaskSearchIndex {
         });
     }
     search(rawQuery: string, requestedLimit: number): { items: TaskSearchHit[]; hasMore: boolean } {
-        const query = normalizeSearchText(rawQuery).slice(0, TASK_SEARCH_MAX_QUERY);
+        const { query, literal, anchor, find } = compileTaskSearch(rawQuery);
         const limit = Math.max(1, Math.min(TASK_SEARCH_MAX_RESULTS, Math.floor(requestedLimit) || 20));
         if (!query) return { items: [], hasMore: false };
-        const tokens = grams(query, [Math.min(3, Array.from(query).length)]);
-        const match = tokens.map((token) => '"' + token + '"').join(' AND ');
-        // Verify substring against original normalized text: ngram intersections alone
-        // can match characters in the wrong order. All grouping stays inside SQLite.
+        const wildcard = literal === undefined;
+        const indexedText = literal ?? anchor;
+        const source = indexedText ? 'terms JOIN documents d ON d.id=terms.rowid' : 'documents d';
+        const params: (string | number)[] = [literal ?? ''];
+        if (indexedText) params.push(makeMatchExpression(indexedText));
+        if (literal !== undefined) params.push(literal);
+        this.wildcardMatcher = find;
+        // Use literal text to find candidates, then verify the entire query within each chunk.
         const rows = this.db.all(
-            `WITH hits AS (
-            SELECT d.task_id, MIN(d.id) AS doc_id,
+            `WITH hits AS ${wildcard ? 'MATERIALIZED ' : ''}(
+            SELECT d.task_id, ${wildcard ? 'd.id' : 'MIN(d.id)'} AS doc_id,
                 d.priority + CASE WHEN d.priority=2 AND d.normalized=? THEN 1 ELSE 0 END AS score
-            FROM terms JOIN documents d ON d.id=terms.rowid
-            WHERE terms MATCH ? AND instr(d.normalized,?) > 0 GROUP BY d.task_id, score
+                ${wildcard ? ', task_search_wildcard(d.text) AS match_length' : ''}
+            FROM ${source}
+            ${indexedText ? 'WHERE terms MATCH ?' : ''}
+            ${wildcard ? '' : 'AND instr(d.normalized,?) > 0 GROUP BY d.task_id, score'}
         ), best AS (
-            SELECT *, row_number() OVER (PARTITION BY task_id ORDER BY score DESC, doc_id) AS n FROM hits
+            SELECT *, row_number() OVER (
+                PARTITION BY task_id ORDER BY score DESC, ${wildcard ? 'match_length, ' : ''}doc_id
+            ) AS n FROM hits ${wildcard ? 'WHERE match_length > 0' : ''}
         ), selected AS (
             SELECT b.*, t.title, t.workspace, t.activity FROM best b JOIN tasks t ON t.id=b.task_id
             WHERE n=1 ORDER BY score DESC, activity DESC, task_id LIMIT ?
         ) SELECT s.*, d.text, d.message_id FROM selected s JOIN documents d ON d.id=s.doc_id
           ORDER BY s.score DESC, s.activity DESC, s.task_id`,
-            [query, match, query, limit + 1]
+            [...params, limit + 1]
         );
         return {
             hasMore: rows.length > limit,
             items: rows.slice(0, limit).map((row) => {
                 const text = String(row.text);
-                const position = normalizeSearchText(text).indexOf(query);
-                const start = Math.max(0, position - 45);
-                const end = start + Math.max(170, query.length + 90);
+                const [matchStart, matchEnd] = find(wildcard ? text.toLowerCase() : normalizeSearchText(text)) ?? [
+                    0, 0
+                ];
+                const start = Math.max(0, matchStart - 45);
+                const end = start + Math.max(170, matchEnd - matchStart + 90);
                 return {
                     taskId: String(row.task_id),
                     title: String(row.title),

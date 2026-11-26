@@ -211,6 +211,35 @@ describe('适配器错误文案', () => {
         expect(classifyModelRequestError(response?.request_error)).toBe('non_retryable');
     });
 
+    test('OpenRouter daily quota errors stop internal retries', async () => {
+        const platform = new ErrorResponsePlatform(
+            429,
+            'application/json',
+            JSON.stringify({
+                error: {
+                    code: 429,
+                    message: 'Rate limit exceeded',
+                    metadata: { limit_source: 'openrouter_free_tier_daily' }
+                }
+            }),
+            'Too Many Requests'
+        );
+        const fetchQuotaError = platform.fetch.bind(platform);
+        // A second request must fail permanently so a regression cannot leave the retry loop running.
+        platform.fetch = async () => {
+            if (platform.requestCount === 0) return fetchQuotaError();
+            platform.requestCount++;
+            return new Response('{}', { status: 400 });
+        };
+        setPlatform(platform);
+        const adapter = new OpenAIAdapter(createModelInstance());
+
+        const response = await firstErrorResponse(adapter.streamComplete(createChatContext(), false));
+
+        expect(platform.requestCount).toBe(1);
+        expect(classifyModelRequestError(response?.request_error)).toBe('non_retryable');
+    });
+
     test('Anthropic 适配器保留消费上限 details 和 request_id', async () => {
         setPlatform(
             new ErrorResponsePlatform(

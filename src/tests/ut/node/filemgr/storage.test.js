@@ -1,3 +1,15 @@
+import {
+    CONTENT_EMBED_MAX_CHARS_PER_CHUNK,
+    CONTENT_EMBED_MAX_CHUNKS_PER_FILE,
+    CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE,
+    EMBED_API_BATCH_SIZE,
+    limitChunksForEmbedding,
+    planEmbeddingInputs
+} from '../../../../main/applications/filemgr/document-retrieval/embedding/build.js';
+import {
+    classifyEmbeddingError,
+    completedFileConditions
+} from '../../../../main/applications/filemgr/document-retrieval/embedding/state.js';
 /**
  * FSStorage integration tests
  *
@@ -14,20 +26,18 @@ import os from 'os';
 import fs from 'fs';
 import { RAW_TEXT_MAX_FILE_SIZE } from '../../../../main/applications/filemgr/parser/extract.js';
 import {
-    CONTENT_EMBED_MAX_CHARS_PER_CHUNK,
-    CONTENT_EMBED_MAX_CHUNKS_PER_FILE,
-    CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE,
     CODES,
-    EMBED_API_BATCH_SIZE,
     FSStorage,
     RebuildRequiredError,
     WARNINGS,
-    buildIndexedFilePreconditions,
-    classifyEmbeddingError,
-    limitChunksForEmbedding,
-    makeSchema,
-    planEmbeddingInputs
+    makeSchema
 } from '../../../../main/applications/filemgr/storage.js';
+
+import { buildIndexedFilePreconditions as publicFilePreconditions } from '../../../../main/applications/filemgr/search/indexed.js';
+
+function buildIndexedFilePreconditions({ scope, ...options }) {
+    return publicFilePreconditions({ scope, algorithmConditions: completedFileConditions(options) });
+}
 
 assert.deepEqual(buildIndexedFilePreconditions({ scope: undefined, requireEmbedded: false }), [
     { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
@@ -60,6 +70,14 @@ assert.deepEqual(
     ]
 );
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
+import { BM25Indexer } from '../../../../main/services/storage/bm25-indexer.js';
+import { recordStorageInitializationFailure } from '../../../../main/services/storage/platform.js';
+import {
+    FULL_TEXT_RULE_VERSION,
+    isFullTextReady
+} from '../../../../main/applications/filemgr/document-retrieval/common/full-text-state.js';
+import Database from 'better-sqlite3';
+import { probeBM25IndexStore } from '../../../../main/services/storage/bm25-index-db-factory.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
 import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
 import { setArkdataDatabaseKit } from '../../../../main/services/storage/arkdata-bridge.js';
@@ -144,7 +162,7 @@ const settingData = {
     providers: [
         {
             name: 'openrouter',
-            base_url: 'https://openrouter.ai/api/v1',
+            base_url: OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : 'http://127.0.0.1:1/v1',
             api_key: OPENROUTER_API_KEY ?? '',
             no_proxy: true
         }
@@ -165,134 +183,181 @@ fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(setting
 
 Setting.updateInstanceData(settingData);
 
-if (!OPENROUTER_API_KEY) {
-    console.log('OPENROUTER_API_KEY not set, running pure storage tests');
-    const filter = process.env.TEST_FILTER;
-    if (filter) {
-        const filteredTests = [
-            testEmbedSingleFileOversizedContentFallsBackToFilenameOnly,
-            testGetStatusReportsMetadata,
-            testRefCountZeroHiddenFromSearchQueueAndStats,
-            testCarveOutKeepsIntermediateRowInvisibleUntilChildScan,
-            testInitializeSyncEmbeddingGate,
-            testProbeEmbeddingBudgetOptions,
-            testScannerStateMigratesLegacyProbeError,
-            testScannerStateMigratesPausedWithoutResettingCheckpoint,
-            testSetRootPausedPersistsDiskBeforeMemoryCommit,
-            testSetRootPausedUsesCallTimeSnapshot,
-            testQueuedCheckpointSaveKeepsCommittedPause,
-            testSetRootPausedFailureDoesNotLeakIntoLaterSave,
-            testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
-            testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
-            testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
-            testSyncEmbeddingModeRecordsRequestDimForConsistentState,
-            testDetachRootForConfigChangeBatchesLargeDeletes,
-            testPerRootCountsUseRootRefsForOverlappingRoots,
-            testPerRootCountsNormalizeRootRefsBeforeCompare,
-            testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare,
-            testHarmonyPerRootCountsUseFreshCache,
-            testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight,
-            testHarmonyPerRootCountsFallbackToScannerStateOnError,
-            testHarmonyPerRootCountsClearCacheHelpers,
-            testHarmonyPerRootCountsClearInvalidatesInFlightRefresh,
-            testHarmonyPerRootCountsModeTransitionClearsCache,
-            testProcessEmbeddingQueueExcludesPausedOnlyOwnership
-        ].filter((test) => test.name.includes(filter));
-        for (const test of filteredTests) {
-            await test();
-        }
-        cleanup(globalAppDir);
-        process.exit(0);
+async function withDeterministicModel(test) {
+    const original = { embed: LLM.embed, batchEmbed: LLM.batchEmbed, rerank: LLM.rerank };
+    LLM.embed = async (_text, dimensions) => [1, ...new Array((dimensions ?? 4) - 1).fill(0)];
+    LLM.batchEmbed = async (texts, _batchSize, dimensions) =>
+        texts.map(() => [1, ...new Array((dimensions ?? 4) - 1).fill(0)]);
+    LLM.rerank = async (_query, items) => items;
+    try {
+        await test();
+    } finally {
+        Object.assign(LLM, original);
     }
-    await testScannerStateNewField();
-    await testScannerStateMigratesLastFileCount();
-    await testScannerStateMigratesLastScanAt();
-    await testScannerStateMigratesPausedWithoutResettingCheckpoint();
-    await testSetRootPausedPersistsDiskBeforeMemoryCommit();
-    await testSetRootPausedUsesCallTimeSnapshot();
-    await testQueuedCheckpointSaveKeepsCommittedPause();
-    await testSetRootPausedFailureDoesNotLeakIntoLaterSave();
-    await testScannerStateMigratesLegacyProbeError();
-    await testProbeErrorPersistsAndNotifies();
-    await testClassifyEmbeddingErrorTableRules();
-    await testSyncEmbeddingModeClearsProbeErrorWhenModelMissing();
-    await testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe();
-    await testSyncEmbeddingModePersistsProbeError();
-    await testProbeEmbeddingOpenHarmonyReducesLargeDimensions();
-    await testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim();
-    await testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError();
-    await testSyncEmbeddingModeRecordsRequestDimForConsistentState();
-    await testSyncEmbeddingModeUsesCanonicalResetReasons();
-    await testInitializeSyncEmbeddingGate();
-    await testProbeEmbeddingBudgetOptions();
-    await testMakeSchemaModes();
-    await testMigrateRefCountBackfillsLegacyRowsOnce();
-    await testSearchItemsUnderRootUsesSubtreeBounds();
-    await testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren();
-    await testDetachRootForConfigChangeKeepsNewChildRootRows();
-    await testDetachRootForConfigChangeBatchesLargeDeletes();
-    await testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping();
-    await testRefCountZeroHiddenFromSearchQueueAndStats();
-    await testProcessEmbeddingQueueUsesRootAwareCandidates();
-    await testProcessEmbeddingQueueExcludesPausedOnlyOwnership();
-    await testProcessEmbeddingQueueYieldsAtFileBoundary();
-    await testRootAwareCandidatesDedupMultiRootFile();
-    await testCarveOutKeepsIntermediateRowInvisibleUntilChildScan();
-    await testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly();
-    await testPerRootCountsUseRootRefsForOverlappingRoots();
-    await testPerRootCountsNormalizeRootRefsBeforeCompare();
-    await testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare();
-    await testHarmonyPerRootCountsUseFreshCache();
-    await testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight();
-    await testHarmonyPerRootCountsFallbackToScannerStateOnError();
-    await testHarmonyPerRootCountsClearCacheHelpers();
-    await testHarmonyPerRootCountsClearInvalidatesInFlightRefresh();
-    await testHarmonyPerRootCountsModeTransitionClearsCache();
-    await testResetVectorChunkAcceptsExplicitDimAndMode();
-    await testResetVectorChunkPreservesBaseAndResetsEmbedded();
-    await testUninitializedVectorAndChunkIndexersDropOldDimStorage();
-    await testResetVectorChunkRecoversFromBaseOnlyOldDimStorage();
-    await testResetVectorChunkDoesNotPublishHalfInitializedStorage();
-    await testArkDataRawDropOnlyDropsTables();
-    await testResetVectorChunkRecordsRebuildEvent();
-    await testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails();
-    await testRebuildAllRecordsFullEventAndResetsVectorState();
-    await testRebuildAllRecordsFailedFullEvent();
-    await testRebuildAllPreservesOriginalErrorWhenEventSaveFails();
-    await testSaveFilesBaseOnlyWritesEmbeddedZero();
-    await testSaveFilesRefOnlyPreservesEmbedded();
-    await testSaveFilesModifiedChangedResetsEmbedded();
-    await testSaveFilesMaintainsRootRefsAndRefCountScenarios();
-    await testPlanEmbeddingInputsSplitsOversizedChunksAndCapsBudget();
-    await testSemanticWriteStateDefaultsToAccepting();
-    await testEmbedSingleFileSkipsChunksWhenChunkWritesLimited();
-    await testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited();
-    await testEmbedWithRetryUsesSmallApiBatch();
-    await testEmbedWithRetryDoesNotRetryPermanentQuota();
-    await testEmbedSingleFileOversizedContentFallsBackToFilenameOnly();
-    await testEmbedSingleFileGoneDeletes();
-    await testInitializeBaseOnlyWhenNoEmbedding();
-    await testSearchByNameBaseOnlyReturnsEmbedUnavailable();
-    await testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable();
-    await testSearchBlankQueryReturnsEmptyResult();
-    await testSearchDeferredReturnsIndexNotReady();
-    await testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown();
-    await testSearchEmbedFailureReturnsEmbedApiDown();
-    await testSearchSemanticRoutesExposeScores();
-    await testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope();
-    await testSearchIndexedChunksContractAndRerankFallback();
-    await testSearchFilesByKeywordSupportsLimit();
-    await testProcessEmbeddingQueueSkipsFileErrorsOnce();
-    await testProcessEmbeddingQueueMarksPermanentFileErrorsAsDisabled();
-    await testProcessEmbeddingQueueKeepsAmbiguousBadRequestRetryable();
-    await testProcessEmbeddingQueuePrioritizesFreshBeforeFailed();
-    await testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors();
-    await testProcessEmbeddingQueueSkipsResetApiFailureStreak();
-    await testInitializeReadonlyMissingBaseIndexDoesNotWriteState();
-    await testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath();
-    await testInitializeReadonlyOpensExistingBaseIndex();
+}
+
+if (!OPENROUTER_API_KEY) {
+    // 无密钥并不阻止 LLM 发请求；默认失败替身保留 base-only 基线，选中场景另用确定性向量。
+    const unavailable = async () => {
+        throw Object.assign(new Error('isolated embedding unavailable'), { status: 401 });
+    };
+    LLM.embed = unavailable;
+    LLM.batchEmbed = unavailable;
+    LLM.rerank = unavailable;
+    const deterministicTests = new Set([
+        testFullTextVersionLifecycle,
+        testEmbedWithRetry429,
+        testSearchFileByName,
+        testSearchFileByContent,
+        testEmbedSingleFileHappyPath,
+        testEmbedSingleFileDriftReturnsSkipped,
+        testProcessEmbeddingQueueDrainsPending,
+        testProcessEmbeddingQueueDriftSkippedOnce,
+        testHotSwapBaseOnlyToFull,
+        testInitializeFullWhenEmbeddingConfigured,
+        testInitializeDimChangeSoftResetsAndStaysFull,
+        testSearchFilterEmbeddedOneExcludesPending
+    ]);
+    const tests = [
+        testParseRootRefs,
+        testRemoveDeletedFilesMultiRoot,
+        testDetachRootDeferred,
+        testSaveScannerStateConcurrent,
+        testEmbedWithRetry429,
+        testGetStatusReportsMetadata,
+        testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes,
+        testScannerStateNewField,
+        testScannerStateMigratesLastFileCount,
+        testScannerStateMigratesLastScanAt,
+        testScannerStateMigratesPausedWithoutResettingCheckpoint,
+        testSetRootPausedPersistsDiskBeforeMemoryCommit,
+        testSetRootPausedUsesCallTimeSnapshot,
+        testQueuedCheckpointSaveKeepsCommittedPause,
+        testSetRootPausedFailureDoesNotLeakIntoLaterSave,
+        testScannerStateMigratesLegacyProbeError,
+        testProbeErrorPersistsAndNotifies,
+        testClassifyEmbeddingErrorTableRules,
+        testSyncEmbeddingModeClearsProbeErrorWhenModelMissing,
+        testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe,
+        testSyncEmbeddingModePersistsProbeError,
+        testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
+        testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
+        testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
+        testSyncEmbeddingModeRecordsRequestDimForConsistentState,
+        testSyncEmbeddingModeUsesCanonicalResetReasons,
+        testInitializeSyncEmbeddingGate,
+        testProbeEmbeddingBudgetOptions,
+        testMakeSchemaModes,
+        testFullTextVersionLifecycle,
+        testFullTextSearchReadinessAndScope,
+        testFullTextQueueSelectionAndOutcomes,
+        testFullTextRebuildAndFilePatches,
+        testFullTextReadonlyCleanup,
+        testFullTextOwnershipAndDeletion,
+        testFullTextReadonly,
+        testFullTextOpenFailures,
+        testFullTextResetRecovery,
+        testFullTextResetRetryFailures,
+        testFullTextAssemblyAndUpgrade,
+        testMigrateRefCountBackfillsLegacyRowsOnce,
+        testSearchItemsUnderRootUsesSubtreeBounds,
+        testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren,
+        testDetachRootForConfigChangeKeepsNewChildRootRows,
+        testDetachRootForConfigChangeBatchesLargeDeletes,
+        testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping,
+        testRefCountZeroHiddenFromSearchQueueAndStats,
+        testProcessEmbeddingQueueUsesRootAwareCandidates,
+        testProcessEmbeddingQueueExcludesPausedOnlyOwnership,
+        testProcessEmbeddingQueueYieldsAtFileBoundary,
+        testRootAwareCandidatesDedupMultiRootFile,
+        testCarveOutKeepsIntermediateRowInvisibleUntilChildScan,
+        testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly,
+        testPerRootCountsUseRootRefsForOverlappingRoots,
+        testPerRootCountsNormalizeRootRefsBeforeCompare,
+        testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare,
+        testHarmonyPerRootCountsUseFreshCache,
+        testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight,
+        testHarmonyPerRootCountsFallbackToScannerStateOnError,
+        testHarmonyPerRootCountsClearCacheHelpers,
+        testHarmonyPerRootCountsClearInvalidatesInFlightRefresh,
+        testHarmonyPerRootCountsModeTransitionClearsCache,
+        testResetVectorChunkAcceptsExplicitDimAndMode,
+        testResetVectorChunkPreservesBaseAndResetsEmbedded,
+        testUninitializedVectorAndChunkIndexersDropOldDimStorage,
+        testResetVectorChunkRecoversFromBaseOnlyOldDimStorage,
+        testResetVectorChunkDoesNotPublishHalfInitializedStorage,
+        testArkDataRawDropDeletesWholeStores,
+        testResetVectorChunkRecordsRebuildEvent,
+        testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails,
+        testRebuildAllRecordsFullEventAndResetsVectorState,
+        testRebuildAllRecordsFailedFullEvent,
+        testRebuildAllPreservesOriginalErrorWhenEventSaveFails,
+        testSaveFilesBaseOnlyWritesEmbeddedZero,
+        testSaveFilesRefOnlyPreservesEmbedded,
+        testSaveFilesModifiedChangedResetsEmbedded,
+        testSaveFilesMaintainsRootRefsAndRefCountScenarios,
+        testPlanEmbeddingInputsSplitsOversizedChunksAndCapsBudget,
+        testSemanticWriteStateDefaultsToAccepting,
+        testEmbedSingleFileSkipsChunksWhenChunkWritesLimited,
+        testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited,
+        testEmbedWithRetryUsesSmallApiBatch,
+        testEmbedWithRetryDoesNotRetryPermanentQuota,
+        testEmbedSingleFileOversizedContentFallsBackToFilenameOnly,
+        testEmbedSingleFileGoneDeletes,
+        testInitializeBaseOnlyWhenNoEmbedding,
+        testSearchByNameBaseOnlyReturnsEmbedUnavailable,
+        testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable,
+        testSearchBlankQueryReturnsEmptyResult,
+        testSearchDeferredReturnsIndexNotReady,
+        testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown,
+        testSearchEmbedFailureReturnsEmbedApiDown,
+        testSearchSemanticRoutesExposeScores,
+        testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope,
+        testSearchIndexedChunksContractAndRerankFallback,
+        testSearchFilesByKeywordSupportsLimit,
+        testProcessEmbeddingQueueSkipsFileErrorsOnce,
+        testProcessEmbeddingQueueMarksPermanentFileErrorsAsDisabled,
+        testProcessEmbeddingQueueKeepsAmbiguousBadRequestRetryable,
+        testProcessEmbeddingQueuePrioritizesFreshBeforeFailed,
+        testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors,
+        testProcessEmbeddingQueueSkipsResetApiFailureStreak,
+        testInitializeReadonlyMissingBaseIndexDoesNotWriteState,
+        testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath,
+        testInitializeReadonlyOpensExistingBaseIndex,
+        testSearchFileByName,
+        testSearchFileByContent,
+        testEmbedSingleFileHappyPath,
+        testEmbedSingleFileDriftReturnsSkipped,
+        testProcessEmbeddingQueueDrainsPending,
+        testProcessEmbeddingQueueDriftSkippedOnce,
+        testHotSwapBaseOnlyToFull,
+        testInitializeFullWhenEmbeddingConfigured,
+        testInitializeDimChangeSoftResetsAndStaysFull,
+        testSearchFilterEmbeddedOneExcludesPending
+    ];
+    const filter = process.env.TEST_FILTER;
+    const selected = filter ? tests.filter((test) => test.name.includes(filter)) : tests;
+    if (selected.length === 0) {
+        console.error(`No no-API tests matched TEST_FILTER=${filter}`);
+        cleanup(globalAppDir);
+        process.exit(1);
+    }
+    let passed = 0;
+    let failed = 0;
+    for (const test of selected) {
+        console.log(`RUN ${test.name} model=${deterministicTests.has(test) ? 'deterministic' : 'unavailable-stub'}`);
+        try {
+            if (deterministicTests.has(test)) await withDeterministicModel(test);
+            else await test();
+            passed++;
+        } catch (error) {
+            failed++;
+            console.error(`FAIL ${test.name}`, error);
+        }
+    }
+    console.log(`WF1_CASE_COUNTS ${JSON.stringify({ tests: selected.length, passed, failed, skipped: 0 })}`);
     cleanup(globalAppDir);
-    process.exit(0);
+    process.exit(failed ? 1 : 0);
 }
 
 // ── Helper: create FSStorage with initialized Setting ───────────────
@@ -513,11 +578,12 @@ async function testRemoveDeletedFilesMultiRoot() {
     try {
         fss = await createFSStorage(testDir);
 
-        const root1 = '/fake/root1';
-        const root2 = '/fake/root2';
+        const root1 = path.join(testDir, 'files');
+        const root2 = path.join(root1, 'nested');
+        fs.mkdirSync(root2, { recursive: true });
 
         // Create a file and index it under root1
-        const mdPath = path.join(testDir, 'shared.md');
+        const mdPath = path.join(root2, 'shared.md');
         fs.writeFileSync(mdPath, SAMPLE_MD_CONTENT, 'utf-8');
         const fileEntry = makeFileEntry(mdPath);
 
@@ -567,7 +633,7 @@ async function testSearchItemsUnderRootUsesSubtreeBounds() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const root = path.join(dir, 'foo');
         await fss.storage.upsert(
@@ -596,7 +662,7 @@ async function testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const root = path.join(dir, 'root');
         const keep = path.join(root, 'keep.md');
@@ -630,7 +696,7 @@ async function testDetachRootForConfigChangeKeepsNewChildRootRows() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const parentRoot = path.join(dir, 'project');
         const childRoot = path.join(parentRoot, 'src');
@@ -672,7 +738,7 @@ async function testDetachRootForConfigChangeBatchesLargeDeletes() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const root = path.join(dir, 'large-root');
         const itemCount = 1200;
@@ -711,7 +777,7 @@ async function testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const parentRoot = path.join(dir, 'project');
         const childRoot = path.join(parentRoot, 'src');
@@ -756,7 +822,7 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         fss.scannerState.vec_dim = 1;
 
         const root = path.join(dir, 'root');
@@ -818,13 +884,13 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
             'keyword search should hide ref_count=0 rows'
         );
 
-        const byName = await fss.searchFileByName('needle');
+        const byName = await fss.retrieval.searchNames('needle');
         assert.ok(
             !byName.results.some((item) => item.path === hidden),
             'vector name search should hide ref_count=0 rows'
         );
 
-        const byContent = await fss.searchIndexedChunks('needle', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('needle', { topK: 20 });
         assert.ok(
             !byContent.results.some((item) => item.source.path === hidden),
             'vector content search should hide ref_count=0 rows'
@@ -836,7 +902,7 @@ async function testRefCountZeroHiddenFromSearchQueueAndStats() {
         assert.equal(stats.pending_count, 0);
 
         const embedCalls = [];
-        fss.embedSingleFile = async (row) => {
+        fss.retrieval._buildWholeFile = async (row) => {
             embedCalls.push(row.item_id);
         };
         const processed = await fss.processEmbeddingQueue(() => false);
@@ -857,7 +923,7 @@ async function testProcessEmbeddingQueueUsesRootAwareCandidates() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const workspaceRoot = '/workspace';
         const docsRoot = '/docs';
@@ -881,7 +947,7 @@ async function testProcessEmbeddingQueueUsesRootAwareCandidates() {
         await fss.storage.upsert(rows, { indexers: ['BaseIndexer'] });
 
         const seen = [];
-        fss.embedSingleFile = async (file) => {
+        fss.retrieval._buildWholeFile = async (file) => {
             seen.push(file.item_id);
             await fss.storage.update(
                 [
@@ -933,7 +999,7 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const root = '/workspace';
         await fss.storage.upsert(
@@ -948,7 +1014,7 @@ async function testProcessEmbeddingQueueYieldsAtFileBoundary() {
 
         const seen = [];
         let scanPending = false;
-        fss.embedSingleFile = async (file) => {
+        fss.retrieval._buildWholeFile = async (file) => {
             seen.push(file.item_id);
             await fss.storage.update(
                 [
@@ -986,7 +1052,7 @@ async function testProcessEmbeddingQueueExcludesPausedOnlyOwnership() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const pausedRoot = '/paused';
         const runnableRoot = '/runnable';
         const pausedOnly = `${pausedRoot}/only.md`;
@@ -1011,7 +1077,7 @@ async function testProcessEmbeddingQueueExcludesPausedOnlyOwnership() {
             { indexers: ['BaseIndexer'] }
         );
         const seen = [];
-        fss.embedSingleFile = async (row) => {
+        fss.retrieval._buildWholeFile = async (row) => {
             seen.push(row.item_id);
             await fss.storage.update(
                 [
@@ -1055,7 +1121,7 @@ async function testRootAwareCandidatesDedupMultiRootFile() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const root = '/workspace';
         const childRoot = '/workspace/src';
@@ -1074,7 +1140,7 @@ async function testRootAwareCandidatesDedupMultiRootFile() {
         );
 
         const seen = [];
-        fss.embedSingleFile = async (row) => {
+        fss.retrieval._buildWholeFile = async (row) => {
             seen.push(row.item_id);
             await fss.storage.update(
                 [
@@ -1112,7 +1178,7 @@ async function testCarveOutKeepsIntermediateRowInvisibleUntilChildScan() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const parentRoot = path.join(dir, 'project');
         const childRoot = path.join(parentRoot, 'src');
@@ -1167,7 +1233,7 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const rootA = path.join(dir, 'a');
         const rootB = path.join(dir, 'b');
@@ -1217,19 +1283,21 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             embedded_count: 1,
             pending_count: 0,
             failed_count: 0,
-            last_scan_at: 2100
+            last_scan_at: 2100,
+            full_text: { indexable: 1, done: 0, pending: 1, failed: 0 }
         });
         assert.deepEqual(counts.get(rootA), {
             total_files: 3,
             embedded_count: 1,
             pending_count: 1,
             failed_count: 1,
-            last_scan_at: 1100
+            last_scan_at: 1100,
+            full_text: { indexable: 3, done: 0, pending: 3, failed: 0 }
         });
 
         await fss.close();
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const root = path.join(dir, 'base');
         const unavailableRoot = path.join(dir, 'missing');
@@ -1270,7 +1338,8 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
             embedded_count: 0,
             pending_count: 2,
             failed_count: 0,
-            last_scan_at: 1200
+            last_scan_at: 1200,
+            full_text: { indexable: 2, done: 0, pending: 2, failed: 0 }
         });
         assert.deepEqual(baseOnlyCounts.get(unavailableRoot), {
             total_files: 42,
@@ -1289,6 +1358,8 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
 async function testPerRootCountsUseRootRefsForOverlappingRoots() {
     console.log('  testPerRootCountsUseRootRefsForOverlappingRoots...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'full';
     fss.scannerState = { roots: { '/Documents': {}, '/Documents/sub': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1339,6 +1410,8 @@ async function testPerRootCountsUseRootRefsForOverlappingRoots() {
 async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
     console.log('  testPerRootCountsNormalizeRootRefsBeforeCompare...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'base-only';
     fss.scannerState = { roots: { '/Documents': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1379,6 +1452,8 @@ async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
 async function testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare() {
     console.log('  testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare...');
     const fss = Object.create(FSStorage.prototype);
+    // This metadata-only fixture does not bind a full-text indexer.
+    fss.getFullTextState = () => ({ available: false, reason: 'open_failed' });
     fss.mode = 'base-only';
     fss.scannerState = { roots: { 'C:/Users/Stella/Docs': {} }, unavailable_roots: {} };
     fss.storage = {
@@ -1519,6 +1594,8 @@ async function testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight() {
             return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
+        fss._perRootCountsCache.get('/Documents').context = fss._capturePerRootCountsContext('/Documents');
+
         const timeout = Symbol('timeout');
         let result;
         try {
@@ -1655,6 +1732,8 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
             return result.items.map(({ item }) => ({ values: item, count: 1 }));
         };
 
+        fss._perRootCountsCache.get('/Documents').context = fss._capturePerRootCountsContext('/Documents');
+
         const counts = await fss.getPerRootCounts(['/Documents']);
         assert.equal(counts.get('/Documents').total_files, 7);
         const oldInFlight = fss._perRootCountsCache.get('/Documents').inFlight;
@@ -1663,7 +1742,7 @@ async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
         fss._clearPerRootCountsCache('/Documents');
         assert.equal(fss._perRootCountsCache.has('/Documents'), false);
         releaseBlocker();
-        await oldInFlight;
+        await assert.rejects(oldInFlight, { code: 'filemgr_counts_invalidated' });
 
         assert.equal(fss._getAnyCachedPerRootCount('/Documents'), null);
         assert.equal(fss._getFreshCachedPerRootCount('/Documents'), null);
@@ -1791,6 +1870,9 @@ async function testEmbedWithRetry429() {
     const testDir = tmpDir('embed-retry');
     let fss;
     const originalBatchEmbed = LLM.batchEmbed;
+    const originalSetTimeout = globalThis.setTimeout;
+    // 这里只跨越真实整组重试的退避等待，不改变重试次数或模型结果。
+    globalThis.setTimeout = (callback, _delay, ...args) => originalSetTimeout(callback, 0, ...args);
     try {
         fss = new FSStorage(testDir);
         fs.mkdirSync(testDir, { recursive: true });
@@ -1812,7 +1894,7 @@ async function testEmbedWithRetry429() {
             return texts.map(() => new Array(embedDim).fill(0).map(() => Math.random()));
         };
 
-        const result = await fss._embedWithRetry(['hello', 'world']);
+        const result = await fss.retrieval._embedWithRetry(['hello', 'world']);
         assert.equal(result.length, 2, 'should return 2 embeddings');
         assert.equal(result[0].length, embedDim, 'embedding dimension should match');
         assert.ok(callCount >= 4, `should have retried (callCount=${callCount})`);
@@ -1821,6 +1903,7 @@ async function testEmbedWithRetry429() {
         console.log('  ✅ testEmbedWithRetry429');
     } finally {
         LLM.batchEmbed = originalBatchEmbed;
+        globalThis.setTimeout = originalSetTimeout;
         cleanup(testDir);
     }
 }
@@ -1837,7 +1920,7 @@ async function testEmbedWithRetryUsesSmallApiBatch() {
             return texts.map(() => [1]);
         };
 
-        const result = await fss._embedWithRetry(['hello', 'world']);
+        const result = await fss.retrieval._embedWithRetry(['hello', 'world']);
 
         assert.equal(seenBatchSize, EMBED_API_BATCH_SIZE);
         assert.equal(EMBED_API_BATCH_SIZE, 32);
@@ -1863,7 +1946,7 @@ async function testEmbedWithRetryDoesNotRetryPermanentQuota() {
             throw err;
         };
 
-        await assert.rejects(() => fss._embedWithRetry(['hello']), /monthly limit/);
+        await assert.rejects(() => fss.retrieval._embedWithRetry(['hello']), /monthly limit/);
         assert.equal(callCount, 1, 'quota errors should not consume retry budget');
     } finally {
         LLM.batchEmbed = originalBatchEmbed;
@@ -2310,17 +2393,17 @@ async function testProbeErrorPersistsAndNotifies() {
             notices++;
         };
 
-        await fss._setProbeError('embedding_config_error');
+        await fss.retrieval._setProbeError('embedding_config_error');
         assert.equal(fss.scannerState.probe_error.code, 'embedding_config_error');
         assert.equal(notices, 1);
 
         const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
         assert.equal(saved.probe_error.code, 'embedding_config_error');
 
-        await fss._setProbeError('embedding_config_error');
+        await fss.retrieval._setProbeError('embedding_config_error');
         assert.equal(notices, 1, 'same probe error should not notify repeatedly');
 
-        await fss._clearProbeError();
+        await fss.retrieval._clearProbeError();
         assert.equal(fss.scannerState.probe_error, null);
         assert.equal(notices, 2);
 
@@ -2342,6 +2425,21 @@ async function testClassifyEmbeddingErrorTableRules() {
         status: 403,
         message: 'monthly limit exceeded'
     });
+    for (const [status, message, kind] of [
+        [429, 'rate limit exceeded', 'transient'],
+        [400, 'token limit exceeded', 'file'],
+        [403, 'limit exceeded', 'unknown'],
+        [403, 'monthly limit exceeded', 'quota'],
+        [403, 'key limit exceeded', 'quota'],
+        [403, 'insufficient quota', 'quota'],
+        [402, 'payment required', 'quota'],
+        [401, 'limit exceeded', 'config'],
+        [404, 'limit exceeded', 'config']
+    ]) {
+        const result = classifyEmbeddingError(Object.assign(new Error(message), { status }));
+        assert.equal(result.kind, kind, `${status}: ${message}`);
+        assert.equal(result.retryable, kind === 'transient' || kind === 'unknown');
+    }
     assert.equal(classifyEmbeddingError(Object.assign(new Error('invalid api key'), { status: 401 })).kind, 'config');
     assert.equal(classifyEmbeddingError(Object.assign(new Error('input too long'), { status: 400 })).kind, 'file');
     assert.equal(
@@ -2365,18 +2463,18 @@ async function testSyncEmbeddingModeClearsProbeErrorWhenModelMissing() {
     try {
         const fss = new FSStorage(dir);
         fs.mkdirSync(dir, { recursive: true });
-        await fss._setProbeError('embedding_config_error');
+        await fss.retrieval._setProbeError('embedding_config_error');
 
         let notices = 0;
         let demoteReason = null;
         fss.onStateChanged = () => {
             notices++;
         };
-        fss._demoteToBaseOnly = async (reason) => {
+        fss.retrieval._demoteToBaseOnly = async (reason) => {
             demoteReason = reason;
         };
 
-        await fss.syncEmbeddingMode('no-model-test');
+        await fss.retrieval._syncMode('no-model-test');
 
         assert.equal(fss.scannerState.probe_error, null);
         assert.equal(notices, 1, 'clearing old probe error should notify once');
@@ -2402,20 +2500,20 @@ async function testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe() {
         const fss = new FSStorage(dir);
         fs.mkdirSync(dir, { recursive: true });
         fss.scannerState.embedded_migrated = true;
-        await fss._setProbeError('embedding_config_error');
+        await fss.retrieval._setProbeError('embedding_config_error');
 
         let notices = 0;
         let openedDim = null;
         fss.onStateChanged = () => {
             notices++;
         };
-        fss._probeEmbedding = async () => ({ ok: true, dim: 3, model_name: 'BAAI/bge-m3', requestDim: null });
-        fss._openFull = async (dim) => {
+        fss.retrieval._probeEmbedding = async () => ({ ok: true, dim: 3, model_name: 'BAAI/bge-m3', requestDim: null });
+        fss.retrieval._openFull = async (dim) => {
             openedDim = dim;
             fss.mode = 'full';
         };
 
-        await fss.syncEmbeddingMode('probe-success-test');
+        await fss.retrieval._syncMode('probe-success-test');
 
         assert.equal(fss.scannerState.probe_error, null);
         assert.equal(notices, 1, 'successful probe should clear old probe error once');
@@ -2446,12 +2544,12 @@ async function testSyncEmbeddingModePersistsProbeError() {
         fss.onStateChanged = () => {
             notices++;
         };
-        fss._probeEmbedding = async () => ({ ok: false, code: 'embedding_config_error' });
-        fss._demoteToBaseOnly = async (reason) => {
+        fss.retrieval._probeEmbedding = async () => ({ ok: false, code: 'embedding_config_error' });
+        fss.retrieval._demoteToBaseOnly = async (reason) => {
             demoteReason = reason;
         };
 
-        await fss.syncEmbeddingMode('probe-fail-test');
+        await fss.retrieval._syncMode('probe-fail-test');
 
         assert.equal(fss.scannerState.probe_error.code, 'embedding_config_error');
         assert.equal(notices, 1, 'new probe error should notify once');
@@ -2471,14 +2569,14 @@ async function testProbeEmbeddingOpenHarmonyReducesLargeDimensions() {
     const originalEmbed = LLM.embed;
     try {
         const fss = new FSStorage(dir);
-        fss._isOpenHarmony = () => true;
+        fss.retrieval._isOpenHarmony = () => true;
         const dimensions = [];
         LLM.embed = async (_text, dim) => {
             dimensions.push(dim);
             return new Array(dim === 1024 ? 1024 : 1536).fill(0.1);
         };
 
-        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+        const probe = await fss.retrieval._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
 
         assert.deepEqual(dimensions, [undefined, 1024]);
         assert.deepEqual(probe, {
@@ -2500,10 +2598,10 @@ async function testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongRed
     const originalEmbed = LLM.embed;
     try {
         const fss = new FSStorage(dir);
-        fss._isOpenHarmony = () => true;
+        fss.retrieval._isOpenHarmony = () => true;
         LLM.embed = async (_text, dim) => new Array(dim === 1024 ? 768 : 1536).fill(0.1);
 
-        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+        const probe = await fss.retrieval._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
 
         assert.deepEqual(probe, { ok: false, code: 'dim_unsupported' });
     } finally {
@@ -2519,7 +2617,7 @@ async function testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError() {
     const originalEmbed = LLM.embed;
     try {
         const fss = new FSStorage(dir);
-        fss._isOpenHarmony = () => true;
+        fss.retrieval._isOpenHarmony = () => true;
         LLM.embed = async (_text, dim) => {
             if (dim === 1024) {
                 const err = new Error('dimensions parameter rejected');
@@ -2529,7 +2627,7 @@ async function testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError() {
             return new Array(1536).fill(0.1);
         };
 
-        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+        const probe = await fss.retrieval._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
 
         assert.deepEqual(probe, { ok: false, code: 'embedding_config_error' });
     } finally {
@@ -2553,20 +2651,20 @@ async function testSyncEmbeddingModeRecordsRequestDimForConsistentState() {
         fss.scannerState.embedding_request_dim = null;
         fss.scannerState._requestDimResolved = false;
         fss.scannerState.embedded_migrated = true;
-        fss._isOpenHarmony = () => true;
-        fss._probeEmbedding = async () => ({
+        fss.retrieval._isOpenHarmony = () => true;
+        fss.retrieval._probeEmbedding = async () => ({
             ok: true,
             dim: 1024,
             model_name: 'BAAI/bge-m3',
             requestDim: 1024
         });
         let openedDim = null;
-        fss._openFull = async (dim) => {
+        fss.retrieval._openFull = async (dim) => {
             openedDim = dim;
             fss.mode = 'full';
         };
 
-        await fss.syncEmbeddingMode('migration-request-dim');
+        await fss.retrieval._syncMode('migration-request-dim');
 
         assert.equal(openedDim, 1024, 'old OHOS full state must not fast no-op before requestDim is resolved');
         assert.equal(fss.scannerState.embedding_request_dim, 1024);
@@ -2594,26 +2692,29 @@ async function testSyncEmbeddingModeUsesCanonicalResetReasons() {
         fss.scannerState.embedding_model = 'old-model';
         fss.scannerState.chunk_level = 'old-level';
         fss.scannerState.embedded_migrated = true;
-        fss._probeEmbedding = async () => ({ ok: true, dim: 2, model_name: 'BAAI/bge-m3', requestDim: null });
+        fss.retrieval._probeEmbedding = async () => ({ ok: true, dim: 2, model_name: 'BAAI/bge-m3', requestDim: null });
         const reasons = [];
-        fss._resetVectorChunk = async (reason) => {
+        fss.retrieval._resetVectorChunk = async (reason) => {
             reasons.push(reason);
             fss.mode = 'full';
         };
 
-        await fss.syncEmbeddingMode('config-change');
+        await fss.retrieval._syncMode('config-change');
         assert.equal(reasons.at(-1), 'embedding_config_changed');
 
-        fss.mode = 'base-only';
-        fss.scannerState.vec_dim = 2;
-        fss.scannerState.embedding_model = 'BAAI/bge-m3';
-        fss.scannerState.chunk_level = 'structured';
-        fss._openFull = async () => {
-            throw new Error('vector open failed');
-        };
-
-        await fss.syncEmbeddingMode('scan');
-        assert.equal(reasons.at(-1), 'open_full_failed');
+        for (const metadata of ['consistent', 'missing']) {
+            fss.mode = 'base-only';
+            fss.scannerState.vec_dim = metadata === 'consistent' ? 2 : null;
+            fss.scannerState.embedding_model = metadata === 'consistent' ? 'BAAI/bge-m3' : null;
+            fss.scannerState.chunk_level = metadata === 'consistent' ? 'structured' : null;
+            const originalFailure = new Error(`ordinary vector open failed: ${metadata}`);
+            fss.retrieval._openFull = async () => {
+                throw originalFailure;
+            };
+            const resetCount = reasons.length;
+            await assert.rejects(fss.retrieval._syncMode('scan'), (error) => error === originalFailure);
+            assert.equal(reasons.length, resetCount, 'ordinary non-pending open failures must not reset');
+        }
     } finally {
         cleanup(dir);
     }
@@ -2626,7 +2727,7 @@ async function testInitializeSyncEmbeddingGate() {
     try {
         const withoutSync = new FSStorage(path.join(dir, 'without'));
         let withoutSyncCalls = 0;
-        withoutSync.syncEmbeddingMode = async () => {
+        withoutSync.retrieval._syncMode = async () => {
             withoutSyncCalls++;
         };
         await withoutSync.initialize({ syncEmbedding: false });
@@ -2635,7 +2736,7 @@ async function testInitializeSyncEmbeddingGate() {
 
         const withSync = new FSStorage(path.join(dir, 'with'));
         const reasons = [];
-        withSync.syncEmbeddingMode = async (reason) => {
+        withSync.retrieval._syncMode = async (reason) => {
             reasons.push(reason);
         };
         await withSync.initialize();
@@ -2652,19 +2753,19 @@ async function testProbeEmbeddingBudgetOptions() {
     const dir = tmpDir('probe-budget');
     try {
         const timeoutStorage = new FSStorage(path.join(dir, 'timeout'));
-        timeoutStorage._probeCallOnce = async () => new Promise(() => {});
+        timeoutStorage.retrieval._probeCallOnce = async () => new Promise(() => {});
         const started = Date.now();
-        const timeoutProbe = await timeoutStorage._probeEmbedding({ probeTimeoutMs: 50, probeRetries: 0 });
+        const timeoutProbe = await timeoutStorage.retrieval._probeEmbedding({ probeTimeoutMs: 50, probeRetries: 0 });
         assert.deepEqual(timeoutProbe, { ok: false, code: 'embedding_config_error' });
         assert.ok(Date.now() - started < 500, 'probe timeout should use caller budget');
 
         const retryStorage = new FSStorage(path.join(dir, 'retry'));
         let attempts = 0;
-        retryStorage._probeCallOnce = async () => {
+        retryStorage.retrieval._probeCallOnce = async () => {
             attempts++;
             throw new Error('fetch failed');
         };
-        const retryProbe = await retryStorage._probeEmbedding({ probeRetries: 1 });
+        const retryProbe = await retryStorage.retrieval._probeEmbedding({ probeRetries: 1 });
         assert.deepEqual(retryProbe, { ok: false, code: 'embedding_config_error' });
         assert.equal(attempts, 2, 'probeRetries:1 means one attempt plus one retry');
     } finally {
@@ -2682,7 +2783,7 @@ async function testResetVectorChunkPreservesBaseAndResetsEmbedded() {
         // Bootstrap with dim=1 so this test runs without a real embedding API.
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const file = path.join(dir, 'r.md');
         fs.writeFileSync(file, 'r body');
@@ -2713,7 +2814,7 @@ async function testResetVectorChunkPreservesBaseAndResetsEmbedded() {
             { indexers: ['BaseIndexer'] }
         );
 
-        await fss._resetVectorChunk('test', { dim: fss.scannerState.vec_dim, mode: fss.mode });
+        await fss.retrieval._resetVectorChunk('test', { dim: fss.scannerState.vec_dim, mode: fss.mode });
 
         const after = (
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
@@ -2737,7 +2838,7 @@ async function testResetVectorChunkAcceptsExplicitDimAndMode() {
         const fss = await createFSStorage(dir);
         // Caller is responsible for updating scannerState BEFORE calling reset.
         fss.scannerState.vec_dim = 768;
-        await fss._resetVectorChunk('dim change', { dim: 768, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('dim change', { dim: 768, mode: 'full' });
         assert.equal(fss.mode, 'full');
         // The reopened storage should accept 768-dim writes:
         await fss.storage.upsert(
@@ -2819,7 +2920,7 @@ async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
     const dir = tmpDir('baseonly-old-dim-reset');
     try {
         const fss = new FSStorage(dir);
-        fss._probeEmbedding = async () => ({
+        fss.retrieval._probeEmbedding = async () => ({
             ok: true,
             dim: 1,
             model_name: 'old-embed',
@@ -2850,20 +2951,20 @@ async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
             { indexers: ['VectorIndexer', 'ChunkIndexer'] }
         );
 
-        await fss._demoteToBaseOnly('test no model');
+        await fss.retrieval._demoteToBaseOnly('test no model');
         assert.equal(fss.mode, 'base-only');
         fss.scannerState.vec_dim = null;
         fss.scannerState.embedding_model = null;
         fss.scannerState.chunk_level = null;
         fss.scannerState.vector_backend = null;
 
-        fss._probeEmbedding = async () => ({
+        fss.retrieval._probeEmbedding = async () => ({
             ok: true,
             dim: 2,
             model_name: 'new-embed',
             requestDim: null
         });
-        await fss.syncEmbeddingMode('test restored model');
+        await fss.retrieval._syncMode('test restored model');
 
         assert.equal(fss.mode, 'full');
         assert.equal(fss.scannerState.vec_dim, 2);
@@ -2892,39 +2993,58 @@ async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
 
 async function testResetVectorChunkDoesNotPublishHalfInitializedStorage() {
     console.log('  testResetVectorChunkDoesNotPublishHalfInitializedStorage...');
-    const dir = tmpDir('reset-no-half-storage');
-    const originalInitialize = BaseStorage.prototype.initialize;
-    try {
-        const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
-        const oldStorage = fss.storage;
-
-        BaseStorage.prototype.initialize = async function () {
-            if (this !== oldStorage) {
-                throw new Error('synthetic init failure');
+    for (const mode of ['base-only', 'full']) {
+        const dir = tmpDir(`reset-no-half-storage-${mode}`);
+        const originalInitialize = BaseStorage.prototype.initialize;
+        let fss;
+        try {
+            fss = new FSStorage(dir);
+            await fss.retrieval._resetVectorChunk('bootstrap', { dim: 1, mode });
+            const oldStorage = fss.storage;
+            const failure = new Error('synthetic init failure');
+            BaseStorage.prototype.initialize = async function () {
+                if (this !== oldStorage) throw failure;
+                return originalInitialize.call(this);
+            };
+            await assert.rejects(
+                () => fss.retrieval._resetVectorChunk('synthetic-failure', { dim: 1, mode }),
+                (error) => error === failure
+            );
+            if (mode === 'base-only') {
+                assert.equal(
+                    fss.storage,
+                    oldStorage,
+                    'an untouched healthy base survives candidate initialization failure'
+                );
+                await oldStorage.getStatus();
+            } else {
+                assert.equal(
+                    fss.storage,
+                    null,
+                    'a failed post-close reset must not publish a candidate or reuse the old full holder'
+                );
+                await assert.rejects(() => oldStorage.getStatus(), /closing|closed/i);
             }
-            return originalInitialize.call(this);
-        };
-
-        await assert.rejects(
-            () => fss._resetVectorChunk('synthetic-failure', { dim: 1, mode: 'base-only' }),
-            /synthetic init failure/
-        );
-        assert.equal(fss.storage, oldStorage, 'failed reset must leave the previous storage installed');
-        await assert.doesNotReject(() => fss.storage.getStatus());
-    } finally {
-        BaseStorage.prototype.initialize = originalInitialize;
-        cleanup(dir);
+            assert.equal(fss.scannerState.semantic_reset_pending, true);
+            assert.equal(fss._pendingStorageClosures.size, 0);
+        } finally {
+            BaseStorage.prototype.initialize = originalInitialize;
+            await fss?.close();
+            cleanup(dir);
+        }
     }
     console.log('  ✅ testResetVectorChunkDoesNotPublishHalfInitializedStorage');
 }
 
 // ── Test: ArkData raw drop avoids schema creation and dim reads ───────
 
-async function testArkDataRawDropOnlyDropsTables() {
-    console.log('  testArkDataRawDropOnlyDropsTables...');
+async function testArkDataRawDropDeletesWholeStores() {
+    console.log('  testArkDataRawDropDeletesWholeStores...');
     const calls = [];
     const kit = {
+        deleteStore: async (storeId, options) => {
+            calls.push(['deleteStore', storeId, options]);
+        },
         openStore: async (storeId, options) => {
             calls.push(['openStore', storeId, options]);
         },
@@ -2941,22 +3061,30 @@ async function testArkDataRawDropOnlyDropsTables() {
             throw new Error('raw drop must not execute prepared statements');
         }
     };
-    setArkdataDatabaseKit(kit);
+    const previousKit = setArkdataDatabaseKit(kit);
+    try {
+        const vectorPath = path.join(globalAppDir, 'raw-vector-index.db');
+        const chunkPath = path.join(globalAppDir, 'raw-chunk-index.db');
+        await dropVectorIndexStoreArkdata(vectorPath);
+        await dropChunkIndexStoreArkdata(chunkPath);
 
-    await dropVectorIndexStoreArkdata('/tmp/vector-index.db');
-    await dropChunkIndexStoreArkdata('/tmp/chunk-index.db');
-
-    const sqls = calls.filter((c) => c[0] === 'execSql').map((c) => c[2]);
-    assert.deepEqual(sqls, [
-        'DROP TABLE IF EXISTS vector_index',
-        'DROP TABLE IF EXISTS __schema_meta_safe',
-        'DROP TABLE IF EXISTS chunk_index',
-        'DROP TABLE IF EXISTS __schema_meta_safe'
-    ]);
-    assert.equal(calls.filter((c) => c[0] === 'openStore').length, 2);
-    assert.equal(calls.filter((c) => c[0] === 'closeStore').length, 2);
-    assert.ok(!sqls.some((sql) => /CREATE TABLE|SELECT/i.test(sql)));
-    console.log('  ✅ testArkDataRawDropOnlyDropsTables');
+        assert.deepEqual(
+            calls.map((call) => call[0]),
+            ['deleteStore', 'deleteStore']
+        );
+        assert.match(calls[0][1], /^arkdata-vector:/);
+        assert.match(calls[1][1], /^arkdata-chunk:/);
+        assert.deepEqual(
+            calls.map((call) => call[2]),
+            [
+                { path: vectorPath.replace(/\.db$/, '-arkdata-database.db'), vector: true },
+                { path: chunkPath.replace(/\.db$/, '-arkdata-database.db'), vector: true }
+            ]
+        );
+        console.log('  ✅ testArkDataRawDropDeletesWholeStores');
+    } finally {
+        setArkdataDatabaseKit(previousKit);
+    }
 }
 
 // ── Test: _resetVectorChunk records last_rebuild_event ────────────────
@@ -2971,7 +3099,7 @@ async function testResetVectorChunkRecordsRebuildEvent() {
             notices++;
         };
 
-        await fss._resetVectorChunk('vector-reset-test', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('vector-reset-test', { dim: 1, mode: 'base-only' });
 
         assert.deepEqual(
             {
@@ -2990,7 +3118,7 @@ async function testResetVectorChunkRecordsRebuildEvent() {
         assert.equal(saved.last_rebuild_event.status, 'completed');
 
         await assert.rejects(
-            () => fss._resetVectorChunk('bad-vector-reset', { dim: null, mode: 'full' }),
+            () => fss.retrieval._resetVectorChunk('bad-vector-reset', { dim: null, mode: 'full' }),
             /dim and mode are required/
         );
         assert.equal(fss.scannerState.last_rebuild_event.type, 'vector');
@@ -3019,11 +3147,11 @@ async function testRebuildAllRecordsFullEventAndResetsVectorState() {
         fss.scannerState.embedding_model = 'old-model';
         fss.scannerState.chunk_level = 'old-level';
         fss.scannerState.embedded_migrated = true;
-        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
 
         let syncReason = null;
         let notices = 0;
-        fss.syncEmbeddingMode = async (reason) => {
+        fss.retrieval._syncMode = async (reason) => {
             syncReason = reason;
             fss.scannerState.last_rebuild_event = {
                 type: 'vector',
@@ -3069,8 +3197,8 @@ async function testRebuildAllRecordsFailedFullEvent() {
     const dir = tmpDir('rebuild-full-failed-event');
     try {
         const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
-        fss.syncEmbeddingMode = async () => {
+        await fss.retrieval._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        fss.retrieval._syncMode = async () => {
             throw new Error('sync failed');
         };
 
@@ -3099,8 +3227,8 @@ async function testRebuildAllPreservesOriginalErrorWhenEventSaveFails() {
     const dir = tmpDir('rebuild-event-save-fails');
     try {
         const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
-        fss.syncEmbeddingMode = async () => {
+        await fss.retrieval._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        fss.retrieval._syncMode = async () => {
             throw new Error('sync failed first');
         };
         const originalSaveScannerState = fss.saveScannerState.bind(fss);
@@ -3136,7 +3264,7 @@ async function testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails() {
         };
 
         await assert.rejects(
-            () => fss._resetVectorChunk('vector-save-mask-test', { dim: null, mode: 'full' }),
+            () => fss.retrieval._resetVectorChunk('vector-save-mask-test', { dim: null, mode: 'full' }),
             /dim and mode are required/
         );
         assert.equal(fss.scannerState.last_rebuild_event.type, 'vector');
@@ -3161,7 +3289,7 @@ async function testSaveFilesBaseOnlyWritesEmbeddedZero() {
         const fss = new FSStorage(dir);
         // _resetVectorChunk closes old storage and opens new one with given schema.
         // Use a placeholder dim=1 — base-only schema ignores dim in needIndexers.
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
         assert.equal(fss.mode, 'base-only');
         const file = path.join(dir, 'doc.md');
         fs.writeFileSync(file, '# hi');
@@ -3184,7 +3312,7 @@ async function testSaveFilesRefOnlyPreservesEmbedded() {
     const dir = tmpDir('savefiles-refonly');
     try {
         const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
         const file = path.join(dir, 'shared.md');
         fs.writeFileSync(file, '# shared');
         // First scan from rootA
@@ -3221,7 +3349,7 @@ async function testSaveFilesModifiedChangedResetsEmbedded() {
     const dir = tmpDir('savefiles-modified');
     try {
         const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
         const file = path.join(dir, 'm.md');
         fs.writeFileSync(file, 'a');
         const e1 = makeFileEntry(file);
@@ -3260,7 +3388,7 @@ async function testSaveFilesMaintainsRootRefsAndRefCountScenarios() {
     const dir = tmpDir('savefiles-ref-count-scenarios');
     try {
         const fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         const shared = path.join(dir, 'shared.md');
         fs.writeFileSync(shared, '# shared');
@@ -3345,7 +3473,7 @@ async function testEmbedSingleFileHappyPath() {
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
         ).items[0].item;
         assert.equal(row.embedded, 0);
-        await fss.embedSingleFile(row);
+        await fss.retrieval._buildWholeFile(row);
         const after = (
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
         ).items[0].item;
@@ -3366,7 +3494,7 @@ async function testEmbedSingleFileGoneDeletes() {
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'gone.md');
         fs.writeFileSync(file, 'x');
         await fss.saveFiles([makeFileEntry(file)], dir);
@@ -3374,11 +3502,12 @@ async function testEmbedSingleFileGoneDeletes() {
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
         ).items[0].item;
         fs.unlinkSync(file);
-        await fss.embedSingleFile(row);
+        assert.deepEqual(await fss.retrieval.buildStep(row), { kind: 'skipped', reason: 'input_changed' });
         const after = await fss.storage.search([
             { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }
         ]);
-        assert.equal(after.items.length, 0);
+        assert.equal(after.items.length, 1);
+        assert.equal(after.items[0].item.embedded, 0);
     } finally {
         cleanup(dir);
     }
@@ -3390,10 +3519,11 @@ async function testEmbedSingleFileGoneDeletes() {
 async function testEmbedSingleFileDriftReturnsSkipped() {
     console.log('  testEmbedSingleFileDriftReturnsSkipped...');
     const dir = tmpDir('embed-drift');
+    const originalBatchEmbed = LLM.batchEmbed;
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'drift.md');
         fs.writeFileSync(file, 'a');
         await fss.saveFiles([makeFileEntry(file)], dir);
@@ -3401,21 +3531,21 @@ async function testEmbedSingleFileDriftReturnsSkipped() {
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
         ).items[0].item;
 
-        // Force drift: monkey-patch _embedWithRetry to mutate file mid-flight
-        const orig = fss._embedWithRetry.bind(fss);
-        fss._embedWithRetry = async (texts) => {
+        // Mutate the source at the model boundary while the real build is waiting.
+        LLM.batchEmbed = async (texts) => {
             await new Promise((r) => setTimeout(r, 50));
             fs.writeFileSync(file, 'a much longer content now to change size+mtime');
-            return orig(texts);
+            return originalBatchEmbed.call(LLM, texts);
         };
 
-        const r = await fss.embedSingleFile(row);
+        const r = await fss.retrieval._buildWholeFile(row);
         assert.equal(r?.status, 'skipped_drift');
         const after = (
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
         ).items[0].item;
         assert.equal(after.embedded, 0);
     } finally {
+        LLM.batchEmbed = originalBatchEmbed;
         cleanup(dir);
     }
     console.log('  ✅ testEmbedSingleFileDriftReturnsSkipped');
@@ -3465,10 +3595,11 @@ async function testPlanEmbeddingInputsSplitsOversizedChunksAndCapsBudget() {
 async function testEmbedSingleFileOversizedContentFallsBackToFilenameOnly() {
     console.log('  testEmbedSingleFileOversizedContentFallsBackToFilenameOnly...');
     const dir = tmpDir('embed-oversized-filename-only');
+    const originalBatchEmbed = LLM.batchEmbed;
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'huge.js');
         fs.closeSync(fs.openSync(file, 'w'));
         fs.truncateSync(file, RAW_TEXT_MAX_FILE_SIZE + 1);
@@ -3478,12 +3609,12 @@ async function testEmbedSingleFileOversizedContentFallsBackToFilenameOnly() {
         ).items[0].item;
 
         let embeddedTexts = null;
-        fss._embedWithRetry = async (texts) => {
+        LLM.batchEmbed = async (texts) => {
             embeddedTexts = texts;
             return texts.map(() => [1]);
         };
 
-        await fss.embedSingleFile(row);
+        await fss.retrieval._buildWholeFile(row);
 
         assert.deepEqual(embeddedTexts, ['huge.js']);
         const after = (
@@ -3493,6 +3624,7 @@ async function testEmbedSingleFileOversizedContentFallsBackToFilenameOnly() {
         const status = await fss.storage.getStatus();
         assert.equal(status.ChunkIndexer?.size ?? 0, 0);
     } finally {
+        LLM.batchEmbed = originalBatchEmbed;
         cleanup(dir);
     }
     console.log('  ✅ testEmbedSingleFileOversizedContentFallsBackToFilenameOnly');
@@ -3504,7 +3636,7 @@ async function testSemanticWriteStateDefaultsToAccepting() {
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
 
         const state = await fss.storage.getSemanticWriteState();
 
@@ -3519,10 +3651,11 @@ async function testSemanticWriteStateDefaultsToAccepting() {
 async function testEmbedSingleFileSkipsChunksWhenChunkWritesLimited() {
     console.log('  testEmbedSingleFileSkipsChunksWhenChunkWritesLimited...');
     const dir = tmpDir('semantic-chunk-limited');
+    const originalBatchEmbed = LLM.batchEmbed;
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'chunked.md');
         fs.writeFileSync(file, SAMPLE_MD_CONTENT);
         await fss.saveFiles([makeFileEntry(file)], dir);
@@ -3533,20 +3666,21 @@ async function testEmbedSingleFileSkipsChunksWhenChunkWritesLimited() {
             chunk: { acceptingWrites: false, reason: 'capacity_limit' }
         });
         let embeddedTexts = null;
-        fss._embedWithRetry = async (texts) => {
+        LLM.batchEmbed = async (texts) => {
             embeddedTexts = texts;
             return texts.map(() => [1]);
         };
 
-        await fss.embedSingleFile(row);
+        assert.deepEqual(await fss.retrieval.buildStep(row), { kind: 'skipped', reason: 'write_limited' });
 
-        assert.deepEqual(embeddedTexts, ['chunked.md']);
+        assert.equal(embeddedTexts, null);
         const after = await getBaseRow(fss, file);
-        assert.equal(after.embedded, 1);
+        assert.equal(after.embedded, 0);
         const status = await fss.storage.getStatus();
-        assert.equal(status.VectorIndexer?.size ?? 0, 1);
+        assert.equal(status.VectorIndexer?.size ?? 0, 0);
         assert.equal(status.ChunkIndexer?.size ?? 0, 0);
     } finally {
+        LLM.batchEmbed = originalBatchEmbed;
         cleanup(dir);
     }
     console.log('  ✅ testEmbedSingleFileSkipsChunksWhenChunkWritesLimited');
@@ -3555,10 +3689,11 @@ async function testEmbedSingleFileSkipsChunksWhenChunkWritesLimited() {
 async function testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited() {
     console.log('  testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited...');
     const dir = tmpDir('semantic-vector-limited');
+    const originalBatchEmbed = LLM.batchEmbed;
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'limited.md');
         fs.writeFileSync(file, SAMPLE_MD_CONTENT);
         await fss.saveFiles([makeFileEntry(file)], dir);
@@ -3568,18 +3703,19 @@ async function testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited() {
             vector: { acceptingWrites: false, reason: 'capacity_limit' },
             chunk: { acceptingWrites: true }
         });
-        fss._embedWithRetry = async () => {
+        LLM.batchEmbed = async () => {
             throw new Error('embedding should not be requested when vector writes are limited');
         };
 
-        await fss.embedSingleFile(row);
+        assert.deepEqual(await fss.retrieval.buildStep(row), { kind: 'skipped', reason: 'write_limited' });
 
         const after = await getBaseRow(fss, file);
-        assert.equal(after.embedded, 1);
+        assert.equal(after.embedded, 0);
         const status = await fss.storage.getStatus();
         assert.equal(status.VectorIndexer?.size ?? 0, 0);
         assert.equal(status.ChunkIndexer?.size ?? 0, 0);
     } finally {
+        LLM.batchEmbed = originalBatchEmbed;
         cleanup(dir);
     }
     console.log('  ✅ testEmbedSingleFileSkipsSemanticWorkWhenVectorWritesLimited');
@@ -3619,13 +3755,13 @@ async function testProcessEmbeddingQueueDriftSkippedOnce() {
     try {
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = 1;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const file = path.join(dir, 'drift.md');
         fs.writeFileSync(file, 'a');
         await fss.saveFiles([makeFileEntry(file)], dir);
 
         let calls = 0;
-        fss.embedSingleFile = async (row) => {
+        fss.retrieval._buildWholeFile = async (row) => {
             calls++;
             return { status: 'skipped_drift' };
         };
@@ -3654,7 +3790,7 @@ async function testHotSwapBaseOnlyToFull() {
         // Bootstrap in base-only mode (no embedding configured)
         const fss = new FSStorage(dir);
         fss.scannerState.vec_dim = null;
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
         assert.equal(fss.mode, 'base-only');
 
         // Configure embedding now
@@ -3662,7 +3798,7 @@ async function testHotSwapBaseOnlyToFull() {
         fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
 
         // syncEmbeddingMode detects model available and transitions to full
-        await fss.syncEmbeddingMode('test');
+        await fss.retrieval._syncMode('test');
 
         assert.equal(fss.mode, 'full');
         assert.ok(fss.scannerState.vec_dim !== null, 'vec_dim should be recorded after sync');
@@ -3756,9 +3892,11 @@ async function testInitializeReadonlyOpensExistingBaseIndex() {
     );
     const dir = tmpDir('readonly-existing-base');
     try {
-        const writer = new FSStorage(dir);
+        // Seed a legacy base without scanner metadata; writable FSStorage now
+        // persists BM25 reset state as part of initialization.
+        const writer = new BaseStorage('filemgr', makeSchema(1024, { mode: 'base-only' }), path.join(dir, 'storage'));
         await writer.initialize();
-        writer.storage?.close?.();
+        await writer.close();
 
         const statePath = path.join(dir, 'scanner_state.json');
         assert.equal(fs.existsSync(statePath), false, 'setup should not write scanner state');
@@ -3855,13 +3993,13 @@ async function testSearchByNameBaseOnlyReturnsEmbedUnavailable() {
     const dir = tmpDir('semantic-baseonly');
     try {
         const fss = await createFSStorage(dir);
-        const r = await fss.searchFileByName('foo');
+        const r = await fss.retrieval.searchNames('foo');
         assert.equal(r.results.length, 0);
         assert.equal(r.totalHits, 0);
         assert.equal(r.code, 'EMBED_UNAVAILABLE');
         assert.ok(r.warning);
 
-        const byContent = await fss.searchIndexedChunks('foo', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('foo', { topK: 20 });
         assert.equal(byContent.results.length, 0);
         assert.equal(byContent.totalHits, 0);
         assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
@@ -3885,11 +4023,11 @@ async function testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable() 
         fss.mode = 'base-only';
         fss.scannerState.probe_error = null;
 
-        const byName = await fss.searchFileByName('alpha');
+        const byName = await fss.retrieval.searchNames('alpha');
         assert.equal(byName.warning, WARNINGS.NO_EMBEDDING_MODEL);
         assert.equal(byName.code, CODES.EMBED_UNAVAILABLE);
 
-        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
         assert.equal(byContent.code, CODES.EMBED_UNAVAILABLE);
     } finally {
@@ -3905,13 +4043,13 @@ async function testSearchBlankQueryReturnsEmptyResult() {
     const dir = tmpDir('semantic-blank');
     try {
         const fss = new FSStorage(dir);
-        const byName = await fss.searchFileByName('   ');
+        const byName = await fss.retrieval.searchNames('   ');
         assert.equal(byName.query, '   ');
         assert.deepEqual(byName.results, []);
         assert.equal(byName.totalHits, 0);
         assert.equal(byName.code, undefined);
 
-        const byContent = await fss.searchIndexedChunks('', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('', { topK: 20 });
         assert.equal(byContent.query, '');
         assert.deepEqual(byContent.results, []);
         assert.equal(byContent.totalHits, 0);
@@ -3930,11 +4068,11 @@ async function testSearchDeferredReturnsIndexNotReady() {
     try {
         const fss = new FSStorage(dir);
 
-        const byName = await fss.searchFileByName('alpha');
+        const byName = await fss.retrieval.searchNames('alpha');
         assert.equal(byName.warning, WARNINGS.DEFERRED);
         assert.equal(byName.code, CODES.INDEX_NOT_READY);
 
-        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.DEFERRED);
         assert.equal(byContent.code, CODES.INDEX_NOT_READY);
     } finally {
@@ -3954,11 +4092,11 @@ async function testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown() {
         fss.mode = 'base-only';
         fss.scannerState.probe_error = { code: 'embedding_config_error', ts: Date.now() };
 
-        const byName = await fss.searchFileByName('alpha');
+        const byName = await fss.retrieval.searchNames('alpha');
         assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byName.code, CODES.EMBED_API_DOWN);
 
-        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byContent.code, CODES.EMBED_API_DOWN);
     } finally {
@@ -3989,11 +4127,11 @@ async function testSearchEmbedFailureReturnsEmbedApiDown() {
             throw err;
         };
 
-        const byName = await fss.searchFileByName('alpha');
+        const byName = await fss.retrieval.searchNames('alpha');
         assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byName.code, CODES.EMBED_API_DOWN);
 
-        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('alpha', { topK: 20 });
         assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
         assert.equal(byContent.code, CODES.EMBED_API_DOWN);
     } finally {
@@ -4046,10 +4184,10 @@ async function testSearchSemanticRoutesExposeScores() {
         };
         LLM.rerank = async (_query, items) => items;
 
-        const byName = await fss.searchFileByName('alpha');
+        const byName = await fss.retrieval.searchNames('alpha');
         assert.equal(byName.results[0].semanticScore, 0.91);
 
-        const byContent = await fss.searchIndexedChunks('alpha', { topK: 20 });
+        const byContent = await fss.retrieval.searchContent('alpha', { topK: 20 });
         assert.equal(byContent.results[0].score, 0.77);
     } finally {
         LLM.embed = originalEmbed;
@@ -4065,7 +4203,7 @@ async function testSearchFilesByKeywordSupportsLimit() {
     let fss;
     try {
         fss = new FSStorage(dir);
-        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        await fss.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
 
         await fss.storage.upsert(
             [
@@ -4118,18 +4256,18 @@ async function testScopedSearchDiagnosticsIncludeFilemgrRouteAndScope() {
         logger.info = (...args) => logs.push(args.join(' '));
 
         delete process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS;
-        await fss.searchFileByName('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        await fss.retrieval.searchNames('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
         assert.equal(calls[0].options.collectDiagnostics, false);
         assert.deepEqual(logs, []);
 
         process.env.FILEMGR_SCOPED_SEARCH_DIAGNOSTICS = '1';
-        await fss.searchFileByName('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        await fss.retrieval.searchNames('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
         assert.equal(calls[1].options.collectDiagnostics, true);
         assert.equal(logs.length, 1);
         assert.match(logs[0], /name_semantic/);
         assert.match(logs[0], /\/Docs/);
 
-        await fss.searchIndexedChunks('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
+        await fss.retrieval.searchContent('plan', { topK: 2, scope: { type: 'path', path: '/Docs' } });
         assert.equal(logs.length, 2);
         assert.match(logs[1], /content_semantic/);
         assert.match(logs[1], /\/Docs/);
@@ -4201,14 +4339,14 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
             return [items[1]];
         };
 
-        const global = await fss.searchIndexedChunks('plan', { topK: 7 });
+        const global = await fss.retrieval.searchContent('plan', { topK: 7 });
         assert.equal(calls[0][1][0].vectorQuery.topK, 7);
         assert.equal(global.results[0].chunk.text, 'complete B');
         assert.equal(global.results[0].score, 0.9);
         assert.equal(global.results[0].source.path, '/Docs/b.md');
         assert.equal(global.totalHits, 1);
 
-        const scoped = await fss.searchIndexedChunks('plan', { topK: 9, scope: { type: 'path', path: '/Docs' } });
+        const scoped = await fss.retrieval.searchContent('plan', { topK: 9, scope: { type: 'path', path: '/Docs' } });
         assert.equal(calls[1][1].targetCondition.vectorQuery.topK, 9);
         assert.deepEqual(
             calls[1][1].preconditions.map((condition) => [condition.field, condition.operator, condition.value]),
@@ -4225,7 +4363,7 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
         LLM.rerank = async () => {
             throw new Error('rerank down');
         };
-        const fallback = await fss.searchIndexedChunks('plan', { topK: 2 });
+        const fallback = await fss.retrieval.searchContent('plan', { topK: 2 });
         assert.deepEqual(
             fallback.results.map((hit) => hit.chunk.id),
             ['a', 'b']
@@ -4234,8 +4372,8 @@ async function testSearchIndexedChunksContractAndRerankFallback() {
             fallback.results.map((hit) => hit.score),
             [0.7, 0.9]
         );
-        await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 1.5 }), /integer/);
-        await assert.rejects(() => fss.searchIndexedChunks('plan', { topK: 5001 }), /1\.\.5000/);
+        await assert.rejects(() => fss.retrieval.searchContent('plan', { topK: 1.5 }), /integer/);
+        await assert.rejects(() => fss.retrieval.searchContent('plan', { topK: 5001 }), /1\.\.5000/);
     } finally {
         LLM.embed = originalEmbed;
         LLM.rerank = originalRerank;
@@ -4264,7 +4402,7 @@ async function testProcessEmbeddingQueueSkipsFileErrorsOnce() {
             }
         };
         let calls = 0;
-        fss.embedSingleFile = async () => {
+        fss.retrieval._buildWholeFile = async () => {
             calls++;
             const err = new Error('malformed content');
             err.status = 400;
@@ -4302,7 +4440,7 @@ async function testProcessEmbeddingQueueMarksPermanentFileErrorsAsDisabled() {
             }
         };
         let calls = 0;
-        fss.embedSingleFile = async () => {
+        fss.retrieval._buildWholeFile = async () => {
             calls++;
             const err = new Error('input too long');
             err.status = 400;
@@ -4340,7 +4478,7 @@ async function testProcessEmbeddingQueueKeepsAmbiguousBadRequestRetryable() {
                 }
             }
         };
-        fss.embedSingleFile = async () => {
+        fss.retrieval._buildWholeFile = async () => {
             const err = new Error('400 status code (no body)');
             err.status = 400;
             throw err;
@@ -4375,7 +4513,7 @@ async function testProcessEmbeddingQueuePrioritizesFreshBeforeFailed() {
             update: async () => {}
         };
         const calls = [];
-        fss.embedSingleFile = async (file) => {
+        fss.retrieval._buildWholeFile = async (file) => {
             calls.push(path.basename(file.item_id));
             file.embedded = 1;
         };
@@ -4421,7 +4559,7 @@ async function testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes() {
             }
         };
         let calls = 0;
-        fss.embedSingleFile = async () => {
+        fss.retrieval._buildWholeFile = async () => {
             calls++;
             const err = new Error('server unavailable');
             err.status = 503;
@@ -4455,7 +4593,7 @@ async function testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors() {
             search: async () => ({ items: [{ item: file }] })
         };
         let calls = 0;
-        fss.embedSingleFile = async () => {
+        fss.retrieval._buildWholeFile = async () => {
             calls++;
             const err = new Error('unauthorized');
             err.status = 401;
@@ -4506,7 +4644,7 @@ async function testProcessEmbeddingQueueSkipsResetApiFailureStreak() {
             }
         };
         const calls = [];
-        fss.embedSingleFile = async (file) => {
+        fss.retrieval._buildWholeFile = async (file) => {
             calls.push(path.basename(file.item_id));
             if (file.item_id.endsWith('drift.md')) {
                 return { status: 'skipped_drift' };
@@ -4570,7 +4708,7 @@ async function testSearchFilterEmbeddedOneExcludesPending() {
         const rowA = (
             await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: fa }])
         ).items[0].item;
-        await fss.embedSingleFile(rowA);
+        await fss.retrieval._buildWholeFile(rowA);
 
         // File B: vector seeded manually (simulating a stale state) but base.embedded=0
         const fb = path.join(dir, 'beta.md');
@@ -4596,13 +4734,13 @@ async function testSearchFilterEmbeddedOneExcludesPending() {
         assert.equal(rowB.embedded, 0);
 
         // Query — must NOT include B
-        const r = await fss.searchFileByName('beta');
+        const r = await fss.retrieval.searchNames('beta');
         const paths = r.results.map((x) => x.path);
         assert.ok(!paths.includes(fb), 'embedded=0 row must be filtered out');
 
         // After embedding B, it should appear
-        await fss.embedSingleFile(rowB);
-        const r2 = await fss.searchFileByName('beta');
+        await fss.retrieval._buildWholeFile(rowB);
+        const r2 = await fss.retrieval.searchNames('beta');
         const paths2 = r2.results.map((x) => x.path);
         assert.ok(paths2.includes(fb));
     } finally {
@@ -4628,6 +4766,17 @@ async function main() {
         testEmbedWithRetry429,
         testEmbedWithRetryUsesSmallApiBatch,
         testMakeSchemaModes,
+        testFullTextVersionLifecycle,
+        testFullTextSearchReadinessAndScope,
+        testFullTextQueueSelectionAndOutcomes,
+        testFullTextRebuildAndFilePatches,
+        testFullTextReadonlyCleanup,
+        testFullTextOwnershipAndDeletion,
+        testFullTextReadonly,
+        testFullTextOpenFailures,
+        testFullTextResetRecovery,
+        testFullTextResetRetryFailures,
+        testFullTextAssemblyAndUpgrade,
         testScannerStateNewField,
         testScannerStateMigratesLastFileCount,
         testScannerStateMigratesLastScanAt,
@@ -4649,7 +4798,7 @@ async function main() {
         testUninitializedVectorAndChunkIndexersDropOldDimStorage,
         testResetVectorChunkRecoversFromBaseOnlyOldDimStorage,
         testResetVectorChunkDoesNotPublishHalfInitializedStorage,
-        testArkDataRawDropOnlyDropsTables,
+        testArkDataRawDropDeletesWholeStores,
         testResetVectorChunkRecordsRebuildEvent,
         testRebuildAllRecordsFullEventAndResetsVectorState,
         testRebuildAllRecordsFailedFullEvent,
@@ -4732,3 +4881,938 @@ main().catch((e) => {
     console.error('Fatal:', e);
     process.exit(1);
 });
+
+async function withFullTextFixture(run) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-storage-'));
+    const owners = [];
+    const owner = () => {
+        const value = new FSStorage(directory);
+        owners.push(value);
+        return value;
+    };
+    try {
+        await run({ directory, owner });
+    } finally {
+        for (const value of owners) await value.close();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+async function testFullTextAssemblyAndUpgrade() {
+    for (const mode of ['base-only', 'full']) {
+        for (const fullText of [false, true]) {
+            await withFullTextFixture(async ({ directory }) => {
+                const schema = makeSchema(4, { mode, fullText });
+                assert.equal(schema.columns.bm25?.defaultValue, 0);
+                assert.equal(schema.columns.full_text?.nullable, true);
+                assert.equal(Boolean(schema.needIndexers.full_text), fullText);
+                const holder = new BaseStorage('filemgr', schema, path.join(directory, 'storage'));
+                try {
+                    await holder.initialize();
+                    assert.equal(Boolean((await holder.getStatus()).BM25Indexer), fullText);
+                } finally {
+                    await holder.close();
+                }
+            });
+        }
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        assert.deepEqual(fss.getFullTextState(), { available: true });
+        assert.equal(fss.scannerState.bm25_generation, 1);
+        assert.equal(fss.scannerState.bm25_rule_version, FULL_TEXT_RULE_VERSION);
+        assert.equal(fss.scannerState.bm25_reset_pending, false);
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: '/old.txt',
+                    item_type: 'file',
+                    type: 'file',
+                    bm25: 1,
+                    bm25_generation: 9,
+                    bm25_modified: 10,
+                    modified: 10
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        await fss.close();
+        const state = JSON.parse(fs.readFileSync(path.join(directory, 'scanner_state.json'), 'utf8'));
+        delete state.bm25_generation;
+        delete state.bm25_rule_version;
+        delete state.bm25_reset_pending;
+        fs.writeFileSync(path.join(directory, 'scanner_state.json'), JSON.stringify(state));
+        const upgraded = owner();
+        await upgraded.initialize({ syncEmbedding: false });
+        assert.equal(upgraded.scannerState.bm25_generation, 10);
+        const row = (
+            await upgraded.storage.search([
+                { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: '/old.txt' }
+            ])
+        ).items[0].item;
+        assert.equal(isFullTextReady(row, 10), false);
+        assert.equal(row.full_text, null);
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const schema = makeSchema(4, { mode: 'base-only', fullTextColumns: false });
+        const old = new BaseStorage('filemgr', schema, path.join(directory, 'storage'));
+        await old.initialize();
+        await old.upsert([{ item_id: '/legacy.txt', item_type: 'file', type: 'file' }]);
+        await old.close();
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        const row = (await fss.storage.search([])).items[0].item;
+        assert.equal(row.bm25, 0);
+        assert.equal(row.bm25_generation, 0);
+        assert.equal(row.full_text, null);
+        assert.equal(fss.scannerState.bm25_generation, 1);
+    });
+}
+
+async function testFullTextResetRecovery() {
+    for (const stage of ['begin', 'complete']) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            assert.equal(fss.getFullTextState().available, true);
+            await fss.close();
+            const statePath = path.join(directory, 'scanner_state.json');
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            state.bm25_rule_version = 0;
+            fs.writeFileSync(statePath, JSON.stringify(state));
+            const bm25Path = path.join(directory, 'storage', 'bm25-index.db');
+            const beforeReset = fs.readFileSync(bm25Path);
+            const broken = owner();
+            const write = broken._writeScannerStateSnapshot;
+            let injected = 0;
+            broken._writeScannerStateSnapshot = async function (snapshot, commit) {
+                if (snapshot.bm25_reset_pending === (stage === 'begin')) {
+                    injected++;
+                    throw new Error('isolated full text snapshot failure');
+                }
+                return write.call(this, snapshot, commit);
+            };
+            await broken.initialize({ syncEmbedding: false });
+            assert.ok(injected > 0);
+            assert.deepEqual(broken.getFullTextState(), { available: false, reason: 'resetting' });
+            assert.equal(broken.scannerState.bm25_generation, stage === 'begin' ? 1 : 2);
+            const disk = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            assert.equal(disk.bm25_reset_pending, stage !== 'begin');
+            if (stage === 'begin') {
+                assert.equal(fs.existsSync(bm25Path), true, 'failed invalidation never deletes the BM25 store');
+                assert.deepEqual(fs.readFileSync(bm25Path), beforeReset);
+            }
+            await broken.close();
+            const resumed = owner();
+            await resumed.initialize({ syncEmbedding: false });
+            assert.equal(resumed.scannerState.bm25_generation, 2, 'resume must not advance the generation twice');
+            assert.deepEqual(resumed.getFullTextState(), { available: true });
+        });
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        await fss.storage.upsert([{ item_id: '/old.txt', item_type: 'file', type: 'file', bm25_generation: 6 }]);
+        await fss.close();
+        fs.writeFileSync(path.join(directory, 'scanner_state.json'), '{corrupt');
+        const interrupted = owner();
+        const write = interrupted._writeScannerStateSnapshot;
+        interrupted._writeScannerStateSnapshot = async function (snapshot, commit) {
+            if (snapshot.bm25_reset_pending === false) throw new Error('completion interrupted');
+            return write.call(this, snapshot, commit);
+        };
+        await interrupted.initialize({ syncEmbedding: false });
+        assert.equal(interrupted.scannerState.bm25_generation, null);
+        await interrupted.close();
+        const resumed = owner();
+        await resumed.initialize({ syncEmbedding: false });
+        assert.equal(resumed.scannerState.bm25_generation, 7);
+    });
+}
+
+async function testFullTextOpenFailures() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        assert.equal(fss.getFullTextState().available, true);
+        await fss.close();
+        const database = new Database(path.join(directory, 'storage', 'bm25-index.db'));
+        database.pragma('user_version = 99');
+        database.close();
+        const reopened = owner();
+        await reopened.initialize({ syncEmbedding: false });
+        assert.deepEqual(reopened.getFullTextState(), { available: true });
+        assert.equal(reopened.scannerState.bm25_generation, 2);
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.saveFiles(
+            [{ path: path.join(directory, 'keep.txt'), filename: 'keep.txt', type: 'file', modified: 1, size: 1 }],
+            directory
+        );
+        await fss.close();
+        const database = new Database(path.join(directory, 'storage', 'bm25-index.db'));
+        database.exec('DROP INDEX postings_rec');
+        database.close();
+        const reopened = owner();
+        await reopened.initialize({ syncEmbedding: false });
+        assert.deepEqual(reopened.getFullTextState(), { available: true });
+        assert.equal(reopened.scannerState.bm25_generation, 2);
+        const rows = (await reopened.storage.search([])).items.map(({ item }) => item.item_id);
+        assert.deepEqual(rows, [path.join(directory, 'keep.txt')], 'only the BM25 store is rebuilt');
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        BM25Indexer.prototype.initialize = async function () {
+            const error = Object.assign(new Error('persistent schema failure'), { code: 'bm25_invalid_schema' });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+            throw error;
+        };
+        try {
+            const reopened = owner();
+            const drop = reopened._dropFullTextStore.bind(reopened);
+            let drops = 0;
+            reopened._dropFullTextStore = async () => {
+                drops++;
+                return drop();
+            };
+            await reopened.initialize({ syncEmbedding: false });
+            assert.equal(reopened.mode, 'base-only');
+            // Startup replaces the base holder with the full one when a model is configured.
+            await reopened._replaceRetrievalStorage({ dim: 2, mode: 'full' });
+            assert.equal(reopened.mode, 'full');
+            assert.equal(drops, 1, 'one reset is shared by every holder opened during initialization');
+            assert.equal(reopened.scannerState.bm25_generation, 2);
+            assert.deepEqual(reopened.getFullTextState(), { available: false, reason: 'open_failed' });
+            await reopened.initialize({ syncEmbedding: false });
+            assert.equal(drops, 2, 'a later initialization may try again once');
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+    for (const code of ['SQLITE_CORRUPT', 'EACCES', 'bm25_invalid_schema']) {
+        await withFullTextFixture(async ({ owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            assert.equal(fss.getFullTextState().available, true);
+            await fss.close();
+            const initialize = BM25Indexer.prototype.initialize;
+            let injected = 0;
+            BM25Indexer.prototype.initialize = async function () {
+                if (injected++ === 0 || code !== 'SQLITE_CORRUPT') {
+                    const error = Object.assign(new Error('isolated BM25 failure'), { code });
+                    recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+                    throw error;
+                }
+                return initialize.call(this);
+            };
+            try {
+                const reopened = owner();
+                await reopened.initialize({ syncEmbedding: false });
+                assert.ok(injected > 0);
+                assert.deepEqual(
+                    reopened.getFullTextState(),
+                    code === 'SQLITE_CORRUPT' ? { available: true } : { available: false, reason: 'open_failed' }
+                );
+                // A persistent schema failure is reset once, then falls back.
+                assert.equal(reopened.scannerState.bm25_generation, code === 'EACCES' ? 1 : 2);
+                if (code === 'bm25_invalid_schema') assert.equal(injected, 2);
+                assert.equal(reopened.mode, 'base-only');
+            } finally {
+                BM25Indexer.prototype.initialize = initialize;
+            }
+        });
+    }
+}
+
+async function testFullTextReadonly() {
+    for (const scenario of [
+        'exists',
+        'pending',
+        'rule',
+        'generation',
+        'missing',
+        'uninitialized',
+        'incompatible',
+        'open_failed'
+    ]) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const writer = owner();
+            await writer.initialize({ syncEmbedding: false });
+            assert.equal(writer.getFullTextState().available, true);
+            await writer.close();
+            const statePath = path.join(directory, 'scanner_state.json');
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            if (scenario === 'pending') state.bm25_reset_pending = true;
+            if (scenario === 'rule') state.bm25_rule_version = 0;
+            if (scenario === 'generation') state.bm25_generation = null;
+            fs.writeFileSync(statePath, JSON.stringify(state));
+            const dbPath = path.join(directory, 'storage', 'bm25-index.db');
+            if (['missing', 'uninitialized', 'open_failed'].includes(scenario)) fs.rmSync(dbPath);
+            if (scenario === 'uninitialized') fs.writeFileSync(dbPath, '');
+            if (scenario === 'open_failed') fs.mkdirSync(dbPath);
+            if (scenario === 'incompatible') {
+                const db = new Database(dbPath);
+                db.pragma('user_version = 99');
+                db.close();
+            }
+            const before = fs.readFileSync(statePath, 'utf8');
+            const reader = owner();
+            const created = [];
+            const closed = new Set();
+            const create = reader._newStorageHolder.bind(reader);
+            reader._newStorageHolder = async (options) => {
+                const result = await create(options);
+                created.push(result.holder);
+                const close = result.holder.close.bind(result.holder);
+                result.holder.close = async () => {
+                    await close();
+                    closed.add(result.holder);
+                };
+                return result;
+            };
+            await reader.initializeReadonly();
+            assert.ok(reader.storage, scenario);
+            assert.deepEqual(
+                reader.getFullTextState(),
+                scenario === 'exists'
+                    ? { available: true }
+                    : {
+                          available: false,
+                          reason: ['pending', 'rule', 'generation'].includes(scenario) ? 'resetting' : 'open_failed'
+                      }
+            );
+            assert.equal(fs.readFileSync(statePath, 'utf8'), before, 'readonly never persists BM25 state');
+            if (scenario === 'missing') assert.equal(fs.existsSync(dbPath), false);
+            assert.ok(created.length >= 2);
+            assert.ok(
+                created.filter((holder) => holder !== reader.storage).every((holder) => closed.has(holder)),
+                scenario
+            );
+        });
+    }
+}
+
+async function testFullTextOwnershipAndDeletion() {
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const old = fss.storage;
+        const initialize = BM25Indexer.prototype.initialize;
+        let injected = 0;
+        BM25Indexer.prototype.initialize = async function () {
+            injected++;
+            const error = Object.assign(new Error('candidate incompatible'), { code: 'bm25_index_version_mismatch' });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer' });
+            throw error;
+        };
+        try {
+            await fss._replaceRetrievalStorage({ dim: 4, mode: 'base-only' }, async () => ({
+                publish: false,
+                afterDiscard() {}
+            }));
+            assert.equal(injected, 1);
+            assert.equal(fss.storage, old);
+            assert.equal(fss.scannerState.bm25_reset_pending, true);
+            assert.deepEqual(fss.getFullTextState(), { available: false, reason: 'resetting' });
+            assert.ok((await old.getStatus()).BM25Indexer, 'D2 preserves the old physical owner');
+            await assert.rejects(
+                () => fss._newStorageHolder({ dim: 4, mode: 'base-only', fullText: 'required', role: 'write' }),
+                /still owned/
+            );
+            assert.equal(injected, 1, 'required D2 does not initialize a successor');
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+    for (const required of [false, true]) {
+        await withFullTextFixture(async ({ owner }) => {
+            const fss = owner();
+            await fss.initialize({ syncEmbedding: false });
+            await fss.close();
+            const initialize = BM25Indexer.prototype.initialize;
+            let injected = 0;
+            const failure = new Error('BM25 denied');
+            recordStorageInitializationFailure(failure, { indexer: 'BM25Indexer' });
+            BM25Indexer.prototype.initialize = async () => {
+                injected++;
+                throw failure;
+            };
+            try {
+                const options = { dim: 4, mode: 'base-only', role: 'write', fullText: required ? 'required' : 'off' };
+                const created = await fss._newStorageHolder(options);
+                if (required)
+                    await assert.rejects(
+                        () => fss._openStorageHolder(created, options),
+                        (error) => error === failure
+                    );
+                else {
+                    const holder = await fss._openStorageHolder(created, options);
+                    await fss._closeBaseStorage(holder);
+                }
+                assert.equal(injected, required ? 1 : 0);
+            } finally {
+                BM25Indexer.prototype.initialize = initialize;
+            }
+        });
+    }
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const statePath = path.join(directory, 'scanner_state.json');
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        state.bm25_rule_version = 0;
+        fs.writeFileSync(statePath, JSON.stringify(state));
+        const remove = fs.rmSync;
+        const initialize = BaseStorage.prototype.initialize;
+        const failure = Object.assign(new Error('BM25 delete denied'), { code: 'EACCES' });
+        let opens = 0,
+            deletes = 0;
+        fs.rmSync = (target, options) => {
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) {
+                deletes++;
+                throw failure;
+            }
+            return remove(target, options);
+        };
+        BaseStorage.prototype.initialize = async function () {
+            opens++;
+            return initialize.call(this);
+        };
+        try {
+            const failed = owner();
+            await assert.rejects(
+                () => failed.initialize({ syncEmbedding: false }),
+                (error) => error === failure
+            );
+            assert.equal(deletes, 1);
+            assert.equal(opens, 0);
+            assert.equal(failed.scannerState.bm25_generation, 2);
+            assert.equal(failed.scannerState.bm25_reset_pending, true);
+        } finally {
+            fs.rmSync = remove;
+            BaseStorage.prototype.initialize = initialize;
+        }
+        const resumed = owner();
+        await resumed.initialize({ syncEmbedding: false });
+        assert.equal(resumed.scannerState.bm25_generation, 2);
+        assert.equal(resumed.getFullTextState().available, true);
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        await fss.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        const close = BM25Indexer.prototype.close;
+        let opens = 0,
+            closes = 0;
+        const primary = Object.assign(new Error('BM25 corrupt with cleanup failure'), { code: 'SQLITE_CORRUPT' });
+        recordStorageInitializationFailure(primary, { indexer: 'BM25Indexer', backend: 'native' });
+        BM25Indexer.prototype.initialize = async () => {
+            opens++;
+            throw primary;
+        };
+        BM25Indexer.prototype.close = async () => {
+            closes++;
+            throw new Error('BM25 still held');
+        };
+        const broken = owner();
+        try {
+            await assert.rejects(
+                () => broken.initialize({ syncEmbedding: false }),
+                (error) => error === primary
+            );
+            assert.equal(opens, 1);
+            assert.ok(closes > 0);
+            assert.equal(broken._pendingStorageClosures.size, 1);
+            assert.equal(broken.scannerState.bm25_reset_pending, false);
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+            BM25Indexer.prototype.close = close;
+        }
+        await broken._retryStorageClosures();
+        assert.equal(broken._pendingStorageClosures.size, 0);
+    });
+}
+
+async function testFullTextReadonlyCleanup() {
+    await withFullTextFixture(async ({ owner }) => {
+        const writer = owner();
+        await writer.initialize({ syncEmbedding: false });
+        await writer.close();
+        const probe = BM25Indexer.prototype.probeBM25Store;
+        const initialize = BaseStorage.prototype.initialize;
+        let failing = true,
+            opens = 0,
+            observed;
+        BM25Indexer.prototype.probeBM25Store = async function () {
+            this.dependencies.probe = async (dbPath, retain) => {
+                observed = await probeBM25IndexStore(dbPath, retain, {
+                    wrapDriver(driver) {
+                        const close = driver.close.bind(driver);
+                        driver.close = () => {
+                            if (failing) throw new Error('isolated probe cleanup failure');
+                            return close();
+                        };
+                        return driver;
+                    }
+                });
+                return observed;
+            };
+            return probe.call(this);
+        };
+        BaseStorage.prototype.initialize = async function () {
+            opens++;
+            return initialize.call(this);
+        };
+        const reader = owner();
+        try {
+            await reader.initializeReadonly();
+            assert.equal(observed.status, 'open_failed');
+            assert.equal(observed.failure.operation, 'close');
+            assert.equal(reader.storage, null);
+            assert.equal(reader.deferredReason, 'open_failed');
+            assert.equal(opens, 0, 'probe cleanup failure forbids every successor initialization');
+            assert.equal(reader._pendingStorageClosures.size, 1);
+        } finally {
+            failing = false;
+            BM25Indexer.prototype.probeBM25Store = probe;
+            BaseStorage.prototype.initialize = initialize;
+        }
+        await reader._retryStorageClosures();
+        assert.equal(reader._pendingStorageClosures.size, 0);
+    });
+    await withFullTextFixture(async ({ owner }) => {
+        const writer = owner();
+        await writer.initialize({ syncEmbedding: false });
+        await writer.close();
+        const initialize = BM25Indexer.prototype.initialize;
+        let injected = 0;
+        BM25Indexer.prototype.initialize = async () => {
+            injected++;
+            const error = Object.assign(new Error('readonly open failed after successful probe'), {
+                code: 'SQLITE_CORRUPT'
+            });
+            recordStorageInitializationFailure(error, { indexer: 'BM25Indexer', backend: 'native' });
+            throw error;
+        };
+        try {
+            const reader = owner();
+            await reader.initializeReadonly();
+            assert.equal(injected, 1);
+            assert.deepEqual(reader.getFullTextState(), { available: false, reason: 'open_failed' });
+            assert.equal(reader.scannerState.bm25_generation, 1);
+            assert.equal(reader.scannerState.bm25_reset_pending, false);
+        } finally {
+            BM25Indexer.prototype.initialize = initialize;
+        }
+    });
+}
+
+async function testFullTextRebuildAndFilePatches() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const primary = Object.assign(new Error('rebuild BM25 delete denied'), { code: 'EACCES' });
+        const remove = fs.rmSync;
+        const basePath = path.join(directory, 'storage', 'base-index.db');
+        const deleted = [];
+        fs.rmSync = (target, options) => {
+            deleted.push(target);
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) throw primary;
+            return remove(target, options);
+        };
+        try {
+            await assert.rejects(fss.rebuildAll('WF2 deletion failure'), (error) => error === primary);
+            assert.equal(deleted.includes(basePath), false);
+            assert.equal(fs.existsSync(basePath), true);
+            const state = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
+            assert.equal(state.bm25_reset_pending, true);
+            assert.equal(state.semantic_reset_pending, true);
+            assert.equal(state.bm25_generation, 2);
+        } finally {
+            fs.rmSync = remove;
+        }
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const file = path.join(directory, 'metadata.txt');
+        fs.writeFileSync(file, 'metadata text');
+        const entry = makeFileEntry(file);
+        await fss.saveFiles([entry], directory);
+        const read = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+                .items[0].item;
+        assert.equal((await read()).bm25, 0);
+        await fss.storage.update(
+            [{ item_id: file, item_type: 'file', bm25: 1, bm25_generation: 1, bm25_modified: entry.modified }],
+            { indexers: ['BaseIndexer'] }
+        );
+        await fss.saveFiles([entry], path.dirname(directory));
+        let row = await read();
+        assert.equal(row.bm25, 1);
+        assert.equal(row.bm25_generation, 1);
+        assert.equal(row.bm25_modified, entry.modified);
+        assert.equal(row.full_text, null);
+        await fss.saveFiles([{ ...entry, modified: entry.modified + 10 }], directory);
+        row = await read();
+        assert.equal(row.bm25, 0);
+        assert.equal(row.full_text, null);
+        const steps = [];
+        const close = fss._closeBaseStorage.bind(fss);
+        fss._closeBaseStorage = async (holder) => {
+            if (holder === fss.storage && holder) {
+                const state = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
+                assert.equal(state.bm25_reset_pending, true);
+                assert.equal(state.semantic_reset_pending, true);
+                steps.push('close');
+            }
+            return close(holder);
+        };
+        const remove = fs.rmSync;
+        fs.rmSync = (target, options) => {
+            if (target === path.join(directory, 'storage', 'bm25-index.db')) steps.push('bm25');
+            if (target === path.join(directory, 'storage', 'base-index.db')) steps.push('base');
+            return remove(target, options);
+        };
+        const complete = fss._completeFullTextReset.bind(fss);
+        fss._completeFullTextReset = async (holder) => {
+            steps.push('complete');
+            return complete(holder);
+        };
+        const settings = Setting.getInstance().data;
+        Setting.updateInstanceData({ ...settings, default_embedding_model: '' });
+        try {
+            await fss.rebuildAll('WF2 fixture');
+        } finally {
+            Setting.updateInstanceData(settings);
+            fs.rmSync = remove;
+            fss._closeBaseStorage = close;
+        }
+        assert.deepEqual(steps, ['close', 'bm25', 'base', 'complete']);
+        assert.equal(fss.scannerState.bm25_reset_pending, false);
+        assert.equal(fss.scannerState.semantic_reset_pending, true);
+    });
+}
+
+async function testFullTextResetRetryFailures() {
+    for (const [indexer, code] of [
+        ['BM25Indexer', 'EACCES'],
+        ['BM25Indexer', 'SQLITE_CORRUPT'],
+        ['BaseIndexer', 'EACCES']
+    ]) {
+        await withFullTextFixture(async ({ directory, owner }) => {
+            const original = owner();
+            await original.initialize({ syncEmbedding: false });
+            await original.close();
+            const second = Object.assign(new Error('reset retry opening failure'), { code });
+            recordStorageInitializationFailure(second, { indexer, backend: 'native' });
+            const first = Object.assign(new Error('initial BM25 corruption'), { code: 'SQLITE_CORRUPT' });
+            recordStorageInitializationFailure(first, { indexer: 'BM25Indexer', backend: 'native' });
+            const initialize = BaseStorage.prototype.initialize;
+            const remove = fs.rmSync;
+            let opens = 0;
+            let deletes = 0;
+            BaseStorage.prototype.initialize = async function () {
+                opens++;
+                if (opens === 1) throw first;
+                if (opens === 2) throw second;
+                return initialize.call(this);
+            };
+            fs.rmSync = (target, options) => {
+                if (target === path.join(directory, 'storage', 'bm25-index.db')) deletes++;
+                return remove(target, options);
+            };
+            const reopened = owner();
+            try {
+                if (indexer === 'BaseIndexer') {
+                    await assert.rejects(reopened.initialize({ syncEmbedding: false }), (error) => error === second);
+                    assert.equal(opens, 2);
+                } else {
+                    await reopened.initialize({ syncEmbedding: false });
+                    assert.equal(opens, 3);
+                    assert.deepEqual(reopened.getFullTextState(), { available: false, reason: 'open_failed' });
+                }
+                assert.equal(deletes, 1, 'a reset retry never deletes the store twice');
+                assert.equal(reopened.scannerState.bm25_generation, 2);
+                assert.equal(reopened.scannerState.bm25_reset_pending, true);
+                const state = JSON.parse(fs.readFileSync(reopened._scannerStatePath, 'utf8'));
+                assert.equal(state.bm25_reset_pending, true);
+            } finally {
+                BaseStorage.prototype.initialize = initialize;
+                fs.rmSync = remove;
+            }
+        });
+    }
+}
+
+async function testFullTextQueueSelectionAndOutcomes() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const active = path.join(directory, 'active');
+        const paused = path.join(directory, 'paused');
+        fs.mkdirSync(active);
+        fs.mkdirSync(paused);
+        const files = ['fresh.txt', 'old.txt', 'retry.txt', 'failed.txt'];
+        for (const file of files) fs.writeFileSync(path.join(active, file), 'wf2queuetoken');
+        const pausedFile = path.join(paused, 'paused.txt');
+        fs.writeFileSync(pausedFile, 'wf2queuetoken');
+        await fss.saveFiles(
+            files.map((file) => makeFileEntry(path.join(active, file))),
+            active
+        );
+        await fss.saveFiles([makeFileEntry(pausedFile)], paused);
+        await fss.storage.update(
+            [
+                { item_id: path.join(active, 'old.txt'), item_type: 'file', bm25: -2, bm25_generation: 0 },
+                { item_id: path.join(active, 'retry.txt'), item_type: 'file', bm25: -1, bm25_generation: 1 },
+                { item_id: path.join(active, 'failed.txt'), item_type: 'file', bm25: -2, bm25_generation: 1 }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const upsert = fss.storage.upsert.bind(fss.storage);
+        const built = [];
+        fss.storage.upsert = async (items, options) => {
+            if (options?.indexers?.includes('BM25Indexer')) built.push(path.basename(items[0].item_id));
+            return upsert(items, options);
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [active], limit: 1 }), {
+            outcome: 'completed',
+            processed: 3
+        });
+        assert.deepEqual(
+            built,
+            ['fresh.txt', 'old.txt', 'retry.txt'],
+            'paused fresh rows must not starve a runnable retry'
+        );
+        assert.equal((await fss.storage.searchBM25('wf2queuetoken', { field: 'full_text', topK: 10 })).length, 3);
+        assert.deepEqual(await fss.processFullTextQueue(() => true, { activeRoots: [active] }), {
+            outcome: 'yielded',
+            processed: 0
+        });
+        fss.storage.upsert = async () => {
+            throw new Error('BM25 queue disk failure');
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [paused] }), {
+            outcome: 'stopped',
+            processed: 0
+        });
+        assert.equal(
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: pausedFile }]))
+                .items[0].item.bm25,
+            0
+        );
+        fss.storage.upsert = upsert;
+        let changed = false;
+        const search = fss.storage.search.bind(fss.storage);
+        fss.storage.search = async (...args) => {
+            const result = await search(...args);
+            if (!changed) {
+                changed = true;
+                fss.scannerState.bm25_generation++;
+            }
+            return result;
+        };
+        assert.equal((await fss.processFullTextQueue(() => false, { activeRoots: [paused] })).outcome, 'stale');
+    });
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const files = [];
+        for (let index = 0; index < 53; index++) {
+            const file = path.join(directory, `batch-${index}.txt`);
+            fs.writeFileSync(file, '');
+            files.push(makeFileEntry(file));
+        }
+        const broken = path.join(directory, 'broken.docx');
+        fs.writeFileSync(broken, 'not an office document');
+        files.push(makeFileEntry(broken));
+        await fss.saveFiles(files, directory);
+        const select = fss._selectPendingEmbeddingCandidates.bind(fss);
+        const sizes = [];
+        // Cache refills pass batchLimit; only the per-batch selection is recorded.
+        fss._selectPendingEmbeddingCandidates = (items, options) => {
+            const batch = select(items, options);
+            if (options.batchLimit === undefined) sizes.push(batch.length);
+            return batch;
+        };
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [directory] }), {
+            outcome: 'completed',
+            processed: 53
+        });
+        assert.equal(sizes[0], 50);
+        const row = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: broken }]))
+                .items[0].item;
+        assert.equal((await row()).bm25, -1, 'same-round failure must not be retried');
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        assert.equal((await row()).bm25, -2);
+    });
+}
+
+async function testFullTextVersionLifecycle() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize();
+        assert.equal(fss.mode, 'full');
+        const file = path.join(directory, 'version.txt');
+        fs.writeFileSync(file, 'wf2versionone');
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        const row = async () =>
+            (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+                .items[0].item;
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        await fss.retrieval.buildStep(await row());
+        const first = await row();
+        assert.equal(first.embedded, 1);
+        assert.equal(isFullTextReady(first, fss.scannerState.bm25_generation), true);
+        assert.equal(first.bm25_modified, first.modified);
+        assert.equal((await fss.searchFullText('wf2versionone')).length, 1);
+        fs.writeFileSync(file, 'wf2versiontwo different length');
+        fs.utimesSync(file, new Date(), new Date(first.modified + 2000));
+        assert.deepEqual(await fss.processFullTextQueue(() => false, { activeRoots: [directory] }), {
+            outcome: 'completed',
+            processed: 0
+        });
+        await fss.retrieval.buildStep(first);
+        const advanced = await row();
+        assert.notEqual(advanced.modified, first.modified, 'embedding production build advances the observed version');
+        assert.equal(advanced.embedded, 1);
+        assert.equal(isFullTextReady(advanced, fss.scannerState.bm25_generation), false);
+        assert.deepEqual(await fss.searchFullText('wf2versionone'), []);
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        assert.equal((await row()).bm25, 0, 'scan invalidates BM25 even after embedding advanced modified');
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        const both = await row();
+        assert.equal(both.embedded, 1);
+        assert.equal(isFullTextReady(both, fss.scannerState.bm25_generation), true);
+        assert.equal(both.bm25_modified, both.modified);
+        assert.equal((await fss.searchFullText('wf2versiontwo')).length, 1);
+        assert.deepEqual(await fss.searchFullText('wf2versionone'), []);
+        await fss.saveFiles([makeFileEntry(file)], path.dirname(directory));
+        const refOnly = await row();
+        for (const key of ['bm25', 'bm25_generation', 'bm25_modified', 'full_text'])
+            assert.equal(refOnly[key], both[key]);
+        await fss.storage.update([{ item_id: file, item_type: 'file', bm25: -1, bm25_modified: first.modified }], {
+            indexers: ['BaseIndexer']
+        });
+        await fss.saveFiles([makeFileEntry(file)], directory);
+        assert.equal((await row()).bm25, -1);
+        await fss.storage.delete([file]);
+        assert.deepEqual(await fss.storage.searchBM25('wf2versiontwo', { field: 'full_text', topK: 5 }), []);
+    });
+}
+
+async function testFullTextSearchReadinessAndScope() {
+    await withFullTextFixture(async ({ directory, owner }) => {
+        const fss = owner();
+        await fss.initialize({ syncEmbedding: false });
+        const sub = path.join(directory, 'sub');
+        fs.mkdirSync(sub);
+        const paths = [];
+        for (const name of [
+            '鸿蒙操作系统说明.txt',
+            '鸿蒙笔记.txt',
+            'pending.txt',
+            'old.txt',
+            'drift.txt',
+            'hidden.txt',
+            'sub/inside.txt'
+        ]) {
+            const file = path.join(directory, name);
+            fs.writeFileSync(file, 'wf2searchtoken');
+            paths.push(file);
+        }
+        await fss.saveFiles(paths.map(makeFileEntry), directory);
+        assert.deepEqual(
+            (await fss.searchIndexedFilesByKeyword('鸿蒙 操作系统', { terms: ['鸿蒙', '操作系统'] }))
+                .map((x) => x.filename)
+                .sort(),
+            ['鸿蒙操作系统说明.txt', '鸿蒙笔记.txt'].sort()
+        );
+        await fss.processFullTextQueue(() => false, { activeRoots: [directory] });
+        const g = fss.scannerState.bm25_generation;
+        await fss.storage.update(
+            [
+                { item_id: paths[2], item_type: 'file', bm25: 0 },
+                { item_id: paths[3], item_type: 'file', bm25_generation: g + 1 },
+                { item_id: paths[4], item_type: 'file', bm25_modified: 1 },
+                { item_id: paths[5], item_type: 'file', ref_count: 0 }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const orphan = path.join(directory, 'orphan.txt');
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: orphan,
+                    item_type: 'file',
+                    indexer_columns: { BM25Indexer: [{ column: 'full_text', content: 'wf2searchtoken' }] }
+                }
+            ],
+            { indexers: ['BM25Indexer'] }
+        );
+        const calls = [];
+        const holder = fss.storage;
+        const raw = holder.searchBM25.bind(holder),
+            scoped = holder.searchScope.bind(holder);
+        holder.searchBM25 = async (q, o) => {
+            calls.push(['raw', q, o]);
+            return raw(q, o);
+        };
+        holder.searchScope = async (q, o) => {
+            calls.push(['scope', q, o]);
+            return scoped(q, o);
+        };
+        const found = await fss.searchFullText('wf2searchtoken', { topK: 1000 });
+        assert.deepEqual(found.map((x) => x.item_id).sort(), [paths[0], paths[1], paths[6]].sort());
+        assert.deepEqual(
+            found.map((x) => x.bm25Rank),
+            [1, 2, 3]
+        );
+        assert.equal(calls[0][0], 'raw');
+        assert.equal(calls[0][2].topK, 200);
+        const restricted = await fss.searchFullText('wf2searchtoken', { topK: 7, scope: { type: 'path', path: sub } });
+        assert.deepEqual(
+            restricted.map((x) => x.item_id),
+            [paths[6]]
+        );
+        assert.deepEqual(
+            restricted.map((x) => x.bm25Rank),
+            [1]
+        );
+        assert.equal(calls[1][0], 'scope');
+        assert.equal(calls[1][1].targetCondition.value.topK, 14);
+        assert.deepEqual(
+            calls[1][1].preconditions.map((x) => [x.field, x.value]),
+            [
+                ['type', 'file'],
+                ['bm25', 1],
+                ['bm25_generation', g],
+                ['ref_count', 0],
+                ['item_id', sub]
+            ]
+        );
+        const context = fss.captureFullTextContext();
+        assert.equal(fss.isFullTextContextCurrent(context), true);
+        fss.scannerState.embedding_generation++;
+        assert.equal(fss.isFullTextContextCurrent(context), true);
+        fss.scannerState.bm25_generation++;
+        assert.equal(fss.isFullTextContextCurrent(context), false);
+        fss.scannerState.bm25_generation--;
+        fss.scannerState.bm25_reset_pending = true;
+        assert.equal(fss.isFullTextContextCurrent(context), false);
+        assert.deepEqual(await fss.searchFullText('wf2searchtoken'), []);
+    });
+}

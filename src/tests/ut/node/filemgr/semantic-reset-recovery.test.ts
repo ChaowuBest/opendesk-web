@@ -6,9 +6,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
-import { BaseIndexer } from '../../../../main/services/storage/base-indexer.js';
 import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
-import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
+import { toWasmDbPath } from '../../../../main/services/storage/wasm-path.js';
 import { FSStorage, makeSchema } from '../../../../main/applications/filemgr/storage.js';
 import { LLM } from '../../../../main/aikernel/llm.js';
 
@@ -18,6 +17,238 @@ after(() => fs.rmSync(profile, { recursive: true, force: true }));
 // Resolve the host binding before any case simulates the WASM platform.
 const SQLite = createRequire(import.meta.url)('better-sqlite3');
 new SQLite(':memory:').close();
+
+test('WF2 full semantic reset releases its holder while preserving BM25 products and state', async (t) => {
+    t.mock.method(Setting, 'getInstance', () => ({
+        getDefaultEmbeddingModelInstance: () => ({ model_name: 'wf2-semantic-preservation', getTimeoutMs: () => 1000 }),
+        getData: () => ({})
+    }));
+    t.mock.method(LLM, 'embed', async () => [1, 0]);
+    const directory = fs.mkdtempSync(path.join(profile, 'wf2-preserve-'));
+    const fss = new FSStorage(directory);
+    t.after(() => fss.close());
+    await fss.initialize();
+    assert.equal(fss.mode, 'full');
+    const file = path.join(directory, 'preserved.txt');
+    const generation = fss.scannerState.bm25_generation;
+    await fss.storage.upsert([
+        {
+            item_id: file,
+            item_type: 'file',
+            type: 'file',
+            modified: 12,
+            bm25: 1,
+            bm25_generation: generation,
+            bm25_modified: 12,
+            indexer_columns: { BM25Indexer: [{ column: 'full_text', content: 'wf2preservedtoken' }] }
+        }
+    ]);
+    const previous = {
+        generation,
+        rule: fss.scannerState.bm25_rule_version,
+        pending: fss.scannerState.bm25_reset_pending
+    };
+    const drop = fss._dropFilemgrStores.bind(fss);
+    let observed = false;
+    t.mock.method(fss, '_dropFilemgrStores', async (options) => {
+        observed = true;
+        assert.equal(fss.storage, null);
+        assert.deepEqual(fss.getFullTextState(), { available: false });
+        assert.equal(options?.includeFullText, undefined);
+        assert.equal(fs.existsSync(path.join(fss._storageDir, 'bm25-index.db')), true);
+        return drop(options);
+    });
+    await fss.retrieval.rebuildProducts({ kind: 'semantic-reset', reason: 'WF2 preserve', dim: 2, mode: 'full' });
+    assert.equal(observed, true);
+    assert.deepEqual(fss.getFullTextState(), { available: true });
+    assert.deepEqual(
+        {
+            generation: fss.scannerState.bm25_generation,
+            rule: fss.scannerState.bm25_rule_version,
+            pending: fss.scannerState.bm25_reset_pending
+        },
+        previous
+    );
+    assert.deepEqual(
+        (await fss.storage.searchBM25('wf2preservedtoken', { field: 'full_text', topK: 5 })).map((hit) => hit.item_id),
+        [file]
+    );
+    const row = (await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }]))
+        .items[0].item;
+    assert.equal(row.bm25, 1);
+    assert.equal(row.bm25_generation, generation);
+    assert.equal(row.bm25_modified, 12);
+});
+
+// Cases that simulate Harmony without a host kit isolate BM25; native-only cases keep it enabled.
+function semanticOnlyOwner(directory: string) {
+    const fss = new FSStorage(directory);
+    const create = fss._newStorageHolder.bind(fss);
+    fss._newStorageHolder = (options: any) => create({ ...options, fullText: 'off' });
+    fss._dropFullTextStore = async () => {
+        assert.equal(fss._fullTextStoreOwned(), false);
+    };
+    return fss;
+}
+
+const baseOnlyResetPhases = [
+    'lock',
+    'chunk-drop',
+    'candidate-init',
+    'reconcile',
+    'candidate-close',
+    'old-close',
+    'complete-write',
+    'success'
+] as const;
+
+for (const backend of ['native', 'wasm'] as const) {
+    for (const phase of baseOnlyResetPhases) {
+        test(`R1 F1 ${backend}: base-only semantic reset ${phase} preserves the approved publication boundary`, async (t) => {
+            const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+            const available = process.env.ARKDATA_AVAILABLE;
+            if (backend === 'wasm') {
+                Object.defineProperty(process, 'platform', { value: 'openharmony' });
+                process.env.ARKDATA_AVAILABLE = '0';
+            }
+            t.mock.method(Setting, 'getInstance', () => ({
+                getDefaultEmbeddingModelInstance: () => ({ model_name: 'model-b' }),
+                getData: () => ({})
+            }));
+            const embed = t.mock.method(LLM, 'embed', async () => [1, 0]);
+            const batch = t.mock.method(LLM, 'batchEmbed', async (texts: string[]) => texts.map(() => [1, 0]));
+            const directory = fs.mkdtempSync(path.join(profile, `base-only-${backend}-${phase}-`));
+            const fss = backend === 'wasm' ? semanticOnlyOwner(directory) : new FSStorage(directory);
+            const old = new BaseStorage('filemgr', makeSchema(2, { mode: 'base-only' }), fss._storageDir);
+            fss.storage = old;
+            fss.mode = 'base-only';
+            const file = path.join(directory, 'old.md');
+            const primary = new Error(`isolated base-only ${phase}`);
+            const cleanup = new Error('isolated candidate cleanup failure');
+            const lock = `${toWasmDbPath(path.join(fss._storageDir, 'chunk-index.db'))}.lock`;
+            let failing = true;
+            let oldCloses = 0;
+            let candidateInitializations = 0;
+            try {
+                await old.initialize();
+                await old.upsert([
+                    { item_id: file, item_type: 'file', type: 'file', filename: 'old.md', ref_count: 1, embedded: 1 }
+                ]);
+                await fss.saveScannerState();
+                if (phase === 'lock') fs.mkdirSync(lock);
+                const initialize = BaseStorage.prototype.initialize;
+                t.mock.method(BaseStorage.prototype, 'initialize', async function () {
+                    candidateInitializations++;
+                    await initialize.call(this);
+                    if (failing && phase === 'candidate-init') throw primary;
+                });
+                const upsert = BaseStorage.prototype.upsert;
+                t.mock.method(BaseStorage.prototype, 'upsert', async function (items: any[], options?: any) {
+                    if (failing) {
+                        assert.equal(fss.storage, old, 'Reconciliation must not publish or release the old base early');
+                        assert.equal(oldCloses, 0);
+                    }
+                    const result = await upsert.call(this, items, options);
+                    if (failing && ['reconcile', 'candidate-close'].includes(phase)) throw primary;
+                    return result;
+                });
+                const close = BaseStorage.prototype.close;
+                t.mock.method(BaseStorage.prototype, 'close', async function () {
+                    if (this === old) {
+                        oldCloses++;
+                        if (failing && phase === 'old-close') throw primary;
+                    } else if (failing && phase === 'candidate-close') throw cleanup;
+                    return close.call(this);
+                });
+                const remove = fs.rmSync;
+                t.mock.method(fs, 'rmSync', (target, options) => {
+                    if (failing && phase === 'chunk-drop' && target === path.join(fss._storageDir, 'chunk-index.db'))
+                        throw primary;
+                    return remove(target, options);
+                });
+                const snapshot = fss._writeScannerStateSnapshot.bind(fss);
+                t.mock.method(fss, '_writeScannerStateSnapshot', async (state, commit) => {
+                    if (state.embedding_generation === 1 && !state.semantic_reset_pending) {
+                        assert.ok(oldCloses > 0, 'Completion follows old-holder release');
+                        assert.equal(fss.storage, null, 'Completion precedes candidate publication');
+                        if (failing && phase === 'complete-write') throw primary;
+                    }
+                    return snapshot(state, commit);
+                });
+                const reset = () =>
+                    fss.retrieval.rebuildProducts({
+                        kind: 'semantic-reset',
+                        reason: 'R1 F1',
+                        dim: 2,
+                        mode: 'full',
+                        embeddingState: { embedding_model: 'model-b', vec_dim: 2 },
+                        resume: !failing
+                    });
+                if (phase === 'success') await reset();
+                else
+                    await assert.rejects(reset(), (error: any) =>
+                        phase === 'lock' ? /lock/i.test(error.message) : error === primary
+                    );
+                assert.equal(fss.scannerState.embedding_generation, 1);
+                assert.equal(fss.scannerState.semantic_reset_pending, phase !== 'success');
+                const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
+                assert.equal(saved.semantic_reset_pending, phase !== 'success');
+                if (!['old-close', 'complete-write', 'success'].includes(phase)) {
+                    assert.equal(
+                        fss.storage,
+                        old,
+                        'An untouched healthy base-only owner remains available after failure'
+                    );
+                    assert.equal(oldCloses, 0);
+                    assert.deepEqual(
+                        (await fss.searchFilesByKeyword('old')).map((row) => row.path),
+                        [file]
+                    );
+                    assert.equal((await fss.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
+                    assert.equal(candidateInitializations, ['lock', 'chunk-drop'].includes(phase) ? 0 : 1);
+                } else if (phase !== 'success') {
+                    assert.equal(fss.storage, null);
+                    assert.equal(
+                        candidateInitializations,
+                        1,
+                        'Old-holder release follows candidate initialization and reconciliation'
+                    );
+                }
+                assert.equal(
+                    fss._pendingStorageClosures.size,
+                    ['old-close', 'candidate-close'].includes(phase) ? 1 : 0
+                );
+                assert.equal(embed.mock.callCount(), 0);
+                assert.equal(batch.mock.callCount(), 0);
+                failing = false;
+                if (phase === 'lock') fs.rmSync(lock, { recursive: true });
+                if (phase !== 'success') {
+                    // The retry uses the persisted pending generation and must release
+                    // retained failures before deleting or creating another candidate.
+                    await fss._retryStorageClosures();
+                    await reset();
+                }
+                assert.equal(fss.mode, 'full');
+                assert.notEqual(fss.storage, old);
+                assert.equal(fss.scannerState.embedding_generation, 1);
+                assert.equal(fss.scannerState.semantic_reset_pending, false);
+                assert.equal(fss._pendingStorageClosures.size, 0);
+                if (backend === 'native') assert.equal(fss.getFullTextState().available, true);
+                assert.deepEqual(
+                    (await fss.searchFilesByKeyword('old')).map((row) => row.path),
+                    [file]
+                );
+            } finally {
+                failing = false;
+                fs.rmSync(lock, { recursive: true, force: true });
+                await fss.close();
+                Object.defineProperty(process, 'platform', platform);
+                if (available === undefined) delete process.env.ARKDATA_AVAILABLE;
+                else process.env.ARKDATA_AVAILABLE = available;
+            }
+        });
+    }
+}
 
 const phases = [
     'initial-write',
@@ -64,7 +295,11 @@ for (const backend of ['native', 'wasm'] as const) {
                 fs.mkdirSync(root);
                 const files = [path.join(root, 'old.md'), path.join(root, 'other.md')];
                 for (const file of files) fs.writeFileSync(file, '');
-                let fss = new FSStorage(directory);
+                const createOwner = () =>
+                    backend === 'wasm' || phase === 'backend-switch'
+                        ? semanticOnlyOwner(directory)
+                        : new FSStorage(directory);
+                let fss = createOwner();
                 const old = new BaseStorage('filemgr', makeSchema(2), fss._storageDir);
                 fss.storage = old;
                 fss.mode = 'full';
@@ -84,7 +319,7 @@ for (const backend of ['native', 'wasm'] as const) {
                     paused: false
                 };
                 const probe = async () => ({ ok: true, model_name: model, dim: dimension, requestDim: undefined });
-                fss._probeEmbedding = probe;
+                fss.retrieval._probeEmbedding = probe;
                 let failing = true;
                 const failure = new Error(`fixture: ${phase}`);
                 try {
@@ -123,33 +358,34 @@ for (const backend of ['native', 'wasm'] as const) {
                             throw failure;
                         return writeSnapshot(state, commit);
                     });
-                    const vectorDrop = VectorIndexer.prototype.dropStorage;
-                    t.mock.method(VectorIndexer.prototype, 'dropStorage', async function () {
-                        await vectorDrop.call(this);
+                    const vectorClose = VectorIndexer.prototype.close;
+                    t.mock.method(VectorIndexer.prototype, 'close', async function () {
+                        if (failing && phase === 'vector-close') throw failure;
+                        return vectorClose.call(this);
+                    });
+                    const storeFile = (name: string) => {
+                        const file = path.join(fss._storageDir, `${name}-index.db`);
+                        return backend === 'wasm' ? toWasmDbPath(file) : file;
+                    };
+                    const remove = fs.rmSync;
+                    t.mock.method(fs, 'rmSync', (...args) => {
+                        const target = String(args[0]);
                         if (
                             failing &&
-                            [
-                                'vector-close',
-                                'repeat-failure',
-                                'disable-model',
-                                'supersede-model',
-                                'change-dimension',
-                                'aba-model',
-                                'backend-switch',
-                                'full-reset'
-                            ].includes(phase)
+                            ((phase === 'chunk-drop' && target === storeFile('chunk')) ||
+                                (phase === 'full-reset' && target === `${storeFile('base')}-wal`) ||
+                                ([
+                                    'repeat-failure',
+                                    'disable-model',
+                                    'supersede-model',
+                                    'change-dimension',
+                                    'aba-model',
+                                    'backend-switch'
+                                ].includes(phase) &&
+                                    target === `${storeFile('vector')}-wal`))
                         )
                             throw failure;
-                    });
-                    const baseDrop = BaseIndexer.prototype.dropStorage;
-                    t.mock.method(BaseIndexer.prototype, 'dropStorage', async function () {
-                        await baseDrop.call(this);
-                        if (failing && phase === 'full-reset') throw failure;
-                    });
-                    const chunkDrop = ChunkIndexer.prototype.dropStorage;
-                    t.mock.method(ChunkIndexer.prototype, 'dropStorage', async function () {
-                        if (failing && phase === 'chunk-drop') throw failure;
-                        return chunkDrop.call(this);
+                        return remove(...args);
                     });
                     const initialize = BaseStorage.prototype.initialize;
                     t.mock.method(BaseStorage.prototype, 'initialize', async function () {
@@ -180,7 +416,7 @@ for (const backend of ['native', 'wasm'] as const) {
                         return save();
                     });
                     await assert.rejects(
-                        phase === 'full-reset' ? fss.rebuildAll('full-reset') : fss.syncEmbeddingMode('model-change'),
+                        phase === 'full-reset' ? fss.rebuildAll('full-reset') : fss.retrieval._syncMode('model-change'),
                         (error) => error === failure
                     );
                     const state = JSON.parse(fs.readFileSync((fss as any)._scannerStatePath, 'utf8'));
@@ -192,13 +428,13 @@ for (const backend of ['native', 'wasm'] as const) {
                         assert.equal((await old.getStatus()).ChunkIndexer.size, 2);
                     }
                     if (pending) {
-                        assert.equal((await fss.searchIndexedChunks('old', { topK: 10 })).results.length, 0);
+                        assert.equal((await fss.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
                         assert.equal(await fss.processEmbeddingQueue(() => false, { activeRoots: [root] }), 0);
-                        const reader = new FSStorage(directory);
+                        const reader = createOwner();
                         await reader.initializeReadonly();
                         try {
                             assert.equal(reader.mode, 'base-only');
-                            assert.equal((await reader.searchIndexedChunks('old', { topK: 10 })).results.length, 0);
+                            assert.equal((await reader.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
                             if (phase === 'full-reset') assert.equal(reader.isDeferred(), true);
                             else assert.equal((await reader.storage!.search([])).items.length, 2);
                         } finally {
@@ -207,16 +443,16 @@ for (const backend of ['native', 'wasm'] as const) {
                     }
                     let expectedGeneration = 1;
                     if (phase === 'repeat-failure') {
-                        await assert.rejects(fss.syncEmbeddingMode('still-failing'), (error) => error === failure);
+                        await assert.rejects(fss.retrieval._syncMode('still-failing'), (error) => error === failure);
                         assert.equal(fss.scannerState.embedding_generation, 1, 'Retries must not advance generation');
                         assert.equal(fss.scannerState.semantic_reset_pending, true);
                     }
                     if (phase === 'disable-model') {
                         model = null;
-                        await fss.syncEmbeddingMode('model-removed');
+                        await fss.retrieval._syncMode('model-removed');
                         assert.equal(fss.mode, 'base-only');
                         assert.equal(fss.scannerState.semantic_reset_pending, true);
-                        assert.equal((await fss.searchIndexedChunks('old', { topK: 10 })).results.length, 0);
+                        assert.equal((await fss.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
                         model = 'model-b';
                     }
                     if (['supersede-model', 'change-dimension', 'aba-model'].includes(phase)) {
@@ -238,15 +474,17 @@ for (const backend of ['native', 'wasm'] as const) {
                     failing = false;
                     if (recovery === 'restart') {
                         await fss.close();
-                        fss = new FSStorage(directory);
-                        fss._probeEmbedding = probe;
+                        fss = createOwner();
+                        fss.retrieval._probeEmbedding = probe;
                         await fss.initialize();
                     } else {
-                        await fss.syncEmbeddingMode('recovery');
+                        await fss.retrieval._syncMode('recovery');
                     }
                     assert.equal(fss.scannerState.embedding_generation, expectedGeneration);
                     assert.equal(fss.scannerState.semantic_reset_pending, false);
                     assert.equal(fss.mode, 'full');
+                    if (backend === 'native' && phase !== 'backend-switch')
+                        assert.equal(fss.getFullTextState().available, true);
                     const before = (await fss.storage!.search([])).items;
                     assert.equal(before.length, ['full-reset', 'backend-switch'].includes(phase) ? 0 : 2);
                     if (before.length === 0) {
@@ -273,26 +511,29 @@ for (const backend of ['native', 'wasm'] as const) {
                     );
                     assert.equal((await fss.storage!.getStatus()).ChunkIndexer.size, 0);
                     assert.equal(await fss.processEmbeddingQueue(() => false, { activeRoots: [root] }), 2);
-                    assert.equal((await fss.searchIndexedChunks('Old model content', { topK: 10 })).results.length, 0);
-                    assert.equal((await fss.searchFileByName('filename')).results.length, 2);
+                    assert.equal(
+                        (await fss.retrieval.searchContent('Old model content', { topK: 10 })).results.length,
+                        0
+                    );
+                    assert.equal((await fss.retrieval.searchNames('filename')).results.length, 2);
                     const final = JSON.parse(fs.readFileSync((fss as any)._scannerStatePath, 'utf8'));
                     assert.equal(final.embedding_generation, expectedGeneration);
                     assert.equal(final.semantic_reset_pending, false);
-                    await fss.syncEmbeddingMode('already-healthy');
+                    await fss.retrieval._syncMode('already-healthy');
                     assert.equal(fss.scannerState.embedding_generation, expectedGeneration);
                     if (phase === 'backend-switch') {
                         if (backend === 'native') Object.defineProperty(process, 'platform', platform);
                         else Object.defineProperty(process, 'platform', { value: 'openharmony' });
                         await fss.close();
-                        fss = new FSStorage(directory);
-                        fss._probeEmbedding = probe;
+                        fss = createOwner();
+                        fss.retrieval._probeEmbedding = probe;
                         await fss.initialize();
                         assert.equal(fss.scannerState.embedding_generation, 2);
                         assert.equal(fss.scannerState.semantic_reset_pending, false);
                         assert.equal((await fss.storage!.search([])).items.length, 2);
                         assert.equal((await fss.storage!.getStatus()).ChunkIndexer.size, 0);
                         assert.equal(await fss.processEmbeddingQueue(() => false, { activeRoots: [root] }), 2);
-                        assert.equal((await fss.searchIndexedChunks('old', { topK: 10 })).results.length, 0);
+                        assert.equal((await fss.retrieval.searchContent('old', { topK: 10 })).results.length, 0);
                     }
                 } finally {
                     failing = false;

@@ -92,6 +92,9 @@ describe('task artifacts first Browser Use after a manual preview', () => {
             isHtmlFile: () => false
         }));
         await jest.unstable_mockModule('../../../renderer/browser.ts', () => ({ EmbeddedBrowser: BrowserFixture }));
+        await jest.unstable_mockModule('../../../renderer/theme/theme-iframe-bridge.ts', () => ({
+            OPENDESK_THEME_CHANGED: 'opendesk-theme-changed'
+        }));
         await jest.unstable_mockModule('../../../renderer/theme/theme-shadow-overrides.ts', () => ({
             syncShadowHostTheme: jest.fn()
         }));

@@ -435,6 +435,7 @@ class TaskView extends HTMLElement {
         this._modelContextSize = 0;
         /** @type {string | null} 当前已加载上下文大小的模型别名 */
         this._contextSizeModel = null;
+        this._contextSizeRequestId = 0;
         /** @type {{p: number, t: number} | null} 任务内最近一次真实 usage（输入/总计），流式估算的基线 */
         this._contextUsageBaseline = null;
         /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
@@ -3685,13 +3686,18 @@ class TaskView extends HTMLElement {
     }
 
     async _refreshModelContextSize(modelAlias) {
+        // 切回已缓存模型也会使在途的旧查询失效。
+        const requestId = ++this._contextSizeRequestId;
         if (modelAlias && modelAlias === this._contextSizeModel) return;
         try {
             const size = await window.taskManagerAPI.getModelContextSize(modelAlias || null);
+            if (requestId !== this._contextSizeRequestId) return;
             this._modelContextSize = size || 0;
             this._contextSizeModel = modelAlias || null;
         } catch {
+            if (requestId !== this._contextSizeRequestId) return;
             this._modelContextSize = 0;
+            this._contextSizeModel = null;
         }
     }
 
@@ -6511,6 +6517,17 @@ class TaskView extends HTMLElement {
             const taskList = event.detail;
             if (!Array.isArray(taskList)) return;
             const myTask = taskList.find((t) => t.task_id === this.task_id);
+            const input = this.querySelector('agent-input');
+            const configuration = myTask?.modelConfiguration;
+            if (input && configuration) {
+                const previousModel = input.selectedModel;
+                input.setModel(configuration.model);
+                const model = input.availableModels?.find((candidate) => candidate.alias === input.selectedModel);
+                input.setReasoningEffort(configuration.reasoningEffort ?? model?.reasoning_effort);
+                if (input.selectedModel !== previousModel) {
+                    void this._refreshModelContextSize(input.selectedModel).then(() => this._updateLastUsageRatio());
+                }
+            }
             if (myTask && myTask.task_name) {
                 this._taskName = myTask.task_name;
                 this._toolbar.setToolbarTitle(myTask.task_name);

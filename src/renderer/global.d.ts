@@ -159,6 +159,14 @@ declare global {
             >;
             check: () => Promise<unknown>;
             restart: () => Promise<boolean>;
+            /** macOS 手动安装模式：本地安装已下载校验的安装包（仅 ready 态有效） */
+            applyManual: () => Promise<boolean>;
+            /** What's New：当前版本未预览过更新内容时返回 { version, notes? }，否则 undefined */
+            getPendingReleaseNotes: () => Promise<{ version: string; notes?: string } | undefined>;
+            /** What's New 弹窗关闭后落账：当前版本记入已预览历史 */
+            dismissReleaseNotes: () => Promise<boolean>;
+            /** 设置页查看版本说明：按指定版本返回 { version, notes? }，不读写已预览历史 */
+            getReleaseNotes: (version: string) => Promise<{ version: string; notes?: string }>;
             onStateChanged: (callback: (state: Record<string, unknown>) => void) => () => void;
         };
         /** preload 注入的语言包 API：快照由 preload 缓存，供翻译器同步读取 */

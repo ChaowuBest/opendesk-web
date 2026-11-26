@@ -26,7 +26,13 @@ import { SimilarityMetric } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
-import { loadSqliteVec } from './platform.js';
+import {
+    loadSqliteVec,
+    recordStorageInitializationFailure,
+    recordStorageCleanupFailure,
+    handoffStorageInitializationCleanup,
+    type RetainStorageInitializationCleanup
+} from './platform.js';
 
 // createRequire keeps resolution lazy — see base-index-db.ts for context.
 const require = createRequire(import.meta.url);
@@ -59,7 +65,7 @@ export class ChunkIndexDB implements IChunkIndexDB {
     private isInitialized = false;
     private readonly dbPath: string;
 
-    constructor(dbPath: string, dimension: number = 1024) {
+    constructor(dbPath: string, dimension: number = 1024, retainCleanup?: RetainStorageInitializationCleanup) {
         this.dimension = dimension;
         this.dbPath = dbPath;
 
@@ -75,10 +81,13 @@ export class ChunkIndexDB implements IChunkIndexDB {
             this.db.pragma('busy_timeout = 5000');
             this.initializeTable();
         } catch (error) {
+            recordStorageInitializationFailure(error, { indexer: 'ChunkIndexer', backend: 'native' });
             try {
                 this.db.close();
-            } catch {
+            } catch (cleanupError) {
                 // Preserve the initialization error if cleanup also fails.
+                recordStorageCleanupFailure(error, cleanupError, 'ChunkIndexer');
+                handoffStorageInitializationCleanup(error, () => this.close(), retainCleanup);
             }
             throw error;
         }

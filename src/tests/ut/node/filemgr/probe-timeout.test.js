@@ -23,43 +23,43 @@ for (const [configured, expected] of [
     test(`probe inherits model timeout: ${configured ?? 'default'}`, async (context) => {
         setModel(context, configured);
         const storage = Object.create(FSStorage.prototype);
-        storage._probeCallOnce = async () => 2;
-        storage._withProbeTimeout = async (promise, timeout) => {
+        storage.retrieval._probeCallOnce = async () => 2;
+        storage.retrieval._withProbeTimeout = async (promise, timeout) => {
             assert.equal(timeout, expected);
             return promise;
         };
-        assert.equal(await storage._probeDim(undefined), 2);
+        assert.equal(await storage.retrieval._probeDim(undefined), 2);
     });
 }
 
 test('explicit probe budget is still honored', async (context) => {
     setModel(context, 120);
     const storage = Object.create(FSStorage.prototype);
-    storage._probeCallOnce = async () => 2;
-    storage._withProbeTimeout = async (promise, timeout) => {
+    storage.retrieval._probeCallOnce = async () => 2;
+    storage.retrieval._withProbeTimeout = async (promise, timeout) => {
         assert.equal(timeout, 50);
         return promise;
     };
-    await storage._probeDim(undefined, { probeTimeoutMs: 50 });
+    await storage.retrieval._probeDim(undefined, { probeTimeoutMs: 50 });
 });
 
 test('startup does not override configured timeout and preserves retry options', async () => {
     const storage = Object.create(FSStorage.prototype);
-    storage.syncEmbeddingMode = async (reason, options) => {
+    storage.retrieval._syncMode = async (reason, options) => {
         assert.equal(reason, 'initialize');
         assert.equal(options.probeTimeoutMs, undefined);
         assert.equal(options.probeRetries, 1);
         assert.equal(options.rateLimitMaxRetries, 1);
     };
-    await storage.syncEmbeddingModeForStartup('initialize');
+    await storage.retrieval._syncModeForStartup('initialize');
 });
 
 test('a probe lasting over ten seconds can complete within the configured budget', async (context) => {
     setModel(context, 120);
     context.mock.timers.enable({ apis: ['setTimeout'] });
     const storage = Object.create(FSStorage.prototype);
-    storage._probeCallOnce = () => new Promise((resolve) => setTimeout(() => resolve(2), 20000));
-    const probe = storage._probeDim(undefined, { probeRetries: 0 });
+    storage.retrieval._probeCallOnce = () => new Promise((resolve) => setTimeout(() => resolve(2), 20000));
+    const probe = storage.retrieval._probeDim(undefined, { probeRetries: 0 });
     context.mock.timers.tick(20000);
     assert.equal(await probe, 2);
 });
@@ -68,8 +68,8 @@ test('configured timeout still terminates probe waiting', async (context) => {
     setModel(context, 120);
     context.mock.timers.enable({ apis: ['setTimeout'] });
     const storage = Object.create(FSStorage.prototype);
-    storage._probeCallOnce = () => new Promise(() => {});
-    const rejected = assert.rejects(storage._probeDim(undefined, { probeRetries: 0 }), /120000ms/);
+    storage.retrieval._probeCallOnce = () => new Promise(() => {});
+    const rejected = assert.rejects(storage.retrieval._probeDim(undefined, { probeRetries: 0 }), /120000ms/);
     context.mock.timers.tick(120000);
     await rejected;
 });
@@ -85,7 +85,7 @@ test('initialization and platform snapshot remain available while probe is pendi
         this.scannerState = { roots: {} };
         this.storage = { close() {} };
         this.saveScannerState = async () => {};
-        this.syncEmbeddingModeForStartup = async () => pending;
+        this.retrieval._syncModeForStartup = async () => pending;
     });
     const worker = new FileManagerWorker('probe-test', path.join(profile, 'worker'));
     worker.config = { entries: [] };
@@ -116,7 +116,9 @@ test('probe timeout still resolves into base-only mode', async (context) => {
         storage: { close() {} },
         mode: 'base-only',
         scannerState: {},
-        refreshLatestSetting() {},
+        refreshLatestSetting() {}
+    });
+    Object.assign(storage.retrieval, {
         _probeCallOnce() {
             resolveProbeStarted();
             return new Promise(() => {});
@@ -128,7 +130,7 @@ test('probe timeout still resolves into base-only mode', async (context) => {
             assert.fail('timed-out probe must not open vector indexes');
         }
     });
-    const result = storage.syncEmbeddingMode('test', { probeRetries: 0 });
+    const result = storage.retrieval._syncMode('test', { probeRetries: 0 });
     await probeStarted;
     context.mock.timers.tick(120000);
     await result;

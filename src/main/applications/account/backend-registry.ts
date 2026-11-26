@@ -48,6 +48,10 @@ export class AccountBackendRegistry {
         if (methods.some((method) => typeof method !== 'function')) {
             throw new Error(`account:backend_invalid_implementation:${backend.id}`);
         }
+        // 可选能力：声明了就必须是函数，避免宿主在调用点才发现类型错误。
+        if (backend.getCredential !== undefined && typeof backend.getCredential !== 'function') {
+            throw new Error(`account:backend_invalid_implementation:${backend.id}`);
+        }
         if (this.backendEntry) throw new Error(`account:backend_already_registered:${this.backendEntry.backend.id}`);
         const entry = { ownerId, backend };
         this.backendEntry = entry;

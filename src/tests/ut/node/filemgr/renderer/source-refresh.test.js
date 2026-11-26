@@ -71,7 +71,7 @@ test('status refresh retains the open menu, focused action and unaffected card; 
     assert.ok(f.card('/a') === a);
     assert.ok(f.card('/b') === b);
     assert.ok(a.querySelector('.fill') === ring);
-    assert.equal(a.querySelector('.status-text').textContent, '扫描中 · 7 / 10 文件');
+    assert.equal(a.querySelector('.status-text').textContent, '语义索引 · 7/10');
     assert.equal(a.dataset.progress, '70');
     assert.equal(ring.style.strokeDashoffset, String(37.7 * (1 - 70 / 100)));
     assert.ok(menu.parentElement === f.document.body);
@@ -236,7 +236,7 @@ test('in-place updates preserve visible state, alert, time, locale, mode and ret
     assert.match(a.querySelector('.fs-source-control-error').textContent, /could not be saved/);
     assert.equal(a.querySelector('.source-menu-trigger').title, 'More actions');
     state.setSnapshot(snapshot([source('/a', { total_files: 3 })]));
-    assert.equal(a.querySelector('.status-text').textContent, 'Completed · 3 files');
+    assert.equal(a.querySelector('.status-text').textContent, 'Index complete · 3 files');
     assert.equal(a.querySelector('.fs-source-control-error'), null);
     assert.ok(f.card('/a') === a);
 });

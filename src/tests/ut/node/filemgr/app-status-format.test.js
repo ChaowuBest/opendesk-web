@@ -458,4 +458,60 @@ assert.ok(
 );
 setRuntimeLocale('zh-CN');
 ApplicationRegistry.callWorker = originalCallWorker;
+for (const [locale, label] of [
+    ['zh-CN', '全文索引'],
+    ['en-US', 'Full-text index']
+]) {
+    setRuntimeLocale(locale);
+    for (const mode of ['full', 'base-only']) {
+        const data = makeStatusData({ mode, full_text: { available: true, done: 2, pending: 7, failed: 1 } });
+        Object.assign(data.sources[0], {
+            state: 'scanning',
+            full_text: { total: 12, done: 2, excluded: 1, pending: 8, failed: 1 }
+        });
+        let page = await runSlashStatus(data);
+        assert.ok(page.text.includes(`${label} · 3 / 12`));
+        assert.ok(
+            page.text.includes(
+                locale === 'zh-CN'
+                    ? '全文索引: 已完成 3 / 12 · 待建 7 · 失败 1'
+                    : 'Full-text index: 3 / 12 done · 7 pending · 1 failed'
+            )
+        );
+        data.full_text = { available: false, reason: 'resetting', done: 0, pending: 11, failed: 0 };
+        page = await runSlashStatus(data);
+        assert.ok(
+            page.text.includes(
+                locale === 'zh-CN' ? '全文索引: 重建中 · 已完成 1 / 12' : 'Full-text index: rebuilding · 1 / 12 done'
+            )
+        );
+        for (const reason of ['open_failed', 'unsupported', 'tokenizer_unavailable']) {
+            data.full_text.reason = reason;
+            page = await runSlashStatus(data);
+            assert.ok(!page.text.includes(label));
+        }
+        data.full_text = { available: true, done: 11, pending: 0, failed: 1 };
+        Object.assign(data.sources[0], {
+            embedded_count: 4,
+            pending_count: 8,
+            full_text: { total: 12, done: 10, excluded: 1, pending: 0, failed: 1 }
+        });
+        page = await runSlashStatus(data);
+        assert.ok(page.text.includes('扫描中 · 4 / 12'));
+        data.sources.push({ root: '/offline', state: 'unavailable', total_files: 25 });
+        data.totals.total_files += 25;
+        data.full_text = { available: true, done: 10, pending: 0, failed: 1 };
+        page = await runSlashStatus(data);
+        assert.ok(
+            page.text.includes(
+                locale === 'zh-CN'
+                    ? '全文索引: 已完成 11 / 12 · 待建 0 · 失败 1'
+                    : 'Full-text index: 11 / 12 done · 0 pending · 1 failed'
+            ),
+            'unavailable roots do not enlarge the full-text denominator'
+        );
+    }
+}
+ApplicationRegistry.callWorker = originalCallWorker;
+setRuntimeLocale('zh-CN');
 console.log('✅ app-status-format tests passed');

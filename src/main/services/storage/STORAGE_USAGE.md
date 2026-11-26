@@ -1,6 +1,6 @@
 # Storage 使用指南
 
-> 文档日期：2026-03-31
+> 文档日期：2026-10-31（BM25 更新）
 > 对应代码：`src/main/services/storage/`
 > 运行示例：`npx tsx src/tests/ut/node/services/storage/indexer-usage-example.ts`
 
@@ -19,10 +19,9 @@
 旧 HAP 未提供此协议时，平台不会启用 ArkData，工厂使用 WASM：
 
 - `BaseIndexDBWasm` / `TagIndexDBWasm`
-- `BM25IndexDBWasm`（`node-sqlite3-wasm + FTS5 + jieba-wasm`）
 - `VectorIndexDBWasm` / `ChunkIndexDBWasm`（SQLite BLOB 真源 + `hnsw` ANN 缓存）
 
-旧的 `*-hm.ts` native addon 实现已被 WASM 路径完全替代，工厂函数不再引用它们。文件保留仅供参考。
+旧的 `*-hm.ts` native addon 实现已被 WASM 路径完全替代，工厂函数不再引用它们。其它索引器文件保留仅供参考；BM25 HM 文件已删除。
 
 HarmonyOS / WASM 路径的当前约定：
 
@@ -35,8 +34,7 @@ HarmonyOS / WASM 路径的当前约定：
     - 小子集：直接暴力精确计算
     - 大子集：ANN 召回后再做 `item_id` 过滤
 - `VectorIndexDBWasm` / `ChunkIndexDBWasm` 在检测到已存储向量维度与配置 `dim` 不一致时，会抛出 `DimMismatchError`
-- `BM25IndexDBWasm` 使用 `jieba-wasm` 切词；原始 `text` 仅用于回传，FTS5 实际索引的是空格拼接后的 `tokens`
-- HarmonyOS 当前 BM25 评分语义与 Node 主路径保持一致，都是“分词命中数”式的确定性评分，而不是直接使用 SQLite `bm25()` 内置排序
+- 桌面 BM25 的 native 和 WASM 后端共用四表统计与标准 BM25 评分。鸿蒙 BM25 使用 `Intl.Segmenter` 分词（后端名 `harmonyos-intl`），通过 ArkData 对象事务读写索引，由宿主评分。各后端均不保存原文。
 
 ### 统一写语义
 
@@ -52,7 +50,7 @@ HarmonyOS / WASM 路径的当前约定：
 - `update(items)`：只更新已存在 item；不存在 item 不创建任何记录
 - `upsert(items)`：不存在则插入，存在则覆盖到当前传入内容
 
-> 说明：不同 Indexer 的底层实现方式可能不同，但对外语义以这三条为准。
+> BM25 的存在性与替换单位是 `(item_id, field, id ?? '')` 记录。update 只更新事务开始时存在的记录；upsert 只替换显式记录，省略兄弟记录不删除。外层 insert 仍先过滤 Base 已有对象。
 
 ---
 
@@ -84,12 +82,12 @@ const schema: ColumnSchema = {
 
 ### needIndexers 规则
 
-| Indexer         | 存储内容                           | 用途              | 支持的 options     |
-| --------------- | ---------------------------------- | ----------------- | ------------------ |
-| `TagIndexer`    | 列的原始值（字符串）               | 精确 tag 过滤     | 无                 |
-| `BM25Indexer`   | 列的原始文本（并额外建立分词索引） | 全文模糊搜索      | 无                 |
-| `VectorIndexer` | 列对应的 embedding 向量            | 语义相似度搜索    | `dim`（默认 1024） |
-| `ChunkIndexer`  | 一个 item 的多条 chunk 向量        | Chunk 级 RAG 搜索 | `dim`（默认 1024） |
+| Indexer         | 存储内容                                 | 用途              | 支持的 options             |
+| --------------- | ---------------------------------------- | ----------------- | -------------------------- |
+| `TagIndexer`    | 列的原始值（字符串）                     | 精确 tag 过滤     | 无                         |
+| `BM25Indexer`   | 词项、记录长度、词频与字段统计（无原文） | 记录级 BM25       | `access`，默认 `readwrite` |
+| `VectorIndexer` | 列对应的 embedding 向量                  | 语义相似度搜索    | `dim`（默认 1024）         |
+| `ChunkIndexer`  | 一个 item 的多条 chunk 向量              | Chunk 级 RAG 搜索 | `dim`（默认 1024）         |
 
 同一列可以同时指定多个 Indexer，如 `text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }]`。
 
@@ -132,15 +130,18 @@ ArkData 的打开和关闭超时表示结果未确定，不代表 SDK 已取消�
 直接调用 DatabaseKit 的使用者也必须为一次获取配对同一 `sessionId`；
 不带会话 ID 的旧接口保留原语义，不保证超时或丢失响应后的重试幂等性。
 
-临时 probe/raw drop 的释放失败由 storage 保留，后续同库访问及 `BaseStorage.close()`
-会重试。其它数据库的使用不会被它阻塞。BM25 普通关闭等待已接受的写入及真实
-LevelDB 连接关闭；search-index 的 `FLUSH` 是清空操作，不能作为持久化或关闭。
+ArkData 临时 probe/raw drop 的释放失败由 storage 保留，后续同库访问及 `BaseStorage.close()`
+会重试。其它数据库的使用不会被它阻塞。
 
-Node BM25 重开时从持久化文档恢复搜索缓存及已有 ID，保持原有评分规则；
-并列分数按 item_id 排序，避免冷启动枚举顺序影响 topK。
-新写入在分词文本之外保存原文；既有文档只有分词文本时仍可查询、更新和删除，
-但不能从分词文本还原已经丢失的大小写及空格。BaseStorage 返回的基础字段和
-元数据继续来自基础库，不会为恢复 BM25 搜索改写用户记录。
+BM25 close 等待已接纳操作、探测及全部 statement/连接释放。失败资源仍归该 holder，必须保留引用并显式重试 close；成功后 BaseStorage 不再接受操作。初始化失败且清理成功时，尚未调用 close 的同一 holder 可重新 initialize。
+
+BM25 使用独立 `bm25-index.db` / `bm25-index.wasm.db`，实际选择由平台和 native 依赖决定，不按文件是否存在选择。Jieba 与 DB 独立回退。规则版本 `PRAGMA user_version=1`；只允许在缺失或安全空库建表，不迁移旧格式、不自动重建。每次数据操作重新校验版本。
+
+所有 BM25 bindings 只接受 `access`：显式值必须一致，省略/undefined 继承，其后默认 readwrite。readonly 严格打开已有兼容库，禁止增删改/clear/drop，允许 TEMP 范围查询。
+
+readonly holder 初始化遇主库缺失时错误码为 `bm25_missing`，安全空库尚未建表时为 `bm25_uninitialized`；`classifyBM25Failure` 分别报告 `reason: 'missing'` / `'uninitialized'`，均为 `kind: 'other'`。这些状态不表示版本不兼容，也不触发隐式创建、降级或重建。
+
+`await storage.probeIndexers(['BM25Indexer'])` 无需加载分词器。已装配时，可能返回 `exists`（含 `backend`、`indexVersion`、`compatibility`）、`missing`、`uninitialized`、`incompatible`、`open_failed` 或 `unsupported`。鸿蒙上的 BM25 探测返回 `unsupported`，不会打开或创建库。未装配 BM25 时返回 `missing`。探测不会隐式初始化，随后初始化仍可能失败。清理失败由原 holder 重试关闭，重建和业务状态同步由调用方决定。
 
 初始化成功后可调用 `getSemanticBackends()` 获取 vector、chunk 的**实际**后端，
 包括各工厂独立发生的 native → WASM 降级。storage 只报告事实；模型、索引兼容性、
@@ -181,7 +182,7 @@ await storage.insert([
 
 - `column` 字段必须是 `needIndexers` 中已声明的列名（如 `'tag'`、`'text'`），否则数据会被忽略。
 - `VectorIndexer` 的 `content` 必须是 `number[]`，维度需与初始化时一致（默认 1024）。
-- `BM25Indexer` 和 `TagIndexer` 的 `content` 是字符串，与 `columns` 中对应列的值保持一致。
+- `BM25Indexer` 的每个 entry 独立消费字符串 content，`id` 为可选 subKey（默认空字符串）。空/纯符号正文不留记录；同批重复 insert 首个非零占键、update/upsert 最后显式正文生效。零词删除该键，不表示业务处理是否完成。TagIndexer 的 content 仍是字符串。
 - `ChunkIndexer` 的每个 entry 必须同时提供：
     - `id`：chunk 标识符
     - `text`：chunk 原文
@@ -281,6 +282,36 @@ import { BM25Query } from './abstract-storage.js';
 ```
 
 结果中通过 `result.BM25Score` 获取分数（`result` 是 `SearchItem`，不是 `result.item`）。
+
+通用 search 使用首个 BM25 condition，`K = value.topK ?? 本阶段 limit ?? 10`，取得全字段 2K 记录后先检查重复 item_id，再与已有候选交集、取 K、应用分页。存在重复对象则拒绝，改用下述专用入口。前序 Tag 和后序 Base 不改变 BM25 的全字段统计域。
+
+```typescript
+// 原始记录排名：不读 Base，允许孤儿与同对象多条记录。
+const hits = await storage.searchBM25('财务 预算', {
+    field: 'text',
+    topK: 10,
+    allowedItemIds: ['report-1', 'report-2']
+}); // {item_id, field, subKey, score}[]
+
+// Base 完整预筛，再在该对象集合内计算记录级 BM25。
+const scoped = await storage.searchScope(
+    {
+        preconditions: [{ indexer: 'BaseIndexer', field: 'tag', operator: '=', value: 'finance' }],
+        targetCondition: {
+            indexer: 'BM25Indexer',
+            field: 'text',
+            operator: 'bm25_match',
+            value: { query: '预算', topK: 10 }
+        }
+    },
+    { collectDiagnostics: true }
+);
+// items 中保留真实 Base Item、BM25Score、bm25Record:{field,subKey}；totalCount 为返回记录数。
+```
+
+raw 必须指定已绑定 field，topK 默认10且为正安全整数。allowedItemIds 省略为全域，[] 为空范围，重复去重、未知忽略，所有元素必须是字符串（不 trim/转换）。scope 必须有非空 Base preconditions；空候选也验证 target、生命周期和库版本。diagnostics 使用 `target=bm25, strategy=exact_temp`，候选数为 Base 唯一对象数，totalTargetRows 为字段记录总数。
+
+统计域含全部候选非空记录，不只命中记录。score 使用标准 BM25（k1=1.2/b=0.75），按分数降序、item_id/subKey UTF-16 升序；重复查询词不加权。分段 NFKC/lower→Jieba HMM=true→Unicode 字母/数字过滤，两端共用规则；不同运行环境的 ICU/Unicode 仍应记录。主库不保存原文，专用 raw 不返回 Item。
 
 ### 4.4 VectorIndexer — 向量相似度搜索
 
@@ -422,13 +453,17 @@ await storage.upsert([
         item_id: 'doc_001',
         item_type: 'file',
         tag: 'finance',
-        /* ... */ indexer_columns: {/* ... */}
+        /* ... */ indexer_columns: {
+            /* ... */
+        }
     },
     {
         item_id: 'doc_999',
         item_type: 'file',
         tag: 'new',
-        /* ... */ indexer_columns: {/* ... */}
+        /* ... */ indexer_columns: {
+            /* ... */
+        }
     }
 ]);
 ```
@@ -497,14 +532,18 @@ try {
 
 ## 10. 已知限制
 
-| 限制                             | 说明                                                                                                                                                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 只支持 AND 组合                  | 多个 condition 取交集；OR 逻辑需调用方自行多次查询取并集                                                                                                                       |
-| 无分数融合                       | BM25Score 和 VecScore 相互独立，无内置加权合并策略                                                                                                                             |
-| 无跨 Indexer 事务                | 多个 Indexer 的写入不是单事务提交；某个 Indexer 失败时会直接传播底层错误，调用方需自行决定重试或补偿                                                                           |
-| 每个 item 只有一个 tag           | TagIndexer 以 `item_id` 为主键，多 tag 需在业务层拼接或使用 BaseIndexer 的 `like` 查询                                                                                         |
-| indexer_columns 需调用方维护     | `columns` 中的字段值与 `indexer_columns` 中传入的内容是否一致，由调用方负责，框架不校验                                                                                        |
-| upsert 不可传 partial row        | `upsert` 的 item 必须包含所有 `nullable: false` 且无 `defaultValue` 的字段；否则即使行已存在也会触发 NOT NULL 错误（SQLite 先校验约束再检测冲突）。只写部分字段请用 `update()` |
-| BM25 分词依赖 jieba / jieba-wasm | 查询词需能被 jieba 正确切分；HarmonyOS WASM 路径会把切词结果写入 FTS tokens 列，再做候选召回与命中数排序                                                                       |
-| BM25 分数为命中数语义            | 当前 Node / HarmonyOS WASM 路径都使用分词命中数作为确定性评分，分数可用于排序，但不应被解释为标准 BM25 数值                                                                    |
-| Chunk 搜索不走普通 item 去重     | `ChunkIndexer` 返回的是 chunk 命中展开结果，同一 `item_id` 允许重复出现                                                                                                        |
+| 限制                         | 说明                                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 只支持 AND 组合              | 多个 condition 取交集；OR 逻辑需调用方自行多次查询取并集                                                                                                                       |
+| 无分数融合                   | BM25Score 和 VecScore 相互独立，无内置加权合并策略                                                                                                                             |
+| 无跨 Indexer 事务            | 多个 Indexer 的写入不是单事务提交；某个 Indexer 失败时会直接传播底层错误，调用方需自行决定重试或补偿                                                                           |
+| 每个 item 只有一个 tag       | TagIndexer 以 `item_id` 为主键，多 tag 需在业务层拼接或使用 BaseIndexer 的 `like` 查询                                                                                         |
+| indexer_columns 需调用方维护 | `columns` 中的字段值与 `indexer_columns` 中传入的内容是否一致，由调用方负责，框架不校验                                                                                        |
+| upsert 不可传 partial row    | `upsert` 的 item 必须包含所有 `nullable: false` 且无 `defaultValue` 的字段；否则即使行已存在也会触发 NOT NULL 错误（SQLite 先校验约束再检测冲突）。只写部分字段请用 `update()` |
+| BM25 分词基线                | @node-rs/jieba=2.0.1、jieba-wasm=2.4.0；分段可能影响词边界，不承诺等于整文分词                                                                                                 |
+| BM25 跨库协调                | delete+upsert 是两个事务；多记录重建、业务完成状态与恢复策略由调用者协调                                                                                                       |
+| Chunk 搜索不走普通 item 去重 | `ChunkIndexer` 返回的是 chunk 命中展开结果，同一 `item_id` 允许重复出现                                                                                                        |
+
+真实 CLI tgz、Electron worker、Windows ARM64 和新 HAP 的验收留到业务接入或发布阶段。
+
+BM25 身份（item_id/field/subKey、候选及删除 ID）与保留词项必须不含 NUL，且 UTF-16 完整；非法值明确拒绝，写入整批在 BM25 事务前失败。合法字符串不转换。原始正文/查询文本仍按分词规则处理，不因原文含这些字符直接整段拒绝；分词后若保留非法词项则失败。

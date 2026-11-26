@@ -13,6 +13,7 @@ import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool';
 import { ToolCall, UserMessage, parseMarkdownSafe } from '../../aikernel/messages';
 import { LLM } from '../../aikernel/llm.js';
 import { escapeHtml, escapeHtmlForMarkdown } from '../../../common/utils/escape.js';
+import { normalizeLocaleTag } from '../../../common/locale/pack.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
@@ -47,7 +48,8 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    | { ok: true }
+    | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
@@ -1376,13 +1378,23 @@ function renderFileToolDetailsCard(opts: {
 const EXTRACT_TEXT_SUPPORTED_EXTENSIONS_DISPLAY = EXTRACT_TEXT_SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(', ');
 
 const extractTextSchema = z.object({
-    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径')
+    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径'),
+    locale: z
+        .string()
+        .refine((locale) => normalizeLocaleTag(locale) !== undefined)
+        .optional()
+        .describe(
+            '可选的 BCP-47 语言地区标签，例如 tr-TR 或 en-US。仅用于本工具读取 .xls 和 .xlsx 时的数字和日期格式化，其他文件格式和搜索索引不受影响。' +
+                '仅在用户本轮明确要求其他语言或地区的数字、日期显示格式时设置，省略则使用应用当前语言。文件中明确指定的格式或 locale 优先，文本单元格保留原文。'
+        )
 });
 
-export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
-    private extractDelegate: (filePath: string) => Promise<string | null>;
+type ExtractTextDelegate = (filePath: string, options?: { locale?: string }) => Promise<string | null>;
 
-    constructor(extractDelegate: (filePath: string) => Promise<string | null>) {
+export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
+    private extractDelegate: ExtractTextDelegate;
+
+    constructor(extractDelegate: ExtractTextDelegate) {
         super(
             'extractText',
             `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如 pdf/doc/docx/pptx/xls/xlsx/odt/odp/ods 等。纯文本文件请使用 readFile 工具读取。`,
@@ -1489,6 +1501,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
         if (!filePath) {
             throw new Error(t('filemgr.extractText.error.pathRequired'));
         }
+        const locale = args.locale === undefined ? undefined : normalizeLocaleTag(args.locale);
 
         try {
             const stat = await fs.promises.stat(filePath);
@@ -1503,7 +1516,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                 });
             }
 
-            const extracted = await this.extractDelegate(filePath);
+            const extracted = await this.extractDelegate(filePath, locale ? { locale } : undefined);
             if (extracted === null) {
                 throw new Error(t('filemgr.extractText.error.extractFailed', { path: filePath }));
             }
@@ -4148,7 +4161,7 @@ function truncateMarkdownText(value: unknown, maxChars = 500): string {
 function formatSemanticMatchTypes(matchTypes: string[] | undefined): string {
     const labels = new Set<string>();
     for (const matchType of matchTypes ?? []) {
-        if (matchType === 'content_semantic') {
+        if (matchType === 'bm25' || matchType === 'content_semantic') {
             labels.add(t('filemgr.semanticSearch.match.content'));
         } else if (matchType === 'name_semantic' || matchType === 'keyword') {
             labels.add(t('filemgr.semanticSearch.match.title'));
@@ -4308,9 +4321,7 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
 
 // ==================== 工具集工厂函数 ====================
 
-export function createFileManagerToolset(options: {
-    extractDelegate: (filePath: string) => Promise<string | null>;
-}): BaseToolset {
+export function createFileManagerToolset(options: { extractDelegate: ExtractTextDelegate }): BaseToolset {
     const toolset = new BaseToolset('filemgr');
     toolset.addTool(new ReadFileTool());
     toolset.addTool(new ReadImageTool());

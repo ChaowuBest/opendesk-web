@@ -297,7 +297,7 @@ test('A05 R1 a global startup mode failure does not start persisted roots or bec
     f.worker._initializing = true;
     f.worker.status = 'initializing';
     const modeError = Error('fixture: global mode failure');
-    t.mock.method(f.storage, 'syncEmbeddingModeForStartup', async () => {
+    t.mock.method(f.storage.retrieval, '_syncModeForStartup', async () => {
         throw modeError;
     });
     const seq = f.worker._nextInitSeq();
@@ -314,6 +314,12 @@ test('A05 R1 a global startup mode failure does not start persisted roots or bec
 for (const boundary of ['queued', 'detach'])
     test(`A07 embedding successor consumes pending config ${boundary} without a same-queue await`, async (t) => {
         const f = await fixture(t);
+        const preparations = [];
+        const prepare = f.storage.retrieval.prepare.bind(f.storage.retrieval);
+        t.mock.method(f.storage.retrieval, 'prepare', async (request) => {
+            preparations.push(request);
+            return prepare(request);
+        });
         const [A, B] = f.roots;
         const gate = deferred(t),
             entered = deferred(t);
@@ -355,6 +361,7 @@ for (const boundary of ['queued', 'detach'])
         assert.equal(f.worker.scanners.has(A), false);
         assert.equal(f.worker._pendingConfigChange, null);
         assert.equal(f.worker._pendingEmbeddingConfigChange, false);
+        assert.ok(preparations.some((request) => request.forceProbe === true));
         assert.ok(f.worker.scanners.get(B)?._scheduledTimeout);
         assert.equal((await f.worker.reconcileConfig(f.config([B]))).reconciled, false);
     });
@@ -411,7 +418,7 @@ test('A01 changed-rule scanner stops before a failing mode sync while unchanged 
     const f = await fixture(t);
     const [A, B] = f.roots;
     const old = f.worker.scanners.get(A);
-    t.mock.method(f.storage, 'syncEmbeddingModeForStartup', async () => {
+    t.mock.method(f.storage.retrieval, '_syncModeForStartup', async () => {
         throw Error('fixture: mode failed');
     });
     await assert.rejects(
@@ -528,9 +535,9 @@ test('A07 mode successor failure clears inherited config/embedding intents and r
     await entered.promise;
     const config = f.worker.applicationConfigChanged(f.config([B]));
     await flush();
-    const sync = f.storage.syncEmbeddingModeForStartup.bind(f.storage);
+    const sync = f.storage.retrieval._syncModeForStartup.bind(f.storage.retrieval);
     let fail = true;
-    t.mock.method(f.storage, 'syncEmbeddingModeForStartup', async (...args) => {
+    t.mock.method(f.storage.retrieval, '_syncModeForStartup', async (...args) => {
         if (fail) throw Error('fixture: inherited mode');
         return sync(...args);
     });

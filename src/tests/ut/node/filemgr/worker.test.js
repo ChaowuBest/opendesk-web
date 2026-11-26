@@ -1,3 +1,4 @@
+import iconv from 'iconv-lite';
 /**
  * FileManagerWorker integration tests
  *
@@ -17,6 +18,7 @@ import { CODES, FSStorage, WARNINGS } from '../../../../main/applications/filemg
 import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
 import { saveEntries } from '../../../../main/applications/filemgr/renderer/adapter.js';
 import { FSEntrySchema } from '../../../../main/applications/filemgr/setting.js';
+import { LLM } from '../../../../main/aikernel/llm.js';
 import { withMemoryStateWriter } from './recovery-fixture.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -149,7 +151,7 @@ const settingData = {
     providers: [
         {
             name: 'openrouter',
-            base_url: 'https://openrouter.ai/api/v1',
+            base_url: OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : 'http://127.0.0.1:1/v1',
             api_key: OPENROUTER_API_KEY ?? '',
             no_proxy: true
         }
@@ -168,163 +170,164 @@ const settingData = {
 fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4), 'utf-8');
 Setting.updateInstanceData(settingData);
 
-if (!OPENROUTER_API_KEY) {
-    console.log('OPENROUTER_API_KEY not set, running no-API worker orchestration tests');
-    const filter = process.env.TEST_FILTER;
-    if (filter) {
-        const filteredTests = [
-            testEmbeddingQueueOnlySchedulesInFullMode,
-            testEmbeddingQueueFailureIsHandled,
-            testEmbeddingQueueYieldsToPendingConfigChange,
-            testProbeErrorAlertsUseStableCodes,
-            testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
-            testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
-            testEmptyScannedSourceStateIsCompleted,
-            testInitializeSchedulesProbeContinuationBeforeStartingScanners,
-            testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
-            testIncrementalScanIndexesMovedOldFileByCtime,
-            testScanYieldsToPendingConfigChangeBeforeNextBatch,
-            testIncrementalScanYieldsDuringGlobWhenNoFilesChanged,
-            testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
-            testStatusUsesPendingConfigWhenConfigChangeQueued,
-            testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
-            testInitializeClearsEquivalentPendingConfigBeforeStartingScanners,
-            testReconcileConfigAppliesExplicitLatestConfig,
-            testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing,
-            testApplicationConfigChangedNormalizesRawEntries,
-            testSaveEntriesPassesExplicitConfigToWorkerReconcile,
-            testSourceConfigPendingDoesNotLeakOnEarlyReturn,
-            testWorkspacePendingControlLifecycle,
-            testEmbeddingPendingControlLifecycle,
-            testSkippedScanTaskDoesNotLeaveScanPending,
-            testEmbeddingQueueDoesNotStartDuringPendingControlChange,
-            testSetSourcePausedStopsScannerPersistsAndReturnsSnapshot,
-            testSetSourcePausedResumeStartsScannerBeforeSuccess,
-            testSetSourcePausedYieldsScannerWithinCandidateBoundary,
-            testSetSourcePausedFinishesCurrentSaveBatchOnly,
-            testSetSourcePausedYieldsEmbeddingAfterCurrentFile,
-            testPausedRootStaysStoppedAcrossConfigRestart,
-            testPausedStateSurvivesRestartRetainsSearchAndFullReset,
-            testSourceControlRequestsAreFifoIdempotentAndRootLocal,
-            testPausedRootSurvivesConfigEmbeddingAndWorkspaceLifecycles,
-            testSourceControlValidationReadonlyAndDeferredWriter,
-            testSourceControlPersistenceFailuresRollbackDiskMemoryAndRuntime,
-            testSourceControlRuntimeFailuresAndStoppedScannerRecovery,
-            testAllPausedRootsDoNotFallBackToUnfilteredEmbedding,
-            testSourceControlReturnsDegradedAuthoritativeSnapshot,
-            testQueuedRootRemovalWinsOverPauseRequest,
-            testEmbeddingConfigChangedKeepsPausedOnlyRowsPending,
-            testMultiPathSubsetRunsEachRouteOnce,
-            testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath,
-            testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped,
-            testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped,
-            testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot,
-            testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization,
-            testMultiPathSelectedSourceRemovalDuringSearchFailsClosed,
-            testMultiPathFinalStatWindowReappliesLatestScopePolicy,
-            testMultiPathScopeValidationHasDeterministicErrorPriority
-        ].filter((test) => test.name.includes(filter));
-        if (filteredTests.length === 0) {
-            console.error(`No no-API worker tests matched TEST_FILTER=${filter}`);
-            cleanup(globalAppDir);
-            process.exit(1);
-        }
-        for (const test of filteredTests) {
-            await test();
-        }
-        cleanup(globalAppDir);
-        process.exit(0);
+async function withDeterministicModel(test) {
+    const original = { embed: LLM.embed, batchEmbed: LLM.batchEmbed, rerank: LLM.rerank };
+    LLM.embed = async (_text, dimensions) => [1, ...new Array((dimensions ?? 4) - 1).fill(0)];
+    LLM.batchEmbed = async (texts, _batchSize, dimensions) =>
+        texts.map(() => [1, ...new Array((dimensions ?? 4) - 1).fill(0)]);
+    LLM.rerank = async (_query, items) => items;
+    try {
+        await test();
+    } finally {
+        Object.assign(LLM, original);
     }
-    // Tests below exercise base-only scanning, config-change root plumbing,
-    // getStatus shape, legacy-file cleanup, and queue-yield logic without
-    // any real embedding API calls.
-    await testInitializeRootStateAndStorageStateCallback();
-    await testGetStatus();
-    await testGetStatusTask4DisplayFields();
-    await testConfigChangeAddRoot();
-    await testConfigChangeRemoveRoot();
-    await testIncrementalScanIndexesMovedOldFileByCtime();
-    await testLegacyFileCleanup();
-    await testEmbeddingTaskYieldsToQueuedScan();
-    await testSearchWhenStorageMissingReturnsIndexNotReady();
-    await testTask5SearchWrappersNormalizeAndShortCircuit();
-    await testSearchIndexedFilesBaseOnlyRunsKeywordOnly();
-    await testSearchIndexedFilesMergesSortsAndFilters();
-    await testSearchIndexedFilesRouteSelectionKeepsExpectedGroups();
-    await testSearchIndexedFilesDropsUnavailableAndExcluded();
-    await testSearchIndexedFilesSemanticPartial();
-    await testSearchIndexedFilesKeywordFailureReturnsError();
-    await testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage();
-    await testSearchIndexedFilesScopedRouteBudgetsAndOutcomes();
-    await testMultiPathSubsetRunsEachRouteOnce();
-    await testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath();
-    await testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped();
-    await testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped();
-    await testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot();
-    await testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization();
-    await testMultiPathSelectedSourceRemovalDuringSearchFailsClosed();
-    await testMultiPathFinalStatWindowReappliesLatestScopePolicy();
-    await testMultiPathScopeValidationHasDeterministicErrorPriority();
-    await testTask5StartScannersDedupesRoots();
-    await testResetFileSystemStorageUsesManualResetReason();
-    await testTask7ReadonlyModeWhenScanLockHeld();
-    await testTask7ScanLockCreatesDirectoryAndFinalizeReleases();
-    await testTask7RepeatedInitializeKeepsWriterMode();
-    await testTask7ReadonlyResetAndRebuildAreGuarded();
-    await testTask8UnavailableRootForcesFullScanDepth();
-    await testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex();
-    await testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount();
-    await testTask17DLastScanAtIncrementalAndFullScan();
-    await testTask15StatusPushLayers();
-    await testSemanticWriteCapacityAlertOnlyForVectorLimit();
-    await testProbeErrorAlertsUseStableCodes();
-    await testGetFileSystemStatusSkipsStorageSnapshotBeforeReady();
-    await testEmptyScannedSourceStateIsCompleted();
-    await testScannerIntervalUsesWorkspaceAndEmbeddingState();
-    await testEmbeddingQueueOnlySchedulesInFullMode();
-    await testEmbeddingQueueFailureIsHandled();
-    await testEmbeddingQueueYieldsToPendingConfigChange();
-    await testScanYieldsToPendingConfigChangeBeforeNextBatch();
-    await testIncrementalScanYieldsDuringGlobWhenNoFilesChanged();
-    await testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint();
-    await testStatusUsesPendingConfigWhenConfigChangeQueued();
-    await testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates();
-    await testInitializeClearsEquivalentPendingConfigBeforeStartingScanners();
-    await testReconcileConfigAppliesExplicitLatestConfig();
-    await testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing();
-    await testApplicationConfigChangedNormalizesRawEntries();
-    await testSaveEntriesPassesExplicitConfigToWorkerReconcile();
-    await testSourceConfigPendingDoesNotLeakOnEarlyReturn();
-    await testWorkspacePendingControlLifecycle();
-    await testEmbeddingPendingControlLifecycle();
-    await testSkippedScanTaskDoesNotLeaveScanPending();
-    await testEmbeddingQueueDoesNotStartDuringPendingControlChange();
-    await testSetSourcePausedStopsScannerPersistsAndReturnsSnapshot();
-    await testSetSourcePausedResumeStartsScannerBeforeSuccess();
-    await testSetSourcePausedYieldsScannerWithinCandidateBoundary();
-    await testSetSourcePausedFinishesCurrentSaveBatchOnly();
-    await testSetSourcePausedYieldsEmbeddingAfterCurrentFile();
-    await testPausedRootStaysStoppedAcrossConfigRestart();
-    await testPausedStateSurvivesRestartRetainsSearchAndFullReset();
-    await testSourceControlRequestsAreFifoIdempotentAndRootLocal();
-    await testPausedRootSurvivesConfigEmbeddingAndWorkspaceLifecycles();
-    await testSourceControlValidationReadonlyAndDeferredWriter();
-    await testSourceControlPersistenceFailuresRollbackDiskMemoryAndRuntime();
-    await testSourceControlRuntimeFailuresAndStoppedScannerRecovery();
-    await testAllPausedRootsDoNotFallBackToUnfilteredEmbedding();
-    await testSourceControlReturnsDegradedAuthoritativeSnapshot();
-    await testQueuedRootRemovalWinsOverPauseRequest();
-    await testEmbeddingConfigChangedKeepsPausedOnlyRowsPending();
-    await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
-    await testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue();
-    await testInitializeSchedulesProbeContinuationBeforeStartingScanners();
-    await testApplicationConfigChangedSyncsModeBeforeRestartingScanners();
-    await testTask16V3ConfigChangeCases();
-    await testTask16ConfigChangeDedup();
-    await testConfigChangeDuringInitializeDoesNotDropRemovedRoots();
-    await testInitializeReconcilesStaleScannerStateRoots();
+}
+
+if (!OPENROUTER_API_KEY) {
+    // 无密钥并不阻止 LLM 发请求；默认失败替身保留 base-only 基线，选中场景另用确定性向量。
+    const unavailable = async () => {
+        throw Object.assign(new Error('isolated embedding unavailable'), { status: 401 });
+    };
+    LLM.embed = unavailable;
+    LLM.batchEmbed = unavailable;
+    LLM.rerank = unavailable;
+    const deterministicTests = new Set([
+        testIncrementalScan,
+        testResetFileSystemStorage,
+        testScannerStateCorruptRebuild,
+        testFullScanSmallDir,
+        testSearchAfterScan,
+        testDeferredRecovery,
+        testE2EBaseOnlyToFullCatchUp
+    ]);
+    const tests = [
+        testExtractFileTextEncodings,
+        testIncrementalScan,
+        testResetFileSystemStorage,
+        testScannerStateCorruptRebuild,
+        testInitializeRootStateAndStorageStateCallback,
+        testGetStatus,
+        testGetStatusTask4DisplayFields,
+        testConfigChangeAddRoot,
+        testConfigChangeRemoveRoot,
+        testIncrementalScanIndexesMovedOldFileByCtime,
+        testLegacyFileCleanup,
+        testEmbeddingTaskYieldsToQueuedScan,
+        testSearchWhenStorageMissingReturnsIndexNotReady,
+        testPublicSearchNormalizesAndShortCircuits,
+        testSearchIndexedFilesBaseOnlyRunsKeywordOnly,
+        testSearchIndexedFilesMergesSortsAndFilters,
+        testSearchIndexedFilesRouteSelectionKeepsExpectedGroups,
+        testSearchIndexedFilesDropsUnavailableAndExcluded,
+        testSearchIndexedFilesSemanticPartial,
+        testSearchIndexedFilesKeywordFailureReturnsError,
+        testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage,
+        testSearchIndexedFilesScopedRouteBudgetsAndOutcomes,
+        testMultiPathSubsetRunsEachRouteOnce,
+        testMultiPathChangePreservesConfiguredSinglePathAndRejectsInvalidSinglePath,
+        testMultiPathAllConfiguredSourcesIncludingPausedBecomeUnscoped,
+        testMultiPathInvalidNeverCallsARouteOrFallsBackUnscoped,
+        testMultiPathWhollyUnavailableSelectedPathFailsButPausedDoesNot,
+        testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOptimization,
+        testMultiPathSelectedSourceRemovalDuringSearchFailsClosed,
+        testMultiPathFinalStatWindowReappliesLatestScopePolicy,
+        testMultiPathScopeValidationHasDeterministicErrorPriority,
+        testTask5StartScannersDedupesRoots,
+        testResetFileSystemStorageUsesManualResetReason,
+        testTask7ReadonlyModeWhenScanLockHeld,
+        testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
+        testTask7RepeatedInitializeKeepsWriterMode,
+        testTask7ReadonlyResetAndRebuildAreGuarded,
+        testTask8UnavailableRootForcesFullScanDepth,
+        testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex,
+        testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount,
+        testTask17DLastScanAtIncrementalAndFullScan,
+        testTask15StatusPushLayers,
+        testSemanticWriteCapacityAlertOnlyForVectorLimit,
+        testProbeErrorAlertsUseStableCodes,
+        testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
+        testEmptyScannedSourceStateIsCompleted,
+        testScannerIntervalUsesWorkspaceAndEmbeddingState,
+        testEmbeddingQueueOnlySchedulesInFullMode,
+        testFullTextQueueHolderChanges,
+        testFullTextReadonlyStatusWindows,
+        testFullTextStatusAndSnapshots,
+        testFullTextSearchRoutesAndOutcomes,
+        testFullTextSearchFastStageWarnings,
+        testFullTextSearchTimeoutWarnings,
+        testFullTextSearchContextChanges,
+        testFullTextSearchEndToEnd,
+        testFullTextQueueHandoff,
+        testFullTextRuntimeFailureHandoff,
+        testEmbeddingQueueFailureIsHandled,
+        testEmbeddingQueueYieldsToPendingConfigChange,
+        testScanYieldsToPendingConfigChangeBeforeNextBatch,
+        testIncrementalScanYieldsDuringGlobWhenNoFilesChanged,
+        testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
+        testStatusUsesPendingConfigWhenConfigChangeQueued,
+        testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
+        testInitializeClearsEquivalentPendingConfigBeforeStartingScanners,
+        testReconcileConfigAppliesExplicitLatestConfig,
+        testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing,
+        testApplicationConfigChangedNormalizesRawEntries,
+        testSaveEntriesPassesExplicitConfigToWorkerReconcile,
+        testSourceConfigPendingDoesNotLeakOnEarlyReturn,
+        testWorkspacePendingControlLifecycle,
+        testEmbeddingPendingControlLifecycle,
+        testSkippedScanTaskDoesNotLeaveScanPending,
+        testEmbeddingQueueDoesNotStartDuringPendingControlChange,
+        testSetSourcePausedStopsScannerPersistsAndReturnsSnapshot,
+        testSetSourcePausedResumeStartsScannerBeforeSuccess,
+        testSetSourcePausedYieldsScannerWithinCandidateBoundary,
+        testSetSourcePausedFinishesCurrentSaveBatchOnly,
+        testSetSourcePausedYieldsEmbeddingAfterCurrentFile,
+        testPausedRootStaysStoppedAcrossConfigRestart,
+        testPausedStateSurvivesRestartRetainsSearchAndFullReset,
+        testSourceControlRequestsAreFifoIdempotentAndRootLocal,
+        testPausedRootSurvivesConfigEmbeddingAndWorkspaceLifecycles,
+        testSourceControlValidationReadonlyAndDeferredWriter,
+        testSourceControlPersistenceFailuresRollbackDiskMemoryAndRuntime,
+        testSourceControlRuntimeFailuresAndStoppedScannerRecovery,
+        testAllPausedRootsDoNotFallBackToUnfilteredEmbedding,
+        testSourceControlReturnsDegradedAuthoritativeSnapshot,
+        testQueuedRootRemovalWinsOverPauseRequest,
+        testEmbeddingConfigChangedKeepsPausedOnlyRowsPending,
+        testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
+        testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,
+        testInitializeSchedulesProbeContinuationBeforeStartingScanners,
+        testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
+        testTask16V3ConfigChangeCases,
+        testTask16ConfigChangeDedup,
+        testConfigChangeDuringInitializeDoesNotDropRemovedRoots,
+        testInitializeReconcilesStaleScannerStateRoots,
+        testFullScanSmallDir,
+        testSearchAfterScan,
+        testDeferredRecovery,
+        testE2EBaseOnlyToFullCatchUp
+    ];
+    const filter = process.env.TEST_FILTER;
+    const selected = filter ? tests.filter((test) => test.name.includes(filter)) : tests;
+    if (selected.length === 0) {
+        console.error(`No no-API tests matched TEST_FILTER=${filter}`);
+        cleanup(globalAppDir);
+        process.exit(1);
+    }
+    let passed = 0;
+    let failed = 0;
+    for (const test of selected) {
+        console.log(`RUN ${test.name} model=${deterministicTests.has(test) ? 'deterministic' : 'unavailable-stub'}`);
+        try {
+            if (deterministicTests.has(test)) await withDeterministicModel(test);
+            else await test();
+            passed++;
+        } catch (error) {
+            failed++;
+            console.error(`FAIL ${test.name}`, error);
+        }
+    }
+    console.log(`WF1_CASE_COUNTS ${JSON.stringify({ tests: selected.length, passed, failed, skipped: 0 })}`);
     cleanup(globalAppDir);
-    process.exit(0);
+    process.exit(failed ? 1 : 0);
 }
 
 // ── Test 1: testFullScanSmallDir ─────────────────────────────────────
@@ -420,7 +423,7 @@ async function testInitializeRootStateAndStorageStateCallback() {
         assert.equal(typeof rootState.last_file_count, 'number');
 
         pushes.length = 0;
-        await worker.storage._setProbeError('dim_unsupported');
+        await worker.storage.retrieval._setProbeError('dim_unsupported');
         await new Promise((r) => setTimeout(r, 10));
         assert.ok(
             pushes.some((payload) => payload.reason === 'storage-state'),
@@ -449,12 +452,12 @@ async function testSearchAfterScan() {
         await worker.initialize();
         await worker.taskQueue.onIdle();
 
-        // searchFileByName
-        const nameResult = await worker.searchFileByName('readme');
-        assert.ok(nameResult.query === 'readme', 'searchFileByName should have query field');
-        assert.ok(Array.isArray(nameResult.results), 'searchFileByName should have results array');
-        assert.ok(typeof nameResult.totalHits === 'number', 'searchFileByName should have totalHits');
-        assert.ok(nameResult.results.length > 0, 'searchFileByName should find results');
+        // Keep the post-scan name route covered through the retained public search API.
+        const nameResult = await worker.searchIndexedFiles('readme', { routes: ['name_semantic'] });
+        assert.ok(nameResult.query === 'readme', 'name semantic route should have query field');
+        assert.ok(Array.isArray(nameResult.results), 'name semantic route should have results array');
+        assert.ok(typeof nameResult.totalHits === 'number', 'name semantic route should have totalHits');
+        assert.ok(nameResult.results.length > 0, 'name semantic route should find results');
 
         const contentResult = await worker.searchIndexedFiles('authentication', { routes: ['content_semantic'] });
         assert.ok(contentResult.query === 'authentication', 'content search should have query field');
@@ -1198,7 +1201,7 @@ async function testEmbeddingTaskYieldsToQueuedScan() {
         // Stub embedSingleFile with a delay so we can observe mid-batch yield.
         // No real API call — this test is only about queue-yield behaviour.
         let processed = 0;
-        fss.embedSingleFile = async (_row) => {
+        fss.retrieval._buildWholeFile = async (_row) => {
             await new Promise((r) => setTimeout(r, 50));
             processed++;
         };
@@ -1248,10 +1251,10 @@ async function testE2EBaseOnlyToFullCatchUp() {
         // Wait for first scan to complete deterministically
         await worker.taskQueue.onIdle();
 
-        const k = await worker.searchFilesByKeyword('alpha');
-        assert.ok(k.length >= 1, 'keyword search must work in base-only');
+        const k = await worker.searchIndexedFiles('alpha', { routes: ['keyword'] });
+        assert.ok(k.results.length >= 1, 'keyword search must work in base-only');
 
-        const s1 = await worker.searchFileByName('alpha');
+        const s1 = await worker.searchIndexedFiles('alpha', { routes: ['name_semantic'] });
         assert.equal(s1.code, 'EMBED_UNAVAILABLE');
 
         // Configure embedding
@@ -1266,17 +1269,18 @@ async function testE2EBaseOnlyToFullCatchUp() {
             async () => {
                 await worker.taskQueue.onIdle();
                 const status = await worker.storage.getStatus();
-                return status?.mode === 'full' && status.pending_count === 0;
+                const counts = await worker.storage.getGlobalFileCounts();
+                return status?.mode === 'full' && counts.pending_count === 0;
             },
             { timeoutMs: 30000, label: 'mode=full + pending_count=0' }
         );
 
-        const s2 = await worker.searchFileByName('alpha');
+        const s2 = await worker.searchIndexedFiles('alpha', { routes: ['name_semantic'] });
         assert.equal(s2.code, undefined);
         assert.ok(s2.results.length >= 1);
     } finally {
         Setting.updateInstanceData(settingData);
-        if (worker) await worker.taskQueue.onIdle();
+        if (worker) await worker.finalize();
         cleanup(dir);
     }
     console.log('  ✅ testE2EBaseOnlyToFullCatchUp');
@@ -1289,7 +1293,7 @@ async function testSearchWhenStorageMissingReturnsIndexNotReady() {
     const appDir = tmpDir('app-search-missing-storage');
     const worker = new FileManagerWorker('com.test.filemgr', appDir);
     try {
-        const byName = await worker.searchFileByName('alpha', 5);
+        const byName = await worker.searchIndexedFiles('alpha', { topK: 5, routes: ['name_semantic'] });
         assert.equal(byName.warning, '文件索引尚未就绪，请稍后重试。');
         assert.equal(byName.code, 'INDEX_NOT_READY');
 
@@ -1304,36 +1308,66 @@ async function testSearchWhenStorageMissingReturnsIndexNotReady() {
 
 // ── Test: Task 5 search wrappers normalize only after storage exists ─
 
-async function testTask5SearchWrappersNormalizeAndShortCircuit() {
-    console.log('  testTask5SearchWrappersNormalizeAndShortCircuit...');
-    const appDir = tmpDir('app-task5-search');
+async function testPublicSearchNormalizesAndShortCircuits() {
+    console.log('  testPublicSearchNormalizesAndShortCircuits...');
+    const appDir = tmpDir('app-public-search-arguments');
     const worker = new FileManagerWorker('com.test.filemgr', appDir);
     try {
-        const originalQuery = { text: 'alpha' };
-        const missing = await worker.searchFileByName(originalQuery, 500);
-        assert.equal(missing.query, originalQuery, 'missing storage path should preserve original query');
+        const missing = await worker.searchIndexedFiles({ text: 'alpha' }, { topK: 500, routes: ['name_semantic'] });
+        assert.equal(missing.query, '', 'the retained API normalizes non-string queries');
         assert.equal(missing.code, CODES.INDEX_NOT_READY);
-
         const calls = [];
+        worker.config = { entries: [makeEntry('/workspace')] };
+        worker._lastConfig = worker.config;
         worker.storage = withMemoryStateWriter({
-            async searchFileByName(query, options) {
-                calls.push({ method: 'name', query, options });
-                return { query, results: [], totalHits: 0 };
-            },
-            isDeferred: () => false
+            mode: 'full',
+            isDeferred: () => false,
+            retrieval: {
+                searchNames: async (query, options) => {
+                    calls.push({ query, options });
+                    return { query, results: [], totalHits: 0 };
+                }
+            }
         });
-
-        const blankName = await worker.searchFileByName('   ', 10);
-        assert.deepEqual(blankName, { query: '   ', results: [], totalHits: 0 });
-        assert.equal(calls.length, 0, 'blank name query should not call storage');
-
-        await worker.searchFileByName('alpha', 500);
-
-        assert.deepEqual(calls, [{ method: 'name', query: 'alpha', options: { topK: 100 } }]);
+        for (const query of ['   ', null, { text: 'alpha' }]) {
+            assert.deepEqual(await worker.searchIndexedFiles(query, { routes: ['name_semantic'] }), {
+                query: '',
+                results: [],
+                totalHits: 0,
+                fullTextAvailable: false
+            });
+        }
+        assert.equal(calls.length, 0, 'empty or invalid queries never reach a semantic route');
+        const invalidScope = await worker.searchIndexedFiles('alpha', {
+            routes: ['name_semantic'],
+            scope: { type: 'path', path: 'relative/path' }
+        });
+        assert.equal(invalidScope.code, CODES.INVALID_SCOPE);
+        assert.equal(calls.length, 0);
+        for (const [topK, expectedRouteBudget] of [
+            [1, 2],
+            [100, 200],
+            [500, 200],
+            [0, 2],
+            [-5, 2],
+            ['4.9', 8],
+            ['invalid', 100],
+            [Infinity, 100]
+        ]) {
+            await worker.searchIndexedFiles('  alpha  ', { topK, routes: ['name_semantic'] });
+            const call = calls.at(-1);
+            assert.equal(call.query, 'alpha');
+            assert.equal(
+                call.options.topK,
+                expectedRouteBudget,
+                'keep the retained API normalization and route budget'
+            );
+        }
+        assert.equal(calls.length, 8);
     } finally {
         cleanup(appDir);
     }
-    console.log('  ✅ testTask5SearchWrappersNormalizeAndShortCircuit');
+    console.log('  ✅ testPublicSearchNormalizesAndShortCircuits');
 }
 
 function makeSearchWorker() {
@@ -1349,11 +1383,13 @@ function makeSearchWorker() {
         scannerState: { unavailable_roots: {}, roots: {}, probe_error: null, last_rebuild_event: null },
         isDeferred: () => false,
         searchFilesByKeyword: async () => [],
-        searchFileByName: async () => {
-            throw new Error('semantic should not run');
-        },
-        searchIndexedChunks: async () => {
-            throw new Error('semantic should not run');
+        retrieval: {
+            searchNames: async () => {
+                throw new Error('semantic should not run');
+            },
+            searchContent: async () => {
+                throw new Error('semantic should not run');
+            }
         }
     });
     worker._statFileForSearch = async () => ({ isFile: () => true });
@@ -1397,7 +1433,7 @@ async function testSearchIndexedFilesMergesSortsAndFilters() {
         worker.storage.searchFilesByKeyword = async () => [
             { path: '/workspace/report.md', filename: 'report.md', modified: 1, size: 2, snippet: null, ref_count: 1 }
         ];
-        worker.storage.searchFileByName = async () => ({
+        worker.storage.retrieval.searchNames = async () => ({
             results: [
                 {
                     path: '/workspace/report.md',
@@ -1410,7 +1446,7 @@ async function testSearchIndexedFilesMergesSortsAndFilters() {
                 { path: '/docs/plan.md', filename: 'plan.md', modified: 3, size: 4, snippet: null, ref_count: 1 }
             ]
         });
-        worker.storage.searchIndexedChunks = async () => ({
+        worker.storage.retrieval.searchContent = async () => ({
             results: [
                 {
                     chunk: { id: '1', text: 'hello' },
@@ -1452,7 +1488,7 @@ async function testSearchIndexedFilesRouteSelectionKeepsExpectedGroups() {
                 }
             ];
         };
-        worker.storage.searchFileByName = async () => {
+        worker.storage.retrieval.searchNames = async () => {
             semanticCalls += 1;
             return {
                 results: [
@@ -1477,7 +1513,7 @@ async function testSearchIndexedFilesRouteSelectionKeepsExpectedGroups() {
                 ]
             };
         };
-        worker.storage.searchIndexedChunks = async () => {
+        worker.storage.retrieval.searchContent = async () => {
             semanticCalls += 1;
             return {
                 results: [
@@ -1563,10 +1599,10 @@ async function testSearchIndexedFilesSemanticPartial() {
         worker.storage.searchFilesByKeyword = async () => [
             { path: '/workspace/report.md', filename: 'report.md', modified: 1, size: 1, ref_count: 1 }
         ];
-        worker.storage.searchFileByName = async () => {
+        worker.storage.retrieval.searchNames = async () => {
             throw new Error('semantic down');
         };
-        worker.storage.searchIndexedChunks = async () => ({ results: [] });
+        worker.storage.retrieval.searchContent = async () => ({ results: [] });
 
         const result = await worker.searchIndexedFiles('report');
 
@@ -1611,11 +1647,11 @@ async function testSearchIndexedFilesExplicitZeroRoutesDoNotCallStorage() {
             calls++;
             return [];
         };
-        worker.storage.searchFileByName = async () => {
+        worker.storage.retrieval.searchNames = async () => {
             calls++;
             return { results: [] };
         };
-        worker.storage.searchIndexedChunks = async () => {
+        worker.storage.retrieval.searchContent = async () => {
             calls++;
             return { results: [] };
         };
@@ -1651,11 +1687,11 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
         calls.push(['keyword', options]);
         return [];
     };
-    worker.storage.searchFileByName = async (_query, options) => {
+    worker.storage.retrieval.searchNames = async (_query, options) => {
         calls.push(['name', options]);
         return { results: [] };
     };
-    worker.storage.searchIndexedChunks = async (_query, options) => {
+    worker.storage.retrieval.searchContent = async (_query, options) => {
         calls.push(['content', options]);
         return { results: [] };
     };
@@ -1675,7 +1711,7 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
     assert.equal(empty.code, undefined);
     assert.equal(statCalls, 0);
 
-    worker.storage.searchFileByName = async () => ({
+    worker.storage.retrieval.searchNames = async () => ({
         results: [{ path: '/workspace/empty/stale.md', filename: 'stale.md', ref_count: 1 }]
     });
     worker._statFileForSearch = async () => {
@@ -1687,7 +1723,7 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
     assert.equal(statCalls, 1);
 
     let unscopedContentOptions;
-    worker.storage.searchIndexedChunks = async (_query, options) => {
+    worker.storage.retrieval.searchContent = async (_query, options) => {
         unscopedContentOptions = options;
         return { results: [] };
     };
@@ -1697,11 +1733,11 @@ async function testSearchIndexedFilesScopedRouteBudgetsAndOutcomes() {
     worker.storage.searchFilesByKeyword = async () => {
         throw new Error('keyword down');
     };
-    worker.storage.searchFileByName = async () => ({ results: [] });
+    worker.storage.retrieval.searchNames = async () => ({ results: [] });
     const partial = await worker.searchIndexedFiles('plan', { routes: ['keyword', 'name_semantic'], scope });
     assert.equal(partial.code, CODES.SEARCH_PARTIAL);
 
-    worker.storage.searchFileByName = async () => {
+    worker.storage.retrieval.searchNames = async () => {
         throw new Error('name down');
     };
     const failed = await worker.searchIndexedFiles('plan', { routes: ['keyword', 'name_semantic'], scope });
@@ -1733,13 +1769,15 @@ function makeMultiPathSearchWorker({ entries, pausedRoots = [], unavailableRoots
             calls.push(['keyword', options]);
             return [];
         },
-        searchFileByName: async (_query, options) => {
-            calls.push(['name', options]);
-            return { results: [] };
-        },
-        searchIndexedChunks: async (_query, options) => {
-            calls.push(['content', options]);
-            return { results: [] };
+        retrieval: {
+            searchNames: async (_query, options) => {
+                calls.push(['name', options]);
+                return { results: [] };
+            },
+            searchContent: async (_query, options) => {
+                calls.push(['content', options]);
+                return { results: [] };
+            }
         }
     });
     return { worker, calls };
@@ -1863,7 +1901,7 @@ async function testMultiPathRequestedUnionFiltersBackendLeakEvenAfterAllSourceOp
     ];
     const { worker } = makeMultiPathSearchWorker({ entries });
     let routedScope = 'not-called';
-    worker.storage.searchFileByName = async (_query, options) => {
+    worker.storage.retrieval.searchNames = async (_query, options) => {
         routedScope = options.scope;
         const expandedEntries = [...entries, { root: '/source/c', exclude_patterns: [] }];
         worker.config = { entries: expandedEntries };
@@ -1892,7 +1930,7 @@ async function testMultiPathSelectedSourceRemovalDuringSearchFailsClosed() {
         { root: '/source/b', exclude_patterns: [] }
     ];
     const { worker } = makeMultiPathSearchWorker({ entries });
-    worker.storage.searchFileByName = async () => {
+    worker.storage.retrieval.searchNames = async () => {
         const remainingEntries = [{ root: '/source/b', exclude_patterns: [] }];
         worker.config = { entries: remainingEntries };
         worker._lastConfig = worker.config;
@@ -1915,7 +1953,7 @@ async function runMultiPathFinalStatConfigChange(mutateVisiblePolicy) {
         { root: '/source/b', exclude_patterns: [] }
     ];
     const { worker } = makeMultiPathSearchWorker({ entries });
-    worker.storage.searchFileByName = async () => ({
+    worker.storage.retrieval.searchNames = async () => ({
         results: [{ path: '/source/a/in.md', filename: 'in.md', ref_count: 1 }]
     });
 
@@ -2660,8 +2698,6 @@ async function testScanYieldsToPendingConfigChangeBeforeNextBatch() {
             },
             isDeferred: () => false,
             initialize: async () => {},
-            syncEmbeddingMode: async () => {},
-            syncEmbeddingModeForStartup: async () => {},
             saveScannerState: async () => {},
             saveFiles: async (files) => {
                 saveCalls++;
@@ -2735,9 +2771,6 @@ async function testIncrementalScanYieldsDuringGlobWhenNoFilesChanged() {
             },
             isDeferred: () => false,
             initialize: async () => {},
-            syncEmbeddingMode: async () => {
-                await scanGate;
-            },
             saveScannerState: async () => {
                 saveScannerStateCalls++;
             },
@@ -2745,7 +2778,12 @@ async function testIncrementalScanYieldsDuringGlobWhenNoFilesChanged() {
                 saveFilesCalls++;
                 return { saved: 0, failed: 0, failures: [] };
             },
-            removeDeletedFiles: async () => {}
+            removeDeletedFiles: async () => {},
+            retrieval: {
+                prepare: async () => {
+                    await scanGate;
+                }
+            }
         });
         worker._enqueueEmbeddingQueue = () => {
             enqueueEmbeddingCalls++;
@@ -2818,7 +2856,6 @@ async function testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint() {
             },
             isDeferred: () => false,
             initialize: async () => {},
-            syncEmbeddingMode: async () => {},
             saveScannerState: async () => {
                 saveScannerStateCalls++;
             },
@@ -2915,7 +2952,6 @@ async function testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates()
                 last_rebuild_event: null,
                 last_embedding_task_at: null
             },
-            syncEmbeddingModeForStartup: async () => {},
             saveScannerState: async () => {},
             detachRootForConfigChange: async () => {},
             removeOrphanedItems: async () => ({ deleted: 0 }),
@@ -3160,7 +3196,6 @@ async function testSourceConfigPendingDoesNotLeakOnEarlyReturn() {
         worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
-            syncEmbeddingModeForStartup: async () => {},
             saveScannerState: async () => {},
             storage: { close() {} }
         });
@@ -3296,13 +3331,17 @@ async function testEmbeddingPendingControlLifecycle() {
                 last_rebuild_event: null,
                 last_embedding_task_at: null
             },
-            syncEmbeddingModeForStartup: async () => {
-                syncCalls++;
-            },
             getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
             getPerRootCounts: async () => new Map(),
             isDeferred: () => false,
-            deferredReason: null
+            deferredReason: null,
+            retrieval: {
+                prepare: async (request) => {
+                    if (request.startup) {
+                        syncCalls++;
+                    }
+                }
+            }
         });
         worker.scanners.set('/scan-root', {
             state: {
@@ -3346,7 +3385,6 @@ async function testEmbeddingPendingControlLifecycle() {
         assert.equal(worker._pendingEmbeddingConfigChange, false);
 
         worker.storage = withMemoryStateWriter({
-            syncEmbeddingModeForStartup: async () => {},
             scannerState: {
                 roots: {},
                 unavailable_roots: {},
@@ -3364,7 +3402,12 @@ async function testEmbeddingPendingControlLifecycle() {
         assert.equal(worker._pendingEmbeddingConfigChange, false);
 
         worker.status = 'running';
-        worker.storage.syncEmbeddingModeForStartup = async () => {
+        worker.storage.retrieval.prepare = async (request) => {
+            assert.equal(request.startup, true);
+            assert.equal(request.forceProbe, true);
+            assert.equal(request.role, 'write');
+            assert.equal(typeof request.context.isCurrent, 'function');
+            assert.equal(request.context.isCurrent(), true);
             throw new Error('fixture embedding sync failure');
         };
         const scansBeforeFailure = scanRequests;
@@ -3406,7 +3449,6 @@ async function testSkippedScanTaskDoesNotLeaveScanPending() {
                 unavailable_roots: {}
             },
             isDeferred: () => false,
-            syncEmbeddingMode: async () => {},
             saveFiles: async () => ({ saved: 0, failed: 0, failures: [] }),
             saveScannerState: async () => {},
             removeDeletedFiles: async () => {}
@@ -3609,8 +3651,6 @@ async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
                 last_embedding_task_at: null
             },
             saveScannerState: async () => {},
-            syncEmbeddingMode: async () => {},
-            syncEmbeddingModeForStartup: async () => {},
             processEmbeddingQueue: async (_isScanPending, options) => {
                 queueOptions = options;
                 return 0;
@@ -3784,8 +3824,6 @@ async function testTask16ConfigChangeDedup() {
             scannerState: { roots: {} },
             detachRootForConfigChange: async () => {},
             saveScannerState: async () => {},
-            syncEmbeddingMode: async () => {},
-            syncEmbeddingModeForStartup: async () => {},
             processEmbeddingQueue: async () => 0
         });
         worker._restartScanners = async () => {
@@ -3830,9 +3868,7 @@ async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
                 detachedRoots.push(root);
                 return { deleted: 0, detached: 0 };
             },
-            saveScannerState: async () => {},
-            syncEmbeddingMode: async () => {},
-            syncEmbeddingModeForStartup: async () => {}
+            saveScannerState: async () => {}
         });
         worker._restartScanners = async () => {};
         worker._enqueueEmbeddingQueue = () => {};
@@ -3869,7 +3905,7 @@ async function testInitializeSchedulesProbeContinuationBeforeStartingScanners() 
             this.scannerState = { roots: {} };
             this.storage = { close() {} };
             this.saveScannerState = async () => {};
-            this.syncEmbeddingModeForStartup = async () => probeBlocker;
+            this.retrieval._syncModeForStartup = async () => probeBlocker;
             this.getStatus = async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 });
             this.getPerRootCounts = async () => new Map();
         };
@@ -3922,7 +3958,6 @@ async function testInitializeClearsEquivalentPendingConfigBeforeStartingScanners
                 roots: {},
                 unavailable_roots: {}
             },
-            syncEmbeddingModeForStartup: async () => {},
             saveScannerState: async () => {},
             detachRootForConfigChange: async () => {
                 throw new Error('no roots should be detached for equivalent startup config');
@@ -3968,14 +4003,17 @@ async function testApplicationConfigChangedSyncsModeBeforeRestartingScanners() {
         worker.storage = withMemoryStateWriter({
             mode: 'base-only',
             scannerState: { roots: {} },
-            syncEmbeddingModeForStartup: async () => {
-                order.push('sync');
-            },
-            syncEmbeddingMode: async () => {
-                order.push('legacy-sync');
-            },
             saveScannerState: async () => {},
-            storage: { close() {} }
+            storage: { close() {} },
+            retrieval: {
+                prepare: async (request) => {
+                    if (request.startup) {
+                        order.push('sync');
+                    } else {
+                        order.push('legacy-sync');
+                    }
+                }
+            }
         });
         worker._detachRemovedRoots = async () => {
             order.push('detach');
@@ -4158,7 +4196,6 @@ async function testSetSourcePausedResumeStartsScannerBeforeSuccess() {
                 rootState.paused = paused;
             },
             isDeferred: () => false,
-            syncEmbeddingMode: async () => {},
             saveFiles: async (files) => ({ saved: files.length, failed: 0, failures: [] }),
             removeDeletedFiles: async () => {},
             saveScannerState: async () => {},
@@ -4233,10 +4270,6 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
                 last_rebuild_event: null,
                 last_embedding_task_at: null
             },
-            syncEmbeddingModeForStartup: async () => {},
-            syncEmbeddingMode: async () => {
-                await scanGate;
-            },
             saveScannerState: async () => {
                 saveScannerStateCalls++;
             },
@@ -4274,7 +4307,12 @@ async function testSetSourcePausedYieldsScannerWithinCandidateBoundary() {
                         }
                     ]
                 ]),
-            deferredReason: null
+            deferredReason: null,
+            retrieval: {
+                prepare: async (request) => {
+                    if (!request.startup) await scanGate;
+                }
+            }
         });
 
         await worker.applicationConfigChanged({ entries: [entry] });
@@ -4350,8 +4388,6 @@ async function testSetSourcePausedFinishesCurrentSaveBatchOnly() {
                 last_rebuild_event: null,
                 last_embedding_task_at: null
             },
-            syncEmbeddingModeForStartup: async () => {},
-            syncEmbeddingMode: async () => {},
             saveScannerState: async () => {},
             saveFiles: async (files) => {
                 batchSizes.push(files.length);
@@ -4420,7 +4456,7 @@ async function testSetSourcePausedYieldsEmbeddingAfterCurrentFile() {
     let worker;
     try {
         const storage = new FSStorage(appDir);
-        await storage._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        await storage.retrieval._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
         const firstFile = path.join(root, 'first.md');
         const secondFile = path.join(root, 'second.md');
         await storage.storage.upsert(
@@ -4462,7 +4498,7 @@ async function testSetSourcePausedYieldsEmbeddingAfterCurrentFile() {
         const firstStarted = new Promise((resolve) => {
             notifyFirst = resolve;
         });
-        storage.embedSingleFile = async (file) => {
+        storage.retrieval._buildWholeFile = async (file) => {
             embeddedPaths.push(file.item_id);
             notifyFirst();
             await new Promise((resolve) => {
@@ -4528,8 +4564,6 @@ async function testPausedRootStaysStoppedAcrossConfigRestart() {
                 last_rebuild_event: null,
                 last_embedding_task_at: null
             },
-            syncEmbeddingModeForStartup: async () => {},
-            syncEmbeddingMode: async () => {},
             saveScannerState: async () => {},
             saveFiles: async (files) => ({ saved: files.length, failed: 0, failures: [] }),
             removeDeletedFiles: async () => {},
@@ -5104,10 +5138,10 @@ async function testEmbeddingConfigChangedKeepsPausedOnlyRowsPending() {
         await worker.taskQueue.onIdle();
 
         worker.storage.mode = 'full';
-        worker.storage.syncEmbeddingModeForStartup = async () => {};
-        worker.storage.syncEmbeddingMode = async () => {};
+        worker.storage.retrieval._syncModeForStartup = async () => {};
+        worker.storage.retrieval._syncMode = async () => {};
         const embedded = [];
-        worker.storage.embedSingleFile = async (file) => {
+        worker.storage.retrieval._buildWholeFile = async (file) => {
             embedded.push(file.item_id);
             await worker.storage.storage.update([{ item_id: file.item_id, item_type: 'file', embedded: 1 }], {
                 indexers: ['BaseIndexer']
@@ -5158,7 +5192,7 @@ async function main() {
         testLegacyFileCleanup,
         testEmbeddingTaskYieldsToQueuedScan,
         testSearchWhenStorageMissingReturnsIndexNotReady,
-        testTask5SearchWrappersNormalizeAndShortCircuit,
+        testPublicSearchNormalizesAndShortCircuits,
         testSearchIndexedFilesRouteSelectionKeepsExpectedGroups,
         testTask5StartScannersDedupesRoots,
         testResetFileSystemStorageUsesManualResetReason,
@@ -5175,6 +5209,16 @@ async function main() {
         testEmptyScannedSourceStateIsCompleted,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testFullTextQueueHolderChanges,
+        testFullTextReadonlyStatusWindows,
+        testFullTextStatusAndSnapshots,
+        testFullTextSearchRoutesAndOutcomes,
+        testFullTextSearchFastStageWarnings,
+        testFullTextSearchTimeoutWarnings,
+        testFullTextSearchContextChanges,
+        testFullTextSearchEndToEnd,
+        testFullTextQueueHandoff,
+        testFullTextRuntimeFailureHandoff,
         testEmbeddingQueueFailureIsHandled,
         testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
         testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
@@ -5253,3 +5297,603 @@ main().catch((e) => {
     console.error('Fatal:', e);
     process.exit(1);
 });
+
+async function testExtractFileTextEncodings() {
+    const dir = tmpDir('extract-encodings');
+    try {
+        const worker = new FileManagerWorker('filemgr', dir);
+        const text = 'ASCII header\n' + '中文编码检测，文件索引和工具提取应保留相同内容。'.repeat(20) + '\n末行';
+        for (const encoding of ['utf8', 'utf16le', 'gbk']) {
+            const file = path.join(dir, `${encoding}.txt`);
+            fs.writeFileSync(file, iconv.encode(text, encoding, { addBOM: encoding === 'utf16le' }));
+            assert.equal(await worker.extractFileText(file), text);
+        }
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testFullTextQueueHandoff() {
+    for (const outcome of ['completed', 'stopped', 'yielded', 'throw']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-handoff-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const calls = [];
+        worker.storage = withMemoryStateWriter({
+            mode: 'full',
+            getFullTextState: () => ({ available: true }),
+            processFullTextQueue: async () => {
+                calls.push('bm25');
+                if (outcome === 'throw') throw new Error('unexpected build error');
+                return { outcome, processed: 1 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        try {
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(calls, outcome === 'yielded' ? ['bm25'] : ['bm25', 'embedding']);
+            assert.equal(worker._fullTextQueueActive, false);
+            assert.equal(worker._fullTextQueueScheduled, false);
+            if (outcome === 'yielded') {
+                worker.storage.processFullTextQueue = async () => {
+                    calls.push('bm25-again');
+                    return { outcome: 'completed', processed: 0 };
+                };
+                worker._enqueueBuildWork();
+                await worker.taskQueue.onIdle();
+                assert.deepEqual(calls, ['bm25', 'bm25-again', 'embedding']);
+            }
+        } finally {
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+    for (const gate of ['readonly', 'error', 'base-only', 'unavailable']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-gate-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const calls = [];
+        worker.storage = withMemoryStateWriter({
+            mode: gate === 'base-only' ? 'base-only' : 'full',
+            getFullTextState: () => ({
+                available: gate !== 'unavailable',
+                reason: gate === 'unavailable' ? 'resetting' : undefined
+            }),
+            processFullTextQueue: async () => {
+                calls.push('bm25');
+                return { outcome: 'completed', processed: 0 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        if (gate === 'readonly') worker._readonlyMode = true;
+        if (gate === 'error') worker.status = 'error';
+        try {
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(calls, gate === 'base-only' ? ['bm25'] : gate === 'unavailable' ? ['embedding'] : []);
+        } finally {
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+}
+
+async function testFullTextQueueHolderChanges() {
+    for (const change of ['queued-holder', 'unavailable', 'running-holder', 'owner']) {
+        const appDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-worker-owner-'));
+        const worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(appDir)] };
+        worker.callApp = () => {};
+        const first = {},
+            second = {},
+            calls = [];
+        let available = true;
+        const storage = withMemoryStateWriter({
+            mode: 'full',
+            storage: first,
+            getFullTextState: () => ({ available }),
+            processFullTextQueue: async () => {
+                calls.push(storage.storage);
+                if (change === 'running-holder' && storage.storage === first) {
+                    storage.storage = second;
+                    return { outcome: 'stale', processed: 0 };
+                }
+                return { outcome: 'completed', processed: 0 };
+            },
+            processEmbeddingQueue: async () => {
+                calls.push('embedding');
+                return 0;
+            }
+        });
+        worker.storage = storage;
+        worker.taskQueue.pause();
+        try {
+            worker._enqueueBuildWork();
+            assert.equal(worker._fullTextQueueScheduled, true);
+            worker._currentWorkspace = appDir;
+            storage.mode = 'base-only';
+            assert.equal(worker._getScanIntervalForRoot(appDir), 180_000);
+            storage.mode = 'full';
+            if (change === 'queued-holder') storage.storage = second;
+            if (change === 'unavailable') available = false;
+            if (change === 'owner') worker.storage = withMemoryStateWriter({ mode: 'base-only' });
+            worker._enqueueBuildWork();
+            worker.taskQueue.start();
+            await worker.taskQueue.onIdle();
+            assert.deepEqual(
+                calls,
+                change === 'queued-holder'
+                    ? [second, 'embedding']
+                    : change === 'unavailable'
+                      ? ['embedding']
+                      : change === 'running-holder'
+                        ? [first, second, 'embedding']
+                        : []
+            );
+            assert.equal(worker._fullTextQueueScheduled, false);
+            assert.equal(worker._fullTextQueueActive, false);
+        } finally {
+            worker.taskQueue.start();
+            await worker.finalize();
+            fs.rmSync(appDir, { recursive: true, force: true });
+        }
+    }
+}
+
+function makeFullTextSearchWorker() {
+    const worker = makeSearchWorker();
+    const storage = worker.storage;
+    storage.storage = {};
+    storage.scannerState.bm25_generation = 1;
+    storage.getFullTextState = () => ({ available: true });
+    storage.captureFullTextContext = FSStorage.prototype.captureFullTextContext;
+    storage.isFullTextContextCurrent = FSStorage.prototype.isFullTextContextCurrent;
+    const row = { path: '/workspace/fulltext.txt', filename: 'fulltext.txt', ref_count: 1, bm25Rank: 1 };
+    storage.searchFullText = async () => [row];
+    storage.retrieval.searchNames = async () => ({ results: [] });
+    storage.retrieval.searchContent = async () => ({ results: [] });
+    return worker;
+}
+async function testFullTextSearchRoutesAndOutcomes() {
+    const worker = makeFullTextSearchWorker();
+    const calls = [];
+    const storage = worker.storage;
+    try {
+        storage.mode = 'full';
+        storage.searchFilesByKeyword = async (q, o) => {
+            calls.push(['keyword', q, o]);
+            return [];
+        };
+        const bm25 = storage.searchFullText;
+        storage.searchFullText = async (q, o) => {
+            calls.push(['bm25', q, o]);
+            return bm25();
+        };
+        storage.retrieval.searchNames = async (q) => {
+            calls.push(['name', q]);
+            return { results: [] };
+        };
+        storage.retrieval.searchContent = async (q) => {
+            calls.push(['content', q]);
+            return { results: [] };
+        };
+        const result = await worker.searchIndexedFiles('鸿蒙 操作系统');
+        assert.deepEqual(
+            calls.map((x) => x[0]),
+            ['keyword', 'bm25', 'name', 'content']
+        );
+        assert.ok(calls.every((x) => x[1] === '鸿蒙 操作系统'));
+        assert.deepEqual(calls[0][2].terms, ['鸿蒙', '操作系统']);
+        for (const [query, terms] of [
+            ['a 1', ['a', '1']],
+            ['系统；系统', ['系统']]
+        ]) {
+            calls.length = 0;
+            await worker.searchIndexedFiles(query);
+            assert.deepEqual(
+                calls.map((call) => call[0]),
+                ['keyword', 'bm25', 'name', 'content']
+            );
+            assert.ok(calls.every((call) => call[1] === query));
+            assert.deepEqual(calls[0][2].terms, terms);
+        }
+        assert.deepEqual(result.results[0].matchTypes, ['bm25']);
+        assert.equal(result.fullTextAvailable, true);
+        for (const reason of ['open_failed', 'resetting']) {
+            storage.getFullTextState = () => ({ available: false, reason });
+            calls.length = 0;
+            const unavailable = await worker.searchIndexedFiles('q');
+            assert.ok(!calls.some((x) => x[0] === 'bm25'));
+            assert.equal(unavailable.code, undefined);
+            assert.equal(unavailable.fullTextAvailable, false);
+        }
+        storage.getFullTextState = () => ({ available: true });
+        storage.searchFullText = async () => {
+            throw new Error('bm25 down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEMANTIC_PARTIAL);
+        storage.mode = 'base-only';
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.EMBED_UNAVAILABLE);
+        storage.searchFullText = bm25;
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.EMBED_UNAVAILABLE);
+        storage.searchFilesByKeyword = async () => {
+            throw new Error('keyword down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEARCH_PARTIAL);
+        storage.searchFullText = async () => {
+            throw new Error('bm25 down');
+        };
+        assert.equal((await worker.searchIndexedFiles('q')).code, CODES.SEARCH_FAILED);
+        for (const [q, o] of [
+            ['', {}],
+            [' ;，、', {}],
+            ['q', { scope: { type: 'path', path: 'relative' } }],
+            ['q', { routes: [] }]
+        ])
+            assert.equal((await worker.searchIndexedFiles(q, o)).fullTextAvailable, true);
+        storage.isDeferred = () => true;
+        assert.equal((await worker.searchIndexedFiles('q')).fullTextAvailable, true);
+        worker.storage = null;
+        assert.equal((await worker.searchIndexedFiles('q')).fullTextAvailable, false);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+}
+async function testFullTextSearchFastStageWarnings() {
+    for (const mode of ['base-only', 'full']) {
+        for (const failure of ['query', 'generation']) {
+            const worker = makeFullTextSearchWorker();
+            const storage = worker.storage;
+            let bm25Calls = 0;
+            try {
+                storage.mode = mode;
+                storage.searchFilesByKeyword = async () => [{ path: '/workspace/keyword.txt', ref_count: 1 }];
+                storage.searchFullText = async () => {
+                    bm25Calls++;
+                    if (failure === 'query') throw new Error('bm25 down');
+                    return [{ path: '/workspace/body.txt', ref_count: 1, bm25Rank: 1 }];
+                };
+                if (failure === 'generation') {
+                    worker._statFileForSearch = async () => {
+                        storage.scannerState.bm25_generation++;
+                        return { isFile: () => true };
+                    };
+                }
+                const fast = await worker.searchIndexedFiles('q', { routes: ['keyword', 'bm25'] });
+                assert.equal(bm25Calls, 1);
+                assert.deepEqual(
+                    fast.results.map((item) => item.path),
+                    ['/workspace/keyword.txt']
+                );
+                assert.equal(fast.code, mode === 'base-only' ? undefined : CODES.SEMANTIC_PARTIAL);
+                assert.equal(fast.warning, mode === 'base-only' ? undefined : WARNINGS.SEMANTIC_PARTIAL);
+                const slow = await worker.searchIndexedFiles('q', {
+                    routes: ['name_semantic', 'content_semantic']
+                });
+                assert.equal(slow.code, mode === 'base-only' ? CODES.EMBED_UNAVAILABLE : undefined);
+                assert.equal(slow.warning, mode === 'base-only' ? WARNINGS.NO_EMBEDDING_MODEL : undefined);
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+        const worker = makeFullTextSearchWorker();
+        try {
+            worker.storage.mode = mode;
+            worker.storage.searchFilesByKeyword = async () => {
+                throw new Error('keyword down');
+            };
+            const options = { routes: ['keyword', 'bm25'] };
+            assert.equal((await worker.searchIndexedFiles('q', options)).code, CODES.SEARCH_PARTIAL);
+            worker.storage.searchFullText = async () => {
+                throw new Error('bm25 down');
+            };
+            assert.equal((await worker.searchIndexedFiles('q', options)).code, CODES.SEARCH_FAILED);
+        } finally {
+            cleanup(worker.appDataDirectory);
+        }
+    }
+}
+async function testFullTextSearchTimeoutWarnings() {
+    for (const mode of ['base-only', 'full'])
+        for (const keyword of ['empty', 'hits', 'failed']) {
+            const worker = makeFullTextSearchWorker();
+            try {
+                worker.storage.mode = mode;
+                worker.storage.searchFilesByKeyword = async () => {
+                    if (keyword === 'failed') throw new Error('isolated keyword failure');
+                    return keyword === 'hits' ? [{ path: '/workspace/keyword.txt', ref_count: 1 }] : [];
+                };
+                worker.storage.searchFullText = async () => {
+                    throw Object.assign(new Error('isolated BM25 timeout'), { code: 'bm25_search_timeout' });
+                };
+                for (const routes of [
+                    ['bm25'],
+                    ['keyword', 'bm25'],
+                    ['keyword', 'bm25', 'name_semantic', 'content_semantic']
+                ]) {
+                    const result = await worker.searchIndexedFiles('q', { routes });
+                    assert.equal(result.code, CODES.BM25_SEARCH_TIMEOUT);
+                    assert.equal(result.warning, WARNINGS.BM25_SEARCH_TIMEOUT);
+                    assert.ok(result.warning && !result.warning.includes('filemgr.search.'));
+                    assert.equal(result.results.length, keyword === 'hits' && routes.includes('keyword') ? 1 : 0);
+                }
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+}
+async function testFullTextSearchContextChanges() {
+    for (const atStat of [false, true])
+        for (const change of ['holder', 'generation', 'owner', 'availability', 'embedding']) {
+            const worker = makeFullTextSearchWorker();
+            const storage = worker.storage;
+            try {
+                storage.mode = 'full';
+                storage.searchFilesByKeyword = async () => [{ path: '/workspace/keyword.txt', ref_count: 1 }];
+                storage.retrieval.captureSearchContext = () => 1;
+                let semanticCurrent = true;
+                storage.retrieval.isSearchContextCurrent = () => semanticCurrent;
+                const mutate = () => {
+                    if (change === 'holder') storage.storage = {};
+                    if (change === 'generation') storage.scannerState.bm25_generation++;
+                    if (change === 'owner') worker.storage = { ...storage };
+                    if (change === 'availability')
+                        storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+                    if (change === 'embedding') semanticCurrent = false;
+                };
+                let changed = false;
+                if (atStat)
+                    worker._statFileForSearch = async () => {
+                        if (!changed) {
+                            changed = true;
+                            mutate();
+                        }
+                        return { isFile: () => true };
+                    };
+                else
+                    storage.retrieval.searchNames = async () => {
+                        mutate();
+                        return { results: [] };
+                    };
+                const result = await worker.searchIndexedFiles('q');
+                assert.equal(
+                    result.results.some((x) => x.matchTypes.includes('bm25')),
+                    change === 'embedding',
+                    `${atStat}/${change}`
+                );
+                assert.ok(result.results.some((x) => x.matchTypes.includes('keyword')));
+                assert.equal(result.code, CODES.SEMANTIC_PARTIAL);
+            } finally {
+                cleanup(worker.appDataDirectory);
+            }
+        }
+}
+async function testFullTextSearchEndToEnd() {
+    const appDir = tmpDir('fulltext-e2e-app'),
+        docs = tmpDir('fulltext-e2e-docs');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        worker.config = { entries: [makeEntry(docs, ['excluded/**'])] };
+        worker._lastConfig = worker.config;
+        worker.storage = new FSStorage(appDir);
+        await worker.storage.initialize({ syncEmbedding: false });
+        const names = ['tail.txt', 'excluded/tail.txt', 'sub/tail.txt'];
+        for (const name of names) {
+            const file = path.join(docs, name);
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, 'x'.repeat(70000) + ' wf2tailtoken');
+        }
+        await worker.storage.saveFiles(
+            names.map((name) => makeFileEntry(path.join(docs, name))),
+            docs
+        );
+        await worker.storage.processFullTextQueue(() => false, { activeRoots: [docs] });
+        const holder = worker.storage.storage,
+            calls = [];
+        const raw = holder.searchBM25.bind(holder),
+            scoped = holder.searchScope.bind(holder);
+        holder.searchBM25 = async (...args) => {
+            calls.push('raw');
+            return raw(...args);
+        };
+        holder.searchScope = async (...args) => {
+            calls.push('scope');
+            return scoped(...args);
+        };
+        const result = await worker.searchIndexedFiles('wf2tailtoken', { scope: { type: 'paths', paths: [docs] } });
+        assert.equal(result.results.length, 2);
+        assert.deepEqual(calls, ['raw']);
+        assert.ok(result.results.every((x) => x.matchTypes.includes('bm25')));
+        const narrow = await worker.searchIndexedFiles('wf2tailtoken', {
+            scope: { type: 'path', path: path.join(docs, 'sub') }
+        });
+        assert.equal(narrow.results.length, 1);
+        assert.equal(calls.at(-1), 'scope');
+        fs.unlinkSync(path.join(docs, 'tail.txt'));
+        assert.equal((await worker.searchIndexedFiles('wf2tailtoken')).results.length, 1);
+        worker.config = { entries: [] };
+        worker._lastConfig = worker.config;
+        assert.equal((await worker.searchIndexedFiles('wf2tailtoken')).results.length, 0);
+    } finally {
+        if (worker.storage) await worker.storage.close();
+        cleanup(appDir);
+        cleanup(docs);
+    }
+}
+
+async function testFullTextStatusAndSnapshots() {
+    const worker = makeFullTextSearchWorker();
+    const storage = worker.storage;
+    try {
+        const counts = {
+            total_files: 10,
+            embedded_count: 10,
+            pending_count: 0,
+            failed_count: 0,
+            last_scan_at: 1,
+            full_text: { indexable: 9, done: 2, pending: 6, failed: 1 }
+        };
+        for (const mode of ['full', 'base-only']) {
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'scanning');
+            counts.full_text.pending = 0;
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'completed');
+            counts.pending_count = 2;
+            assert.equal(
+                worker._deriveSourceState('/workspace', counts, mode),
+                mode === 'full' ? 'scanning' : 'completed'
+            );
+            counts.pending_count = 0;
+            counts.full_text.pending = 6;
+            for (const reason of ['unsupported', 'open_failed', 'tokenizer_unavailable']) {
+                storage.getFullTextState = () => ({ available: false, reason });
+                assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'completed');
+            }
+            storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'scanning');
+            storage.scannerState.roots['/workspace'] = { paused: true, metadata_write_pending: true };
+            storage.scannerState.unavailable_roots['/workspace'] = {};
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'paused');
+            storage.scannerState.roots['/workspace'].paused = false;
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'unavailable');
+            delete storage.scannerState.unavailable_roots['/workspace'];
+            assert.equal(worker._deriveSourceState('/workspace', counts, mode), 'pending');
+            delete storage.scannerState.roots['/workspace'];
+        }
+        worker.config = { entries: [makeEntry('/workspace')] };
+        worker._lastConfig = worker.config;
+        storage.getStatus = async () => ({ db_size: 1 });
+        storage.getPerRootCounts = async () => new Map([['/workspace', counts]]);
+        storage.retrieval.getRuntimeState = () => ({ probeError: null });
+        storage.getFullTextState = () => ({ available: true });
+        const first = await worker.getFileSystemStatus();
+        assert.deepEqual(first.full_text, { available: true, done: 2, pending: 6, failed: 1 });
+        assert.deepEqual(first.sources[0].full_text, { total: 10, done: 2, pending: 6, failed: 1, excluded: 1 });
+        let pushed;
+        worker.callApp = (_method, payload) => {
+            pushed = payload.snapshot;
+        };
+        counts.full_text.done = 4;
+        counts.full_text.pending = 4;
+        await worker._emitStatusChanged('task-done');
+        assert.equal(pushed.full_text.done, 4);
+        const holder = storage.storage;
+        storage.storage = null;
+        storage.getStatus = async () => null;
+        storage.getFullTextState = () => ({ available: false, reason: 'resetting' });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        storage.storage = holder;
+        storage.getStatus = async () => ({ db_size: 1 });
+        storage.getFullTextState = () => ({ available: true });
+        assert.equal((await worker.getFileSystemStatus()).full_text.done, 4);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+}
+
+async function testFullTextReadonlyStatusWindows() {
+    const dir = tmpDir('fulltext-status-windows');
+    const worker = new FileManagerWorker('test.wf2', dir);
+    const root = path.join(dir, 'docs');
+    fs.mkdirSync(root);
+    worker.config = { entries: [makeEntry(root)] };
+    worker._lastConfig = worker.config;
+    worker.status = 'running';
+    let owner = new FSStorage(dir);
+    worker.storage = owner;
+    try {
+        await owner.initialize({ syncEmbedding: false });
+        const file = path.join(root, 'a.txt');
+        fs.writeFileSync(file, 'hello');
+        await owner.saveFiles([makeFileEntry(file)], root);
+        await owner.processFullTextQueue(() => false, { activeRoots: [root] });
+        await owner._beginFullTextReset();
+        await owner.close();
+        assert.deepEqual(owner.getFullTextState(), { available: false, reason: 'resetting' });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        owner = new FSStorage(dir);
+        worker.storage = owner;
+        await owner.initialize({ syncEmbedding: false });
+        await owner.close();
+        assert.deepEqual(owner.getFullTextState(), { available: false });
+        assert.equal((await worker.getFileSystemStatus()).full_text, undefined);
+        for (const name of ['bm25-index.db', 'bm25-index.wasm.db'])
+            fs.rmSync(path.join(owner._storageDir, name), { force: true });
+        owner = new FSStorage(dir);
+        worker.storage = owner;
+        await owner.initializeReadonly();
+        worker._readonlyMode = true;
+        worker.status = 'readonly';
+        const snapshot = await worker.getFileSystemStatus();
+        assert.equal(snapshot.full_text.available, false);
+        assert.equal(snapshot.full_text.reason, 'open_failed');
+        assert.equal(snapshot.sources[0].full_text, undefined);
+    } finally {
+        await owner.close();
+        cleanup(dir);
+    }
+}
+
+async function testFullTextRuntimeFailureHandoff() {
+    for (const availability of ['terminal', 'unsupported']) {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-runtime-handoff-'));
+        const owner = new FSStorage(directory);
+        const worker = new FileManagerWorker('com.test.filemgr', directory);
+        try {
+            await owner.initialize({ syncEmbedding: false });
+            const file = path.join(directory, 'document.txt');
+            fs.writeFileSync(file, 'wf2 runtime content');
+            const stat = fs.statSync(file);
+            await owner.saveFiles(
+                [
+                    {
+                        path: file,
+                        filename: 'document.txt',
+                        type: 'file',
+                        modified: Math.floor(stat.mtimeMs),
+                        size: stat.size
+                    }
+                ],
+                directory
+            );
+            const failure = Object.assign(new Error('isolated public tokenizer failure'), {
+                code: 'bm25_tokenizer_unavailable',
+                details: { availability }
+            });
+            owner.storage.upsert = async () => {
+                throw failure;
+            };
+            let embeddings = 0;
+            owner.mode = 'full';
+            owner.processEmbeddingQueue = async () => {
+                embeddings++;
+                return 0;
+            };
+            worker.storage = owner;
+            worker.config = { entries: [makeEntry(directory)] };
+            worker.status = 'running';
+            worker.callApp = () => {};
+            owner.onStateChanged = () => {
+                void worker._emitStatusChanged('runtime-failure');
+            };
+            worker._enqueueBuildWork();
+            await worker.taskQueue.onIdle();
+            assert.equal(owner.getFullTextState().availability, availability);
+            assert.equal(embeddings, 1);
+            assert.equal(worker._fullTextQueueActive, false);
+            assert.equal(worker._fullTextQueueScheduled, false);
+        } finally {
+            await worker.finalize();
+            await owner.close();
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    }
+}

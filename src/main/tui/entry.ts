@@ -85,6 +85,7 @@ import { TaskProfiler } from '../aikernel/profiler.js';
 import { t } from '../../locale/index.js';
 import { getPlatform } from '../../platforms/base.js';
 import { CliPlatform } from '../../platforms/cli.js';
+import type { InteractionDeliveryChannel } from '../aikernel/interaction/delivery.js';
 import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 import { getExecutionNode } from '../applications/devicemgr/execution.js';
 import { resolveTaskMode, replaceTaskHarnessForWorkspace } from '../aikernel/task/mode.js';
@@ -224,7 +225,11 @@ export class OpenDeskTUI {
      */
     public undoStacks: Map<string, ChatMessage[][]> = new Map();
 
-    constructor(args: CommandLineArgs) {
+    constructor(
+        args: CommandLineArgs,
+        deliveryChannel: InteractionDeliveryChannel,
+        private readonly closeApplications: () => Promise<void>
+    ) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = AgentRegistry.getMainAgent();
 
@@ -255,9 +260,9 @@ export class OpenDeskTUI {
         this.inputArea = new AgentInputArea(this);
         this.inputArea.statusBar.update({ outputDisplayLevel: this.lastConfiguredOutputDisplayLevel });
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
-        this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
-        this.sharedAskUserProvider = new TUIAskUserProvider(this);
-        this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this);
+        this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this, deliveryChannel);
+        this.sharedAskUserProvider = new TUIAskUserProvider(this, deliveryChannel);
+        this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this, deliveryChannel);
         this.workspace = args.workspace;
         this.model = this.resolveValidChatModelAlias(args.model);
         this.lastGlobalDefaultModel = Setting.getInstance().getData().default_model ?? '';
@@ -1525,6 +1530,7 @@ export class OpenDeskTUI {
     }
 
     async exit() {
+        const applicationsClosing = this.closeApplications();
         const resumeTaskId = this.activeTaskId;
 
         try {
@@ -1547,6 +1553,8 @@ export class OpenDeskTUI {
             process.stdout.write(t('cli.resume.hint') + '\n');
             process.stdout.write(`  opendesk --resume ${resumeTaskId}\n`);
         }
+
+        await applicationsClosing;
 
         try {
             await this.taskManagerState.flushAllPendingSaves();

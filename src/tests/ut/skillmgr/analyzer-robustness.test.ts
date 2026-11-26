@@ -287,3 +287,34 @@ describe('SkillAnalyzer robustness boundaries', () => {
         });
     });
 });
+
+describe('SkillAnalyzer run token isolation', () => {
+    test('晚到的旧 run 不能清理新 run 的状态', () => {
+        const analyzer = makeAnalyzerWithTaskManager({ getTask: jest.fn() });
+        const internal = analyzer as any;
+        internal.state = makeRunningState(2);
+        const staleToken = ++internal._runToken;
+        const currentToken = ++internal._runToken;
+
+        internal._finishRun({}, staleToken);
+
+        expect(internal.state.running).toBe(true);
+
+        internal._finishRun({}, currentToken);
+
+        expect(internal.state.running).toBe(false);
+        expect(internal.state.runningTaskIds.size).toBe(0);
+    });
+
+    test('stop 会让在途 run 的 token 失效', async () => {
+        const analyzer = makeAnalyzerWithTaskManager({ getTask: jest.fn() });
+        const internal = analyzer as any;
+        internal.state = makeRunningState(1);
+        const inFlightToken = ++internal._runToken;
+
+        await analyzer.stop();
+
+        expect(internal.state.running).toBe(false);
+        expect(internal._runToken).not.toBe(inFlightToken);
+    });
+});

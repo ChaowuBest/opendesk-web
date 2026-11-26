@@ -75,8 +75,11 @@ for (const DB of [BaseIndexDB, BaseIndexDBWasm, BaseIndexDBArkdata, BaseIndexDBH
                 { field: 'filename', operator: 'like', value: '%_%' }
             ]),
             {
-                whereClause: "(filename LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\') AND filename LIKE ?",
-                params: [String.raw`%a\\b\_100\%'%`, '%报告%', '%_%']
+                whereClause:
+                    DB === BaseIndexDBArkdata
+                        ? String.raw`(filename LIKE '%a\b _100 %''%' ESCAPE ' ' OR filename LIKE ? ESCAPE '\') AND filename LIKE ?`
+                        : "(filename LIKE ? ESCAPE '\\' OR filename LIKE ? ESCAPE '\\') AND filename LIKE ?",
+                params: DB === BaseIndexDBArkdata ? ['%报告%', '%_%'] : [String.raw`%a\\b\_100\%'%`, '%报告%', '%_%']
             }
         );
         for (const value of [null, 1, [], {}]) {

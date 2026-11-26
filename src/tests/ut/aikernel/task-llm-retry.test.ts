@@ -317,32 +317,44 @@ describe('task LLM auto retry', () => {
         ).toBe(true);
     });
 
-    test('does not retry a known non-retryable model error when auto retry is enabled', async () => {
+    test.each([
+        { name: 'exhausted credit', message: 'credit balance exhausted', code: 'credit_balance_exhausted' },
+        { name: 'OpenRouter daily quota', message: 'Rate limit exceeded: free-models-per-day.' }
+    ])('does not retry $name when auto retry is enabled', async ({ message, code }) => {
         const { task, chunks } = createRunningTask(true);
+        const error = new ModelRequestError({
+            provider: 'openai',
+            status: 429,
+            message,
+            code
+        });
         let requestCount = 0;
 
         jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* () {
             requestCount++;
-            const response = AssistantResponse.richError('Stream Completion Failed', 'credit balance exhausted');
-            response.request_error = new ModelRequestError({
-                provider: 'openai',
-                message: 'credit balance exhausted',
-                status: 429,
-                code: 'credit_balance_exhausted'
-            });
-            yield response;
+            if (requestCount === 1) {
+                const response = AssistantResponse.richError('Stream Completion Failed', error.message);
+                response.request_error = error;
+                yield response;
+                return;
+            }
+            yield textResponse('unexpected retry', 'stop');
         });
 
-        await task.processCompletion();
+        let finished = false;
+        const completion = task.processCompletion().then(() => {
+            finished = true;
+        });
+        await waitForCondition(() => finished || retryChunks(chunks).length > 0);
+        await jest.advanceTimersByTimeAsync(10_000);
+        await completion;
 
         expect(requestCount).toBe(1);
         expect(retryChunks(chunks)).toHaveLength(0);
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
-        expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
-        expect(assistant.content.some((part) => part.type === 'error' && part.title === '模型服务错误')).toBe(true);
-        expect(assistant.content.some((part) => part.type === 'error' && part.message.includes('credit balance'))).toBe(
-            true
-        );
+        expect(assistant.content.filter((part) => part.type === 'error')).toEqual([
+            expect.objectContaining({ title: '模型服务错误', message: error.message })
+        ]);
     });
 
     test('uses the fallback title when a local error only resembles a non-retryable model error', async () => {

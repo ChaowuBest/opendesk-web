@@ -11,6 +11,7 @@
 
 import * as esbuild from 'esbuild';
 import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { writeCliWebrtcNotices } from 'werift/cli-notices';
 
 const outfile = 'dist/cli/opendesk';
 const outfileDebug = 'dist/cli/opendesk-debug';
@@ -121,7 +122,8 @@ const debugConfig: esbuild.BuildOptions = {
 };
 
 async function build() {
-    await esbuild.build(prodConfig);
+    const prod = await esbuild.build({ ...prodConfig, metafile: true });
+    await writeCliWebrtcNotices(prod.metafile, 'dist/cli');
     await esbuild.build(debugConfig);
     removePiTuiNativeModules();
     // 添加可执行权限，确保 npm link 后可直接运行

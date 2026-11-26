@@ -478,7 +478,11 @@ export class ToolCall implements BaseChatToolCall {
             this.outputReset = true;
         }
         if (this.outputDelta.length > MAX_PENDING_OUTPUT_DELTA_CHARS) {
+            // 丢弃已累积增量后，必须保留「下一帧整体重写」的语义：
+            // 否则渲染端会按 append-only 把后续增量接在 reset 前的旧内容后，
+            // 被丢弃的 256KiB 段造成 live 视图错位。
             this.clearOutputDelta();
+            this.outputReset = true;
         }
     }
 
@@ -1110,7 +1114,7 @@ export class FileMessagePart implements BaseFileMessagePart {
         <div class="od-file-card" data-file-path="${escapeHtml(this.path)}" data-open-preview="${escapeHtml(this.path)}">
             <div class="od-file-card-icon">${fileIcon}</div>
             <div class="od-file-card-info">
-                <span class="od-file-card-name">${fileName}</span>
+                <span class="od-file-card-name">${escapeHtml(fileName)}</span>
                 ${metaInfo ? `<span class="od-file-card-meta">${metaInfo}</span>` : `<span class="od-file-card-meta">${ext} 文档</span>`}
             </div>
             <button class="od-file-card-menu" aria-label="文件操作" data-open-preview="${escapeHtml(this.path)}">
@@ -1225,9 +1229,9 @@ export class ErrorMessagePart implements BaseErrorMessagePart {
         <div class="od-error-msg flex flex-col mt-1.5 mb-1.5 text-xs bg-rose-50/80 border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit min-w-[240px] max-w-2xl">
             <div class="flex items-center gap-1.5 mb-1">
                 <span class="text-xs">🔴</span>
-                <span class="font-semibold text-rose-600">${this.title}</span>
+                <span class="font-semibold text-rose-600">${escapeHtml(this.title)}</span>
             </div>
-            <div class="text-[11px] text-slate-600 whitespace-pre-wrap">${this.message}</div>
+            <div class="text-[11px] text-slate-600 whitespace-pre-wrap">${escapeHtml(this.message)}</div>
         </div>`;
         return this.rendered;
     }

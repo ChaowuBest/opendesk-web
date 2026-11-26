@@ -24,6 +24,7 @@ import {
     ScalarOperator
 } from './abstract-storage.js';
 import { escapeSqlLikePattern, normalizePathDescendantOrSelfValues } from './path-scope.js';
+import type { StorageInitializationCleanup } from './platform.js';
 
 // BaseIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;
@@ -160,6 +161,7 @@ export class BaseIndexer extends Indexer {
     private isInitialized = false;
     private isDropped = false;
     private closingPromise: Promise<void> | null = null;
+    private initializationCleanup: StorageInitializationCleanup[] = [];
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
@@ -180,8 +182,11 @@ export class BaseIndexer extends Indexer {
         if (this.isDropped) {
             throw new Error('BaseIndexer storage has been dropped. Construct a new BaseIndexer.');
         }
+        if (this.initializationCleanup.length > 0) throw this.initializationCleanup[0].error;
         if (!this.db) {
-            this.db = await createBaseIndexDB(this._dbPath, this.schema);
+            this.db = await createBaseIndexDB(this._dbPath, this.schema, (cleanup) => {
+                this.initializationCleanup.push(cleanup);
+            });
         }
         this.isInitialized = true;
     }
@@ -395,11 +400,26 @@ export class BaseIndexer extends Indexer {
     close(): Promise<void> {
         if (this.closingPromise) return this.closingPromise;
         const db = this.db;
-        if (!db) return Promise.resolve();
-        // Keep the holder reachable until its reference has actually been released.
+        const cleanup = [...this.initializationCleanup];
+        if (!db && cleanup.length === 0) return Promise.resolve();
+        // Keep failed construction cleanup and normal holders owned until released.
         const closing = (async () => {
-            await db.close();
-            if (this.db === db) this.db = null;
+            const results = await Promise.allSettled([
+                ...cleanup.map(async (pending) => {
+                    await pending.close();
+                    this.initializationCleanup = this.initializationCleanup.filter((item) => item !== pending);
+                }),
+                ...(db
+                    ? [
+                          (async () => {
+                              await db.close();
+                              if (this.db === db) this.db = null;
+                          })()
+                      ]
+                    : [])
+            ]);
+            const failed = results.find((result) => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
         })().finally(() => {
             if (this.closingPromise === closing) this.closingPromise = null;
         });
@@ -408,6 +428,7 @@ export class BaseIndexer extends Indexer {
     }
 
     async dropStorage(): Promise<void> {
+        if (this.initializationCleanup.length > 0) await this.close();
         const db = this.ensureDB();
         let failure: unknown;
         let failed = false;

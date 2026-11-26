@@ -17,7 +17,7 @@ const originalDatabase = bindingModule.exports;
 let stage = 'load';
 let closeFails = false;
 let closeCalls = 0;
-const originalError = new Error('synthetic initialization failure');
+let originalError = new Error('synthetic initialization failure');
 class FakeDatabase {
     loadExtension() {
         if (stage === 'load') throw originalError;
@@ -41,23 +41,33 @@ after(() => {
 const { BaseStorage } = await import('../../../../../main/services/storage/abstract-storage.js');
 const { VectorIndexDB } = await import('../../../../../main/services/storage/vector-index-db.js');
 const { ChunkIndexDB } = await import('../../../../../main/services/storage/chunk-index-db.js');
-const { SqliteVecLoadError } = await import('../../../../../main/services/storage/platform.js');
+const { SqliteVecLoadError, getStorageInitializationFailure } =
+    await import('../../../../../main/services/storage/platform.js');
 
 for (const Database of [VectorIndexDB, ChunkIndexDB]) {
     for (const failureStage of ['load', 'pragma', 'table']) {
         for (const failingClose of [false, true]) {
             test(`${Database.name}: ${failureStage} failure closes connection; close throws=${failingClose}`, () => {
                 stage = failureStage;
+                originalError = new Error('synthetic initialization failure');
                 closeFails = failingClose;
                 closeCalls = 0;
+                let received: unknown;
                 assert.throws(
                     () => new Database(path.join(profile, 'index.db'), 2),
-                    (error: unknown) =>
-                        failureStage === 'load'
+                    (error: unknown) => {
+                        received = error;
+                        return failureStage === 'load'
                             ? error instanceof SqliteVecLoadError && error.cause === originalError
-                            : error === originalError
+                            : error === originalError;
+                    }
                 );
                 assert.equal(closeCalls, 1);
+                const failure = getStorageInitializationFailure(received)!;
+                assert.equal(failure.indexer, Database === VectorIndexDB ? 'VectorIndexer' : 'ChunkIndexer');
+                assert.equal(failure.backend, 'native');
+                assert.equal(failure.cause, originalError);
+                assert.equal(failure.cleanupFailures.length, failingClose ? 1 : 0);
             });
         }
     }
@@ -66,6 +76,7 @@ for (const Database of [VectorIndexDB, ChunkIndexDB]) {
 const names = ['vectorIndexer', 'baseIndexer', 'bm25Indexer', 'tagIndexer', 'chunkIndexer'];
 for (const failingIndex of [0, 2, 4]) {
     test(`BaseStorage cleans all indexers when initialization fails at ${names[failingIndex]}`, async () => {
+        originalError = new Error('synthetic initialization failure');
         const storage = Object.create(BaseStorage.prototype);
         const initialized: string[] = [];
         const closed: string[] = [];
@@ -87,6 +98,14 @@ for (const failingIndex of [0, 2, 4]) {
         );
         assert.deepEqual(initialized, names.slice(0, failingIndex + 1));
         assert.deepEqual([...closed].sort(), [...names].sort());
+        const failure = getStorageInitializationFailure(originalError)!;
+        assert.equal(
+            failure.indexer,
+            ['VectorIndexer', 'BaseIndexer', 'BM25Indexer', 'TagIndexer', 'ChunkIndexer'][failingIndex]
+        );
+        assert.equal(failure.cause, originalError);
+        assert.equal(failure.cleanupFailures.length, 1);
+        assert.equal(failure.cleanupFailures[0].indexer, 'TagIndexer');
     });
 }
 

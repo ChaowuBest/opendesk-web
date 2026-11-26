@@ -13,6 +13,11 @@ beforeAll(async () => {
 function fixture() {
     const operations = new Map<string, any>();
     const accepted = new Map<string, any>();
+    const invocations: string[] = [];
+    let deletes = 0,
+        pendingDelete = false,
+        emptyDeleteId = false,
+        unknownReady = false;
     let lostStart: string | null = null;
     let supported = true;
     let refs = 0,
@@ -24,6 +29,7 @@ function fixture() {
         corruptReady = false;
     callArkTSFunction.mockReset();
     callArkTSFunction.mockImplementation(async (name, _type, args) => {
+        invocations.push(name);
         let result: any;
         if (name === 'ArkData.Ping')
             return { value: JSON.stringify({ ok: true, storeSessionProtocol: supported ? 1 : undefined }) };
@@ -41,11 +47,36 @@ function fixture() {
                 )
             };
         }
+        if (unknownReady && name.endsWith('Ready')) {
+            unknownReady = false;
+            return { value: JSON.stringify({ ok: true, state: 'unknown' }) };
+        }
         if (corruptReady && name.endsWith('Ready')) {
             corruptReady = false;
             return '{broken';
         }
-        if (name === 'ArkData.OpenStoreStart') {
+        if (name === 'ArkData.DeleteStoreStart') {
+            if (refs > 0)
+                result = {
+                    ok: false,
+                    error: {
+                        code: 'store_busy_with_pending_ops',
+                        message: 'isolated occupied store',
+                        details: { storeId: args[0], operation: 'DeleteStoreStart' }
+                    }
+                };
+            else {
+                deletes++;
+                const opId = 'delete-' + ++next;
+                operations.set(opId, {
+                    ok: true,
+                    state: pendingDelete ? 'pending' : 'success',
+                    storeId: args[0],
+                    path: args[1]
+                });
+                result = { ok: true, opId: emptyDeleteId ? '' : opId };
+            }
+        } else if (name === 'ArkData.OpenStoreStart') {
             refs++;
             if (refs > 1) result = { ok: true, reused: true };
             else {
@@ -90,7 +121,18 @@ function fixture() {
                     Object.assign(operation, {
                         ok: false,
                         state: 'error',
-                        error: { code: `store_${kind}_failed`, message: 'isolated SDK failure' }
+                        error: {
+                            code: `store_${kind}_failed`,
+                            message: 'isolated SDK failure',
+                            ...(kind === 'delete' && {
+                                details: {
+                                    sdkErrorCode: 14800011,
+                                    storeId: operation.storeId,
+                                    path: operation.path,
+                                    operation: 'DeleteStoreStart'
+                                }
+                            })
+                        }
                     });
                 else Object.assign(operation, { ok: true, state: 'success' });
             }
@@ -105,6 +147,17 @@ function fixture() {
         },
         kit: new HarmonyOSDatabaseKit(),
         operations,
+        invocations,
+        deletes: () => deletes,
+        pendingDelete: () => {
+            pendingDelete = true;
+        },
+        emptyDeleteId: () => {
+            emptyDeleteId = true;
+        },
+        unknownReady: () => {
+            unknownReady = true;
+        },
         corrupt: () => {
             corruptReady = true;
         },
@@ -123,6 +176,7 @@ function fixture() {
             timeout = false;
             settle('open');
             settle('close');
+            settle('delete');
             now.mockRestore();
         }
     };
@@ -309,3 +363,54 @@ test('an older adapter without the idempotent store protocol is unavailable for 
         f.restore();
     }
 });
+
+for (const scenario of ['occupied', 'sdk-failure', 'timeout', 'bad-start', 'bad-ready', 'empty-op-id', 'unknown-ready'])
+    test(`deletion ${scenario} preserves the failure without retry or acquiring another owner`, async () => {
+        const f = fixture();
+        try {
+            if (scenario === 'occupied') await f.kit.openStore('store', options('owner'));
+            else f.pendingDelete();
+            if (scenario === 'timeout') f.timeout(true);
+            if (scenario === 'bad-start') f.lost('ArkData.DeleteStoreStart');
+            if (scenario === 'bad-ready') f.corrupt();
+            if (scenario === 'empty-op-id') f.emptyDeleteId();
+            if (scenario === 'unknown-ready') f.unknownReady();
+            const expectedCode =
+                scenario === 'occupied'
+                    ? 'store_busy_with_pending_ops'
+                    : scenario === 'sdk-failure'
+                      ? 'store_delete_failed'
+                      : scenario === 'timeout'
+                        ? 'operation_timeout'
+                        : scenario === 'empty-op-id'
+                          ? 'payload_shape_invalid'
+                          : scenario === 'unknown-ready'
+                            ? 'unknown_error'
+                            : 'envelope_parse_failed';
+            const rejected = expect(f.kit.deleteStore('store', options('delete-caller'))).rejects.toMatchObject({
+                code: expectedCode,
+                ...(scenario === 'sdk-failure' && {
+                    details: { sdkErrorCode: 14800011, storeId: 'store', operation: 'DeleteStoreStart' }
+                })
+            });
+            if (scenario === 'sdk-failure') {
+                await new Promise((resolve) => setImmediate(resolve));
+                f.settle('delete', true);
+            }
+            await rejected;
+            f.timeout(false);
+            expect(f.deletes()).toBe(scenario === 'occupied' ? 0 : 1);
+            expect(f.invocations.filter((name) => name === 'ArkData.DeleteStoreStart')).toHaveLength(1);
+            expect(f.invocations.filter((name) => name === 'ArkData.OpenStoreStart')).toHaveLength(
+                scenario === 'occupied' ? 1 : 0
+            );
+            expect(f.invocations.filter((name) => name.includes('CloseStore'))).toHaveLength(0);
+            if (!['occupied', 'sdk-failure'].includes(scenario)) {
+                expect([...f.operations.values()].filter((op) => op.state === 'pending')).toHaveLength(1);
+                f.settle('delete');
+                expect([...f.operations.values()].every((op) => op.state === 'success')).toBe(true);
+            }
+        } finally {
+            f.restore();
+        }
+    });

@@ -3,13 +3,15 @@ import { after, test } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { BaseIndexDBArkdata } from '../../../../main/services/storage/base-index-db-arkdata.js';
+import { buildIndexedFilePreconditions } from '../../../../main/applications/filemgr/search/indexed.js';
+import { completedFileConditions } from '../../../../main/applications/filemgr/document-retrieval/embedding/state.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-generation-'));
 setCustomOpendeskDirectory(profile);
 after(() => fs.rmSync(profile, { recursive: true, force: true }));
-const { FSStorage, makeSchema, buildIndexedFilePreconditions } =
-    await import('../../../../main/applications/filemgr/storage.js');
+const { FSStorage, makeSchema } = await import('../../../../main/applications/filemgr/storage.js');
 const { BaseStorage } = await import('../../../../main/services/storage/abstract-storage.js');
 const { BaseIndexDB } = await import('../../../../main/services/storage/base-index-db.js');
 const { BaseIndexDBWasm } = await import('../../../../main/services/storage/base-index-db-wasm.js');
@@ -70,7 +72,6 @@ for (const Database of [BaseIndexDB, BaseIndexDBWasm]) {
 }
 
 test('ArkData schema reconciliation adds generation without rebuilding legacy rows (SQLite bridge)', async () => {
-    const { BaseIndexDBArkdata } = await import('../../../../main/services/storage/base-index-db-arkdata.js');
     const fss = fixture();
     const dbPath = path.join(fss._storageDir, 'arkdata-compat.db');
     const legacySchema = makeSchema(2, { mode: 'base-only' });
@@ -111,6 +112,83 @@ test('ArkData schema reconciliation adds generation without rebuilding legacy ro
         old.close();
     }
 });
+
+for (const scenario of ['missing', 'partial', 'interrupted']) {
+    test(`ArkData BM25 four-column upgrade preserves legacy data: ${scenario} (SQLite bridge)`, async () => {
+        const fss = fixture();
+        const dbPath = path.join(fss._storageDir, 'bm25-upgrade.db');
+        const target = makeSchema(2, { mode: 'base-only' });
+        const legacy = structuredClone(target);
+        for (const field of ['bm25', 'bm25_generation', 'bm25_modified', 'full_text'])
+            if (scenario !== 'partial' || field !== 'bm25') delete legacy.columns[field];
+        const old = new BaseIndexDB(dbPath, legacy);
+        await old.insert(row('/docs/preserved.md', 7));
+        const db = (old as any).db;
+        let fail = scenario === 'interrupted';
+        const params = (values: any[]) => values.map((value) => value.v);
+        const kit = {
+            execSql: async (_store: string, sql: string) => {
+                if (fail && /ADD COLUMN (bm25_modified|full_text)\b/.test(sql))
+                    throw new Error('isolated interrupted BM25 schema upgrade');
+                db.exec(sql);
+            },
+            queryPrepared: async (_store: string, sql: string, values: any[]) => db.prepare(sql).all(...params(values)),
+            executePrepared: async (_store: string, sql: string, values: any[]) => ({
+                affectedRows: db.prepare(sql).run(...params(values)).changes
+            }),
+            transaction: async (_store: string, fn: any) => {
+                db.exec('BEGIN');
+                try {
+                    await fn({ id: 'fixture' });
+                    db.exec('COMMIT');
+                } catch (error) {
+                    db.exec('ROLLBACK');
+                    throw error;
+                }
+            }
+        };
+        const open = () => {
+            const upgraded = new BaseIndexDBArkdata(dbPath, target) as any;
+            upgraded.dbKit = kit;
+            return upgraded.initializeTable();
+        };
+        try {
+            if (fail) {
+                await assert.rejects(open, /ArkData base schema upgrade failed/);
+                assert.equal(
+                    db.prepare("SELECT COUNT(*) AS n FROM __schema_meta_safe WHERE meta_name='base_schema_hash'").get()
+                        .n,
+                    0
+                );
+                const columns = db
+                    .prepare('PRAGMA table_info(base_index)')
+                    .all()
+                    .map((column: any) => column.name);
+                assert.ok(columns.includes('bm25_generation'));
+                assert.ok(!columns.includes('full_text'));
+                fail = false;
+            }
+            await open();
+            await open();
+            const item = db.prepare('SELECT * FROM base_index WHERE item_id=?').get('/docs/preserved.md');
+            assert.equal(item.embedding_generation, 7);
+            assert.equal(item.embedded, 1);
+            assert.equal(item.root_refs, '["/docs"]');
+            assert.equal(item.ref_count, 1);
+            assert.equal(item.bm25, 0);
+            assert.equal(item.bm25_generation, 0);
+            assert.equal(item.bm25_modified, null);
+            assert.equal(item.full_text, null);
+            assert.equal(db.prepare('SELECT COUNT(*) AS n FROM base_index').get().n, 1);
+            assert.equal(
+                db.prepare("SELECT COUNT(*) AS n FROM __schema_meta_safe WHERE meta_name='base_schema_hash'").get().n,
+                1
+            );
+        } finally {
+            old.close();
+        }
+    });
+}
 
 for (const invalid of [-1, 0.5, '1', null, Number.MAX_SAFE_INTEGER + 1]) {
     test(`invalid generation ${JSON.stringify(invalid)} is handled as corrupt state`, () => {
@@ -157,7 +235,7 @@ test('generation and model persist together before deleting semantic stores; int
     await fss.initialize({ syncEmbedding: false });
     await fss.storage.upsert([row('/docs/interrupted')], { indexers: ['BaseIndexer'] });
     const failure = new Error('interrupted before semantic deletion');
-    const drop = t.mock.method(BaseStorage.prototype, 'dropIndexers', async () => {
+    const drop = t.mock.method(fss, '_dropFilemgrStores', async () => {
         const state = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf8'));
         assert.equal(state.embedding_generation, 1);
         assert.equal(state.embedding_model, 'new-model');
@@ -166,7 +244,7 @@ test('generation and model persist together before deleting semantic stores; int
     try {
         await assert.rejects(
             () =>
-                fss._resetVectorChunk('model-change', {
+                fss.retrieval._resetVectorChunk('model-change', {
                     dim: 2,
                     mode: 'full',
                     embeddingState: { embedding_model: 'new-model', vec_dim: 2 }
@@ -200,7 +278,7 @@ test('failed generation persistence neither deletes stores nor commits new model
     try {
         await assert.rejects(
             () =>
-                fss._resetVectorChunk('model-change', {
+                fss.retrieval._resetVectorChunk('model-change', {
                     dim: 2,
                     mode: 'full',
                     embeddingState: { embedding_model: 'new-model', vec_dim: 2 }
@@ -216,12 +294,19 @@ test('failed generation persistence neither deletes stores nor commits new model
     }
 });
 
-test('legacy embedded backfill cannot bless vectors after a generation change', async () => {
+test('generation reconciliation keeps unfinished rows pending while advancing generation', async () => {
     const fss = fixture();
-    fss.scannerState.embedding_generation = 2;
-    fss.storage = { searchVectorMeta: async () => assert.fail('old vectors must not be trusted') };
-    await fss._migrateEmbeddedFlag();
-    assert.equal(fss.scannerState.embedded_migrated, true);
+    await fss.initialize({ syncEmbedding: false });
+    try {
+        await fss.storage.upsert([row('/docs/unfinished', 0, 0)], { indexers: ['BaseIndexer'] });
+        fss.scannerState.embedding_generation = 2;
+        await fss.retrieval._reconcileEmbeddingGeneration(fss._createRetrievalDataView());
+        const [item] = await rows(fss);
+        assert.equal(item.embedded, 0);
+        assert.equal(item.embedding_generation, 2);
+    } finally {
+        await fss.close();
+    }
 });
 
 test('search preconditions and counts exclude stale completion without rewriting readonly rows', async () => {
@@ -231,7 +316,9 @@ test('search preconditions and counts exclude stale completion without rewriting
         fss.scannerState.embedding_generation = 2;
         fss.mode = 'full';
         await fss.storage.upsert([row('/docs/current', 2), row('/docs/stale', 1)], { indexers: ['BaseIndexer'] });
-        const conditions = buildIndexedFilePreconditions({ requireEmbedded: true, embeddingGeneration: 2 });
+        const conditions = buildIndexedFilePreconditions({
+            algorithmConditions: completedFileConditions({ requireEmbedded: true, embeddingGeneration: 2 })
+        });
         assert.equal((await fss.storage.search(conditions)).items.length, 1);
         assert.deepEqual(await fss.getGlobalFileCounts(), { total_files: 2, embedded_count: 1, pending_count: 1 });
         const counts = await fss._aggregatePerRootCounts('/docs');
@@ -288,11 +375,11 @@ for (const pending of [false, true]) {
         try {
             assert.equal(reader.mode, pending ? 'base-only' : 'full');
             assert.deepEqual(
-                (await reader.searchFileByName('fixture')).results.map((item: any) => item.path),
+                (await reader.retrieval.searchNames('fixture')).results.map((item: any) => item.path),
                 pending ? [] : ['/docs/current']
             );
             assert.deepEqual(
-                (await reader.searchIndexedChunks('fixture', { topK: 10 })).results.map(
+                (await reader.retrieval.searchContent('fixture', { topK: 10 })).results.map(
                     (item: any) => item.source.path
                 ),
                 pending ? [] : ['/docs/current']

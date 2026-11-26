@@ -127,6 +127,7 @@ export class SkillAnalyzer {
     private state: AnalyzeState;
     private onStatusChange?: StatusChangeCallback;
     /** 当前正在执行的分析队列引用，用于 stop() 时清空 */
+    private _runToken = 0;
     private _currentQueue?: Array<string | TestCasePlan>;
 
     constructor(onStatusChange?: StatusChangeCallback) {
@@ -276,8 +277,9 @@ export class SkillAnalyzer {
         const maxConcurrency = Math.max(1, concurrency);
 
         this._notifyStatusChange();
-        void this._runTestsInBackground(testPlan, maxConcurrency, timeoutMs).catch((err) =>
-            this._handleBackgroundFailure('测试运行', err)
+        const runToken = ++this._runToken;
+        void this._runTestsInBackground(testPlan, maxConcurrency, timeoutMs, runToken).catch((err) =>
+            this._handleBackgroundFailure('测试运行', err, runToken)
         );
         return this.getStatus();
     }
@@ -356,6 +358,8 @@ export class SkillAnalyzer {
 
     async stop(): Promise<void> {
         if (!this.state.running) return;
+        // 让在途 run 的 token 失效：它晚到的 finally 不能再清理下一次 run 的状态
+        this._runToken += 1;
         this._finishRun({ cancelPendingQueue: true });
     }
 
@@ -633,7 +637,12 @@ export class SkillAnalyzer {
         }
     }
 
-    private _finishRun(options: { cancelPendingQueue?: boolean; stopRunningTasks?: boolean } = {}): void {
+    private _finishRun(
+        options: { cancelPendingQueue?: boolean; stopRunningTasks?: boolean } = {},
+        runToken?: number
+    ): void {
+        // 晚到的旧 run（token 已过期）不得清理新 run 的队列与状态
+        if (runToken !== undefined && runToken !== this._runToken) return;
         const { cancelPendingQueue = false, stopRunningTasks = true } = options;
         this._clearCurrentQueue(cancelPendingQueue);
         if (stopRunningTasks) {
@@ -645,9 +654,9 @@ export class SkillAnalyzer {
         this._notifyStatusChange();
     }
 
-    private _handleBackgroundFailure(label: string, err: unknown): void {
+    private _handleBackgroundFailure(label: string, err: unknown, runToken?: number): void {
         logger.error(`[SkillAnalyzer] ${label} 后台任务未捕获异常: ${this._formatError(err)}`);
-        this._finishRun({ cancelPendingQueue: true });
+        this._finishRun({ cancelPendingQueue: true }, runToken);
     }
 
     private async _failTestCase(plan: TestCasePlan, message: string, taskId?: string): Promise<void> {
@@ -690,8 +699,9 @@ export class SkillAnalyzer {
         };
         this._notifyStatusChange();
 
-        void this._runAnalysisInBackground(targetIds, maxConcurrency, taskType).catch((err) =>
-            this._handleBackgroundFailure(taskType === 'deps' ? '依赖分析' : '测试用例生成', err)
+        const runToken = ++this._runToken;
+        void this._runAnalysisInBackground(targetIds, maxConcurrency, taskType, runToken).catch((err) =>
+            this._handleBackgroundFailure(taskType === 'deps' ? '依赖分析' : '测试用例生成', err, runToken)
         );
         return this.getStatus();
     }
@@ -699,14 +709,16 @@ export class SkillAnalyzer {
     private async _runAnalysisInBackground(
         skillIds: string[],
         concurrency: number,
-        taskType: 'deps' | 'testgen'
+        taskType: 'deps' | 'testgen',
+        runToken: number = this._runToken
     ): Promise<void> {
         const queue = [...skillIds];
         this._currentQueue = queue;
+        const isActive = (): boolean => runToken === this._runToken;
         const worker = async () => {
-            while (queue.length > 0 && this.state.running) {
+            while (queue.length > 0 && this.state.running && isActive()) {
                 const sid = queue.shift();
-                if (!sid || !this.state.running) break;
+                if (!sid || !this.state.running || !isActive()) break;
                 try {
                     if (taskType === 'deps') await this._analyzeDepsForSkill(sid);
                     else await this._generateTestsForSkill(sid);
@@ -724,7 +736,7 @@ export class SkillAnalyzer {
         try {
             await Promise.all(Array.from({ length: concurrency }, () => worker()));
         } finally {
-            this._finishRun();
+            this._finishRun({}, runToken);
         }
     }
 
@@ -1087,15 +1099,17 @@ ${preScanSection}`;
     private async _runTestsInBackground(
         testPlan: TestCasePlan[],
         concurrency: number,
-        timeoutMs: number | undefined
+        timeoutMs: number | undefined,
+        runToken: number = this._runToken
     ): Promise<void> {
         const queue = [...testPlan];
         this._currentQueue = queue;
+        const isActive = (): boolean => runToken === this._runToken;
 
         const worker = async () => {
-            while (queue.length > 0 && this.state.running) {
+            while (queue.length > 0 && this.state.running && isActive()) {
                 const plan = queue.shift();
-                if (!plan || !this.state.running) break;
+                if (!plan || !this.state.running || !isActive()) break;
                 try {
                     await this._runTestForCase(plan, timeoutMs);
                 } catch (err) {
@@ -1112,7 +1126,7 @@ ${preScanSection}`;
         try {
             await Promise.all(Array.from({ length: concurrency }, () => worker()));
         } finally {
-            this._finishRun();
+            this._finishRun({}, runToken);
         }
     }
 

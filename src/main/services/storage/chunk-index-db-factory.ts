@@ -12,14 +12,18 @@
 /**
  * ChunkIndexDB 工厂：根据平台动态加载 ArkData / WASM / Node 原生实现
  */
-import fs from 'fs';
 import type { IChunkIndexDB } from './chunk-indexer.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
-import { removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
+import type { RetainStorageInitializationCleanup } from './platform.js';
+import { assertWasmStoresUnlocked, removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
 import { toWasmDbPath } from './wasm-path.js';
 
-export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
+export async function createChunkIndexDB(
+    dbPath: string,
+    dimension: number = 1024,
+    retainCleanup?: RetainStorageInitializationCleanup
+): Promise<IChunkIndexDB> {
     if (shouldUseArkData()) {
         const { ChunkIndexDBArkdata } = await import('./chunk-index-db-arkdata.js');
         return new ChunkIndexDBArkdata(dbPath, dimension);
@@ -27,19 +31,13 @@ export async function createChunkIndexDB(dbPath: string, dimension: number = 102
     return createWithNativeSqliteFallback(
         async () => {
             const { ChunkIndexDB } = await import('./chunk-index-db.js');
-            return new ChunkIndexDB(dbPath, dimension);
+            return new ChunkIndexDB(dbPath, dimension, retainCleanup);
         },
         async () => {
             const { ChunkIndexDBWasm } = await import('./chunk-index-db-wasm.js');
-            return new ChunkIndexDBWasm(dbPath, dimension);
+            return new ChunkIndexDBWasm(dbPath, dimension, retainCleanup);
         }
     );
-}
-
-/** Raw ArkData deletion needs a retained connection; file backends delete without opening a DB. */
-export async function createChunkIndexDBForDrop(dbPath: string, dimension: number): Promise<IChunkIndexDB | null> {
-    if (!shouldUseArkData()) return null;
-    return createChunkIndexDB(dbPath, dimension);
 }
 
 export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexStoreProbeResult> {
@@ -60,6 +58,7 @@ export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexSto
 }
 
 export async function dropChunkIndexStore(dbPath: string): Promise<void> {
+    assertWasmStoresUnlocked([dbPath]);
     if (shouldUseArkData()) {
         const { dropChunkIndexStoreArkdata } = await import('./chunk-index-db-arkdata.js');
         await dropChunkIndexStoreArkdata(dbPath);
@@ -67,8 +66,6 @@ export async function dropChunkIndexStore(dbPath: string): Promise<void> {
     }
     removeSqliteStoreFiles(dbPath, [`${dbPath}.hnsw.json`]);
     removePathIfExists(`${toWasmDbPath(dbPath)}.hnsw.json`);
-    if (fs.existsSync(toWasmDbPath(dbPath))) {
-        const { dropChunkIndexStoreWasm } = await import('./chunk-index-db-wasm.js');
-        await dropChunkIndexStoreWasm(dbPath);
-    }
+    // A previous attempt may already have removed the main file before failing on a sidecar.
+    removeSqliteStoreFiles(toWasmDbPath(dbPath));
 }

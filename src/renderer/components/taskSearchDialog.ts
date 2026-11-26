@@ -12,8 +12,11 @@
 import { createOverlay, ensureOverlayStyles } from './overlay.js';
 import './taskSearchDialog.css';
 import {
+    compactSearchText,
+    compileTaskSearch,
     normalizeSearchText,
     TASK_SEARCH_MAX_QUERY,
+    TASK_SEARCH_MAX_WILDCARD_GAP,
     TASK_SEARCH_PAGE_SIZE,
     TASK_SEARCH_MAX_RESULTS,
     type TaskSearchHit,
@@ -33,7 +36,7 @@ interface Options {
     search(query: string, limit: number): Promise<TaskSearchResponse>;
     subscribe(onChange: (unavailable?: boolean) => void): () => void;
     open(hit: TaskSearchHit): Promise<void>;
-    translate(key: string): string;
+    translate(key: string, params?: Record<string, string | number>): string;
 }
 export class TaskSearchDialog {
     private readonly dialog = document.createElement('dialog');
@@ -44,7 +47,7 @@ export class TaskSearchDialog {
     private readonly more: HTMLButtonElement;
     private readonly cache = new Map<string, TaskSearchHit[]>();
     private items: TaskSearchHit[] = [];
-    private query = '';
+    private pattern = compileTaskSearch('');
     private limit = TASK_SEARCH_PAGE_SIZE;
     private generation = 0;
     private timer?: ReturnType<typeof setTimeout>;
@@ -86,6 +89,7 @@ export class TaskSearchDialog {
         this.input.maxLength = TASK_SEARCH_MAX_QUERY;
         this.input.placeholder = t('placeholder');
         this.input.setAttribute('aria-label', t('placeholder'));
+        this.input.title = options.translate('renderer.taskSearch.wildcardHint', { max: TASK_SEARCH_MAX_WILDCARD_GAP });
         this.dialog.querySelector('.od-task-search-heading > span')!.textContent = t('chats');
         this.spinner.setAttribute('aria-label', t('searching'));
         const close = this.dialog.querySelector<HTMLButtonElement>('.od-task-search-close')!;
@@ -191,7 +195,7 @@ export class TaskSearchDialog {
     };
     private indexChanged = (unavailable = false) => {
         this.cache.clear();
-        if (!this.visible || !this.query) return;
+        if (!this.visible || !this.pattern.query) return;
         if (unavailable) {
             ++this.generation;
             clearTimeout(this.timer);
@@ -207,21 +211,15 @@ export class TaskSearchDialog {
     private results(indexed: TaskSearchHit[] = []): TaskSearchHit[] {
         const bodyHits = new Map(indexed.filter((hit) => hit.messageId).map((hit) => [hit.taskId, hit]));
         const matches: { hit: TaskSearchHit; activity: number }[] = [];
+        const { query, literal, find } = this.pattern;
+        const wildcard = literal === undefined;
         for (const task of this.options.getTasks()) {
             if (task.internal || !(task.task_name?.trim() || task.name_pending)) continue;
-            const title = normalizeSearchText(task.task_name || '');
-            const workspace = normalizeSearchText(task.workspace || '');
-            const priority = !this.query
-                ? 0
-                : title === this.query
-                  ? 3
-                  : title.includes(this.query)
-                    ? 2
-                    : workspace.includes(this.query)
-                      ? 1
-                      : 0;
+            const title = normalizeSearchText(task.task_name || '', wildcard);
+            const workspace = normalizeSearchText(task.workspace || '', wildcard);
+            const priority = !query ? 0 : title === literal ? 3 : find(title) ? 2 : find(workspace) ? 1 : 0;
             const body = bodyHits.get(task.task_id);
-            if (this.query && !priority && !body) continue;
+            if (query && !priority && !body) continue;
             // Read metadata once from the live list; only body matches come from the index/cache.
             matches.push({
                 hit: {
@@ -245,15 +243,16 @@ export class TaskSearchDialog {
         this.timer = undefined;
         this.refreshRequested = false;
         const generation = ++this.generation;
-        this.query = normalizeSearchText(this.input.value).slice(0, TASK_SEARCH_MAX_QUERY);
+        this.pattern = compileTaskSearch(this.input.value);
+        const { query } = this.pattern;
         this.limit = TASK_SEARCH_PAGE_SIZE;
-        const cached = this.cache.get(this.query);
+        const cached = this.cache.get(query);
         this.items = this.results(cached);
         this.more.hidden = true;
         this.status.textContent = '';
-        this.setLoading(Boolean(this.query));
+        this.setLoading(Boolean(query));
         this.render();
-        if (this.query)
+        if (query)
             this.timer = setTimeout(() => {
                 this.timer = undefined;
                 void this.run(generation);
@@ -261,7 +260,8 @@ export class TaskSearchDialog {
         else if (!this.items.length) this.status.textContent = this.t('recentEmpty');
     }
     private async run(generation: number, quiet = false): Promise<void> {
-        if (!this.visible || this.composing || generation !== this.generation || !this.query) return;
+        const { query } = this.pattern;
+        if (!this.visible || this.composing || generation !== this.generation || !query) return;
         if (this.running === generation) {
             this.refreshRequested = true;
             return;
@@ -270,7 +270,7 @@ export class TaskSearchDialog {
         this.refreshRequested = false;
         if (!quiet) this.setLoading(true);
         try {
-            const result = await this.options.search(this.query, this.limit);
+            const result = await this.options.search(query, this.limit);
             if (!this.visible || generation !== this.generation) return;
             const incoming = this.results(result.items);
             // Keep row order stable until indexing completes, while dropping obsolete hits.
@@ -284,8 +284,8 @@ export class TaskSearchDialog {
                       })
                       .concat([...remaining.values()])
                 : incoming;
-            this.cache.delete(this.query);
-            this.cache.set(this.query, this.items);
+            this.cache.delete(query);
+            this.cache.set(query, this.items);
             if (this.cache.size > 20) this.cache.delete(this.cache.keys().next().value!);
             this.render();
             this.more.hidden = !result.hasMore || this.limit >= TASK_SEARCH_MAX_RESULTS;
@@ -373,21 +373,20 @@ export class TaskSearchDialog {
         element.replaceChildren(before, match, after);
     }
     private highlight(element: HTMLElement, value: string): void {
-        value = value.replace(/\s+/gu, ' ').trim();
-        if (!this.query) {
-            element.textContent = value;
-            return;
-        }
-        const lower = normalizeSearchText(value);
+        const { find, literal } = this.pattern;
+        const compact = compactSearchText(value, literal === undefined);
+        const lower = compact.toLowerCase();
+        value = compact.replace(/\n/gu, ' ');
         let position = 0;
-        let hit = lower.indexOf(this.query);
-        while (hit >= 0) {
-            element.append(document.createTextNode(value.slice(position, hit)));
+        let match = find(lower);
+        while (match) {
+            const [start, end] = match;
+            element.append(document.createTextNode(value.slice(position, start)));
             const mark = document.createElement('mark');
-            mark.textContent = value.slice(hit, hit + this.query.length);
+            mark.textContent = value.slice(start, end);
             element.append(mark);
-            position = hit + this.query.length;
-            hit = lower.indexOf(this.query, position);
+            position = end;
+            match = literal === undefined ? undefined : find(lower, position);
         }
         element.append(document.createTextNode(value.slice(position)));
     }

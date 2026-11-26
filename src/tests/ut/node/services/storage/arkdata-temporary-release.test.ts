@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
-import { setCustomOpendeskDirectory } from '../../../../../main/utils/setting.js';
+import {
+    getLogDirectory,
+    getOpendeskDirectory,
+    setCustomOpendeskDirectory
+} from '../../../../../main/utils/setting.js';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { stripTypeScriptTypes } from 'node:module';
 import {
@@ -23,8 +29,11 @@ import {
     probeChunkIndexStoreArkdata,
     dropChunkIndexStoreArkdata
 } from '../../../../../main/services/storage/chunk-index-db-arkdata.js';
-const profileDirectory = fs.mkdtempSync('/private/tmp/arkdata-cross-repo-');
+const profileDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'arkdata-cross-repo-'));
 setCustomOpendeskDirectory(profileDirectory);
+assert.equal(getOpendeskDirectory(), profileDirectory);
+assert.equal(getLogDirectory(), path.join(profileDirectory, 'logs'));
+console.log(JSON.stringify({ profile: profileDirectory, logs: getLogDirectory() }));
 after(() => fs.rmSync(profileDirectory, { recursive: true, force: true }));
 const app = new URL('../../../../../../', import.meta.url).pathname.replace(/\/$/, '');
 const adapterRoot = process.env.OPENDESK_ARKDATA_ADAPTER_DIR;
@@ -60,6 +69,8 @@ if (adapterRoot) {
         strip(bridgeSource) + '\nreturn HarmonyOSDatabaseKit;'
     );
     const routes = {
+        'ArkData.DeleteStoreStart': 'deleteStoreStart',
+        'ArkData.DeleteStoreReady': 'deleteStoreReady',
         'ArkData.OpenStoreStart': 'openStoreStart',
         'ArkData.OpenStoreReady': 'openStoreReady',
         'ArkData.CloseStoreStart': 'closeStoreStart',
@@ -105,6 +116,7 @@ if (adapterRoot) {
                 sdkCloses = 0;
             const sdk = {
                 SecurityLevel: { S1: 1, S2: 2, S3: 3, S4: 4 },
+                deleteRdbStore: async () => {},
                 getRdbStore: async () => ({
                     close: async () => {
                         sdkCloses++;
@@ -135,10 +147,14 @@ if (adapterRoot) {
                     ? [{ meta_value: owner.computeSchemaHash() }]
                     : [{ count: 0 }];
             const previous = setArkdataDatabaseKit(kit);
-            const file = '/private/tmp/filemgr-helper-release-' + name + '.db';
+            const file = path.join(profileDirectory, `helper-${label.replaceAll(' ', '-')}.db`);
             try {
                 const result = await helper(file);
                 const afterProbe = [...adapter.stores.values()].map((x: any) => x.refCount);
+                if (label.includes('raw drop')) {
+                    assert.deepEqual(afterProbe, []);
+                    assert.equal(sdkCloses, 0, 'Raw deletion must never acquire a temporary owner');
+                }
                 fail = false;
                 owner = create(file);
                 await owner.count();
@@ -161,7 +177,7 @@ if (adapterRoot) {
 
     test('generic BaseStorage close releases failed temporary probe ownership for its own stores', async () => {
         const { BaseStorage } = await import('../../../../../main/services/storage/abstract-storage.js');
-        const directory = '/private/tmp/isolated-temp-probe-owner';
+        const directory = path.join(profileDirectory, 'isolated-temp-probe-owner');
         const file = directory + '/base-index.db';
         let fail = true,
             closes = 0;

@@ -22,6 +22,7 @@
  * 参考：https://agentskills.io/specification
  */
 
+import path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
@@ -376,6 +377,16 @@ export function validateSkillName(name: unknown): ValidationResult & { normalize
     }
     if (normalized.length === 0) {
         return { valid: false, error: 'name 不能为空' };
+    }
+    // name 会被直接当作安装目录名：含路径分隔符/控制字符或绝对路径时，
+    // 技能会被装进嵌套目录（如 skills/a/b/），而加载只扫一层 → 安装成功但不可见。
+    if (
+        normalized === '.' ||
+        normalized === '..' ||
+        /[/\\\x00-\x1f\x7f]/.test(normalized) ||
+        path.isAbsolute(normalized)
+    ) {
+        return { valid: false, error: 'name 不能包含路径分隔符或控制字符' };
     }
     if (normalized.length > NAME_MAX_LEN) {
         normalized = normalized.slice(0, NAME_MAX_LEN);

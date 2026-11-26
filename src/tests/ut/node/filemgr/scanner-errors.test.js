@@ -59,11 +59,11 @@ async function fixture(t, files = ['bad/old.txt', 'good/live.txt', 'bad-backup/l
     const state = { last_full_scan: 0, last_scan_at: null, total_files: 81, last_file_count: 81 };
     const rows = new Map();
     const storage = new FSStorage(stateDirectory);
+    storage.retrieval.prepare = async () => {};
     Object.assign(storage, {
         mode: 'base-only',
         scannerState: { roots: { [root]: state }, unavailable_roots: {} },
         isDeferred: () => false,
-        syncEmbeddingMode: async () => {},
         saveFiles: async (files, source) => {
             for (const file of files)
                 rows.set(file.path, {

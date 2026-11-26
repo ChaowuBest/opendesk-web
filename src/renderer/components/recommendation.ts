@@ -50,7 +50,7 @@ export interface RecommendationData {
     categories: RecommendationCategory[];
 }
 
-type SearchMatchType = 'keyword' | 'name_semantic' | 'content_semantic';
+type SearchMatchType = 'keyword' | 'bm25' | 'name_semantic' | 'content_semantic';
 
 type IndexedFileSearchItem = {
     path: string;
@@ -344,7 +344,8 @@ class RecommendationPanel extends HTMLElement {
         for (const type of item.matchTypes ?? []) {
             if (type === 'keyword' || type === 'name_semantic')
                 badgeLabels.add(t('renderer.recommendation.badge.filename'));
-            if (type === 'content_semantic') badgeLabels.add(t('renderer.recommendation.badge.content'));
+            if (type === 'bm25' || type === 'content_semantic')
+                badgeLabels.add(t('renderer.recommendation.badge.content'));
         }
         const badges = [...badgeLabels].map((label) => `<span class="search-badge">${label}</span>`).join('');
         const attachAction = `

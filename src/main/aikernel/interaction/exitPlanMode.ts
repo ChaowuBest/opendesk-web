@@ -26,35 +26,15 @@ import path from 'path';
 import fs from 'fs';
 import type { TaskState } from '../states/tasks.js';
 import chalk from 'chalk';
+import type { ExitPlanModeProvider } from './contracts.js';
+export type {
+    ExitPlanModeAction,
+    ExitPlanModeProvider,
+    ExitPlanModeRemoteContext,
+    ExitPlanModeResponse
+} from './contracts.js';
 
 // ─── Provider 接口 ────────────────────────────────────────────────────────────
-
-export type ExitPlanModeAction = 'execute-standard' | 'execute-solo' | 'continue-editing';
-
-export interface ExitPlanModeResponse {
-    action: ExitPlanModeAction;
-}
-
-/**
- * ExitPlanMode 交互提供者接口。
- * TUI 和 Electron 各自实现此接口。
- *
- * 实现方需负责：
- * 1. 向用户展示计划内容
- * 2. 让用户选择动作（执行 Standard/Solo 或继续编辑）
- * 3. 如果用户选择执行，切换到对应模式
- */
-export interface ExitPlanModeProvider {
-    promptAndSwitch(
-        planContent: string,
-        planFilePath: string,
-        taskId?: string,
-        taskName?: string
-    ): Promise<ExitPlanModeResponse>;
-    isPrompting?(): boolean;
-    /** 主动取消当前等待中的审批（模式切换为不交互模式时调用），resolve 为 continue-editing。 */
-    cancelCurrent?(): void;
-}
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -250,12 +230,19 @@ export class ExitPlanModeTool extends InteractiveTool<typeof ExitPlanModeArgsSch
             throw new Error(`exitPlanMode: 计划文件不存在 ${planFilePath}`);
         }
 
+        const relativePath = path.relative(path.normalize(workspace), normalizedPlanFile);
+        if (path.isAbsolute(relativePath) || relativePath === '..' || relativePath.startsWith(`..${path.sep}`)) {
+            throw new Error('exitPlanMode: safe relative plan path unavailable');
+        }
+        const planRelativePath = relativePath.split(path.sep).join('/');
+
         // 向用户展示计划并获取决定
         const response = await this.provider.promptAndSwitch(
             planContent,
             planFilePath,
             taskState?.task_id,
-            taskState?.task_name ?? undefined
+            taskState?.task_name ?? undefined,
+            { planRelativePath }
         );
 
         if (response.action === 'continue-editing') {

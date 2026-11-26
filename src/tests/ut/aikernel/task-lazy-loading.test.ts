@@ -104,6 +104,10 @@ describe('task lazy loading', () => {
         expect(loadedTask).toBeDefined();
         expect(loadedTask!._fullyLoaded).toBe(true);
         expect(loadedTask!.model).toBe('fixture-model');
+        expect(loadedTask!.toSimplifiedJSON()).toMatchObject({
+            modelConfiguration: { model: 'fixture-model', reasoningEffort: undefined }
+        });
+        expect(loadedTask!.toIndexJSON()).not.toHaveProperty('modelConfiguration');
         expect(loadedTask!.chat_context.messages).toHaveLength(1);
         expect(loadedTask!.chat_context.messages[0]).toBeInstanceOf(UserMessage);
         expect(loadedTask!.getAutoCompactState()).toMatchObject({

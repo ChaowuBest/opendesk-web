@@ -382,12 +382,23 @@ class LLM {
                     logger.info(`progress ${i} / ${texts.length}`);
                     const batch = texts.slice(i, i + batchSize);
                     const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
-                    embeddings.push(
-                        ...data.data
-                            .slice()
-                            .sort((a: any, b: any) => a.index - b.index)
-                            .map((d: any) => d.embedding)
-                    );
+                    const entries = data.data.slice();
+                    const objects = entries.every((entry: any) => entry !== null && typeof entry === 'object');
+                    const indexed = entries.filter((entry: any) => entry?.index !== undefined);
+                    const validIndexes =
+                        indexed.length === 0 ||
+                        (indexed.length === entries.length &&
+                            entries.every((entry: any) => Number.isInteger(entry.index)) &&
+                            new Set(entries.map((entry: any) => entry.index)).size === entries.length);
+                    if (entries.length !== batch.length || !objects || !validIndexes) {
+                        const error = new Error(
+                            t('error.model.invalid_embedding_response', { shape: 'data.length / data[].index' })
+                        ) as Error & { status: number };
+                        error.status = 502;
+                        throw error;
+                    }
+                    if (indexed.length > 0) entries.sort((a: any, b: any) => a.index - b.index);
+                    embeddings.push(...entries.map((entry: any) => entry.embedding));
                 }
                 return embeddings;
             }

@@ -30,6 +30,14 @@ import {
     fetchBrowserHintsForPage,
     type BrowserHintPanelHandle
 } from './components/browserHintPanel.js';
+import {
+    clearBrowserCertificateWarning,
+    getBrowserCertificateWarningTitle,
+    isBrowserCertificateError,
+    observeBrowserCertificateExceptions,
+    renderBrowserCertificateIndicator,
+    showBrowserCertificateWarning
+} from './components/browserCertificateWarning.js';
 // 注册 <content-loading-view> 加载中组件，用于页面加载反馈
 import './components/loading.js';
 
@@ -61,6 +69,7 @@ interface BrowserTab {
     ready: boolean;
     pendingUrl: string | null;
     errorInfo?: ErrorInfo;
+    unverifiedOrigins?: Set<string>;
     /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
     openerTabId?: number;
     /** 加载指示器延迟显示的定时器句柄 */
@@ -86,6 +95,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     private activeTabId: number = -1;
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
+    private readonly _removeCertificateListener: (() => void) | undefined;
     private _resizeObserver: ResizeObserver | null = null;
     private readonly _restoreState?: BrowserRestoreState;
     private static readonly VIRTUAL_WIDTH = 1280;
@@ -126,6 +136,10 @@ export class EmbeddedBrowser extends BrowserInstance {
         this._restoreState = restoreState;
         this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
+        this._removeCertificateListener = observeBrowserCertificateExceptions(
+            () => this.tabs,
+            () => this.syncUrlBar()
+        );
         this.init();
         this.container.addEventListener('keydown', this._focusTrapKeydown);
     }
@@ -1250,6 +1264,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         // 页面反复闪现加载遮罩；同文档导航（pushState/hash）也不需要遮罩。
         wv.addEventListener('did-start-navigation', (event: any) => {
             if (event.isMainFrame && !event.isInPlace) {
+                clearBrowserCertificateWarning(tab.wrapEl);
                 this.showTabLoading(tab);
             }
         });
@@ -1328,7 +1343,9 @@ export class EmbeddedBrowser extends BrowserInstance {
         });
 
         wv.addEventListener('page-title-updated', (event: any) => {
-            tab.title = event.title || this.extractTitle(tab.url);
+            tab.title = isBrowserCertificateError(tab.errorInfo?.description)
+                ? getBrowserCertificateWarningTitle()
+                : event.title || this.extractTitle(tab.url);
             this.renderTabBar();
         });
 
@@ -1426,11 +1443,19 @@ export class EmbeddedBrowser extends BrowserInstance {
             };
 
             // 更新 tab 标题显示错误
-            tab.title = this.extractTitle(validatedURL || tab.url) + ' - 加载失败';
+            const certificateError = isBrowserCertificateError(errorDescription);
+            tab.title = certificateError
+                ? getBrowserCertificateWarningTitle()
+                : this.extractTitle(validatedURL || tab.url) + ' - 加载失败';
             this.renderTabBar();
 
             // 将自定义错误页面注入 webview 内部，CDP snapshot 可直接读取
             this.injectErrorPage(tab);
+            if (tab.wrapEl && certificateError) {
+                const url = tab.errorInfo.url;
+                tab.url = url;
+                showBrowserCertificateWarning(tab.wrapEl, wv, tab.errorInfo, () => this.navigateTo('about:blank', tab));
+            }
 
             // 同步地址栏显示失败的 URL
             if (tab.id === this.activeTabId) this.syncUrlBar();
@@ -1570,6 +1595,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         const tab = this.getActiveTab();
         if (this.urlInput && tab) {
             this.urlInput.value = tab.url || '';
+            renderBrowserCertificateIndicator(this.container?.querySelector('.bw-lock') ?? null, tab.url, tab);
         }
         this.scheduleHintsRefresh();
     }
@@ -1653,7 +1679,10 @@ export class EmbeddedBrowser extends BrowserInstance {
      */
     private injectErrorPage(tab: BrowserTab): void {
         if (!tab.webview || !tab.errorInfo) return;
-        const script = buildErrorPageScript(tab.errorInfo);
+        const title = isBrowserCertificateError(tab.errorInfo.description)
+            ? getBrowserCertificateWarningTitle()
+            : undefined;
+        const script = buildErrorPageScript(tab.errorInfo, title);
         try {
             tab.webview.executeJavaScript(script);
         } catch {
@@ -1896,6 +1925,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     public destroy(): void {
+        this._removeCertificateListener?.();
         this.container?.removeAttribute('data-od-browser-focus-scope');
         this.container?.removeEventListener('keydown', this._focusTrapKeydown);
         this._disposeViewportScaling();

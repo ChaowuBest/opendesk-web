@@ -72,6 +72,10 @@ jest.unstable_mockModule('../../../main/utils/logger.js', () => ({
     }
 }));
 
+jest.unstable_mockModule('../../../main/applications/mobileaccess/app.js', () => ({
+    MobileAccessApplication: class {}
+}));
+
 jest.unstable_mockModule('../../../main/applications/slides/app.js', () => ({
     SlidesApplication: class {}
 }));

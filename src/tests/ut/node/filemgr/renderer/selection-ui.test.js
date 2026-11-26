@@ -219,7 +219,7 @@ test('U08 changed rules keep real scan information with missing counts omitted',
     document.body.append(sources.element);
     cleanup.push(() => sources.destroy());
     state.editEntries([{ ...E('/source'), exclude_patterns: ['sub/**'] }]);
-    assert.equal(document.querySelector('.status-text').textContent, '已完成');
+    assert.equal(document.querySelector('.status-text').textContent, '索引完成');
     assert.doesNotMatch(document.querySelector('.status-text').textContent, /0|100|文件/);
     assert.equal(document.querySelector('.fs-mini-ring'), null);
     assert.equal(document.querySelector('.fs-selection-status'), null);
@@ -245,7 +245,7 @@ test('selection changes preserve compact cards without submission labels on any 
     assert.equal(document.querySelectorAll('.fs-selection-status').length, 0);
     for (const root of ['/workspace', '/a']) {
         const card = document.querySelector(`[data-source-id="${root}"]`);
-        assert.equal(card.querySelector('.status-text').textContent, '基础索引 · 1 文件');
+        assert.equal(card.querySelector('.status-text').textContent, '索引完成 · 1 文件');
         assert.equal(card.querySelector('.info').children.length, 2);
         assert.ok(card.querySelector('.fs-mini-ring'));
         assert.equal(card.dataset.progress, '100');

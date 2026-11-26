@@ -92,19 +92,11 @@ function normalizeFetchInit(input: ModelFetchInput, init?: RequestInit): Request
     };
 }
 
-export function applyModelNetworkConfig(model: ModelNetworkConfig): void {
-    if (model.no_ssl && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-        logger.info('no_ssl: SSL certificate verification disabled');
-    }
-}
-
 export async function fetchModelUrl(
     model: ModelNetworkConfig,
     input: ModelFetchInput,
     init?: RequestInit
 ): Promise<Response> {
-    applyModelNetworkConfig(model);
     const url = normalizeFetchUrl(input);
     const requestInit = normalizeFetchInit(input, init);
     const method = requestInit?.method || 'GET';

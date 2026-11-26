@@ -16,10 +16,27 @@ import { isValidVersion, isNewerVersion } from '../utils/version.js';
 
 const STABLE_VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 const SHA256 = /^[a-f\d]{64}$/i;
+/** news 条目内指向本版本详情页的链接（`/news/<date>-stable-release/` 形式，相对或绝对） */
+const NEWS_DETAIL_HREF = /\/news\/[^/?#]+\/?$/;
+/** 详情页正文起点标题「OpenDesk X.Y.Z 正式版本更新内容」 */
+const DETAIL_BODY_HEADING = /正式版本更新内容/;
+/** 详情页尾部「如何升级」章节不属于更新说明，据此截断 */
+const DETAIL_TERMINATOR_HEADING = '如何升级';
 type ReleaseTrustMode = 'strict' | 'trusted-source';
 
-/** 更新包目标架构：process.arch 在 Windows 上只有 x64 / arm64 两种发布形态 */
+/** 更新器目标架构：process.arch 在 Windows/macOS 上都只有 x64 / arm64 两种发布形态 */
 export type UpdaterTargetArch = 'x64' | 'arm64';
+
+/** 更新器目标平台：决定安装包格式（Windows 选 EXE，macOS 选 DMG） */
+export type UpdaterTargetPlatform = 'win32' | 'darwin';
+
+function installerExtensionFor(platform: UpdaterTargetPlatform): string {
+    return platform === 'darwin' ? '.dmg' : '.exe';
+}
+
+function platformReleaseLabel(platform: UpdaterTargetPlatform, targetArch: UpdaterTargetArch): string {
+    return `${platform === 'darwin' ? 'macOS' : 'Windows'} ${targetArch}`;
+}
 
 /**
  * 更新器只接受 `x.y.z` 形式的稳定版本：预发布、构建元数据、`v` 前缀都不走发布流程。
@@ -42,26 +59,41 @@ function validateUrl(value: unknown): string {
 /**
  * 官网 news 页安装包链接识别。x64 目标同时接受 x86 与 x64 标记
  * （官网 win-x86 包实际内嵌 x64 MSI），arm64 目标只接受 arm64 标记。
+ * macOS 链接按 Apple 芯片 / Intel 芯片标签或 darwin-<arch> 文件名区分架构。
  */
-function isNativeInstallerLink(href: string, label: string, targetArch: UpdaterTargetArch): boolean {
+function isNativeInstallerLink(
+    href: string,
+    label: string,
+    targetArch: UpdaterTargetArch,
+    platform: UpdaterTargetPlatform
+): boolean {
+    if (platform === 'darwin') {
+        if (targetArch === 'arm64') {
+            return /apple\s*芯片/i.test(label) || /darwin[-_]?arm64/i.test(href);
+        }
+        return /intel\s*芯片/i.test(label) || /darwin[-_]?x(86|64)/i.test(href);
+    }
     if (targetArch === 'arm64') {
         return /windows\s*arm64/i.test(label) || /win[-_]?arm64/i.test(href);
     }
     return /windows\s*x(86|64)/i.test(label) || /win[-_]?x(86|64)/i.test(href);
 }
 
-/** arm64 目标在 feed 未发布原生包时（如 0.3.6 及更早）回退 x86 包，保持可更新 */
+/** win32 arm64 目标在 feed 未发布原生包时（如 0.3.6 及更早）回退 x86 包，保持可更新 */
 function isLegacyX86InstallerLink(href: string, label: string): boolean {
     return /windows\s*x86/i.test(label) || /win[-_]?x86/i.test(href);
 }
 
 function selectNewsInstallerLink(
     candidates: { href: string; label: string; checksum?: string }[],
-    targetArch: UpdaterTargetArch
+    targetArch: UpdaterTargetArch,
+    platform: UpdaterTargetPlatform
 ): { href: string; label: string; checksum?: string } | undefined {
-    const native = candidates.find((candidate) => isNativeInstallerLink(candidate.href, candidate.label, targetArch));
+    const native = candidates.find((candidate) =>
+        isNativeInstallerLink(candidate.href, candidate.label, targetArch, platform)
+    );
     if (native) return native;
-    if (targetArch === 'arm64') {
+    if (platform === 'win32' && targetArch === 'arm64') {
         return candidates.find((candidate) => isLegacyX86InstallerLink(candidate.href, candidate.label));
     }
     return undefined;
@@ -71,9 +103,11 @@ export function parseNewsReleasePage(
     html: string,
     pageUrl: string,
     trustMode: ReleaseTrustMode = 'strict',
-    targetArch: UpdaterTargetArch = 'x64'
+    targetArch: UpdaterTargetArch = 'x64',
+    platform: UpdaterTargetPlatform = 'win32'
 ): UpdateRelease {
     const { document } = parseHTML(html);
+    const installerExtension = installerExtensionFor(platform);
     let latestRelease: UpdateRelease | undefined;
 
     for (const item of Array.from(document.querySelectorAll('li[data-release-category="stable-release"]'))) {
@@ -82,19 +116,19 @@ export function parseNewsReleasePage(
         if (!title || !version) continue;
         assertStableVersion(version);
 
-        const exeLinks = Array.from(item.querySelectorAll('.release-downloads a'))
+        const installerLinks = Array.from(item.querySelectorAll('.release-downloads a'))
             .map((candidate) => ({
                 href: candidate.getAttribute('href') || '',
                 label: candidate.textContent || '',
                 checksum: candidate.getAttribute('data-sha256')?.trim().toLowerCase()
             }))
-            .filter((candidate) => candidate.href.toLowerCase().endsWith('.exe'));
-        const installerLink = selectNewsInstallerLink(exeLinks, targetArch);
+            .filter((candidate) => candidate.href.toLowerCase().endsWith(installerExtension));
+        const installerLink = selectNewsInstallerLink(installerLinks, targetArch, platform);
         const href = installerLink?.href;
         if (!installerLink || !href) continue;
 
         const installerUrl = validateUrl(new URL(href, pageUrl).toString());
-        const installerName = validateInstallerName(undefined, installerUrl);
+        const installerName = validateInstallerName(undefined, installerUrl, platform);
         const rawChecksum = installerLink.checksum;
         if (rawChecksum && !SHA256.test(rawChecksum) && trustMode === 'strict') {
             throw new Error('Update news page contains an invalid SHA-256 checksum');
@@ -110,14 +144,22 @@ export function parseNewsReleasePage(
         if (!latestRelease || isNewerVersion(release.version, latestRelease.version)) latestRelease = release;
     }
 
-    if (!latestRelease) throw new Error(`Update news page does not contain a stable Windows ${targetArch} release`);
+    if (!latestRelease) {
+        throw new Error(
+            `Update news page does not contain a stable ${platformReleaseLabel(platform, targetArch)} release`
+        );
+    }
     return latestRelease;
 }
 
-function validateInstallerName(value: unknown, url: string): string {
+function validateInstallerName(value: unknown, url: string, platform: UpdaterTargetPlatform): string {
     const name = typeof value === 'string' ? value : decodeURIComponent(new URL(url).pathname.split('/').at(-1) || '');
-    if (!name.toLowerCase().endsWith('.exe') || name.includes('/') || name.includes('\\')) {
-        throw new Error('Update release does not contain a Windows EXE installer');
+    if (!name.toLowerCase().endsWith(installerExtensionFor(platform)) || name.includes('/') || name.includes('\\')) {
+        throw new Error(
+            platform === 'darwin'
+                ? 'Update release does not contain a macOS DMG installer'
+                : 'Update release does not contain a Windows EXE installer'
+        );
     }
     return name;
 }
@@ -136,7 +178,8 @@ function checksumForAsset(notes: string | undefined, installerName: string): str
 export function parseReleaseResponse(
     input: unknown,
     trustMode: ReleaseTrustMode = 'strict',
-    targetArch: UpdaterTargetArch = 'x64'
+    targetArch: UpdaterTargetArch = 'x64',
+    platform: UpdaterTargetPlatform = 'win32'
 ): UpdateRelease {
     if (!input || typeof input !== 'object') throw new Error('Update feed returned an invalid response');
     const raw = input as Record<string, unknown>;
@@ -151,7 +194,7 @@ export function parseReleaseResponse(
         return {
             version: raw.version,
             installerUrl,
-            installerName: validateInstallerName(raw.name, installerUrl),
+            installerName: validateInstallerName(raw.name, installerUrl, platform),
             size: optionalPositiveNumber(raw.size),
             sha256: sha256 && SHA256.test(sha256) ? sha256 : undefined,
             notes: typeof raw.notes === 'string' ? raw.notes : undefined
@@ -163,20 +206,29 @@ export function parseReleaseResponse(
     const version = raw.tag_name.startsWith('v') ? raw.tag_name.slice(1) : raw.tag_name;
     assertStableVersion(version);
     if (!Array.isArray(raw.assets)) throw new Error('GitCode release does not contain assets');
-    const winAssets = raw.assets.filter((candidate) => {
+    const assetPattern =
+        platform === 'darwin' ? /(?:opendesk|open-desk).*darwin.*\.dmg$/i : /(?:opendesk|open-desk).*win.*\.exe$/i;
+    const installerAssets = raw.assets.filter((candidate) => {
         if (!candidate || typeof candidate !== 'object') return false;
         const name = (candidate as Record<string, unknown>).name;
-        return typeof name === 'string' && /(?:opendesk|open-desk).*win.*\.exe$/i.test(name);
+        return typeof name === 'string' && assetPattern.test(name);
     }) as Record<string, unknown>[];
-    // 优先当前架构原生包；arm64 在老版本 feed（仅 x86 包）时回退 x86，保持可更新
+    // 优先当前架构原生包；arm64 在老版本 feed（仅 x86 包）时回退 x86，保持可更新。
+    // darwin 的 Intel 包在 Apple 芯片上可通过 Rosetta 运行，回退同样成立。
     const isArm64 = (asset: Record<string, unknown>) => /arm64/i.test(String(asset.name));
     const asset =
         targetArch === 'arm64'
-            ? (winAssets.find(isArm64) ?? winAssets.find((candidate) => !isArm64(candidate)))
-            : winAssets.find((candidate) => !isArm64(candidate));
-    if (!asset) throw new Error('GitCode release does not contain a Windows EXE installer');
+            ? (installerAssets.find(isArm64) ?? installerAssets.find((candidate) => !isArm64(candidate)))
+            : installerAssets.find((candidate) => !isArm64(candidate));
+    if (!asset) {
+        throw new Error(
+            platform === 'darwin'
+                ? 'GitCode release does not contain a macOS DMG installer'
+                : 'GitCode release does not contain a Windows EXE installer'
+        );
+    }
     const installerUrl = validateUrl(asset.browser_download_url);
-    const installerName = validateInstallerName(asset.name, installerUrl);
+    const installerName = validateInstallerName(asset.name, installerUrl, platform);
     const notes = typeof raw.body === 'string' ? raw.body : undefined;
     return {
         version,
@@ -193,7 +245,8 @@ export async function fetchLatestRelease(
     fetchImpl: typeof fetch = fetch,
     timeoutMs = 30_000,
     trustMode: ReleaseTrustMode = 'strict',
-    targetArch: UpdaterTargetArch = 'x64'
+    targetArch: UpdaterTargetArch = 'x64',
+    platform: UpdaterTargetPlatform = 'win32'
 ): Promise<UpdateRelease> {
     const url = validateUpdateUrl(feedUrl, 'Update feed URL');
     const response = await raceWithForceTimeout(
@@ -208,9 +261,118 @@ export async function fetchLatestRelease(
     const body = await response.text();
     const contentType = response.headers.get('content-type')?.toLowerCase() || '';
     if (contentType.includes('text/html') || contentType.includes('application/xhtml+xml') || /^\s*</.test(body)) {
-        return parseNewsReleasePage(body, response.url || url.toString(), trustMode, targetArch);
+        return parseNewsReleasePage(body, response.url || url.toString(), trustMode, targetArch, platform);
     }
-    return parseReleaseResponse(JSON.parse(body), trustMode, targetArch);
+    return parseReleaseResponse(JSON.parse(body), trustMode, targetArch, platform);
+}
+
+/** news 列表页单条稳定版条目：标题 + 指向本版本详情页的安全链接（链接缺失或不安全时为空） */
+export interface NewsReleaseEntry {
+    title: string;
+    notesUrl?: string;
+}
+
+/**
+ * 在 news 列表页按版本号查找稳定版条目，供启动时的「更新内容」弹窗使用，
+ * 与更新检查的 parseNewsReleasePage 互不影响：这里不需要安装包信息，
+ * 也无需假设页面上存在任何条目。条目内指向 `/news/<date>-stable-release/`
+ * 的链接是本版本详情页；链接不安全时丢弃而非报错，调用方据此回退通用弹窗。
+ */
+export function findNewsReleaseEntry(html: string, pageUrl: string, version: string): NewsReleaseEntry | undefined {
+    const { document } = parseHTML(html);
+    for (const item of Array.from(document.querySelectorAll('li[data-release-category="stable-release"]'))) {
+        const title = item.querySelector('.release-item__title')?.textContent?.trim();
+        if (!title || title.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] !== version) continue;
+        let notesUrl: string | undefined;
+        const detailHref = Array.from(item.querySelectorAll('a'))
+            .map((anchor) => anchor.getAttribute('href') || '')
+            .find((candidate) => NEWS_DETAIL_HREF.test(candidate));
+        if (detailHref) {
+            try {
+                notesUrl = validateUpdateUrl(new URL(detailHref, pageUrl).toString(), 'Update notes URL').toString();
+            } catch {
+                notesUrl = undefined;
+            }
+        }
+        return { title, notesUrl };
+    }
+    return undefined;
+}
+
+/**
+ * 将 news 详情页正文转换为行级标记 notes：`# ` 总标题 / `## ` 章节 / `- ` 列表项 / 其余为段落。
+ * 正文起点是「OpenDesk X.Y.Z 正式版本更新内容」h1，其后为平铺的 h2/p/ul，
+ * 遇「如何升级」章节截断；下载区位于正文流之前，天然不会混入。
+ * 页面结构不符合预期时返回 undefined，由调用方回退通用弹窗。
+ */
+export function extractReleaseNotesFromDetailPage(html: string, listTitle: string): string | undefined {
+    const { document } = parseHTML(html);
+    const bodyHeading = Array.from(document.querySelectorAll('h1')).find((heading) =>
+        DETAIL_BODY_HEADING.test(heading.textContent || '')
+    );
+    if (!bodyHeading) return undefined;
+    const lines: string[] = [`# ${listTitle}`];
+    let node: Element | null = bodyHeading.nextElementSibling;
+    while (node) {
+        const tag = node.tagName.toLowerCase();
+        // 行内标签（code/strong 等）拼接会产生换行与连续空白，统一压缩为单个空格
+        const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+        if (tag === 'h2') {
+            if (text === DETAIL_TERMINATOR_HEADING) break;
+            if (text) lines.push('', `## ${text}`);
+        } else if (tag === 'p') {
+            if (text) lines.push('', text);
+        } else if (tag === 'ul') {
+            for (const listItem of Array.from(node.querySelectorAll('li'))) {
+                const itemText = (listItem.textContent || '').replace(/\s+/g, ' ').trim();
+                if (itemText) lines.push(`- ${itemText}`);
+            }
+            lines.push('');
+        }
+        node = node.nextElementSibling;
+    }
+    const notes = lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    return notes || undefined;
+}
+
+/**
+ * 启动时按当前版本拉取「更新内容」：先取 news 列表页找到该版本条目，
+ * 再抓其详情页组装行级标记 notes。返回 undefined 表示该版本没有可用的
+ * 更新内容（列表无条目、详情链接不安全或页面结构不符），调用方弹通用窗；
+ * 网络失败（含非 2xx）则抛错，由调用方 catch 后同样弹通用窗。
+ */
+export async function fetchReleaseNotesForVersion(
+    feedUrl: string,
+    version: string,
+    fetchImpl: typeof fetch = fetch,
+    timeoutMs = 30_000
+): Promise<string | undefined> {
+    const url = validateUpdateUrl(feedUrl, 'Update feed URL');
+    const response = await raceWithForceTimeout(
+        fetchImpl(url, {
+            headers: { accept: 'text/html', 'user-agent': 'OpenDesk-Updater' },
+            signal: AbortSignal.timeout(timeoutMs)
+        }),
+        timeoutMs
+    );
+    if (!response.ok) throw new Error(`Update feed request failed with HTTP ${response.status}`);
+    if (response.url) validateUpdateUrl(response.url, 'Update feed redirect');
+    const entry = findNewsReleaseEntry(await response.text(), response.url || url.toString(), version);
+    if (!entry?.notesUrl) return undefined;
+    const detailResponse = await raceWithForceTimeout(
+        fetchImpl(entry.notesUrl, {
+            headers: { accept: 'text/html', 'user-agent': 'OpenDesk-Updater' },
+            signal: AbortSignal.timeout(timeoutMs)
+        }),
+        timeoutMs
+    );
+    if (!detailResponse.ok) {
+        throw new Error(`Update notes page request failed with HTTP ${detailResponse.status}`);
+    }
+    return extractReleaseNotesFromDetailPage(await detailResponse.text(), entry.title);
 }
 
 /**

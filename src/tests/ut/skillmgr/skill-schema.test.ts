@@ -1,4 +1,4 @@
-import { parseAndValidateSkillMd } from '../../../main/applications/skillmgr/skill-schema';
+import { parseAndValidateSkillMd, validateSkillName } from '../../../main/applications/skillmgr/skill-schema';
 
 describe('skillmgr skill markdown parsing', () => {
     test('uses fallback name for markdown files without frontmatter', () => {
@@ -132,5 +132,36 @@ describe('skillmgr skill markdown parsing', () => {
         expect(result.valid).toBe(true);
         expect(result.name).toBe('douyin_copy_extract');
         expect(result.description).toBe('粘贴短视频分享链接，一键提取标题、简介、口播文案。');
+    });
+});
+
+describe('validateSkillName path safety', () => {
+    test('拒绝包含路径分隔符的名称', () => {
+        for (const name of ['foo/bar', 'foo\\bar', '../escape', '..', '.', '/abs/path', 'C:\\abs']) {
+            const result = validateSkillName(name);
+            expect(result.valid).toBe(false);
+            expect(result.error).toContain('路径分隔符');
+        }
+    });
+
+    test('拒绝控制字符', () => {
+        expect(validateSkillName('bad\u0000name').valid).toBe(false);
+        expect(validateSkillName('bad\u001fname').valid).toBe(false);
+    });
+
+    test('正常名称仍然通过并去掉首尾空白', () => {
+        expect(validateSkillName('  my-skill  ')).toEqual({ valid: true, normalized: 'my-skill' });
+        expect(validateSkillName('技能-abc')).toEqual({ valid: true, normalized: '技能-abc' });
+    });
+
+    test('frontmatter 中的危险 name 不会成为安装目录名', () => {
+        const result = parseAndValidateSkillMd(
+            ['---', 'name: foo/bar', 'description: skill with nested name', '---', '', '# x'].join('\n')
+        );
+        // 解析器对非法 name 走 fallback（slug/正文/unnamed-skill），
+        // 关键是最终名字不含路径分隔符，否则会被装进嵌套目录后加载不到。
+        expect(result.valid).toBe(true);
+        expect(result.name).toBeTruthy();
+        expect(result.name).not.toMatch(/[/\\]/);
     });
 });

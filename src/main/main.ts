@@ -33,6 +33,7 @@ import {
     clipboard
 } from 'electron';
 import type { WebContents } from 'electron';
+import { installBrowserCertificates } from './applications/browser/certificateElectron.js';
 import { installBrowserCredentials } from './services/browser-credentials/manager.js';
 import { initializeBrowserCredentials } from './services/browser-credentials/runtime.js';
 import {
@@ -110,7 +111,6 @@ import { exportLogEntries } from './utils/export-log.js';
 import { createLocalExportDestinationHost } from './utils/export-local-destination.js';
 import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
-import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import {
     activateOpenDeskOfficeContents,
@@ -225,6 +225,8 @@ import {
     setMainWindowHidden,
     setMainWindowFocused
 } from './windows/task-status-widget-window.js';
+import { mobileInteractionRuntime, type MobileAccessApplication } from './applications/mobileaccess/app.js';
+import { createMobileQuitBarrier, startElectronMobileAccess } from './applications/mobileaccess/electron.js';
 import { registerElectronUpdateService } from './updater/electron-service.js';
 
 let telemetryModulePromise: Promise<typeof import('./telemetry/index.js')> | undefined;
@@ -381,7 +383,8 @@ import { initializeHarmonyLocalRuntimeState } from '../platforms/bridges/harmony
 declare const FSService: any;
 declare const recallApplication: any;
 
-setPlatform(new ElectronPlatform(app));
+const electronPlatform = new ElectronPlatform(app);
+setPlatform(electronPlatform);
 useConsoleTransport();
 initializeHarmonyRuntimeEnvironment();
 initializeHarmonyLocalRuntimeState();
@@ -696,9 +699,9 @@ async function initBrowserSession() {
             // 获取 BrowserApplication 实例
             const browserApp = ApplicationRegistry.getApplication('browser') as any;
 
-            // 初始化证书验证器（支持用户导入的根证书 + 系统根证书）
+            // 初始化证书验证器（支持用户导入的证书 + 系统根证书）
             if (browserApp?.initCertificateVerifier) {
-                void browserApp.initCertificateVerifier().catch((err: any) => {
+                await browserApp.initCertificateVerifier().catch((err: any) => {
                     logger.error(`initCertificateVerifier 失败: ${err?.message || err}`);
                 });
             }
@@ -1161,6 +1164,7 @@ const createWindow = () => {
     displayZoomSync.add(mainWindow);
     mainWindow.once('closed', () => displayZoomSync.remove(mainWindow));
     installWebviewHostHandlers(mainWindow);
+    installBrowserCertificates(mainWindow, isEmbeddedBrowserContents);
     if (isWebMode()) {
         // 浏览器连接替代 renderer：发往主窗口的消息转发给所有浏览器
         attachHiddenMainWindow(mainWindow);
@@ -1398,7 +1402,9 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
 
-            const switched = await switchTaskMode(task, modeId, () => new ElectronPermissionPromptProvider());
+            const switched = await switchTaskMode(task, modeId, () =>
+                electronPlatform.createPermissionPromptProvider()
+            );
             if (!switched) {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
@@ -1553,7 +1559,7 @@ const registerTaskManagerAPIHandlers = () => {
     registerTaskTransferHandlers(globalState.taskManagerState, () => globalMainWindow, taskTransfer);
     const taskSearch = new TaskSearchService(
         getTaskDirectory(),
-        path.join(getOpendeskDirectory(), 'task-search-v1.sqlite'),
+        path.join(getOpendeskDirectory(), 'task-search-v3.sqlite'),
         {
             onChange: (unavailable) => broadcastToAllWindows('taskManager:searchChanged', unavailable === true),
             onError: (error) => logger.warn(`Task search worker failed: ${error.stack || error.message}`)
@@ -1681,7 +1687,7 @@ const registerTaskManagerAPIHandlers = () => {
                 return _currentElectronModeId;
             },
             defaultExecutionNodeId: globalState.getDefaultExecutionNodeId(),
-            permissionPromptFactory: () => new ElectronPermissionPromptProvider(),
+            permissionPromptFactory: () => electronPlatform.createPermissionPromptProvider(),
             createInteractionToolset: (task) => getPlatform().createInteractionToolset(task)
         });
     });
@@ -1761,7 +1767,7 @@ const registerTaskManagerAPIHandlers = () => {
         try {
             await updateTaskWorkspace(task, newWorkspace, {
                 currentModeId: _currentElectronModeId,
-                permissionPromptFactory: () => new ElectronPermissionPromptProvider()
+                permissionPromptFactory: () => electronPlatform.createPermissionPromptProvider()
             });
             return { status: 'ok' };
         } catch (err: any) {
@@ -3474,8 +3480,14 @@ async function startApplication(): Promise<void> {
     initializeRegistry();
     initializeRegistryProtocols();
 
+    const mobileAccess = ApplicationRegistry.getApplication('mobileaccess') as MobileAccessApplication;
+    const deferQuitForMobileAccess = createMobileQuitBarrier(() => mobileAccess.beforeExit(), () => app.quit());
     app.on('before-quit', (event) => {
         if (officeQuitApproved) {
+            if (deferQuitForMobileAccess()) {
+                event.preventDefault();
+                return;
+            }
             isAppQuitting = true;
             void disposePluginHost();
             return;
@@ -3533,24 +3545,8 @@ async function startApplication(): Promise<void> {
         const ensureBrowserReady = (): Promise<void> => {
             if (!browserReadyPromise) {
                 browserReadyPromise = (async () => {
-                    try {
-                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
-                        if (browserApp?.constructor?._refreshCertCache) {
-                            await browserApp.constructor._refreshCertCache();
-                        }
-                    } catch (err: any) {
-                        logger.error(`证书缓存初始化失败: ${err?.message || err}`);
-                    }
-
                     await initBrowserSession();
                     registerRendererFramePreload();
-
-                    // 全局证书错误处理：使用内存缓存同步匹配
-                    app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-                        const browserApp = ApplicationRegistry.getApplication('browser') as any;
-                        const matched = browserApp?.constructor?.matchCachedFingerprint?.(certificate.fingerprint);
-                        callback(!!matched);
-                    });
                 })();
             }
             return browserReadyPromise;
@@ -3627,6 +3623,8 @@ async function startApplication(): Promise<void> {
 
         // BrowserWindow 已开始加载；同步恢复任务状态时 renderer 进程可以并行解析页面。
         GlobalState.initialize();
+        const { deliveryChannel } = mobileAccess[mobileInteractionRuntime];
+        electronPlatform.setInteractionDeliveryChannel(deliveryChannel);
         registerTaskManagerAPIHandlers();
         registerElectronUpdateService({
             getMainWindow: () => globalMainWindow,
@@ -3760,10 +3758,8 @@ async function startApplication(): Promise<void> {
             // 旧方案在启动时遍历所有 task 创建 HarnessContext（含 GlobPermissionEnforcer），
             // 每个 enforcer 编译 ~17 条 picomatch 规则（~70KB），814 个 task ≈ 56 MB。
             // 新方案：按 workspace 创建共享 enforcer，task 被实际访问时才注入 harness。
-            await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(
-                defaultMode,
-                startupWorkspace,
-                () => new ElectronPermissionPromptProvider()
+            await GlobalState.getInstance().taskManagerState.setupLazyHarnessInit(defaultMode, startupWorkspace, () =>
+                electronPlatform.createPermissionPromptProvider()
             );
         })();
 
@@ -3777,6 +3773,7 @@ async function startApplication(): Promise<void> {
 
         // 鸿蒙平台：启动时校验华为账号登录，未登录则阻塞直到登录成功或退出
         await ensureHuaweiAuthOnStartup();
+        startElectronMobileAccess(mobileAccess, () => globalMainWindow, ensureElectronFullyLoaded);
 
         // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
         powerMonitor.on('suspend', () => {

@@ -110,12 +110,13 @@ export async function downloadInstaller(options: DownloadInstallerOptions): Prom
 export async function copyLocalInstaller(
     source: string,
     destination: string,
-    onProgress?: (receivedBytes: number, totalBytes?: number) => void
+    onProgress?: (receivedBytes: number, totalBytes?: number) => void,
+    expectedExtension = '.exe'
 ): Promise<void> {
     const partialPath = `${destination}.partial`;
     const sourceStat = await fs.promises.stat(source);
-    if (!sourceStat.isFile() || !source.toLowerCase().endsWith('.exe')) {
-        throw new Error('Local update test package must be an EXE file');
+    if (!sourceStat.isFile() || !source.toLowerCase().endsWith(expectedExtension)) {
+        throw new Error(`Local update test package must be a ${expectedExtension} file`);
     }
     await fs.promises.mkdir(path.dirname(destination), { recursive: true });
     await fs.promises.rm(partialPath, { force: true });

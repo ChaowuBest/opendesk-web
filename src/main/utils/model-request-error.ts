@@ -146,7 +146,13 @@ function parseRetryAfterMs(headers: Headers | undefined): number | undefined {
     return undefined;
 }
 
-function parseShouldRetry(headers: Headers | undefined): boolean | undefined {
+function parseShouldRetry(
+    headers: Headers | undefined,
+    errorBody: Record<string, unknown> | undefined
+): boolean | undefined {
+    const limitSource = nonEmptyString(asRecord(errorBody?.metadata)?.limit_source);
+    if (normalizeIdentifier(limitSource) === 'openrouter_free_tier_daily') return false;
+
     const value = headerValue(headers, 'x-should-retry')?.trim().toLowerCase();
     if (value === 'true') return true;
     if (value === 'false') return false;
@@ -192,7 +198,7 @@ export function parseModelErrorResponse(options: ParseModelErrorResponseOptions)
             headerValue(options.headers, 'request-id') ??
             headerValue(options.headers, 'x-request-id'),
         retryAfterMs: parseRetryAfterMs(options.headers),
-        shouldRetry: parseShouldRetry(options.headers)
+        shouldRetry: parseShouldRetry(options.headers, errorBody)
     });
 }
 
@@ -228,7 +234,7 @@ export function normalizeModelRequestError(
                 headerValue(headers, 'request-id') ??
                 headerValue(headers, 'x-request-id'),
             retryAfterMs: parseRetryAfterMs(headers),
-            shouldRetry: parseShouldRetry(headers)
+            shouldRetry: parseShouldRetry(headers, errorBody)
         },
         error instanceof Error || displayMessage !== undefined
             ? { ...(error instanceof Error ? { cause: error } : {}), displayMessage }
@@ -245,6 +251,7 @@ function hasKnownNonRetryableMessage(message: string): boolean {
         /context length exceeded/i,
         /maximum context length/i,
         /credit balance (is )?(depleted|exhausted)/i,
+        /\bfree-models-per-day\b/i,
         /you have reached your specified (workspace )?api usage limits/i
     ].some((pattern) => pattern.test(message));
 }

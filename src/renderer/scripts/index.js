@@ -38,10 +38,10 @@ import '../components/agentgate-floating-window.js';
 import '../components/trashFloatingWindow.ts';
 import '../components/desktop/entry.ts';
 import '../../main/applications/browser/renderer/entry.ts';
-import { showConfirmModal, showCloseDialog } from '../components/confirmModal.ts';
+import { showConfirmModal, showCloseDialog, showWhatsNewModal } from '../components/confirmModal.ts';
 import { initializeSidebarLayout } from '../sidebarLayout.ts';
 import { showBlacklistPrompt } from '../components/blacklistPrompt.ts';
-import { createRendererTranslator, onLocalePacksChanged } from '../locale.ts';
+import { createRendererTranslator, notifyRendererSettingChanged, onLocalePacksChanged } from '../locale.ts';
 import { routeTaskFileOpenRequest } from './taskFileRouting.ts';
 import { installQuickCaptureInbox } from './quickcaptureInbox.ts';
 import { installTaskComposeListener } from './taskCompose.ts';
@@ -73,13 +73,37 @@ function getLocalizedString(key, locale = 'en-us') {
 
 // 暴露翻译器实例给 index.html 内联脚本使用
 window.__odT = createRendererTranslator();
+// What's New：启动时检查当前版本更新内容是否已预览过，未预览则拉取并弹窗。
+// 无更新说明（断网 / 社区无条目）时展示通用社区引导弹窗；dismiss 后落账，下次启动不再弹。
+async function showWhatsNewOnce() {
+    try {
+        const pending = await window.updateAPI?.getPendingReleaseNotes();
+        if (!pending) return;
+        const t = window.__odT;
+        await showWhatsNewModal({
+            title: t('update.whatsNew.title', { version: pending.version }),
+            notes: pending.notes ?? '',
+            noNotesText: t('update.whatsNew.noNotes'),
+            communityText: t('update.whatsNew.community'),
+            communityLinkText: t('update.whatsNew.communityLink'),
+            communityUrl: 'https://opendesk.matrix.openharmony.cn',
+            confirmText: t('update.whatsNew.confirm')
+        });
+        await window.updateAPI?.dismissReleaseNotes();
+    } catch {
+        /* What's New 是增强展示：任何失败都静默跳过 */
+    }
+}
 (async () => {
     try {
         const settings = await window.settingAPI.loadSettingObject();
+        notifyRendererSettingChanged(settings);
         window.__odT = createRendererTranslator(settings);
     } catch {
         /* fallback to browser locale */
     }
+    // 等翻译器按用户语言就绪后再弹窗，避免 What's New 使用错误语言
+    await showWhatsNewOnce();
 })();
 window.settingAPI?.onSettingChanged?.((settings) => {
     window.__odT = createRendererTranslator(settings);
@@ -110,14 +134,24 @@ onLocalePacksChanged?.(() => {
 })();
 
 let latestUpdateState = null;
+// renderer 拿不到 process.platform，用 UA 判定 macOS（Electron UA 恒含 Macintosh），
+// 与 setting-panel 的 _isManualUpdateInstall 判定保持一致
+function _isMacManualUpdateInstall() {
+    return typeof navigator !== 'undefined' && !!navigator.userAgent?.includes('Macintosh');
+}
+
 function updateUpdateReadyButton(state) {
     latestUpdateState = state;
     const updateReadyButton = document.getElementById('update-ready-btn');
     if (!updateReadyButton) return;
-    updateReadyButton.hidden = state?.status !== 'installed';
-    if (state?.status !== 'installed') return;
+    const installed = state?.status === 'installed';
+    // macOS 手动安装模式：下载校验完成停在 ready，标题栏入口引导用户到设置页安装；
+    // 其他平台的 ready 是自动安装的中间态，不点亮入口
+    const macReady = state?.status === 'ready' && _isMacManualUpdateInstall();
+    updateReadyButton.hidden = !installed && !macReady;
+    if (!installed && !macReady) return;
     const t = window.__odT || createRendererTranslator();
-    const label = t('update.available.button', { version: state.version });
+    const label = t(installed ? 'update.available.button' : 'update.ready.button', { version: state.version });
     const text = t('update.available.short');
     updateReadyButton.title = label;
     updateReadyButton.setAttribute('aria-label', label);

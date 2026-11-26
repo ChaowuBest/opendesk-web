@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
 import * as XLSX from 'xlsx';
+import iconv from 'iconv-lite';
+import { parseAndChunk } from '../../../../main/applications/filemgr/parser/index.js';
 
 import { LLM } from '../../../../main/aikernel/llm.ts';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
@@ -31,6 +33,20 @@ async function run(name, fn) {
     await fn();
     console.log(`  ✅ ${name}`);
 }
+
+for (const encoding of ['utf8', 'utf16le', 'gbk'])
+    await run(`plain text ${encoding} retains Chinese and ASCII through public parsing`, async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf1-parser-encoding-'));
+        try {
+            const text = 'ASCII header\n' + '中文编码检测，文件索引和工具提取应保留相同内容。'.repeat(20) + '\n末行';
+            const file = path.join(dir, `${encoding}.txt`);
+            fs.writeFileSync(file, iconv.encode(text, encoding, { addBOM: encoding === 'utf16le' }));
+            assert.equal(await extractText(file), text);
+            assert.equal((await parseAndChunk(file, { isChunk: false })).text, text);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 
 function writeOpenDocument(filePath, lines) {
     const zip = new AdmZip();
