@@ -20,6 +20,12 @@ import { createRequire } from 'module';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
 import WordExtractor from 'word-extractor';
+import {
+    format as formatSpreadsheetValue,
+    getFormatDateInfo,
+    getLocale as getSpreadsheetLocale,
+    tokenize
+} from 'numfmt';
 import { readOfd } from '@sharp9/ofdjs';
 import {
     initDOMParser as initOfdDOMParser,
@@ -33,6 +39,7 @@ import { logger as staticLogger } from '../../../utils/logger.js';
 import { xlsxLoader } from '../../../loader/xlsx.js';
 import { prepareHostResource } from '../../../../platforms/runtime.js';
 import { detectEncoding, decodeBuffer } from '../../terminal/encoding.js';
+import { resolveSpreadsheetLocale } from './spreadsheet-locale.js';
 
 function getLogger() {
     return staticLogger;
@@ -288,13 +295,22 @@ function isXmlEntryReadable(filePath, ext) {
     });
 }
 
-async function extractSpreadsheetText(buffer) {
+async function extractSpreadsheetText(buffer, locale) {
     const XLSX = await xlsxLoader.ensure();
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    // Keep raw values and Excel format codes for explicitly localized tool reads.
+    // Other callers, including indexing, retain the existing SheetJS behavior.
+    const workbook = XLSX.read(
+        buffer,
+        locale === undefined
+            ? { type: 'buffer' }
+            : { type: 'buffer', cellNF: true, cellText: false, cellFormula: true, sheetStubs: true }
+    );
+    const resolvedLocale = locale === undefined ? undefined : resolveSpreadsheetLocale(locale);
+    const date1904 = Boolean(workbook.Workbook?.WBProps?.date1904);
     const sheets = [];
     for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
-        const lines = sheetToRowNumberedLines(XLSX, sheet);
+        const lines = sheetToRowNumberedLines(XLSX, sheet, resolvedLocale, date1904);
         if (lines.length === 0) continue;
         const text = lines.join('\n');
         sheets.push(workbook.SheetNames.length > 1 ? `[${sheetName}]\n${text}` : text);
@@ -302,7 +318,7 @@ async function extractSpreadsheetText(buffer) {
     return sheets.join('\n\n');
 }
 
-function sheetToRowNumberedLines(XLSX, sheet) {
+function sheetToRowNumberedLines(XLSX, sheet, locale, date1904) {
     if (!sheet['!ref']) return [];
     const range = XLSX.utils.decode_range(sheet['!ref']);
     const lines = [];
@@ -311,7 +327,7 @@ function sheetToRowNumberedLines(XLSX, sheet) {
         let hasValue = false;
         for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex++) {
             const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
-            const value = cell ? XLSX.utils.format_cell(cell) : '';
+            const value = cell ? formatCellValue(XLSX, cell, locale, date1904) : '';
             if (value !== '') {
                 hasValue = true;
             }
@@ -322,6 +338,97 @@ function sheetToRowNumberedLines(XLSX, sheet) {
         }
     }
     return lines;
+}
+
+function selectFormatSection(tokens, value) {
+    const sections = [[]];
+    for (const token of tokens) {
+        if (token.type === 'BREAK') sections.push([]);
+        else sections[sections.length - 1].push(token);
+    }
+
+    // Let numfmt select the section with the original value. Shifting first can
+    // change a condition's result or move zero into the positive-value section.
+    const selector = sections
+        .map((section, index) => {
+            const conditions = section.filter((token) => token.type === 'CONDITION').map((token) => token.raw);
+            return conditions.join('') + (section.some((token) => token.type === 'TEXT') ? '@' : `"section${index}"`);
+        })
+        .join(';');
+    const selected = formatSpreadsheetValue(selector, value).match(/^-?section([0-3])$/);
+    return selected && sections[Number(selected[1])];
+}
+
+function getFormatLocale(tokens) {
+    for (let index = tokens.length - 1; index >= 0; index--) {
+        const token = tokens[index];
+        if (token.type !== 'LOCALE') continue;
+        const candidate = token.value.match(/^[^-]*-([^,]+)(?:,[0-9a-f]{1,4})?$/i)?.[1].replace(/-x-gannen$/i, '');
+        if (candidate && getSpreadsheetLocale(candidate)) {
+            // Keep only the locale so calendar and numbering modifiers stay in their own section.
+            return /^[0-9a-f]{3,8}$/i.test(candidate) ? (parseInt(candidate, 16) & 0xffff).toString(16) : candidate;
+        }
+    }
+    return undefined;
+}
+
+function formatWithSectionLocale(format, value, locale, tokens, section) {
+    const lastLocaleToken = tokens.findLast((token) => token.type === 'LOCALE');
+    if (lastLocaleToken && !section.includes(lastLocaleToken)) {
+        const sectionLocale = getFormatLocale(section);
+        if (sectionLocale) {
+            // numfmt uses the last locale for the whole format. Override it without
+            // changing the existing tokens, so numfmt still handles conditions and signs.
+            format = tokens
+                .map((token) => token.raw + (token === lastLocaleToken ? `[$-${sectionLocale}]` : ''))
+                .join('');
+        }
+    }
+    return formatSpreadsheetValue(format, value, { locale });
+}
+
+function formatLocalizedNumber(XLSX, format, value, locale, date1904) {
+    if (!date1904 && (!format.includes(';') || !format.includes('[$'))) {
+        return formatSpreadsheetValue(format, value, { locale });
+    }
+    const tokens = tokenize(format);
+    const section = selectFormatSection(tokens, value);
+    if (!section) return formatSpreadsheetValue(format, value, { locale });
+    if (!date1904) return formatWithSectionLocale(format, value, locale, tokens, section);
+
+    const sectionFormat = section
+        .filter((token) => token.type !== 'CONDITION')
+        .map((token) => token.raw)
+        .join('');
+    const dateInfo = getFormatDateInfo(sectionFormat);
+    const systemDate = section.some((token) => token.type === 'LOCALE' && /^-(?:f800|x-sysdate)$/i.test(token.value));
+    if (dateInfo.type !== 'date' && dateInfo.type !== 'datetime' && !systemDate) {
+        return formatWithSectionLocale(format, value, locale, tokens, section);
+    }
+    // A format mixing calendar dates with elapsed units needs both epochs;
+    // preserve the existing SheetJS handling for that uncommon combination.
+    if (section.some((token) => token.type === 'DURATION')) {
+        return XLSX.SSF.format(format, value, { date1904: true });
+    }
+    // Preserve locale inheritance when the selected section does not specify its own.
+    const localeOverride = getFormatLocale(section) ?? getFormatLocale(tokens);
+    const localizedFormat = localeOverride ? `${sectionFormat}[$-${localeOverride}]` : sectionFormat;
+    // numfmt only supports the 1900 epoch, so shift calendar dates alone.
+    return formatSpreadsheetValue(localizedFormat, value + 1462, { locale });
+}
+
+function formatCellValue(XLSX, cell, locale, date1904) {
+    if (locale === undefined) return XLSX.utils.format_cell(cell);
+    if (cell.f && (cell.t === 'z' || cell.v === undefined || cell.v === null)) return `=${cell.f}`;
+    if (cell.t === 'n' && typeof cell.v === 'number') {
+        const format = cell.z ?? 'General';
+        try {
+            return formatLocalizedNumber(XLSX, format, cell.v, locale, date1904);
+        } catch {
+            // Unsupported format codes retain the existing SheetJS fallback.
+        }
+    }
+    return String(XLSX.utils.format_cell(cell) ?? '');
 }
 
 /** 确保 @sharp9/ofdjs 在 Node.js 中的 DOMParser 已初始化 */
@@ -448,11 +555,13 @@ async function extractOfdTextFromFile(filePath) {
 /**
  * 从文件中提取原始文本
  * @param {string} filePath
+ * @param {{ locale?: string }} [options]
+ *   locale is supplied by the extractText tool; omitted callers retain existing formatting.
  * @returns {Promise<string | null>}
  *   不支持的格式或解析失败返回 null；
  *   合法文件解析为空内容时返回 ''（空字符串）
  */
-export async function extractText(filePath) {
+export async function extractText(filePath, options = {}) {
     const ext = path.extname(filePath).slice(1).toLowerCase();
     try {
         const stat = await fs.promises.stat(filePath);
@@ -504,7 +613,7 @@ export async function extractText(filePath) {
 
         if (SPREADSHEET_EXTS.has(ext)) {
             const buffer = await fs.promises.readFile(filePath);
-            return await extractSpreadsheetText(buffer);
+            return await extractSpreadsheetText(buffer, options.locale);
         }
 
         if (ext === 'pptx') {
