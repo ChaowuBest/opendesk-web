@@ -340,8 +340,7 @@ function sheetToRowNumberedLines(XLSX, sheet, locale, date1904) {
     return lines;
 }
 
-function format1904CellValue(XLSX, format, value, locale) {
-    const tokens = tokenize(format);
+function selectFormatSection(tokens, value) {
     const sections = [[]];
     for (const token of tokens) {
         if (token.type === 'BREAK') sections.push([]);
@@ -357,8 +356,45 @@ function format1904CellValue(XLSX, format, value, locale) {
         })
         .join(';');
     const selected = formatSpreadsheetValue(selector, value).match(/^-?section([0-3])$/);
-    const section = selected && sections[Number(selected[1])];
+    return selected && sections[Number(selected[1])];
+}
+
+function getFormatLocale(tokens) {
+    for (let index = tokens.length - 1; index >= 0; index--) {
+        const token = tokens[index];
+        if (token.type !== 'LOCALE') continue;
+        const candidate = token.value.match(/^[^-]*-([^,]+)(?:,[0-9a-f]{1,4})?$/i)?.[1].replace(/-x-gannen$/i, '');
+        if (candidate && getSpreadsheetLocale(candidate)) {
+            // Keep only the locale so calendar and numbering modifiers stay in their own section.
+            return /^[0-9a-f]{3,8}$/i.test(candidate) ? (parseInt(candidate, 16) & 0xffff).toString(16) : candidate;
+        }
+    }
+    return undefined;
+}
+
+function formatWithSectionLocale(format, value, locale, tokens, section) {
+    const lastLocaleToken = tokens.findLast((token) => token.type === 'LOCALE');
+    if (lastLocaleToken && !section.includes(lastLocaleToken)) {
+        const sectionLocale = getFormatLocale(section);
+        if (sectionLocale) {
+            // numfmt uses the last locale for the whole format. Override it without
+            // changing the existing tokens, so numfmt still handles conditions and signs.
+            format = tokens
+                .map((token) => token.raw + (token === lastLocaleToken ? `[$-${sectionLocale}]` : ''))
+                .join('');
+        }
+    }
+    return formatSpreadsheetValue(format, value, { locale });
+}
+
+function formatLocalizedNumber(XLSX, format, value, locale, date1904) {
+    if (!date1904 && (!format.includes(';') || !format.includes('[$'))) {
+        return formatSpreadsheetValue(format, value, { locale });
+    }
+    const tokens = tokenize(format);
+    const section = selectFormatSection(tokens, value);
     if (!section) return formatSpreadsheetValue(format, value, { locale });
+    if (!date1904) return formatWithSectionLocale(format, value, locale, tokens, section);
 
     const sectionFormat = section
         .filter((token) => token.type !== 'CONDITION')
@@ -367,26 +403,17 @@ function format1904CellValue(XLSX, format, value, locale) {
     const dateInfo = getFormatDateInfo(sectionFormat);
     const systemDate = section.some((token) => token.type === 'LOCALE' && /^-(?:f800|x-sysdate)$/i.test(token.value));
     if (dateInfo.type !== 'date' && dateInfo.type !== 'datetime' && !systemDate) {
-        return formatSpreadsheetValue(format, value, { locale });
+        return formatWithSectionLocale(format, value, locale, tokens, section);
     }
     // A format mixing calendar dates with elapsed units needs both epochs;
     // preserve the existing SheetJS handling for that uncommon combination.
     if (section.some((token) => token.type === 'DURATION')) {
         return XLSX.SSF.format(format, value, { date1904: true });
     }
-    // numfmt applies an explicit locale from any section to the whole format.
-    let localeOverride;
-    for (const token of tokens) {
-        if (token.type !== 'LOCALE') continue;
-        const candidate = token.value.match(/^[^-]*-(.+)$/)?.[1];
-        if (candidate && getSpreadsheetLocale(candidate)) {
-            // Keep only the LCID so calendar/numbering modifiers stay in their own section.
-            localeOverride = /^[0-9a-f]{3,8}$/i.test(candidate)
-                ? (parseInt(candidate, 16) & 0xffff).toString(16)
-                : candidate;
-        }
-    }
+    // Preserve locale inheritance when the selected section does not specify its own.
+    const localeOverride = getFormatLocale(section) ?? getFormatLocale(tokens);
     const localizedFormat = localeOverride ? `${sectionFormat}[$-${localeOverride}]` : sectionFormat;
+    // numfmt only supports the 1900 epoch, so shift calendar dates alone.
     return formatSpreadsheetValue(localizedFormat, value + 1462, { locale });
 }
 
@@ -396,12 +423,7 @@ function formatCellValue(XLSX, cell, locale, date1904) {
     if (cell.t === 'n' && typeof cell.v === 'number') {
         const format = cell.z ?? 'General';
         try {
-            // numfmt only supports the 1900 epoch. Adapt calendar dates without
-            // shifting ordinary numbers or elapsed times in the workbook.
-            if (date1904) {
-                return format1904CellValue(XLSX, format, cell.v, locale);
-            }
-            return formatSpreadsheetValue(format, cell.v, { locale });
+            return formatLocalizedNumber(XLSX, format, cell.v, locale, date1904);
         } catch {
             // Unsupported format codes retain the existing SheetJS fallback.
         }

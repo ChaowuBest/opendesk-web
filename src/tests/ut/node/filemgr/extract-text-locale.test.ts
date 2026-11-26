@@ -31,10 +31,13 @@ test.after(() => {
     fs.rmSync(directory, { recursive: true, force: true });
 });
 
-test('extractText exposes an optional locale in its model-facing schema', () => {
+test('extractText exposes an optional locale scoped to Excel formatting in its model-facing schema', () => {
     const tool = new ExtractTextTool(async () => '');
     const schema = tool.getJsonSchema();
-    assert.equal(schema.properties.locale?.type, 'string');
+    const locale = schema.properties.locale;
+    assert.equal(locale?.type, 'string');
+    assert.match(locale?.description ?? '', /仅用于本工具读取 \.xls 和 \.xlsx 时的数字和日期格式化/);
+    assert.match(locale?.description ?? '', /其他文件格式和搜索索引不受影响/);
     assert.deepEqual(schema.required, ['file_path']);
 });
 

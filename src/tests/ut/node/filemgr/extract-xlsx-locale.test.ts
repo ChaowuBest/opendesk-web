@@ -230,17 +230,37 @@ test('1904 system dates and locales inherited from other sections remain localiz
         {
             A1: { t: 'n', v: 0, z: '[$-F800]' },
             B1: { t: 'n', v: 0, z: '[$-x-sysdate]' },
-            C1: { t: 'n', v: 0, z: '[$-0409]0.00;0.00;dddd d mmmm yyyy' },
-            D1: { t: 'n', v: 0, z: '[$-0409]dddd d mmmm yyyy;[$-041F]0.00' }
+            C1: { t: 'n', v: 0, z: '[$-0409]0.00;0.00;dddd d mmmm yyyy' }
         },
-        'A1:D1',
+        'A1:C1',
         { date1904: true }
     );
     assert.equal(
         await extractText(filePath, { locale: 'tr-TR' }),
-        '1\t1 Ocak 1904 Cuma\t1 Ocak 1904 Cuma\tFriday 1 January 1904\tCuma 1 Ocak 1904'
+        '1\t1 Ocak 1904 Cuma\t1 Ocak 1904 Cuma\tFriday 1 January 1904'
     );
 });
+
+for (const [date1904, value, englishDate, turkishDate] of [
+    [false, 46320, 'Sunday 25 October 2026', 'Pazar 25 Ekim 2026'],
+    [true, 0, 'Friday 1 January 1904', 'Cuma 1 Ocak 1904']
+] as const) {
+    test(`selected format section takes locale precedence in ${date1904 ? '1904' : '1900'} workbooks`, async () => {
+        const filePath = writeWorkbook(
+            {
+                A1: { t: 'n', v: value, z: '[$-0409]dddd d mmmm yyyy;[$-041F]0.00' },
+                B1: { t: 'n', v: value, z: '[$-041F]dddd d mmmm yyyy;[$-0409]0.00' },
+                C1: { t: 'n', v: -1234.5, z: '[$USD-0409]#,##0.00;([$TRY-041F]#,##0.00);[$-0409]0.00' }
+            },
+            'A1:C1',
+            { date1904 }
+        );
+        assert.equal(
+            await extractText(filePath, { locale: 'de-DE' }),
+            `1\t${englishDate}\t${turkishDate}\t(TRY1.234,50)`
+        );
+    });
+}
 
 test('unsupported formats fall back without losing other cells or cached formula values', async () => {
     const filePath = writeWorkbook(

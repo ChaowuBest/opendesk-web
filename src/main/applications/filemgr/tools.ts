@@ -1384,7 +1384,8 @@ const extractTextSchema = z.object({
         .refine((locale) => normalizeLocaleTag(locale) !== undefined)
         .optional()
         .describe(
-            '可选的 BCP-47 语言地区标签，例如 tr-TR 或 en-US。仅在用户本轮明确要求其他输出语言或地区数字、日期格式时设置；省略则使用应用当前语言。文件中明确指定的格式或 locale 优先，不翻译文本单元格。'
+            '可选的 BCP-47 语言地区标签，例如 tr-TR 或 en-US。仅用于本工具读取 .xls 和 .xlsx 时的数字和日期格式化，其他文件格式和搜索索引不受影响。' +
+                '仅在用户本轮明确要求其他语言或地区的数字、日期显示格式时设置，省略则使用应用当前语言。文件中明确指定的格式或 locale 优先，文本单元格保留原文。'
         )
 });
 
