@@ -66,14 +66,19 @@ describe('ToolCall live 增量累积', () => {
         expect(call.outputReset).toBe(true);
     });
 
-    test('累积超过上限时丢弃增量，让下一次快照退回全量渲染', () => {
+    test('累积超过上限时丢弃增量，并标记下一帧需整体重写', () => {
         const call = new ToolCall(0, 'call-live', 'terminal-executePwsh', '{}');
         call.queueOutputDelta('a'.repeat(200 * 1024), undefined);
         expect(call.outputDelta).toHaveLength(200 * 1024);
 
         call.queueOutputDelta('b'.repeat(100 * 1024), undefined);
         expect(call.outputDelta).toBeUndefined();
-        expect(call.outputReset).toBeUndefined();
+        // 丢弃了中间段：必须让下一帧整体重写，避免渲染端 append-only 造成错位
+        expect(call.outputReset).toBe(true);
+
+        call.queueOutputDelta('tail\n', undefined);
+        expect(call.outputDelta).toBe('tail\n');
+        expect(call.outputReset).toBe(true);
     });
 });
 

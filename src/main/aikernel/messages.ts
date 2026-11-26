@@ -478,7 +478,11 @@ export class ToolCall implements BaseChatToolCall {
             this.outputReset = true;
         }
         if (this.outputDelta.length > MAX_PENDING_OUTPUT_DELTA_CHARS) {
+            // 丢弃已累积增量后，必须保留「下一帧整体重写」的语义：
+            // 否则渲染端会按 append-only 把后续增量接在 reset 前的旧内容后，
+            // 被丢弃的 256KiB 段造成 live 视图错位。
             this.clearOutputDelta();
+            this.outputReset = true;
         }
     }
 
